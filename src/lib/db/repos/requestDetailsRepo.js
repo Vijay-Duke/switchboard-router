@@ -6,8 +6,15 @@ const DEFAULT_BATCH_SIZE = 20;
 const DEFAULT_FLUSH_INTERVAL_MS = 5000;
 /** Cap each JSON field at 5 KB by default (was unbounded in memory until flush). */
 const DEFAULT_MAX_JSON_SIZE = 5 * 1024;
-/** Hard cap on buffered unflushed records to prevent OOM under load (#2472). */
-const DEFAULT_MAX_BUFFER = 100;
+/**
+ * Hard cap on buffered unflushed records to prevent OOM under load (#2472).
+ * This is a last-resort memory guard, not a throughput limit: saveRequestDetail
+ * awaits its config before buffering, so a burst arrives all at once and only
+ * drains after the first async flush completes. At 100 (5 batches) a moderately
+ * busy gateway silently dropped most of its observability rows. Fields are
+ * already truncated to maxJsonSize on push, so 5000 records is a few MB.
+ */
+const DEFAULT_MAX_BUFFER = 5000;
 const CONFIG_CACHE_TTL_MS = 5000;
 
 let cachedConfig = null;
@@ -47,6 +54,10 @@ async function getObservabilityConfig() {
 let writeBuffer = [];
 let flushTimer = null;
 let isFlushing = false;
+
+const DROP_WARN_INTERVAL_MS = 60_000;
+let lastDropWarnAt = 0;
+let droppedSinceLastWarn = 0;
 
 function sanitizeHeaders(headers) {
   if (!headers || typeof headers !== "object") return {};
@@ -88,7 +99,7 @@ function truncateField(obj, maxSize) {
 /**
  * Shrink a detail record before it enters the write buffer so large agent
  * payloads (tool schemas, multi-turn history, images) never sit untruncated
- * in heap. Addresses decolua/9router#2472 OOM from requestDetails bloat.
+ * in heap. Addresses Switchboard#2472 OOM from requestDetails bloat.
  */
 function shrinkDetail(detail, maxJsonSize) {
   if (!detail || typeof detail !== "object") return detail;
@@ -175,8 +186,18 @@ export async function saveRequestDetail(detail) {
   const shrunk = shrinkDetail(detail, config.maxJsonSize);
 
   // Drop oldest if buffer is full (prefer recent errors over old successes).
+  // Never drop silently — a quiet truncation reads as "we captured everything".
   if (writeBuffer.length >= config.maxBuffer) {
     writeBuffer.shift();
+    droppedSinceLastWarn++;
+    const now = Date.now();
+    if (now - lastDropWarnAt > DROP_WARN_INTERVAL_MS) {
+      console.warn(
+        `[requestDetailsRepo] observability buffer full (${config.maxBuffer}); dropped ${droppedSinceLastWarn} record(s). Raise OBSERVABILITY_MAX_BUFFER or lower OBSERVABILITY_FLUSH_INTERVAL_MS.`
+      );
+      lastDropWarnAt = now;
+      droppedSinceLastWarn = 0;
+    }
   }
   writeBuffer.push(shrunk);
 
