@@ -146,6 +146,15 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
           "
           npm run pack:cli
+          # Stable name so /releases/latest/download/switchboard-router.tgz always works
+          TGZ=$(ls -1 ../../switchboard-router-*.tgz switchboard-router-*.tgz 2>/dev/null | head -1)
+          if [ -z "$TGZ" ]; then
+            echo "No tarball produced"
+            exit 1
+          fi
+          cp "$TGZ" ../../switchboard-router.tgz
+          cp "$TGZ" ../../"switchboard-router-${VER}.tgz" 2>/dev/null || true
+          ls -la ../../switchboard-router*.tgz
         env:
           VER: ${{ needs.resolve-version.outputs.version }}
 
@@ -154,7 +163,6 @@ jobs:
         run: |
           TAG="${{ needs.resolve-version.outputs.tag }}"
           VER="${{ needs.resolve-version.outputs.version }}"
-          # Prefer section matching this version from CHANGELOG.md
           if [ -f CHANGELOG.md ]; then
             awk -v ver="$VER" -v tag="$TAG" '
               BEGIN { p=0 }
@@ -165,17 +173,16 @@ jobs:
           fi
           if [ ! -s /tmp/notes.md ]; then
             cat > /tmp/notes.md <<EOF
-          ## Switchboard Router ${TAG}
+          ## ${TAG}
 
           ### Install
           \`\`\`bash
-          npm i -g switchboard-router@${VER}
-          switchboard
+          npm i -g switchboard-router && switchboard
           \`\`\`
 
-          ### Docker
+          Or from this release (no npm registry):
           \`\`\`bash
-          docker pull ghcr.io/${{ github.repository }}:${VER}
+          npm i -g https://github.com/${{ github.repository }}/releases/latest/download/switchboard-router.tgz && switchboard
           \`\`\`
           EOF
           fi
@@ -184,11 +191,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve-version.outputs.tag }}
-          name: ${{ needs.resolve-version.outputs.tag }}
+          name: Switchboard ${{ needs.resolve-version.outputs.tag }}
           body_path: /tmp/notes.md
           files: |
+            switchboard-router.tgz
             switchboard-router-*.tgz
-            cli/switchboard-router-*.tgz
           fail_on_unmatched_files: false
           generate_release_notes: true
         env:

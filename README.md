@@ -1,206 +1,96 @@
 # Switchboard
 
-**Local AI routing gateway** — one OpenAI-compatible endpoint, multi-provider accounts, model combos (including **Auto**), and a dashboard for ops and learning.
+**One local endpoint for every AI model you use.**
+
+Point Claude Code, Cursor, Codex, Cline, or any OpenAI-compatible client at Switchboard. It routes across your provider accounts and combos — including **Auto**, which picks the right model and gets better over time.
 
 <p align="center">
-  <img src="images/console-overview.png" alt="Switchboard dashboard — Overview" width="900" />
+  <img src="images/console-overview.png" alt="Switchboard dashboard" width="900" />
 </p>
 
 <p align="center">
-  <a href="https://github.com/Vijay-Duke/switchboard-router/releases/latest"><img src="https://img.shields.io/github/v/release/Vijay-Duke/switchboard-router?label=release" alt="Release" /></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen" alt="Node >= 18" />
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" />
+  <a href="https://github.com/Vijay-Duke/switchboard-router/releases/latest"><img src="https://img.shields.io/github/v/release/Vijay-Duke/switchboard-router?style=flat-square&label=latest" alt="Latest release" /></a>
+  <a href="https://www.npmjs.com/package/switchboard-router"><img src="https://img.shields.io/npm/v/switchboard-router?style=flat-square" alt="npm" /></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?style=flat-square" alt="Node 18+" />
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT" />
 </p>
-
-```
-Your CLI / IDE  →  Switchboard (:20128/v1)  →  Provider accounts & combos
-                         │
-                         └── Dashboard: providers, keys, combos, usage, Auto insights
-```
-
----
-
-## Why Switchboard?
-
-You juggle many models and providers. Hand-picking every turn is slow; closed “auto” modes hide the decision.
-
-**Switchboard** sits on your machine and:
-
-- Exposes a single **`/v1`** API for coding agents and SDKs  
-- Routes across OAuth + API-key providers and **combos** (fallback, round-robin, fusion, **Auto**)  
-- Logs outcomes so **Auto** can learn which workers win per task cluster  
-- Gives you a **local dashboard** — no required cloud control plane  
 
 ---
 
 ## Install
 
-### From GitHub Release (recommended)
-
-Download the CLI package from the [latest release](https://github.com/Vijay-Duke/switchboard-router/releases/latest), then:
+**Requires [Node.js 18+](https://nodejs.org/).** Copy → paste → run:
 
 ```bash
-npm i -g ./switchboard-router-0.5.20.tgz   # use the version you downloaded
-switchboard
+npm i -g https://github.com/Vijay-Duke/switchboard-router/releases/latest/download/switchboard-router.tgz && switchboard
 ```
 
-- **Dashboard:** http://localhost:20128/dashboard  
-- **API:** http://localhost:20128/v1  
-- **Data:** `~/.switchboard` (legacy `~/.9router` is still detected if present)
-
-> **npm name:** install package **`switchboard-router`** · **CLI command:** **`switchboard`**  
-> Bare name `switchboard` on npm is an unrelated package — do not install that.
-
-### From source
+Dashboard: **http://localhost:20128/dashboard** · API: **http://localhost:20128/v1**
 
 ```bash
-git clone https://github.com/Vijay-Duke/switchboard-router.git
-cd switchboard-router
-cp .env.example .env
-npm install
-PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run dev
+# After the package is on npm (same result, shorter):
+npm i -g switchboard-router && switchboard
 ```
 
-Production:
-
-```bash
-npm run build
-PORT=20128 HOSTNAME=127.0.0.1 npm run start
-# Prefer custom-server (socket-derived IP, H1-safe):
-# PORT=20128 npm run start:standalone
-```
-
-CLI launcher from this monorepo:
-
-```bash
-npm run cli:pack          # builds cli/ and packs switchboard-router-*.tgz
-cd cli && npm run dev     # or run the packed CLI
-```
+> Always install **`switchboard-router`**. The bare name `switchboard` on npm is a different project.
 
 ---
 
-## Point a client at Switchboard
+## Use it in 30 seconds
 
-In the dashboard: **Endpoint & keys** → copy base URL and API key.
+1. Open **http://localhost:20128/dashboard**
+2. Connect a provider (OAuth or API key)
+3. Copy your endpoint + key from **Endpoint & keys**
+4. Point your coding agent at Switchboard:
 
 ```bash
 export OPENAI_BASE_URL="http://127.0.0.1:20128/v1"
-export OPENAI_API_KEY="sk_…"   # from the dashboard
+export OPENAI_API_KEY="sk-…"   # from the dashboard
 ```
 
-Works with **Claude Code**, **Codex**, **Cursor**, **Cline**, **Continue**, **Grok**, **Pi**, **Aider**, **Gemini CLI**, and any OpenAI-compatible client. Use **CLI tools** in the dashboard to write settings for common agents.
+Or use **CLI tools** in the dashboard to wire Claude Code, Cursor, Codex, Cline, Continue, and others automatically.
 
 ---
 
-## Features
+## What you get
 
-| Area | What you get |
-|------|----------------|
-| **Gateway** | OpenAI-compatible `/v1/*`, format translation, streaming, multi-account fallback |
-| **Providers** | OAuth (Claude, Codex, Cursor, Antigravity, …) + API keys + free tiers |
-| **Combos** | Fallback, round-robin, fusion, **Auto** (router model → worker pool) |
-| **Learning** | Routing events, bandit artifacts, Relearn / scheduled learn, insights UI |
-| **Ops** | Usage & quota, token saver, MITM helpers, local SQLite |
-| **Security** | Local-first; admin `/api/*` gated to loopback / CLI token |
-
-### Auto routing
-
-Create a combo with strategy **Auto**:
-
-1. Pick a **router** model (e.g. a strong Claude)  
-2. Build a **worker pool** (cheap + strong models)  
-3. Point clients at the combo name as the model  
-4. Open **Combos → Insights** to see decisions, scores, and relearn  
-
-Design notes: [docs/switchboard/](docs/switchboard/README.md) · product direction: [SWITCHBOARD.md](./SWITCHBOARD.md)
-
----
-
-## Screenshots
+| | |
+|---|---|
+| **One gateway** | OpenAI-compatible `/v1` — works with almost every agent and SDK |
+| **Many providers** | Claude, Codex, Cursor, Gemini, free tiers, API keys, and more |
+| **Combos** | Fallback, round-robin, fusion, or **Auto** (router → best worker) |
+| **Learning** | Auto records outcomes and improves which model wins per task type |
+| **Local-first** | Runs on your machine; data in `~/.switchboard` |
 
 <p align="center">
-  <img src="images/console-overview.png" alt="Overview — traffic and system health" width="880" />
-  <br />
-  <em>Overview — live traffic, providers, endpoint</em>
-</p>
-
-<p align="center">
-  <img src="images/switchboard.png" alt="Providers catalog" width="880" />
-  <br />
-  <em>Providers — OAuth, free tier, and API-key connections</em>
+  <img src="images/switchboard.png" alt="Providers" width="880" />
 </p>
 
 ---
 
-## Configuration
+## Docker
 
-See [`.env.example`](./.env.example). Common settings:
+```bash
+docker run -d \
+  --name switchboard \
+  -p 20128:20128 \
+  -v "$HOME/.switchboard:/app/data" \
+  -e DATA_DIR=/app/data \
+  ghcr.io/vijay-duke/switchboard-router:latest
+```
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `DATA_DIR` | `~/.switchboard` | SQLite + app state |
-| `PORT` | `20128` | HTTP port |
-| `HOSTNAME` | `127.0.0.1` | Bind address (`0.0.0.0` to expose on LAN; non-loopback `/v1` needs an API key by default) |
-| `REQUIRE_API_KEY` | `true` | Require gateway API key for non-loopback LLM API access |
-| `INITIAL_PASSWORD` | `123456` | Override if you enable password flows |
-
-Docker: [DOCKER.md](./DOCKER.md)
+Then open **http://localhost:20128/dashboard**.
 
 ---
 
-## Development
+## Docs & help
 
-```bash
-# App
-npm install
-npm run dev
-
-# Lint
-npx eslint .
-
-# Tests (separate package under tests/)
-npm install && cd tests && npm install
-npx vitest run unit/switchboard-auto.test.js
-```
-
-| Doc | Contents |
-|-----|----------|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Request lifecycle, OAuth, persistence |
-| [docs/switchboard/](docs/switchboard/README.md) | Auto + Learn product/engineering specs |
-| [cli/README.md](cli/README.md) | CLI package notes |
-
----
-
-## Releases (CI/CD — no local publish)
-
-Everything ships from GitHub Actions. You do **not** need to run `npm publish` locally.
-
-| Workflow | Trigger | What it does |
-|----------|---------|----------------|
-| **CI** | push / PR | unit tests, docs build, CLI pack dry-run |
-| **Release** | tag `v*` or manual | tests → **npm publish** `switchboard-router` → GitHub Release + tarball → Docker to GHCR |
-| **Deploy docs** | `gitbook/**` on master | static docs → GitHub Pages |
-
-```bash
-# Cut a release (from a clean master)
-git tag v0.5.21
-git push origin v0.5.21
-# Or: Actions → Release → Run workflow → version 0.5.21
-```
-
-```bash
-npm i -g switchboard-router@latest
-switchboard
-```
-
-**Secrets:** see [`.github/SECRETS.md`](.github/SECRETS.md) — at least `NPM_TOKEN` for npm.  
-**Docs:** enable Pages → Source: GitHub Actions → https://vijay-duke.github.io/switchboard-router/  
-**Images:** `ghcr.io/vijay-duke/switchboard-router`
-
-Downloads / notes: https://github.com/Vijay-Duke/switchboard-router/releases
+- [User docs](https://vijay-duke.github.io/switchboard-router/)
+- [Releases](https://github.com/Vijay-Duke/switchboard-router/releases)
+- [Architecture](docs/ARCHITECTURE.md) · [Auto / Learn specs](docs/switchboard/README.md)
 
 ---
 
 ## License
 
-MIT — see [cli/LICENSE](cli/LICENSE) and repository license files.
+MIT
