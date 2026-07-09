@@ -1530,7 +1530,7 @@ export async function backfillCodexEmails() {
   if (codexBackfillDone) return;
   codexBackfillDone = true;
   try {
-    const { getProviderConnections, updateProviderConnection } = await import("@/lib/localDb");
+    const { getProviderConnections, updateProviderConnection } = await import("@/lib/db/index.js");
     const connections = await getProviderConnections();
     const targets = connections.filter((c) => {
       if (c.provider !== "codex" || c.authType !== "oauth" || !c.idToken) return false;

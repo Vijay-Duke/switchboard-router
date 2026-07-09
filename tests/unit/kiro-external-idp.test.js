@@ -35,6 +35,11 @@ describe("Kiro external_idp (CLIProxyAPI) import and refresh", () => {
     });
     global.fetch = fetchMock;
 
+    // M11: open-sse reaches the app's external-IDP param builder through deps.
+    const { setOpenSseDeps } = await import("../../open-sse/runtimeDeps.js");
+    const { buildExternalIdpRefreshParams } = await import("../../src/lib/oauth/kiroExternalIdp.js");
+    setOpenSseDeps({ buildExternalIdpRefreshParams });
+
     const { refreshKiroToken } = await import("../../open-sse/services/tokenRefresh.js");
     const result = await refreshKiroToken("old-refresh-token", {
       authMethod: "external_idp",

@@ -1,7 +1,11 @@
+// M11: open-sse reads persistence through injected deps. The SSE request
+// handlers wire them, but the scheduler + quota ping start before any request
+// arrives — without this they would silently run against the no-op defaults.
+import "@/sse/initOpenSseDeps.js";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { existsSync } from "fs";
-import { cleanupProviderConnections, getSettings, updateSettings, getApiKeys, deleteOldRoutingEvents } from "@/lib/localDb";
+import { cleanupProviderConnections, getSettings, updateSettings, getApiKeys, deleteOldRoutingEvents } from "@/lib/db/index.js";
 import { getMitmStatus, startMitm, loadEncryptedPassword, initDbHooks, restoreToolDNS, removeAllDNSEntriesSync } from "@/mitm/manager";
 import { startQuotaAutoPing } from "@/shared/services/quotaAutoPing";
 import { startAutoLearnScheduler } from "open-sse/routing/scheduler.js";

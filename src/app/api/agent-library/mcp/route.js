@@ -1,5 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
+import { jsonError, safeErrorMessage } from "@/lib/jsonError";
 import {
   loadSettings,
   resolveLibraryRoot,
@@ -19,7 +20,7 @@ export async function GET() {
     const servers = await listMcpServers(root);
     return NextResponse.json({ servers, libraryRoot: root });
   } catch (e) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return jsonError(500, safeErrorMessage(e));
   }
 }
 
@@ -55,7 +56,7 @@ export async function POST(request) {
     const entry = await upsertMcpServer(root, body);
     return NextResponse.json({ ok: true, server: entry, warnings });
   } catch (e) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return jsonError(500, safeErrorMessage(e));
   }
 }
 
@@ -68,6 +69,6 @@ export async function DELETE(request) {
     const res = await removeMcpServer(root, id);
     return NextResponse.json({ ok: true, ...res });
   } catch (e) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return jsonError(500, safeErrorMessage(e));
   }
 }

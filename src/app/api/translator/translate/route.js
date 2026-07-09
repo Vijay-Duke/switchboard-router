@@ -1,10 +1,11 @@
 // @ts-check
 import { NextResponse } from "next/server";
+import { safeErrorMessage } from "@/lib/jsonError.js";
 import { detectFormat, getTargetFormat } from "open-sse/services/provider.js";
 import { translateRequest } from "open-sse/translator/index.js";
 import { FORMATS } from "open-sse/translator/formats.js";
 import { getModelInfo } from "@/sse/services/model.js";
-import { getProviderConnections } from "@/lib/localDb.js";
+import { getProviderConnections } from "@/lib/db/index.js";
 import { getExecutor } from "open-sse/executors/index.js";
 
 export async function POST(request) {
@@ -86,6 +87,6 @@ export async function POST(request) {
     }
   } catch (error) {
     console.error("Error in translator:", error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: safeErrorMessage(error) }, { status: 500 });
   }
 }

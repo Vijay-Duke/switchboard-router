@@ -1,6 +1,8 @@
+// @ts-check
 import { NextResponse } from "next/server";
+import { safeErrorMessage } from "@/lib/jsonError.js";
 import { runOptimizer } from "open-sse/routing/optimizer.js";
-import { getSettings } from "@/lib/localDb";
+import { getSettings } from "@/lib/db/index.js";
 
 /**
  * POST /api/routing/learn
@@ -55,9 +57,10 @@ export async function POST(request) {
 
     return NextResponse.json(result);
   } catch (e) {
-    console.error("[ROUTING_LEARN] learn_failed:", e?.message || e);
+    const message = safeErrorMessage(e, "learn_failed");
+    console.error("[ROUTING_LEARN] learn_failed:", message);
     return NextResponse.json(
-      { ok: false, error: e.message || "learn_failed" },
+      { ok: false, error: message },
       { status: 500 }
     );
   }

@@ -437,24 +437,35 @@ const FUSION_DEFAULTS = {
   panelHardTimeoutMs: 90000, // absolute cap so one hung model can't stall forever
 };
 
-// Resolve a Response (or {__error}) within ms; the loser keeps running but is ignored.
-function withTimeout(promise, ms) {
+// Resolve a Response (or {__error}) within ms.
+// M3: on timeout, abort the panel AbortController so upstream work stops billing.
+function withTimeout(promise, ms, abortController) {
   return new Promise((resolve) => {
-    const t = setTimeout(() => resolve({ __timeout: true }), ms);
+    const t = setTimeout(() => {
+      try { abortController?.abort?.(new Error("fusion panel hard timeout")); } catch { /* ignore */ }
+      resolve({ __timeout: true });
+    }, ms);
     Promise.resolve(promise)
       .then((v) => { clearTimeout(t); resolve(v); })
-      .catch((e) => { clearTimeout(t); resolve({ __error: e }); });
+      .catch((e) => {
+        clearTimeout(t);
+        if (e?.name === "AbortError" || abortController?.signal?.aborted) {
+          resolve({ __timeout: true, __aborted: true });
+        } else {
+          resolve({ __error: e });
+        }
+      });
   });
 }
 
 /**
  * Collect panel responses with quorum-grace: as soon as `minPanel` calls succeed,
- * start a short grace timer for the rest, then proceed with whatever arrived. This
- * caps the straggler penalty (the slowest model otherwise dominates wall time) while
- * still preferring a full panel when everyone is fast. Bounded by a hard timeout.
+ * start a short grace timer for the rest, then proceed with whatever arrived.
+ * M3: when collection finishes, abort all still-running panel controllers so
+ * stragglers stop consuming provider credits.
  * Returns a sparse array aligned to `calls` (undefined = not yet / dropped).
  */
-function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs }) {
+function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs, abortControllers = [] }) {
   return new Promise((resolve) => {
     const out = new Array(calls.length);
     let settled = 0;
@@ -466,6 +477,12 @@ function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs })
       finished = true;
       clearTimeout(hardTimer);
       if (graceTimer) clearTimeout(graceTimer);
+      // Abort any panel still in flight (stragglers / non-quorum)
+      for (const ac of abortControllers) {
+        if (ac && !ac.signal.aborted) {
+          try { ac.abort(new Error("fusion panel collection finished")); } catch { /* ignore */ }
+        }
+      }
       resolve(out);
     };
     const hardTimer = setTimeout(finish, panelHardTimeoutMs);
@@ -480,6 +497,46 @@ function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs })
           if (ok >= minPanel && !graceTimer) graceTimer = setTimeout(finish, stragglerGraceMs);
         });
     });
+  });
+}
+
+/** Build a non-streaming OpenAI-shaped JSON Response from already-collected panel text (M3: no re-dispatch). */
+function responseFromPanelAnswer({ model, text }, originalBody) {
+  const wantStream = !!originalBody?.stream;
+  const created = Math.floor(Date.now() / 1000);
+  const id = `chatcmpl-fusion-${created}`;
+  if (!wantStream) {
+    const json = {
+      id,
+      object: "chat.completion",
+      created,
+      model: model || "fusion-survivor",
+      choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }],
+    };
+    return new Response(JSON.stringify(json), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  // Minimal SSE for stream clients
+  const chunk = {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model: model || "fusion-survivor",
+    choices: [{ index: 0, delta: { role: "assistant", content: text }, finish_reason: null }],
+  };
+  const done = {
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model: model || "fusion-survivor",
+    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+  };
+  const body = `data: ${JSON.stringify(chunk)}\n\ndata: ${JSON.stringify(done)}\n\ndata: [DONE]\n\n`;
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
   });
 }
 
@@ -537,11 +594,20 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   }
 
   const t0 = Date.now();
-  const calls = panel.map((m) => withTimeout(handleSingleModel(panelBody, m, true), cfg.panelHardTimeoutMs));
-  const settled = await collectPanel(calls, { ...cfg, minPanel });
+  // M3: per-panel AbortControllers so stragglers are cancelled after collection
+  const abortControllers = panel.map(() => new AbortController());
+  const calls = panel.map((m, i) =>
+    withTimeout(
+      // Prefer callOpts shape { isPanel, signal }; third-arg `true` still works for old wrappers
+      handleSingleModel(panelBody, m, { isPanel: true, signal: abortControllers[i].signal }),
+      cfg.panelHardTimeoutMs,
+      abortControllers[i]
+    )
+  );
+  const settled = await collectPanel(calls, { ...cfg, minPanel, abortControllers });
   log.info("FUSION", `fan-out collected in ${Date.now() - t0}ms`);
 
-  // 2. Collect successful answers.
+  // 2. Collect successful answers (body already buffered for survivor path — no re-dispatch).
   const answers = [];
   for (let i = 0; i < settled.length; i++) {
     const res = settled[i];
@@ -554,7 +620,7 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
       const json = await res.clone().json();
       const text = extractPanelText(json);
       if (text) {
-        answers.push({ model, text });
+        answers.push({ model, text, json });
         log.info("FUSION", `Panel ${model} ok (${text.length} chars)`);
       } else {
         log.warn("FUSION", `Panel ${model} returned empty content`);
@@ -573,8 +639,9 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
     );
   }
   if (answers.length === 1) {
-    log.info("FUSION", `Only ${answers[0].model} succeeded — answering directly (no fusion)`);
-    return handleSingleModel(body, answers[0].model);
+    // M3: reuse buffered answer — do NOT re-dispatch (double bill / rate-limit risk)
+    log.info("FUSION", `Only ${answers[0].model} succeeded — returning buffered answer (no re-dispatch)`);
+    return responseFromPanelAnswer(answers[0], body);
   }
 
   // 4. Judge analyzes + writes one final answer (streams to client if requested).

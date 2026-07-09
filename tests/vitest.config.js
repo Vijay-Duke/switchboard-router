@@ -17,6 +17,10 @@ export default defineConfig({
     maxConcurrency: 60,
     // Suppress noisy console output from handlers under test
     silent: false,
+    // Tests that touch the DB layer (db-concurrent, db-sqlite-vs-lowdb, any
+    // route whose mock misses) would otherwise open the developer's live
+    // ~/.switchboard/db/data.sqlite and write real usage rows into it.
+    env: { DATA_DIR: resolve(__dirname, ".tmp-data") },
   },
   resolve: {
     // Use array form so subpath aliases (e.g. "@/lib/db/index.js") resolve correctly.

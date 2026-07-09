@@ -9,7 +9,6 @@ const mocks = vi.hoisted(() => ({
   getSettings: vi.fn(),
   validateApiKey: vi.fn(),
   getConsistentMachineId: vi.fn(),
-  verifyDashboardAuthToken: vi.fn(),
 }));
 
 vi.mock("next/server", () => ({
@@ -20,17 +19,13 @@ vi.mock("next/server", () => ({
   },
 }));
 
-vi.mock("@/lib/localDb", () => ({
+vi.mock("@/lib/db/index.js", () => ({
   getSettings: mocks.getSettings,
   validateApiKey: mocks.validateApiKey,
 }));
 
 vi.mock("@/shared/utils/machineId", () => ({
   getConsistentMachineId: mocks.getConsistentMachineId,
-}));
-
-vi.mock("@/lib/auth/dashboardSession", () => ({
-  verifyDashboardAuthToken: mocks.verifyDashboardAuthToken,
 }));
 
 const { proxy, __test__ } = await import("../../src/dashboardGuard.js");
@@ -48,11 +43,12 @@ function request(pathname, headers = {}) {
 describe("dashboard guard public LLM API access", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default: requireApiKey off → remote LLM open (LAN gateway use-case)
-    mocks.getSettings.mockResolvedValue({ requireApiKey: false });
+    // C1 default: requireApiKey on
+    mocks.getSettings.mockResolvedValue({ requireApiKey: true });
     mocks.validateApiKey.mockResolvedValue(false);
     mocks.getConsistentMachineId.mockResolvedValue("cli-token");
-    mocks.verifyDashboardAuthToken.mockResolvedValue(false);
+    delete process.env.SWITCHBOARD_TRUST_REAL_IP;
+    delete process.env.HOSTNAME;
   });
 
   it("allows loopback public LLM API without API key", async () => {
@@ -63,6 +59,7 @@ describe("dashboard guard public LLM API access", () => {
   });
 
   it("allows remote public LLM API when requireApiKey is off", async () => {
+    mocks.getSettings.mockResolvedValue({ requireApiKey: false });
     const response = await proxy(request("/v1/chat/completions", {
       host: "router.example.com",
       "x-9r-real-ip": "10.204.111.34",
@@ -70,8 +67,16 @@ describe("dashboard guard public LLM API access", () => {
     expect(response).toBe(mocks.nextResponse);
   });
 
+  it("rejects remote LLM by default (requireApiKey true) with no key", async () => {
+    const response = await proxy(request("/v1/chat/completions", {
+      host: "router.example.com",
+    }));
+    expect(response.status).toBe(401);
+    expect(response.body.error).toBe("API key required");
+  });
+
   it("rejects remote Host-spoof when requireApiKey is on and no key", async () => {
-    mocks.getSettings.mockResolvedValue({ requireApiKey: true });
+    process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
     const response = await proxy(request("/v1/chat/completions", {
       host: "localhost",
       "x-9r-real-ip": "10.204.111.34",
@@ -81,9 +86,27 @@ describe("dashboard guard public LLM API access", () => {
     expect(response.body.error).toBe("API key required");
   });
 
-  it("allows loopback peer IP regardless of Host", async () => {
+  it("ignores spoofed x-9r-real-ip when custom-server trust flag is unset (H1)", async () => {
+    // Without SWITCHBOARD_TRUST_REAL_IP, spoofed loopback IP must not grant local access
+    const response = await proxy(request("/api/settings", {
+      host: "192.168.1.10:20128",
+      "x-9r-real-ip": "127.0.0.1",
+    }));
+    expect(response.status).toBe(403);
+  });
+
+  it("rejects Host-header loopback claim on a public bind with no trust flag (H1)", async () => {
+    // Bare `next start` on 0.0.0.0: nothing derived the peer from the socket,
+    // so a `Host: localhost` header proves nothing.
+    process.env.HOSTNAME = "0.0.0.0";
+    const response = await proxy(request("/api/settings", { host: "localhost:20128" }));
+    expect(response.status).toBe(403);
+  });
+
+  it("allows loopback peer IP when trust flag is set", async () => {
+    process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
     const response = await proxy(request("/v1/chat/completions", {
-      host: "localhost:20128",
+      host: "router.example.com",
       "x-9r-real-ip": "127.0.0.1",
     }));
 
@@ -145,7 +168,7 @@ describe("dashboard guard public LLM API access", () => {
     expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid");
   });
 
-  it("allows remote beta with key query when required", async () => {
+  it("rejects API key in query string (M9 — headers only)", async () => {
     mocks.getSettings.mockResolvedValue({ requireApiKey: true });
     mocks.validateApiKey.mockResolvedValue(true);
 
@@ -153,18 +176,19 @@ describe("dashboard guard public LLM API access", () => {
       host: "router.example.com",
     }));
 
-    expect(response).toBe(mocks.nextResponse);
-    expect(mocks.validateApiKey).toHaveBeenCalledWith("sk-valid");
+    expect(response.status).toBe(401);
+    expect(mocks.validateApiKey).not.toHaveBeenCalled();
   });
 });
 
 describe("dashboard guard local-only access", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.getSettings.mockResolvedValue({ requireApiKey: false });
+    mocks.getSettings.mockResolvedValue({ requireApiKey: true });
     mocks.validateApiKey.mockResolvedValue(false);
     mocks.getConsistentMachineId.mockResolvedValue("cli-token");
-    mocks.verifyDashboardAuthToken.mockResolvedValue(false);
+    delete process.env.SWITCHBOARD_TRUST_REAL_IP;
+    delete process.env.HOSTNAME;
   });
 
   it("rejects local-only route from non-loopback host without CLI token", async () => {
@@ -186,6 +210,7 @@ describe("dashboard guard local-only access", () => {
   });
 
   it("rejects local-only route from tunnel host", async () => {
+    process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
     const response = await proxy(request("/api/cli-tools/antigravity-mitm", {
       host: "tunnel.example.com",
       "x-9r-via-proxy": "1",
@@ -214,6 +239,7 @@ describe("dashboard guard local-only access", () => {
   });
 
   it("rejects non-public /api/* from LAN without CLI token", async () => {
+    process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
     const response = await proxy(request("/api/settings", {
       host: "192.168.1.10:20128",
       "x-9r-real-ip": "192.168.1.20",

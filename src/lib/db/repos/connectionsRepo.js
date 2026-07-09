@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { encryptSecret, decryptSecret } from "@/lib/crypto/secrets.js";
 
 const OPTIONAL_FIELDS = [
   "displayName", "email", "globalPriority", "defaultModel",
@@ -10,9 +11,32 @@ const OPTIONAL_FIELDS = [
   "consecutiveUseCount", "idToken", "lastRefreshAt",
 ];
 
+// H2: encrypt these at rest inside the JSON `data` blob
+const SECRET_FIELDS = ["accessToken", "refreshToken", "idToken", "apiKey"];
+
+function encryptSecretsInPlace(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  for (const f of SECRET_FIELDS) {
+    if (typeof obj[f] === "string" && obj[f]) obj[f] = encryptSecret(obj[f]);
+  }
+  return obj;
+}
+
+function decryptSecretsInPlace(obj) {
+  if (!obj || typeof obj !== "object") return obj;
+  for (const f of SECRET_FIELDS) {
+    if (typeof obj[f] === "string" && obj[f]) {
+      const plain = decryptSecret(obj[f]);
+      if (plain != null) obj[f] = plain;
+    }
+  }
+  return obj;
+}
+
 function rowToConn(row) {
   if (!row) return null;
   const extra = parseJson(row.data, {});
+  decryptSecretsInPlace(extra);
   return {
     ...extra,
     id: row.id,
@@ -29,6 +53,7 @@ function rowToConn(row) {
 
 function connToRow(c) {
   const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, ...rest } = c;
+  const sealed = encryptSecretsInPlace({ ...rest });
   return {
     id,
     provider,
@@ -37,7 +62,7 @@ function connToRow(c) {
     email: email ?? null,
     priority: priority ?? null,
     isActive: isActive === false ? 0 : 1,
-    data: stringifyJson(rest),
+    data: stringifyJson(sealed),
     createdAt,
     updatedAt,
   };

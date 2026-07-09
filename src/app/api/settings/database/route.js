@@ -1,6 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { exportDb, getSettings, importDb } from "@/lib/localDb";
+import { exportDb, getSettings, importDb } from "@/lib/db/index.js";
 import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
 
 // Single-user local mode: no password re-auth for DB export/import.

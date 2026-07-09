@@ -10,8 +10,7 @@ import {
   getProviderConnections,
   getProviderNodes,
   getCombos,
-} from "@/lib/localDb";
-import { getUsageStats, getChartData } from "@/lib/db/index.js";
+} from "@/lib/db/index.js";
 import { getMachineId } from "@/shared/utils/machine";
 
 /**
@@ -121,15 +120,4 @@ export async function loadProfilePage() {
   };
 }
 
-/**
- * Usage overview initial stats for a period.
- * @param {string} [period]
- * @returns {Promise<{ period: string, stats: any, chart: any }>}
- */
-export async function loadUsageOverview(period = "today") {
-  const [stats, chart] = await Promise.all([
-    getUsageStats(period).catch(() => null),
-    getChartData(period).catch(() => null),
-  ]);
-  return { period, stats, chart };
-}
+

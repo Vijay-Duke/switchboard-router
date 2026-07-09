@@ -2,6 +2,7 @@
 "use server";
 
 import { NextResponse } from "next/server";
+import { safeErrorMessage } from "@/lib/jsonError.js";
 
 const REGISTRY_URL = "https://api.anthropic.com/mcp-registry/v0/servers";
 const VISIBILITY = "commercial,gsuite,gsuite-google";
@@ -73,6 +74,6 @@ export async function GET(request) {
     cache.data = data;
     return NextResponse.json({ cached: false, ...data });
   } catch (e) {
-    return NextResponse.json({ error: e.message, servers: [], total: 0 }, { status: 500 });
+    return NextResponse.json({ error: safeErrorMessage(e), servers: [], total: 0 }, { status: 500 });
   }
 }

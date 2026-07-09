@@ -1,12 +1,31 @@
-import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "@/lib/localDb";
+import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "@/lib/db/index.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import * as log from "../utils/logger.js";
 
-// Mutex to prevent race conditions during account selection
-let selectionMutex = Promise.resolve();
+// M1: per-provider mutex — unrelated providers select credentials in parallel
+const selectionMutexByProvider = new Map();
+
+function withProviderSelectionLock(providerId, fn) {
+  const prev = selectionMutexByProvider.get(providerId) || Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const chained = prev.then(() => gate, () => gate);
+  selectionMutexByProvider.set(providerId, chained);
+  return (async () => {
+    await prev.catch(() => {});
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (selectionMutexByProvider.get(providerId) === chained) {
+        selectionMutexByProvider.delete(providerId);
+      }
+    }
+  })();
+}
 
 /**
  * Get provider credentials from localDb
@@ -21,16 +40,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     ? excludeConnectionIds
     : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
   const preferredConnectionId = options?.preferredConnectionId || null;
-  // Acquire mutex to prevent race conditions
-  const currentMutex = selectionMutex;
-  let resolveMutex;
-  selectionMutex = new Promise(resolve => { resolveMutex = resolve; });
+  // Resolve alias early so the lock is keyed by canonical provider id
+  const providerId = resolveProviderId(provider);
 
-  try {
-    await currentMutex;
-
-    // Resolve alias to provider ID (e.g., "kc" -> "kilocode")
-    const providerId = resolveProviderId(provider);
+  return withProviderSelectionLock(providerId, async () => {
 
     // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings)
     if (FREE_PROVIDERS[providerId]?.noAuth) {
@@ -185,9 +198,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       // Pass full connection for clearAccountError to read modelLock_* keys
       _connection: connection
     };
-  } finally {
-    if (resolveMutex) resolveMutex();
-  }
+  });
 }
 
 /**

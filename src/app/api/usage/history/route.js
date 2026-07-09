@@ -1,6 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { getUsageStats } from "@/lib/usageDb";
+import { getUsageStats } from "@/lib/db/index.js";
 
 export async function GET() {
   try {

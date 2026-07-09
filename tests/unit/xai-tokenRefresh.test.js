@@ -29,8 +29,11 @@ describe("xai/token-refresh wrapper", () => {
 
   it("refreshTokenByProvider returns expiresIn for refreshed xai tokens", async () => {
     vi.resetModules();
-    vi.doMock("../../src/lib/oauth/services/xai.js", () => ({
-      XaiService: class {
+    // M11: open-sse no longer imports the app's XaiService directly — it asks
+    // for it through the injected deps, so wire a fake factory instead.
+    const { setOpenSseDeps } = await import("../../open-sse/runtimeDeps.js");
+    setOpenSseDeps({
+      createXaiService: async () => ({
         async refreshAccessToken(refreshToken) {
           return {
             access_token: "new-access",
@@ -38,9 +41,9 @@ describe("xai/token-refresh wrapper", () => {
             expires_in: 900,
             id_token: "id-token",
           };
-        }
-      },
-    }));
+        },
+      }),
+    });
 
     const mod = await import("../../open-sse/services/tokenRefresh.js");
     const out = await mod.refreshTokenByProvider(
@@ -57,7 +60,6 @@ describe("xai/token-refresh wrapper", () => {
     });
     expect(out).not.toHaveProperty("expiresAt");
 
-    vi.doUnmock("../../src/lib/oauth/services/xai.js");
     vi.resetModules();
   });
 });

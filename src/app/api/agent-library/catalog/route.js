@@ -1,5 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
+import { jsonError, safeErrorMessage } from "@/lib/jsonError";
 import {
   loadSettings,
   resolveLibraryRoot,
@@ -48,6 +49,6 @@ export async function POST(request) {
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (e) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return jsonError(500, safeErrorMessage(e));
   }
 }

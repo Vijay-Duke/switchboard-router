@@ -1,5 +1,5 @@
 // @ts-check
-import { getUsageStats, statsEmitter, getActiveRequests } from "@/lib/usageDb";
+import { getUsageStats, statsEmitter, getActiveRequests } from "@/lib/db/index.js";
 
 export const dynamic = "force-dynamic";
 

@@ -1,6 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
+import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/db/index.js";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {

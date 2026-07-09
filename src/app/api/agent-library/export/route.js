@@ -1,5 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
+import { jsonError, safeErrorMessage } from "@/lib/jsonError";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
@@ -78,6 +79,6 @@ export async function POST(request) {
     const res = await exportAgentSyncLayout(libraryRoot, dest);
     return NextResponse.json(res);
   } catch (e) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return jsonError(500, safeErrorMessage(e));
   }
 }

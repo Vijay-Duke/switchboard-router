@@ -1,6 +1,7 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { getSettings, updateSettings } from "@/lib/localDb";
+import { jsonError } from "@/lib/jsonError.js";
+import { getSettings, updateSettings } from "@/lib/db/index.js";
 import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
 import { resetComboRotation } from "open-sse/services/combo.js";
 import { runQuotaAutoPingTick } from "@/shared/services/quotaAutoPing";
@@ -66,7 +67,7 @@ export async function GET() {
     );
   } catch (error) {
     console.log("Error getting settings:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return jsonError(500, error);
   }
 }
 
@@ -107,6 +108,6 @@ export async function PATCH(request) {
     return NextResponse.json(sanitizeSettings(settings), { headers: SETTINGS_RESPONSE_HEADERS });
   } catch (error) {
     console.log("Error updating settings:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return jsonError(500, error);
   }
 }

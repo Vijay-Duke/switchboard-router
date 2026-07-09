@@ -1,4 +1,4 @@
-// Database Models - Export all from localDb
+// Database Models - re-export from preferred DB barrel
 export {
   getProviderConnections,
   getProviderConnectionById,
@@ -22,7 +22,14 @@ export {
   deleteModelAlias,
   getCustomModels,
   addCustomModel,
+  addCustomModelsBulk,
   deleteCustomModel,
+  upsertProbeResult,
+  getProbesForScope,
+  getDeadModelIds,
+  clearProbes,
+  clearProbesForProvider,
+  deleteProbeRows,
   getMitmAlias,
   setMitmAliasAll,
   getApiKeys,
@@ -30,4 +37,4 @@ export {
   deleteApiKey,
   validateApiKey,
   isCloudEnabled,
-} from "@/lib/localDb";
+} from "@/lib/db/index.js";

@@ -145,13 +145,19 @@ async function flushToDatabase() {
           );
         }
 
-        const cnt = db.get(`SELECT COUNT(*) as c FROM requestDetails`);
-        if (cnt && cnt.c > config.maxRecords) {
-          db.run(
-            `DELETE FROM requestDetails WHERE id IN (SELECT id FROM requestDetails ORDER BY timestamp ASC LIMIT ?)`,
-            [cnt.c - config.maxRecords]
-          );
-        }
+        // H8: prune via ordered delete without a full COUNT when under soft cap.
+        // Run retention every flush; use LIMIT-based delete of oldest excess if any.
+        // Cheap path: attempt delete of (batch-sized) oldest rows beyond max via
+        // subquery that only materializes when over the cap.
+        db.run(
+          `DELETE FROM requestDetails WHERE id IN (
+             SELECT id FROM requestDetails
+             WHERE id NOT IN (
+               SELECT id FROM requestDetails ORDER BY timestamp DESC LIMIT ?
+             )
+           )`,
+          [config.maxRecords]
+        );
       });
     }
   } catch (e) {

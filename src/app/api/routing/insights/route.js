@@ -1,4 +1,6 @@
+// @ts-check
 import { NextResponse } from "next/server";
+import { jsonError, safeErrorMessage } from "@/lib/jsonError.js";
 import {
   getClusterWorkerStats,
   getModelPerfStats,
@@ -9,7 +11,7 @@ import {
   countRoutingAttempts,
   getScoreTrendByDay,
 } from "@/lib/db/repos/routingRepo.js";
-import { getSettings } from "@/lib/localDb";
+import { getSettings } from "@/lib/db/index.js";
 
 /**
  * GET /api/routing/insights?combo=auto&days=14&cluster=&worker=&exploration=1
@@ -143,6 +145,6 @@ export async function GET(request) {
       },
     });
   } catch (e) {
-    return NextResponse.json({ error: e.message || "insights_failed" }, { status: 500 });
+    return jsonError(500, safeErrorMessage(e, "insights_failed"));
   }
 }

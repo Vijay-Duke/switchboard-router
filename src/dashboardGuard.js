@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSettings, validateApiKey } from "@/lib/localDb";
+import { getSettings, validateApiKey } from "@/lib/db/index.js";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 
 const CLI_TOKEN_HEADER = "x-9r-cli-token";
@@ -47,13 +47,27 @@ function isLoopbackHostname(h) {
   return LOOPBACK_HOSTS.has(name);
 }
 
+/**
+ * Loopback detection.
+ * H1: `x-9r-real-ip` is only trustworthy when custom-server.js set
+ * SWITCHBOARD_TRUST_REAL_IP=1 (it strips client copies and rewrites from the
+ * TCP socket). Bare `next start` / `start:bun` leave that env unset, so a
+ * client-spoofed x-9r-real-ip is ignored.
+ *
+ * Without that flag the only evidence left is the `Host` header, which the
+ * client controls. That is sound ONLY while the server is bound to loopback —
+ * then non-local packets can't arrive at all. If the bind host is public and
+ * nothing derived the peer from the socket, locality is unprovable: fail closed.
+ */
 export function isLocalRequest(request) {
   if (request.headers.get("x-9r-via-proxy")) return false;
-  const realIp = request.headers.get("x-9r-real-ip");
+  const trustRealIp = process.env.SWITCHBOARD_TRUST_REAL_IP === "1";
+  const realIp = trustRealIp ? request.headers.get("x-9r-real-ip") : null;
   if (realIp) {
     if (!isLoopbackHostname(realIp)) return false;
-  } else if (!isLoopbackHostname(request.headers.get("host"))) {
-    return false;
+  } else {
+    if (!trustRealIp && !isLoopbackHostname(process.env.HOSTNAME || "127.0.0.1")) return false;
+    if (!isLoopbackHostname(request.headers.get("host"))) return false;
   }
   const origin = request.headers.get("origin");
   if (origin) {
@@ -77,7 +91,8 @@ function extractApiKey(request) {
   if (apiKeyHeader) return apiKeyHeader;
   const googleApiKeyHeader = request.headers.get("x-goog-api-key");
   if (googleApiKeyHeader) return googleApiKeyHeader;
-  return request.nextUrl.searchParams?.get("key") || null;
+  // M9: query-string keys land in access logs / Referer — headers only.
+  return null;
 }
 
 async function hasValidApiKey(request) {
@@ -90,12 +105,13 @@ async function canAccessPublicLlmApi(request) {
   // Local single-user: loopback always allowed. Non-local needs API key or CLI token.
   if (isLocalRequest(request)) return true;
   if (await hasValidCliToken(request)) return true;
-  // If requireApiKey is off, allow non-local too (still a local install by design).
+  // C1: requireApiKey defaults true. Opt-out only via settings or REQUIRE_API_KEY=false.
   try {
     const settings = await getSettings();
-    if (settings?.requireApiKey !== true) return true;
+    if (settings?.requireApiKey === false) return true;
   } catch {
-    /* fall through */
+    // Fail closed when settings unreadable
+    return await hasValidApiKey(request);
   }
   return await hasValidApiKey(request);
 }

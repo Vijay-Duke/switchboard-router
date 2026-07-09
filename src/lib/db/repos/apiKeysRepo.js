@@ -1,11 +1,26 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
+import {
+  hashApiKey,
+  packApiKeyRecord,
+  unpackApiKeyRecord,
+  timingSafeEqualStr,
+} from "@/lib/crypto/secrets.js";
 
-function rowToKey(row) {
+/**
+ * H3: store hashed keys (v1:prefix:sha256). Legacy plaintext rows are accepted
+ * on validate and upgraded in place. List endpoints never return the full key.
+ */
+function rowToKey(row, { includeFullKey = false } = {}) {
   if (!row) return null;
+  const unpacked = unpackApiKeyRecord(row.key);
+  const displayKey = includeFullKey && unpacked.legacy
+    ? row.key
+    : (unpacked.prefix || "sk-…");
   return {
     id: row.id,
-    key: row.key,
+    key: displayKey,
+    keyPrefix: unpacked.prefix || displayKey,
     name: row.name,
     machineId: row.machineId,
     isActive: row.isActive === 1 || row.isActive === true,
@@ -16,7 +31,7 @@ function rowToKey(row) {
 export async function getApiKeys() {
   const db = await getAdapter();
   const rows = db.all(`SELECT * FROM apiKeys ORDER BY createdAt ASC`);
-  return rows.map(rowToKey);
+  return rows.map((r) => rowToKey(r));
 }
 
 export async function getApiKeyById(id) {
@@ -30,17 +45,19 @@ export async function createApiKey(name, machineId) {
   const db = await getAdapter();
   const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey");
   const result = generateApiKeyWithMachine(machineId);
+  const packed = packApiKeyRecord(result.key);
   const apiKey = {
     id: uuidv4(),
     name,
-    key: result.key,
+    key: result.key, // full key returned ONCE to caller
+    keyPrefix: unpackApiKeyRecord(packed).prefix,
     machineId,
     isActive: true,
     createdAt: new Date().toISOString(),
   };
   db.run(
     `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt]
+    [apiKey.id, packed, apiKey.name, apiKey.machineId, 1, apiKey.createdAt]
   );
   return apiKey;
 }
@@ -51,12 +68,15 @@ export async function updateApiKey(id, data) {
   db.transaction(() => {
     const row = db.get(`SELECT * FROM apiKeys WHERE id = ?`, [id]);
     if (!row) return;
-    const merged = { ...rowToKey(row), ...data };
+    const current = rowToKey(row);
+    const merged = { ...current, ...data };
+    // Never rewrite stored hash from a redacted list key
+    const storedKey = row.key;
     db.run(
       `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ? WHERE id = ?`,
-      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, id]
+      [storedKey, merged.name, merged.machineId, merged.isActive ? 1 : 0, id]
     );
-    result = merged;
+    result = rowToKey({ ...row, name: merged.name, machineId: merged.machineId, isActive: merged.isActive ? 1 : 0 });
   });
   return result;
 }
@@ -68,8 +88,25 @@ export async function deleteApiKey(id) {
 }
 
 export async function validateApiKey(key) {
+  if (!key || typeof key !== "string") return false;
   const db = await getAdapter();
-  const row = db.get(`SELECT isActive FROM apiKeys WHERE key = ?`, [key]);
-  if (!row) return false;
-  return row.isActive === 1 || row.isActive === true;
+  const candidateHash = hashApiKey(key);
+  const rows = db.all(`SELECT id, key, isActive FROM apiKeys`);
+  for (const row of rows) {
+    const active = row.isActive === 1 || row.isActive === true;
+    if (!active) continue;
+    const unpacked = unpackApiKeyRecord(row.key);
+    if (!unpacked.legacy && unpacked.hash) {
+      if (timingSafeEqualStr(unpacked.hash, candidateHash)) return true;
+      continue;
+    }
+    // Legacy plaintext row — constant-time-ish compare then upgrade
+    if (row.key === key) {
+      try {
+        db.run(`UPDATE apiKeys SET key = ? WHERE id = ?`, [packApiKeyRecord(key), row.id]);
+      } catch { /* best-effort migrate */ }
+      return true;
+    }
+  }
+  return false;
 }

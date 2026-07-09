@@ -1,12 +1,14 @@
 import { FORMATS } from "../translator/formats.js";
 
-// Parse SSE data line
+// Parse SSE data line (or NDJSON). L1: also accept raw JSON lines for non-Ollama
+// providers that emit NDJSON, and multi-line payloads joined with \n.
 export function parseSSELine(line, format = null) {
   if (!line) return null;
 
-  // NDJSON format (Ollama): raw JSON lines without "data:" prefix
-  if (format === FORMATS.OLLAMA) {
-    const trimmed = line.trim();
+  const trimmed = line.trim();
+
+  // NDJSON / raw JSON line (Ollama + other NDJSON upstreams)
+  if (format === FORMATS.OLLAMA || (trimmed.startsWith("{") && !trimmed.startsWith("data:"))) {
     if (trimmed.startsWith("{")) {
       try {
         return JSON.parse(trimmed);
@@ -14,23 +16,33 @@ export function parseSSELine(line, format = null) {
         return null;
       }
     }
-    return null;
+    if (format === FORMATS.OLLAMA) return null;
   }
 
-  // Standard SSE format: "data: {...}"
-  if (line.charCodeAt(0) !== 100) return null; // 'd' = 100
-
-  const data = line.slice(5).trim();
-  if (data === "[DONE]") return { done: true };
-
-  try {
-    return JSON.parse(data);
-  } catch (error) {
-    if (data.length > 0 && data.length < 1000) {
-      console.log(`[WARN] Failed to parse SSE line (${data.length} chars): ${data.substring(0, 100)}...`);
+  // Standard SSE format: "data: {...}" (also "data:line1\\ndata:line2" after join)
+  if (trimmed.startsWith("data:")) {
+    // Support multi-line SSE: each data: segment joined with \n
+    const payload = trimmed
+      .split("\n")
+      .map((l) => {
+        const t = l.trim();
+        if (t.startsWith("data:")) return t.slice(5).replace(/^ /, "");
+        return t;
+      })
+      .join("\n")
+      .trim();
+    if (payload === "[DONE]") return { done: true };
+    try {
+      return JSON.parse(payload);
+    } catch (error) {
+      if (payload.length > 0 && payload.length < 1000) {
+        console.log(`[WARN] Failed to parse SSE line (${payload.length} chars): ${payload.substring(0, 100)}...`);
+      }
+      return null;
     }
-    return null;
   }
+
+  return null;
 }
 
 // Check if chunk has valuable content (not empty)

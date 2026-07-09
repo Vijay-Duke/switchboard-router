@@ -1,5 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
+import { jsonError, safeErrorMessage } from "@/lib/jsonError";
 import {
   loadSettings,
   applySync,
@@ -51,6 +52,6 @@ export async function POST(request) {
     return NextResponse.json(res);
   } catch (e) {
     console.error("[agent-library/sync]", e);
-    return NextResponse.json({ error: e?.message || "sync failed" }, { status: 500 });
+    return jsonError(500, safeErrorMessage(e, "sync failed"));
   }
 }

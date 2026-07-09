@@ -1,5 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
+import { jsonError } from "@/lib/jsonError.js";
 import {
   getMitmStatus,
   startServer,
@@ -13,7 +14,7 @@ import {
   isSudoPasswordRequired,
   initDbHooks,
 } from "@/mitm/manager";
-import { getSettings, updateSettings } from "@/lib/localDb";
+import { getSettings, updateSettings } from "@/lib/db/index.js";
 
 initDbHooks(getSettings, updateSettings);
 
@@ -135,7 +136,7 @@ export async function POST(request) {
         { status: 409 }
       );
     }
-    return NextResponse.json({ error: error.message || "Failed to start MITM server" }, { status: 500 });
+    return jsonError(500, error.message || "Failed to start MITM server");
   }
 }
 
@@ -156,7 +157,7 @@ export async function DELETE(request) {
     return NextResponse.json({ success: true, running: false });
   } catch (error) {
     console.log("Error stopping MITM server:", error.message);
-    return NextResponse.json({ error: error.message || "Failed to stop MITM server" }, { status: 500 });
+    return jsonError(500, error.message || "Failed to stop MITM server");
   }
 }
 
@@ -198,6 +199,6 @@ export async function PATCH(request) {
     return NextResponse.json({ success: true, dnsStatus: status.dnsStatus });
   } catch (error) {
     console.log("Error toggling DNS:", error.message);
-    return NextResponse.json({ error: error.message || "Failed to toggle DNS" }, { status: 500 });
+    return jsonError(500, error.message || "Failed to toggle DNS");
   }
 }

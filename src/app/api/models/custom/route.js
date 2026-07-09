@@ -1,6 +1,11 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { getCustomModels, addCustomModel, deleteCustomModel } from "@/models";
+import {
+  getCustomModels,
+  addCustomModel,
+  addCustomModelsBulk,
+  deleteCustomModel,
+} from "@/models";
 
 export const dynamic = "force-dynamic";
 
@@ -15,10 +20,29 @@ export async function GET() {
   }
 }
 
-// POST /api/models/custom - Add custom model
+// POST /api/models/custom - Add one model, or bulk { models: [...] }
 export async function POST(request) {
   try {
-    const { providerAlias, id, type, name } = await request.json();
+    const body = await request.json();
+
+    // Bulk import: { models: [{ providerAlias, id, type?, name? }, ...] }
+    if (Array.isArray(body?.models)) {
+      if (body.models.length === 0) {
+        return NextResponse.json({ success: true, added: 0, skipped: 0 });
+      }
+      const cleaned = body.models
+        .map((m) => ({
+          providerAlias: m?.providerAlias,
+          id: typeof m?.id === "string" ? m.id.trim() : "",
+          type: m?.type || m?.kind || "llm",
+          name: m?.name,
+        }))
+        .filter((m) => m.providerAlias && m.id);
+      const result = await addCustomModelsBulk(cleaned);
+      return NextResponse.json({ success: true, ...result });
+    }
+
+    const { providerAlias, id, type, name } = body || {};
     if (!providerAlias || !id) {
       return NextResponse.json({ error: "providerAlias and id required" }, { status: 400 });
     }

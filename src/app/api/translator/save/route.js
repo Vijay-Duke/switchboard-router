@@ -1,5 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
+import { safeErrorMessage } from "@/lib/jsonError.js";
 import fs from "fs";
 import path from "path";
 
@@ -40,6 +41,6 @@ export async function POST(request) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error saving file:", error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: safeErrorMessage(error) }, { status: 500 });
   }
 }

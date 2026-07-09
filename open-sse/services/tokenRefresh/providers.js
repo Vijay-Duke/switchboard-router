@@ -2,7 +2,17 @@ import { PROVIDERS, PROVIDER_OAUTH } from "../../config/providers.js";
 import { OAUTH_ENDPOINTS, GITHUB_COPILOT } from "../../config/appConstants.js";
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { dedupRefresh } from "./dedup.js";
-import { buildExternalIdpRefreshParams } from "../../../src/lib/oauth/kiroExternalIdp.js";
+import { getOpenSseDeps } from "../../runtimeDeps.js";
+
+/** M10: never log raw OAuth error bodies (may echo tokens). Keep status + error code only. */
+function safeRefreshError(errorText = "", status = 0) {
+  let code = "";
+  try {
+    const p = errorText ? JSON.parse(errorText) : null;
+    code = p?.error || p?.error_code || p?.code || "";
+  } catch { /* ignore */ }
+  return { status, errorCode: code || undefined, bodyLen: errorText?.length || 0 };
+}
 
 let _xaiServiceSingleton = null;
 export async function refreshXaiToken(refreshToken, log) {
@@ -10,8 +20,12 @@ export async function refreshXaiToken(refreshToken, log) {
   return dedupRefresh("xai", refreshToken, async () => {
     try {
       if (!_xaiServiceSingleton) {
-        const mod = await import("../../../src/lib/oauth/services/xai.js");
-        _xaiServiceSingleton = new mod.XaiService();
+        const factory = getOpenSseDeps().createXaiService;
+        if (!factory) {
+          log?.warn?.("TOKEN_REFRESH", "xAI service not wired (setOpenSseDeps)");
+          return null;
+        }
+        _xaiServiceSingleton = await factory();
       }
       const tokens = await _xaiServiceSingleton.refreshAccessToken(refreshToken);
       return {
@@ -64,7 +78,7 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
       const errorText = await response.text();
       log?.error?.("TOKEN_REFRESH", `Failed to refresh token for ${provider}`, {
         status: response.status,
-        error: errorText,
+        error: safeRefreshError(errorText, response.status),
       });
       return null;
     }
@@ -110,7 +124,7 @@ export async function refreshClaudeOAuthToken(refreshToken, log) {
 
     if (!response.ok) {
       const errorText = await response.text();
-      log?.error?.("TOKEN_REFRESH", "Failed to refresh Claude OAuth token", { status: response.status, error: errorText });
+      log?.error?.("TOKEN_REFRESH", "Failed to refresh Claude OAuth token", { status: response.status, error: safeRefreshError(errorText, response.status) });
       return null;
     }
 
@@ -144,7 +158,7 @@ export async function refreshGoogleToken(refreshToken, clientId, clientSecret, l
 
     if (!response.ok) {
       const errorText = await response.text();
-      log?.error?.("TOKEN_REFRESH", "Failed to refresh Google token", { status: response.status, error: errorText });
+      log?.error?.("TOKEN_REFRESH", "Failed to refresh Google token", { status: response.status, error: safeRefreshError(errorText, response.status) });
       return null;
     }
 
@@ -198,7 +212,7 @@ export async function refreshQwenToken(refreshToken, log) {
       const errorText = await response.text().catch(() => "");
       log?.warn?.("TOKEN_REFRESH", `Error with Qwen endpoint`, {
         status: response.status,
-        error: errorText,
+        error: safeRefreshError(errorText, response.status),
       });
     }
   } catch (error) {
@@ -263,7 +277,7 @@ export async function refreshCodexToken(refreshToken, log) {
 
         log?.error?.("TOKEN_REFRESH", "Failed to refresh Codex token", {
           status: response.status,
-          error: errorText,
+          error: safeRefreshError(errorText, response.status),
           code: failure.code,
           permanent: failure.permanent,
         });
@@ -296,8 +310,8 @@ async function resolveKiroProfileArnPatch(providerSpecificData, accessToken, ref
   if (providerSpecificData?.profileArn) return {};
   let profileArn = refreshedArn?.trim?.() || null;
   if (!profileArn) {
-    const { fetchKiroProfileArn } = await import("../../../src/lib/oauth/providers.js");
-    profileArn = await fetchKiroProfileArn(accessToken);
+    const fetchArn = getOpenSseDeps().fetchKiroProfileArn;
+    if (fetchArn) profileArn = await fetchArn(accessToken);
   }
   return profileArn ? { providerSpecificData: { profileArn } } : {};
 }
@@ -313,7 +327,9 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
   if (authMethod === "external_idp") {
     let refreshRequest;
     try {
-      refreshRequest = buildExternalIdpRefreshParams(refreshToken, providerSpecificData);
+      const buildParams = getOpenSseDeps().buildExternalIdpRefreshParams;
+      if (!buildParams) throw new Error("buildExternalIdpRefreshParams not wired");
+      refreshRequest = await buildParams(refreshToken, providerSpecificData);
     } catch (error) {
       log?.warn?.("TOKEN_REFRESH", `Invalid Kiro external_idp refresh config: ${error.message}`);
       return null;
@@ -332,7 +348,7 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
       const errorText = await response.text();
       log?.error?.("TOKEN_REFRESH", "Failed to refresh Kiro external_idp token", {
         status: response.status,
-        error: errorText,
+        error: safeRefreshError(errorText, response.status),
       });
       return null;
     }
@@ -377,7 +393,7 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
       const errorText = await response.text();
       log?.error?.("TOKEN_REFRESH", "Failed to refresh Kiro AWS token", {
         status: response.status,
-        error: errorText,
+        error: safeRefreshError(errorText, response.status),
       });
       return null;
     }
@@ -413,7 +429,7 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
     const errorText = await response.text();
     log?.error?.("TOKEN_REFRESH", "Failed to refresh Kiro social token", {
       status: response.status,
-      error: errorText,
+      error: safeRefreshError(errorText, response.status),
     });
     return null;
   }
@@ -458,7 +474,7 @@ export async function refreshIflowToken(refreshToken, log) {
     const errorText = await response.text();
     log?.error?.("TOKEN_REFRESH", "Failed to refresh iFlow token", {
       status: response.status,
-      error: errorText,
+      error: safeRefreshError(errorText, response.status),
     });
     return null;
   }
@@ -504,7 +520,7 @@ export async function refreshGitHubToken(refreshToken, log) {
     const errorText = await response.text();
     log?.error?.("TOKEN_REFRESH", "Failed to refresh GitHub token", {
       status: response.status,
-      error: errorText,
+      error: safeRefreshError(errorText, response.status),
     });
     return null;
   }
@@ -544,7 +560,7 @@ export async function refreshCopilotToken(githubAccessToken, log) {
       const errorText = await response.text();
       log?.error?.("TOKEN_REFRESH", "Failed to refresh Copilot token", {
         status: response.status,
-        error: errorText
+        error: safeRefreshError(errorText, response.status)
       });
       return null;
     }
@@ -595,7 +611,7 @@ export async function refreshCodebuddyToken(refreshToken, log) {
       const errorText = await response.text();
       log?.error?.("TOKEN_REFRESH", "Failed to refresh CodeBuddy token", {
         status: response.status,
-        error: errorText,
+        error: safeRefreshError(errorText, response.status),
       });
       return null;
     }

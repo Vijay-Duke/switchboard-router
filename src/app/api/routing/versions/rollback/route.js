@@ -1,4 +1,6 @@
+// @ts-check
 import { NextResponse } from "next/server";
+import { jsonError, safeErrorMessage } from "@/lib/jsonError.js";
 import { rollbackLearningVersion } from "@/lib/db/repos/routingRepo.js";
 
 /** POST { comboName: string } */
@@ -18,6 +20,6 @@ export async function POST(request) {
     }
     return NextResponse.json({ ok: true, version });
   } catch (e) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return jsonError(500, safeErrorMessage(e));
   }
 }

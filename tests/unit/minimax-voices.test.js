@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("../../src/lib/localDb.js", () => ({
+vi.mock("@/lib/db/index.js", () => ({
   getProviderConnections: vi.fn(),
 }));
 
-import { getProviderConnections } from "../../src/lib/localDb.js";
+import { getProviderConnections } from "@/lib/db/index.js";
 import { GET } from "../../src/app/api/media-providers/tts/minimax/voices/route.js";
 
 const originalFetch = global.fetch;

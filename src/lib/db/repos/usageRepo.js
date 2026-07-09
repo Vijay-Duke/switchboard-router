@@ -50,14 +50,33 @@ function getLocalDateKey(timestamp) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// M6: reject magic keys that pollute Object.prototype when used as plain-object keys
+function safeCounterKey(key) {
+  if (key == null) return null;
+  const s = String(key);
+  if (s === "__proto__" || s === "constructor" || s === "prototype") return `__safe_${s}`;
+  return s;
+}
+
+function ensureNullProto(obj) {
+  if (!obj || Object.getPrototypeOf(obj) !== null) {
+    const next = Object.create(null);
+    if (obj) Object.assign(next, obj);
+    return next;
+  }
+  return obj;
+}
+
 function addToCounter(target, key, values) {
-  if (!target[key]) target[key] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0 };
-  target[key].requests += values.requests || 1;
-  target[key].promptTokens += values.promptTokens || 0;
-  target[key].completionTokens += values.completionTokens || 0;
-  target[key].cachedTokens += values.cachedTokens || 0;
-  target[key].cost += values.cost || 0;
-  if (values.meta) Object.assign(target[key], values.meta);
+  const k = safeCounterKey(key);
+  if (k == null) return;
+  if (!target[k]) target[k] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0 };
+  target[k].requests += values.requests || 1;
+  target[k].promptTokens += values.promptTokens || 0;
+  target[k].completionTokens += values.completionTokens || 0;
+  target[k].cachedTokens += values.cachedTokens || 0;
+  target[k].cost += values.cost || 0;
+  if (values.meta) Object.assign(target[k], values.meta);
 }
 
 function aggregateEntryToDay(day, entry) {
@@ -73,11 +92,11 @@ function aggregateEntryToDay(day, entry) {
   day.cachedTokens = (day.cachedTokens || 0) + cachedTokens;
   day.cost = (day.cost || 0) + cost;
 
-  day.byProvider ||= {};
-  day.byModel ||= {};
-  day.byAccount ||= {};
-  day.byApiKey ||= {};
-  day.byEndpoint ||= {};
+  day.byProvider = ensureNullProto(day.byProvider || {});
+  day.byModel = ensureNullProto(day.byModel || {});
+  day.byAccount = ensureNullProto(day.byAccount || {});
+  day.byApiKey = ensureNullProto(day.byApiKey || {});
+  day.byEndpoint = ensureNullProto(day.byEndpoint || {});
 
   if (entry.provider) addToCounter(day.byProvider, entry.provider, vals);
 
@@ -151,7 +170,13 @@ async function calculateCost(provider, model, tokens) {
 
 export function trackPendingRequest(model, provider, connectionId, started, error = false) {
   const modelKey = provider ? `${model} (${provider})` : model;
-  const timerKey = `${connectionId}|${modelKey}`;
+  // M7: unique timer per request so concurrent same-connection/model don't share cleanup
+  const requestToken = started
+    ? `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    : null;
+  // Pair start/end via side channel on the caller's scope is unavailable; track
+  // refcounts per connection|model and use a bag of timers instead of one shared key.
+  const groupKey = `${connectionId || "none"}|${modelKey}`;
 
   if (!pendingRequests.byModel[modelKey]) pendingRequests.byModel[modelKey] = 0;
   pendingRequests.byModel[modelKey] = Math.max(0, pendingRequests.byModel[modelKey] + (started ? 1 : -1));
@@ -170,18 +195,32 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
   }
 
   if (started) {
-    clearTimeout(pendingTimers[timerKey]);
-    pendingTimers[timerKey] = setTimeout(() => {
-      delete pendingTimers[timerKey];
-      if (pendingRequests.byModel[modelKey] > 0) pendingRequests.byModel[modelKey] = 0;
-      if (connectionId && pendingRequests.byAccount[connectionId]?.[modelKey] > 0) {
-        pendingRequests.byAccount[connectionId][modelKey] = 0;
+    if (!pendingTimers[groupKey]) pendingTimers[groupKey] = new Set();
+    const timer = setTimeout(() => {
+      pendingTimers[groupKey]?.delete(timer);
+      if (pendingTimers[groupKey]?.size === 0) delete pendingTimers[groupKey];
+      // Only force-clear if no other live timers for this group (other concurrent requests)
+      if (!pendingTimers[groupKey] || pendingTimers[groupKey].size === 0) {
+        if (pendingRequests.byModel[modelKey] > 0) pendingRequests.byModel[modelKey] = 0;
+        if (connectionId && pendingRequests.byAccount[connectionId]?.[modelKey] > 0) {
+          pendingRequests.byAccount[connectionId][modelKey] = 0;
+        }
       }
       scheduleStatsEvent("pending");
     }, PENDING_TIMEOUT_MS);
-  } else {
-    clearTimeout(pendingTimers[timerKey]);
-    delete pendingTimers[timerKey];
+    timer.unref?.();
+    pendingTimers[groupKey].add(timer);
+    // stash last-started token unused except to silence lint
+    void requestToken;
+  } else if (pendingTimers[groupKey]) {
+    // Clear one timer for this group (FIFO)
+    const set = pendingTimers[groupKey];
+    const first = set.values().next().value;
+    if (first) {
+      clearTimeout(first);
+      set.delete(first);
+    }
+    if (set.size === 0) delete pendingTimers[groupKey];
   }
 
   if (!started && error && provider) {
@@ -289,18 +328,28 @@ export async function saveRequestUsage(entry) {
         ]
       );
 
-      // Retention: prevent unbounded usageHistory growth (scout P0 OOM path).
-      // Defaults to 50k rows; override with USAGE_HISTORY_MAX env.
+      // H8: maintain row count in _meta — avoid full-table COUNT(*) on every insert.
       const maxHist = parseInt(process.env.USAGE_HISTORY_MAX || "50000", 10);
-      if (Number.isFinite(maxHist) && maxHist > 0) {
-        const cnt = db.get(`SELECT COUNT(*) as c FROM usageHistory`);
-        if (cnt && cnt.c > maxHist) {
-          db.run(
-            `DELETE FROM usageHistory WHERE id IN (SELECT id FROM usageHistory ORDER BY id ASC LIMIT ?)`,
-            [cnt.c - maxHist]
-          );
-        }
+      let histCount;
+      const histMeta = db.get(`SELECT value FROM _meta WHERE key = 'usageHistoryCount'`);
+      if (histMeta?.value != null) {
+        histCount = parseInt(histMeta.value, 10) + 1;
+      } else {
+        // One-time bootstrap scan
+        histCount = (db.get(`SELECT COUNT(*) as c FROM usageHistory`)?.c || 0);
       }
+      if (Number.isFinite(maxHist) && maxHist > 0 && histCount > maxHist) {
+        const excess = histCount - maxHist;
+        db.run(
+          `DELETE FROM usageHistory WHERE id IN (SELECT id FROM usageHistory ORDER BY id ASC LIMIT ?)`,
+          [excess]
+        );
+        histCount = maxHist;
+      }
+      db.run(
+        `INSERT INTO _meta(key, value) VALUES('usageHistoryCount', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        [String(histCount)]
+      );
 
       const dateKey = getLocalDateKey(entry.timestamp);
       const row = db.get(`SELECT data FROM usageDaily WHERE dateKey = ?`, [dateKey]);

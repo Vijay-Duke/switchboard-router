@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import {
   getProviderConnections,
   updateProviderConnection,
-} from "@/lib/localDb";
+} from "@/lib/db/index.js";
 
 const MODEL_LOCK_PREFIX = "modelLock_";
 

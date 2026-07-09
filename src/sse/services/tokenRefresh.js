@@ -1,4 +1,8 @@
-// Re-export from open-sse with local logger
+// Re-export from open-sse with local logger.
+// M11: xAI/Kiro refresh reach the app's OAuth helpers through injected deps.
+// API routes never render app/layout.js, so bootstrap may not have run — wire
+// here, or refreshTokenByProvider silently returns null for those providers.
+import "../initOpenSseDeps.js";
 import * as log from "../utils/logger.js";
 import { updateProviderConnection } from "../../lib/localDb.js";
 import {

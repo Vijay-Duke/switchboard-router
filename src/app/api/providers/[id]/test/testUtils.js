@@ -1,5 +1,5 @@
 // @ts-check
-import { getProviderConnectionById, updateProviderConnection } from "@/lib/localDb";
+import { getProviderConnectionById, updateProviderConnection } from "@/lib/db/index.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { testProxyUrl } from "@/lib/network/proxyTest";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
@@ -19,11 +19,23 @@ import {
   KILOCODE_CONFIG,
   KIMCHI_CONFIG,
 } from "@/lib/oauth/constants/oauth";
+import { XAI_CONFIG } from "@/lib/oauth/constants/xai";
 import { buildClineHeaders } from "@/shared/utils/clineAuth";
 
 // OAuth provider test endpoints
 const OAUTH_TEST_CONFIG = {
   claude: { checkExpiry: true, refreshable: true },
+  // xAI Grok OAuth — probe /v1/models with access token (same as API-key validate)
+  xai: {
+    url: `${XAI_CONFIG.apiBaseUrl}/models`,
+    method: "GET",
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    extraHeaders: { "User-Agent": XAI_CONFIG.userAgent, Accept: "application/json" },
+    // 403 = valid token, account may lack credits; 401 = bad/revoked token
+    acceptStatuses: [403],
+    refreshable: true,
+  },
   codex: {
     url: "https://chatgpt.com/backend-api/codex/responses",
     method: "POST",
@@ -187,7 +199,7 @@ async function refreshOAuthToken(connection) {
       return { accessToken: data.access_token, expiresIn: data.expires_in, refreshToken: data.refresh_token || refreshToken };
     }
 
-    if (provider === "codex") {
+    if (provider === "codex" || provider === "xai") {
       return await refreshProviderCredentials(provider, connection, console);
     }
 
@@ -588,8 +600,16 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
       }
       case "xai": {
-        const res = await fetchWithConnectionProxy("https://api.x.ai/v1/models", { headers: { Authorization: `Bearer ${connection.apiKey}` } }, effectiveProxy);
-        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+        // Match validate route: 200 or 403 (valid auth, may lack credits) succeed
+        const res = await fetchWithConnectionProxy("https://api.x.ai/v1/models", {
+          headers: {
+            Authorization: `Bearer ${connection.apiKey}`,
+            "User-Agent": XAI_CONFIG.userAgent,
+            Accept: "application/json",
+          },
+        }, effectiveProxy);
+        const valid = res.ok || res.status === 403;
+        return { valid, error: valid ? null : "Invalid API key" };
       }
       case "nvidia": {
         const res = await fetchWithConnectionProxy("https://integrate.api.nvidia.com/v1/models", { headers: { Authorization: `Bearer ${connection.apiKey}` } }, effectiveProxy);

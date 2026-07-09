@@ -1,5 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
+import { jsonError, safeErrorMessage } from "@/lib/jsonError";
 import {
   loadSettings,
   runDoctor,
@@ -11,6 +12,6 @@ export async function GET() {
     const report = await runDoctor(settings);
     return NextResponse.json(report);
   } catch (e) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return jsonError(500, safeErrorMessage(e));
   }
 }

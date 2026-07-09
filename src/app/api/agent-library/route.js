@@ -1,5 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
+import { jsonError, safeErrorMessage } from "@/lib/jsonError";
 import {
   getOverview,
   loadSettings,
@@ -15,10 +16,7 @@ export async function GET() {
     return NextResponse.json(overview);
   } catch (e) {
     console.error("[agent-library] GET", e);
-    return NextResponse.json(
-      { error: e?.message || "Failed to load agent library" },
-      { status: 500 }
-    );
+    return jsonError(500, safeErrorMessage(e, "Failed to load agent library"));
   }
 }
 
@@ -34,9 +32,6 @@ export async function PATCH(request) {
     return NextResponse.json({ ok: true, settings, libraryRoot: root });
   } catch (e) {
     console.error("[agent-library] PATCH", e);
-    return NextResponse.json(
-      { error: e?.message || "Failed to save settings" },
-      { status: 500 }
-    );
+    return jsonError(500, safeErrorMessage(e, "Failed to save settings"));
   }
 }

@@ -2,6 +2,7 @@
 "use server";
 
 import { NextResponse } from "next/server";
+import { safeErrorMessage } from "@/lib/jsonError.js";
 
 const TIMEOUT_MS = 8000;
 
@@ -76,7 +77,7 @@ async function probeMcp(url) {
       tools: tools.map((t) => ({ name: t.name, description: t.description || "" })),
     };
   } catch (e) {
-    return { error: e.name === "AbortError" ? "timeout" : e.message, tools: [] };
+    return { error: e?.name === "AbortError" ? "timeout" : safeErrorMessage(e), tools: [] };
   } finally {
     clearTimeout(timer);
   }
@@ -91,6 +92,6 @@ export async function POST(request) {
     const result = await probeMcp(url);
     return NextResponse.json(result);
   } catch (e) {
-    return NextResponse.json({ error: e.message, tools: [] }, { status: 500 });
+    return NextResponse.json({ error: safeErrorMessage(e), tools: [] }, { status: 500 });
   }
 }

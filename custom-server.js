@@ -1,5 +1,9 @@
 const http = require("http");
 
+// H1: mark that x-9r-real-ip is derived from the TCP socket by this wrapper.
+// dashboardGuard only trusts that header when this env is set.
+process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
+
 const origCreate = http.createServer.bind(http);
 
 // Wrap Next standalone HTTP server: derive client IP from the TCP socket

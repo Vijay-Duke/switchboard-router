@@ -64,7 +64,15 @@ async function initAdapter() {
   if (!adapter) throw new Error("[DB] No SQLite driver available (bun/better/node/sql.js all failed)");
 
   if (!state.logged) {
-    console.log(`[DB] Driver: ${adapter.driver} | file: ${DATA_FILE}`);
+    const level = adapter.driver === "sql.js" ? "warn" : "log";
+    // M2: sql.js is last-resort — full-DB rewrite on every write burst
+    if (adapter.driver === "sql.js") {
+      console.warn(
+        `[DB] WARNING: using sql.js fallback (in-memory + full-file rewrite). Prefer Node ≥22.5 (node:sqlite) or install better-sqlite3. file: ${DATA_FILE}`
+      );
+    } else {
+      console[level](`[DB] Driver: ${adapter.driver} | file: ${DATA_FILE}`);
+    }
     state.logged = true;
   }
 
@@ -77,9 +85,4 @@ export async function getAdapter() {
   if (state.instance) return state.instance;
   if (!state.initPromise) state.initPromise = initAdapter().then((a) => { state.instance = a; return a; });
   return state.initPromise;
-}
-
-export function getAdapterSync() {
-  if (!state.instance) throw new Error("[DB] adapter not initialized — await getAdapter() first");
-  return state.instance;
 }

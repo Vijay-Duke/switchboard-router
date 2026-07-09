@@ -1,6 +1,7 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { getSettings } from "@/lib/localDb";
+import { jsonError, safeErrorMessage } from "@/lib/jsonError.js";
+import { getSettings } from "@/lib/db/index.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 
 export const dynamic = "force-dynamic";
@@ -92,7 +93,7 @@ async function proxy(request, { params }) {
 
     return new NextResponse(response.body, { status: response.status, headers });
   } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return jsonError(500, safeErrorMessage(error));
   }
 }
 

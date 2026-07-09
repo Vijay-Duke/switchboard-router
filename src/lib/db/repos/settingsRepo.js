@@ -28,7 +28,19 @@ const DEFAULT_SETTINGS = {
   cavemanLevel: "full",
   ponytailEnabled: false,
   ponytailLevel: "full",
+  // C1: non-loopback /v1 requires an API key by default (LAN-open was the prior insecure default)
+  requireApiKey: true,
 };
+
+/** Env OVERRIDE_API_KEY / REQUIRE_API_KEY can force the gate without editing settings. */
+function envRequireApiKey() {
+  const raw = process.env.REQUIRE_API_KEY;
+  if (raw == null || raw === "") return null;
+  const v = String(raw).trim().toLowerCase();
+  if (v === "1" || v === "true" || v === "yes") return true;
+  if (v === "0" || v === "false" || v === "no") return false;
+  return null;
+}
 
 async function readRaw() {
   const db = await getAdapter();
@@ -52,6 +64,9 @@ function mergeWithDefaults(raw) {
       }
     }
   }
+  // Env wins when set (ops override without DB write)
+  const envGate = envRequireApiKey();
+  if (envGate !== null) merged.requireApiKey = envGate;
   return merged;
 }
 

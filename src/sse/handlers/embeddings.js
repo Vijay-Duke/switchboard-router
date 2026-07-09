@@ -1,3 +1,4 @@
+import "../initOpenSseDeps.js";
 import {
   getProviderCredentials,
   markAccountUnavailable,
@@ -5,13 +6,14 @@ import {
   extractApiKey,
   isValidApiKey,
 } from "../services/auth.js";
-import { getSettings } from "@/lib/localDb";
+import { getSettings } from "@/lib/db/index.js";
 import { getModelInfo } from "../services/model.js";
 import { handleEmbeddingsCore } from "open-sse/handlers/embeddingsCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
+import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
 
 /**
  * Handle embeddings request for the SSE/Next.js server.
@@ -41,19 +43,12 @@ export async function handleEmbeddings(request) {
     log.debug("AUTH", "No API key provided (local mode)");
   }
 
-  // Enforce API key if enabled in settings
+  // Enforce API key if enabled in settings (L3 shared gate)
   const settings = await getSettings();
-  if (settings.requireApiKey) {
-    if (!apiKey) {
-      log.warn("AUTH", "Missing API key (requireApiKey=true)");
-      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
-    }
-    const valid = await isValidApiKey(apiKey);
-    if (!valid) {
-      log.warn("AUTH", "Invalid API key (requireApiKey=true)");
-      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
-    }
-  }
+  const denied = await gateRequireApiKey(settings, apiKey, {
+    isValidApiKey, log, errorResponse, HTTP_STATUS,
+  });
+  if (denied) return denied;
 
   if (!modelStr) {
     log.warn("EMBEDDINGS", "Missing model");

@@ -1,5 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
+import { jsonError, safeErrorMessage } from "@/lib/jsonError.js";
 import { sendToChild, findPlugin } from "@/lib/mcp/stdioSseBridge";
 
 export const runtime = "nodejs";
@@ -15,6 +16,6 @@ export async function POST(request, { params }) {
     sendToChild(plugin, body);
     return new Response(null, { status: 202 });
   } catch (e) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return jsonError(500, safeErrorMessage(e));
   }
 }

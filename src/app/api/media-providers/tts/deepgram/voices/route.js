@@ -1,6 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { getProviderConnections } from "@/lib/localDb";
+import { getProviderConnections } from "@/lib/db/index.js";
 
 const langNames = new Intl.DisplayNames(["en"], { type: "language" });
 

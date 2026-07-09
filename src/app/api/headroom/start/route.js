@@ -1,6 +1,7 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { getSettings } from "@/lib/localDb";
+import { safeErrorMessage } from "@/lib/jsonError.js";
+import { getSettings } from "@/lib/db/index.js";
 import { startHeadroomProxy } from "@/lib/headroom/process";
 import { DEFAULT_HEADROOM_URL, isLoopbackHeadroomUrl } from "@/lib/headroom/detect";
 
@@ -26,7 +27,7 @@ export async function POST() {
     const result = await startHeadroomProxy({ port });
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
-    const status = error.code === "NOT_INSTALLED" ? 400 : 500;
-    return NextResponse.json({ error: error.message, code: error.code || null }, { status });
+    const status = error?.code === "NOT_INSTALLED" ? 400 : 500;
+    return NextResponse.json({ error: safeErrorMessage(error), code: error?.code || null }, { status });
   }
 }

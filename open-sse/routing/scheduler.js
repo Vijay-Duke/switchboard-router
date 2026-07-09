@@ -6,11 +6,12 @@
  * lastRun is persisted via router_learning_versions.source='scheduled'
  * (MAX createdAt) so restarts do not re-arm every combo after BOOT_DELAY.
  */
-import { getSettings } from "@/lib/localDb";
 import {
+  getSettings,
   listCombosWithRoutingEvents,
   getLastScheduledLearnAt,
-} from "@/lib/db/repos/routingRepo.js";
+  getComboModels,
+} from "../runtimeDeps.js";
 import { runOptimizer } from "./optimizer.js";
 
 const TICK_MS = 15 * 60 * 1000; // check every 15 minutes
@@ -112,7 +113,6 @@ export async function runAutoLearnTick(log = console) {
         // Resolve current worker pool for filtering removed models from bandit
         let pool = null;
         try {
-          const { getComboModels } = await import("@/sse/services/model.js");
           const models = await getComboModels(comboName);
           const router = strat.routerModel || "claude/claude-opus-4-8";
           pool = (models || []).filter((m) => m && m !== router);

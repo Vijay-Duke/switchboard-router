@@ -36,7 +36,9 @@ function generateRootCA() {
   }
 
   if (!fs.existsSync(MITM_DIR)) {
-    fs.mkdirSync(MITM_DIR, { recursive: true });
+    fs.mkdirSync(MITM_DIR, { recursive: true, mode: 0o700 });
+  } else {
+    try { fs.chmodSync(MITM_DIR, 0o700); } catch { /* ignore */ }
   }
 
   console.log("🔐 Generating Root CA certificate...");
@@ -81,12 +83,13 @@ function generateRootCA() {
   // Self-sign the certificate
   cert.sign(keys.privateKey, forge.md.sha256.create());
 
-  // Save to disk
+  // Save to disk — private key must be owner-only (H4)
   const privateKeyPem = forge.pki.privateKeyToPem(keys.privateKey);
   const certPem = forge.pki.certificateToPem(cert);
 
-  fs.writeFileSync(ROOT_CA_KEY_PATH, privateKeyPem);
-  fs.writeFileSync(ROOT_CA_CERT_PATH, certPem);
+  fs.writeFileSync(ROOT_CA_KEY_PATH, privateKeyPem, { mode: 0o600 });
+  fs.writeFileSync(ROOT_CA_CERT_PATH, certPem, { mode: 0o644 });
+  try { fs.chmodSync(ROOT_CA_KEY_PATH, 0o600); } catch { /* ignore */ }
 
   console.log("✅ Root CA generated successfully");
   return { key: ROOT_CA_KEY_PATH, cert: ROOT_CA_CERT_PATH };

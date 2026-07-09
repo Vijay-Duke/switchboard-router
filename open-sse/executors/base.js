@@ -3,6 +3,7 @@ import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js"
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
+import { assertPublicUrlResolved } from "../utils/ssrfGuard.js";
 
 /**
  * BaseExecutor - Base class for provider executors
@@ -143,6 +144,20 @@ export class BaseExecutor {
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 
+      // H5: SSRF guard for user-configured / compatible base URLs (DNS-resolved)
+      const isUserConfiguredBase =
+        this.provider?.startsWith?.("openai-compatible-") ||
+        this.provider?.startsWith?.("anthropic-compatible-") ||
+        !!credentials?.providerSpecificData?.baseUrl ||
+        !!credentials?.runtimeTransport?.baseUrl;
+      if (isUserConfiguredBase) {
+        try {
+          await assertPublicUrlResolved(url);
+        } catch (ssrfErr) {
+          throw new Error(`SSRF blocked: ${ssrfErr.message}`);
+        }
+      }
+
       // Abort if upstream doesn't return response headers within connection timeout
       const connectCtrl = new AbortController();
       const timeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
@@ -157,7 +172,8 @@ export class BaseExecutor {
           method: "POST",
           headers,
           body: bodyStr,
-          signal: mergedSignal
+          signal: mergedSignal,
+          redirect: "error", // H5: do not follow redirects to internal hosts
         }, proxyOptions);
         clearTimeout(connectTimer);
         const ct = response.headers?.get?.("content-type") || "";

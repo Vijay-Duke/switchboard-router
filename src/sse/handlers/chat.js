@@ -1,4 +1,5 @@
 import "open-sse/index.js";
+import "../initOpenSseDeps.js";
 
 import {
   getProviderCredentials,
@@ -8,7 +9,7 @@ import {
   isValidApiKey,
 } from "../services/auth.js";
 import { cacheClaudeHeaders } from "open-sse/utils/claudeHeaderCache.js";
-import { getSettings } from "@/lib/localDb";
+import { getSettings } from "@/lib/db/index.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
@@ -21,6 +22,7 @@ import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
+import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
 import {
   insertRoutingEvent,
   getPromotedLearningVersion,
@@ -109,19 +111,12 @@ export async function handleChat(request, clientRawRequest = null) {
     log.debug("AUTH", "No API key provided (local mode)");
   }
 
-  // Enforce API key if enabled in settings
+  // Enforce API key if enabled in settings (L3 shared gate)
   const settings = await getSettings();
-  if (settings.requireApiKey) {
-    if (!apiKey) {
-      log.warn("AUTH", "Missing API key (requireApiKey=true)");
-      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Missing API key");
-    }
-    const valid = await isValidApiKey(apiKey);
-    if (!valid) {
-      log.warn("AUTH", "Invalid API key (requireApiKey=true)");
-      return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
-    }
-  }
+  const denied = await gateRequireApiKey(settings, apiKey, {
+    isValidApiKey, log, errorResponse, HTTP_STATUS,
+  });
+  if (denied) return denied;
 
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
@@ -146,13 +141,16 @@ export async function handleChat(request, clientRawRequest = null) {
       return handleFusionChat({
         body,
         models: comboModels,
-        handleSingleModel: (b, m, isPanel) => {
+        handleSingleModel: (b, m, panelOpts) => {
+          const opts = panelOpts === true ? { isPanel: true } : (panelOpts || {});
           let cleanRawReq = clientRawRequest;
-          if (isPanel && clientRawRequest) {
+          if (opts.isPanel && clientRawRequest) {
             const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
             cleanRawReq = { ...clientRawRequest, body: cleanBody };
           }
-          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
+          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, {
+            signal: opts.signal || null,
+          });
         },
         log,
         comboName: modelStr,
@@ -250,13 +248,17 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         return handleFusionChat({
           body,
           models: comboModels,
-          handleSingleModel: (b, m, isPanel) => {
+          handleSingleModel: (b, m, panelOpts) => {
+            const opts = panelOpts === true ? { isPanel: true } : (panelOpts || {});
             let cleanRawReq = clientRawRequest;
-            if (isPanel && clientRawRequest) {
+            if (opts.isPanel && clientRawRequest) {
               const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
               cleanRawReq = { ...clientRawRequest, body: cleanBody };
             }
-            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, callOpts);
+            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, {
+              ...(callOpts || {}),
+              signal: opts.signal || callOpts?.signal || null,
+            });
           },
           log,
           comboName: modelStr,

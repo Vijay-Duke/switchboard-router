@@ -9,7 +9,7 @@ import {
   updateSettings,
   deleteRoutingDataForCombo,
   rekeyRoutingDataForCombo,
-} from "@/lib/localDb";
+} from "@/lib/db/index.js";
 import { resetComboRotation } from "open-sse/services/combo.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _

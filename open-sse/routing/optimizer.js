@@ -8,7 +8,7 @@ import {
   getPromotedLearningVersion,
   createLearningVersion,
   countRoutingEvents,
-} from "@/lib/db/repos/routingRepo.js";
+} from "../runtimeDeps.js";
 import { pickByObjective } from "./objective.js";
 
 const DEFAULT_MAX_FEW_SHOTS = 5;

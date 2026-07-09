@@ -1,5 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
+import { jsonError, safeErrorMessage } from "@/lib/jsonError";
 import {
   loadSettings,
   resolveLibraryRoot,
@@ -23,7 +24,7 @@ export async function GET() {
     const skills = await listLibrarySkills(root);
     return NextResponse.json({ skills, libraryRoot: root });
   } catch (e) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return jsonError(500, safeErrorMessage(e));
   }
 }
 
@@ -48,7 +49,7 @@ export async function POST(request) {
 
     return NextResponse.json({ error: "id + markdown or action required" }, { status: 400 });
   } catch (e) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return jsonError(500, safeErrorMessage(e));
   }
 }
 
@@ -61,6 +62,6 @@ export async function DELETE(request) {
     const res = await removeLibrarySkill(root, id);
     return NextResponse.json({ ok: true, ...res });
   } catch (e) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    return jsonError(500, safeErrorMessage(e));
   }
 }

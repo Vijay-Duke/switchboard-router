@@ -79,3 +79,7 @@ gitbook/README.md
 open-sse.old/
 .graphifyignore
 graphify-out/*
+*.tgz
+
+# vitest scratch data dir (DATA_DIR override)
+tests/.tmp-data/

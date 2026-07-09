@@ -1,6 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { getRequestDetails } from "@/lib/usageDb";
+import { getRequestDetails } from "@/lib/db/index.js";
 
 /**
  * GET /api/usage/request-details

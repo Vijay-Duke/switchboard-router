@@ -1,6 +1,25 @@
 import crypto from "crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { DATA_DIR } from "@/lib/dataDir";
 
-const API_KEY_SECRET = process.env.API_KEY_SECRET || "endpoint-proxy-api-key-secret";
+// M8: prefer env; otherwise load/generate a per-install secret (never a shared hardcoded default)
+function loadApiKeySecret() {
+  if (process.env.API_KEY_SECRET) return process.env.API_KEY_SECRET;
+  const secretFile = path.join(DATA_DIR, "auth", "api-key-secret");
+  try {
+    const existing = fs.readFileSync(secretFile, "utf8").trim();
+    if (existing) return existing;
+  } catch { /* create */ }
+  const generated = crypto.randomBytes(32).toString("hex");
+  try {
+    fs.mkdirSync(path.dirname(secretFile), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(secretFile, generated, { mode: 0o600 });
+  } catch { /* best-effort */ }
+  return generated;
+}
+
+const API_KEY_SECRET = loadApiKeySecret();
 
 /**
  * Generate 6-char random keyId

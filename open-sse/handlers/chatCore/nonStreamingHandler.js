@@ -4,9 +4,9 @@ import { projectCompletionToClientFormat } from "../../translator/response/compl
 import { addBufferToUsage, filterUsageForFormat } from "../../utils/usageTracking.js";
 import { createErrorResult } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
-import { parseSSEToOpenAIResponse } from "./sseToJsonHandler.js";
+import { convertChatCompletionsStreamToJson } from "../../transformer/streamToJsonConverter.js";
 import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, saveUsageStats } from "./requestDetail.js";
-import { appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
+import { appendRequestLog, saveRequestDetail } from "../../runtimeDeps.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
 import { extractThinkTags } from "../../utils/thinkExtractor.js";
 
@@ -58,10 +58,13 @@ export function translateNonStreamingResponse(responseBody, targetFormat) {
     let finishReason = (candidate.finishReason || "stop").toLowerCase();
     if (finishReason === "stop" && toolCalls.length > 0) finishReason = "tool_calls";
 
+    // L2: unparseable createTime → NaN → JSON null; OpenAI schema wants integer
+    const createdMs = new Date(response.createTime || Date.now()).getTime();
+    const created = Number.isFinite(createdMs) ? Math.floor(createdMs / 1000) : Math.floor(Date.now() / 1000);
     const result = {
       id: `chatcmpl-${response.responseId || Date.now()}`,
       object: "chat.completion",
-      created: Math.floor(new Date(response.createTime || Date.now()).getTime() / 1000),
+      created,
       model: response.modelVersion || "gemini",
       choices: [{ index: 0, message, finish_reason: finishReason }]
     };
@@ -152,8 +155,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   let responseBody;
 
   if (contentType.includes("text/event-stream")) {
-    const sseText = await providerResponse.text();
-    const parsed = parseSSEToOpenAIResponse(sseText, model);
+    const parsed = await convertChatCompletionsStreamToJson(providerResponse.body, model);
     if (!parsed) {
       appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
       return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Invalid SSE response for non-streaming request");

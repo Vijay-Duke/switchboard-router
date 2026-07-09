@@ -63,7 +63,9 @@ const APP_NAME =
 const INSTALL_CMD_LATEST = `npm i -g ${PKG_NAME}@latest --prefer-online`;
 
 const DEFAULT_PORT = 20128;
-const DEFAULT_HOST = "0.0.0.0";
+// C1: bind loopback by default — LAN exposure is an explicit opt-in via --host 0.0.0.0
+const DEFAULT_HOST = "127.0.0.1";
+const ALL_INTERFACES = "0.0.0.0";
 
 // First non-internal IPv4 — the address remote peers actually reach when bound to 0.0.0.0.
 function getLanIp() {
@@ -75,9 +77,10 @@ function getLanIp() {
   return null;
 }
 
-// Local URL stays "localhost"; warn separately when bound to all interfaces (network-exposed).
+// Local URL stays "localhost" for loopback binds.
 function getDisplayHost() {
-  return host === DEFAULT_HOST ? "localhost" : host;
+  if (host === DEFAULT_HOST || host === "localhost" || host === "::1") return "localhost";
+  return host;
 }
 const MAX_PORT_ATTEMPTS = 10;
 // Identifiers for killAllAppProcesses — bin + package name only
@@ -577,10 +580,10 @@ const RESTART_RESET_MS = 30000; // Reset counter if alive > 30s
 function startServer(latestVersion) {
   const displayHost = getDisplayHost();
   const url = `http://${displayHost}:${port}/dashboard`;
-  // Surface real network exposure when bound to all interfaces (default 0.0.0.0).
-  if (host === DEFAULT_HOST) {
+  // Surface real network exposure when bound to all interfaces (explicit opt-in).
+  if (host === ALL_INTERFACES || host === "::") {
     const lanIp = getLanIp();
-    if (lanIp) console.log(`\x1b[33m⚠ Network-exposed: reachable at http://${lanIp}:${port} (bound 0.0.0.0). Use --host 127.0.0.1 for local-only.\x1b[0m`);
+    if (lanIp) console.log(`\x1b[33m⚠ Network-exposed: reachable at http://${lanIp}:${port} (bound ${host}). Use --host 127.0.0.1 for local-only. Non-loopback /v1 requires an API key by default.\x1b[0m`);
   }
 
   let restartCount = 0;

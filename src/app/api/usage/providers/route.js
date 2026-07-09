@@ -1,7 +1,7 @@
 // @ts-check
 import { NextResponse } from "next/server";
 import { getRequestDetails } from "@/lib/requestDetailsDb";
-import { getProviderNodes } from "@/lib/localDb";
+import { getProviderNodes } from "@/lib/db/index.js";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
 
 /**

@@ -1,6 +1,7 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { getSettings } from "@/lib/localDb";
+import { jsonError, safeErrorMessage } from "@/lib/jsonError.js";
+import { getSettings } from "@/lib/db/index.js";
 import { DEFAULT_HEADROOM_URL, getHeadroomStatus } from "@/lib/headroom/detect";
 import { getManagedPid } from "@/lib/headroom/process";
 
@@ -14,6 +15,6 @@ export async function GET() {
     const managedPid = getManagedPid();
     return NextResponse.json({ ...status, url, managedPid });
   } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return jsonError(500, safeErrorMessage(error));
   }
 }

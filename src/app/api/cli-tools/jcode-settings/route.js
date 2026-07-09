@@ -2,6 +2,7 @@
 "use server";
 
 import { NextResponse } from "next/server";
+import { jsonError } from "@/lib/jsonError.js";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
@@ -180,10 +181,7 @@ export async function POST(request) {
     });
   } catch (error) {
     console.error("Error configuring jcode:", error);
-    return NextResponse.json(
-      { error: error.message },
-      { status: 500 }
-    );
+    return jsonError(500, error);
   }
 }
 
@@ -209,9 +207,6 @@ export async function DELETE() {
     });
   } catch (error) {
     console.error("Error removing jcode configuration:", error);
-    return NextResponse.json(
-      { error: error.message },
-      { status: 500 }
-    );
+    return jsonError(500, error);
   }
 }
