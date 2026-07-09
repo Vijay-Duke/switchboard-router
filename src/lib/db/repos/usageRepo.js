@@ -294,19 +294,27 @@ export async function saveRequestUsage(entry) {
     // All 3 writes (history insert, daily upsert, lifetime counter) in ONE transaction.
     // better-sqlite3 is sync → no JS yield mid-transaction → no race in same process.
     db.transaction(() => {
-      // No content-based dedupe here. It used to collapse rows matching on
-      // (timestamp, provider, model, connectionId, apiKey, tokens), but an ISO
-      // timestamp only has millisecond resolution: two genuinely distinct
+      // Idempotency by request identity, not by content. The old guard matched
+      // on (timestamp, provider, model, connectionId, apiKey, tokens), but an
+      // ISO timestamp only has millisecond resolution: two genuinely distinct
       // requests with the same model and token counts finishing in the same
       // millisecond were silently merged, undercounting usage under load.
-      // Each saveRequestUsage call is one completed request — record it.
+      // A requestId is minted once per request, so a replayed save is a no-op
+      // while distinct requests always count. Callers that don't mint one pass
+      // null and every call inserts.
+      const requestId = entry.requestId || null;
+      if (requestId) {
+        const dupe = db.get(`SELECT id FROM usageHistory WHERE requestId = ?`, [requestId]);
+        if (dupe) return;
+      }
+
       db.run(
-        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta, requestId) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           entry.timestamp, entry.provider || null, entry.model || null,
           entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
           promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
-          stringifyJson(tokens), stringifyJson({}),
+          stringifyJson(tokens), stringifyJson({}), requestId,
         ]
       );
 

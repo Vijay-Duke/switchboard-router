@@ -55,7 +55,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // When a transport matches sourceFormat, force targetFormat=sourceFormat so we skip
   // translation entirely — otherwise modelTargetFormat can win and the body is sent
   // in the wrong shape (e.g. MiniMax M3: Claude-format tools on an OpenAI endpoint → 400).
-  // See decolua/9router#2435 / PR#2463.
+  // See Switchboard#2435 / PR#2463.
   const runtimeTransport = resolveTransport(provider, sourceFormat);
   const skipTranslation = runtimeTransport?.format === sourceFormat;
   if (runtimeTransport && credentials) credentials.runtimeTransport = runtimeTransport;
@@ -107,7 +107,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   // Keep body.stream in sync with the effective stream decision so upstream
   // Accept: text/event-stream headers match the JSON body (avoids 406 when
-  // clients omit `stream` — decolua/9router#2458).
+  // clients omit `stream` — Switchboard#2458).
   if (body && typeof body === "object") {
     body = { ...body, stream };
   }
@@ -140,7 +140,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   // Strip orphaned tool results before translation so the translator never sees
   // stale call_id references that client-side history truncation left behind.
-  // decolua/9router#2236 / PR#2298.
+  // Switchboard#2236 / PR#2298.
   const preStripped = stripOrphanedToolResults(body);
   if (preStripped > 0) {
     log?.debug?.("TOOLCLEAN", `pre-translation: stripped ${preStripped} orphaned tool result(s)`);
@@ -379,7 +379,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   // Antigravity empty-stream guard: Gemini often returns HTTP 200 with no usable
   // output (thought-only, bare STOP, MALFORMED_FUNCTION_CALL). Retry in-stream so
-  // the client doesn't hang on a blank turn. decolua/9router PR#2462.
+  // the client doesn't hang on a blank turn. Switchboard PR#2462.
   if (provider === "antigravity" && stream && providerResponse.body) {
     const reexecute = async () => {
       const retryResult = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions });
@@ -409,7 +409,10 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     );
   }
 
-  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess };
+  // One identity per completed request. Handlers pass it to saveUsageStats so a
+  // replayed save is idempotent instead of double-counting usage.
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, requestId };
   const appendLog = (extra) => appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });
   const trackDone = () => trackPendingRequest(model, provider, connectionId, false);
 
