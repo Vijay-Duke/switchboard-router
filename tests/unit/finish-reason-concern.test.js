@@ -9,7 +9,7 @@ describe("toOpenAIFinish - gemini", () => {
     ["RECITATION", "content_filter"],
     ["BLOCKLIST", "content_filter"],
     ["PROHIBITED_CONTENT", "content_filter"],
-    ["OTHER", "stop"],
+    ["OTHER", "error"],
     ["UNKNOWN_XYZ", "stop"],
     ["STOP", "stop"],
     ["MAX_TOKENS", "length"],

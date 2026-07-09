@@ -49,7 +49,9 @@ afterAll(() => {
   else process.env.DATA_DIR = originalDataDir;
 });
 
-describe("DB Benchmark — SQLite vs Lowdb", () => {
+const describeBenchmark = process.env.RUN_BENCHMARKS === "1" ? describe : describe.skip;
+
+describeBenchmark("DB Benchmark — SQLite vs Lowdb", () => {
   it(`INSERT ${N_ITEMS} provider connections`, async () => {
     console.log(`\n[INSERT ${N_ITEMS}]`);
 

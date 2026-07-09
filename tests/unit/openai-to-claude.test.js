@@ -72,23 +72,14 @@ describe("openaiToClaudeRequest", () => {
       expect(systemText).toContain("Respond ONLY with a JSON object");
     });
 
-    it("should not modify system prompt when response_format is missing", () => {
+    it("does not add a system prompt when response_format is missing", () => {
       const body = {
         messages: [{ role: "user", content: "Hello" }]
       };
 
       const result = openaiToClaudeRequest("claude-sonnet-4.5", body, false);
 
-      // Should have system but without JSON instructions
-      expect(result.system).toBeDefined();
-      
-      const systemText = result.system
-        .filter(s => s.type === "text")
-        .map(s => s.text)
-        .join("\n");
-      
-      // Should NOT contain JSON-specific instructions
-      expect(systemText).not.toContain("You must respond with valid JSON");
+      expect(result.system).toBeUndefined();
     });
 
     it("should preserve existing system messages when adding response_format", () => {
@@ -143,7 +134,7 @@ describe("openaiToClaudeRequest", () => {
 
     it("maps string tool_choice values", () => {
       expect(choiceOf("auto")).toEqual({ type: "auto" });
-      expect(choiceOf("none")).toEqual({ type: "auto" });
+      expect(choiceOf("none")).toEqual({ type: "none" });
       expect(choiceOf("required")).toEqual({ type: "any" });
     });
 
@@ -175,6 +166,7 @@ describe("openaiToClaudeResponse", () => {
       id: "chatcmpl-test",
       model: "gpt-test",
       choices: [{
+        finish_reason: "tool_calls",
         delta: {
           tool_calls: [{
             index: 0,

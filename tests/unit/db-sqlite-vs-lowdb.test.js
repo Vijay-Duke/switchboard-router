@@ -24,25 +24,24 @@ afterAll(() => {
 });
 
 describe("DB SQLite layer — public API parity", () => {
-  it("settings: get → defaults; update → merge", async () => {
+  it("settings: get → local defaults; update → merge", async () => {
     const s = await sqliteDb.getSettings();
     expect(s).toBeDefined();
-    expect(s.cloudEnabled).toBe(false);
-    expect(s.requireLogin).toBe(true);
+    expect(s.requireApiKey).toBe(true);
 
     const updated = await sqliteDb.updateSettings({ cloudEnabled: true, customField: "x" });
     expect(updated.cloudEnabled).toBe(true);
     expect(updated.customField).toBe("x");
-    expect(updated.requireLogin).toBe(true); // default preserved
+    expect(updated.requireApiKey).toBe(true); // default preserved
 
     const re = await sqliteDb.getSettings();
     expect(re.cloudEnabled).toBe(true);
     expect(re.customField).toBe("x");
   });
 
-  it("isCloudEnabled reflects settings", async () => {
+  it("isCloudEnabled remains false after cloud hosting was removed", async () => {
     await sqliteDb.updateSettings({ cloudEnabled: true });
-    expect(await sqliteDb.isCloudEnabled()).toBe(true);
+    expect(await sqliteDb.isCloudEnabled()).toBe(false);
     await sqliteDb.updateSettings({ cloudEnabled: false });
     expect(await sqliteDb.isCloudEnabled()).toBe(false);
   });
@@ -117,14 +116,10 @@ describe("DB SQLite layer — public API parity", () => {
     expect(await sqliteDb.getProviderNodeById(n.id)).toBeNull();
   });
 
-  it("proxyPools: CRUD with sort by updatedAt desc", async () => {
-    const p1 = await sqliteDb.createProxyPool({ name: "p1", proxyUrl: "http://a", type: "http" });
-    await new Promise((r) => setTimeout(r, 10));
-    const p2 = await sqliteDb.createProxyPool({ name: "p2", proxyUrl: "http://b", type: "http" });
-    const list = await sqliteDb.getProxyPools();
-    expect(list[0].id).toBe(p2.id); // newest first
-    await sqliteDb.deleteProxyPool(p1.id);
-    await sqliteDb.deleteProxyPool(p2.id);
+  it("does not expose removed proxy-pool CRUD", () => {
+    expect(sqliteDb.createProxyPool).toBeUndefined();
+    expect(sqliteDb.getProxyPools).toBeUndefined();
+    expect(sqliteDb.deleteProxyPool).toBeUndefined();
   });
 
   it("combos: CRUD", async () => {
