@@ -65,9 +65,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tests/package-lock.json
+      - run: npm ci --no-audit --no-fund
       - working-directory: tests
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - working-directory: tests
         run: |
           npx vitest run \
@@ -86,45 +90,66 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Node 24 bundles npm 11.6+. Do NOT `npm install -g npm@latest` here:
+      # npm overwrites its own node_modules in the toolcache and libnpmpublish
+      # loses `sigstore`, which the provenance path needs — publish then dies
+      # with MODULE_NOT_FOUND. Take a Node whose bundled npm already qualifies.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            cli/package-lock.json
 
-      # setup-node's Node 22 bundles npm 10.x, which has no OIDC support and
-      # would silently fall back to token auth (then fail, with no token).
-      - name: Upgrade npm for trusted publishing (needs >= 11.5.1)
+      # Fail loudly if a future Node bump ships an npm without OIDC support,
+      # rather than falling back to token auth and erroring obscurely.
+      - name: Assert npm supports trusted publishing (OIDC)
         run: |
-          npm install -g npm@latest
           npm -v
-
-      - name: Align package version to tag
-        working-directory: cli
-        run: |
-          node -e "
-            const fs = require('fs');
-            const p = JSON.parse(fs.readFileSync('package.json','utf8'));
-            p.version = process.env.VER;
-            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
-          "
-        env:
-          VER: ${{ needs.resolve-version.outputs.version }}
+          node -e 'const v=process.argv[1].split(".").map(Number),m=[11,5,1];
+            const ok=v[0]>m[0]||(v[0]===m[0]&&(v[1]>m[1]||(v[1]===m[1]&&v[2]>=m[2])));
+            if(!ok){console.error("npm >= 11.5.1 required for OIDC, got "+process.argv[1]);process.exit(1)}' "$(npm -v)"
 
       # CLI pack builds the root Next app into cli/app — need root deps first
       - name: Install root app deps
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
-      - name: Install CLI deps + build
+      - name: Install CLI deps
         working-directory: cli
-        run: |
-          npm install --no-audit --no-fund
-          npm run build
+        run: npm ci --no-audit --no-fund
+
+      # AFTER npm ci: `npm ci` aborts when package.json and package-lock.json
+      # disagree on the version, so the rewrite has to follow the install.
+      # --no-git-tag-version keeps the lockfile in step with package.json.
+      - name: Align package version to tag
+        working-directory: cli
+        run: npm version "$VER" --no-git-tag-version --allow-same-version
+        env:
+          VER: ${{ needs.resolve-version.outputs.version }}
+
+      - name: Build CLI
+        working-directory: cli
+        run: npm run build
 
       # No NODE_AUTH_TOKEN: npm exchanges the Actions OIDC token for a
       # short-lived publish credential, and attaches provenance automatically.
       - name: Publish to npm (trusted publishing)
         working-directory: cli
         run: npm publish --access public
+
+      # Hand the built tarball to github-release so it doesn't rebuild the
+      # whole Next app a second time.
+      - name: Pack tarball for the release assets
+        working-directory: cli
+        run: npm pack --pack-destination "$RUNNER_TEMP"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-tarball
+          path: ${{ runner.temp }}/switchboard-router-*.tgz
+          retention-days: 1
 
   github-release:
     name: GitHub Release
@@ -146,29 +171,22 @@ jobs:
             git push origin "$TAG"
           fi
 
-      - name: Build CLI tarball for release assets
+      # Reuse the tarball publish-npm already built — rebuilding the Next app
+      # here cost ~2 minutes and could drift from what was actually published.
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli-tarball
+
+      - name: Name release assets
         run: |
-          npm install --no-audit --no-fund
-          cd cli
-          npm install --no-audit --no-fund
-          node -e "
-            const fs = require('fs');
-            const p = JSON.parse(fs.readFileSync('package.json','utf8'));
-            p.version = process.env.VER;
-            fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
-          "
-          npm run pack:cli
-          # Stable name so /releases/latest/download/switchboard-router.tgz always works
-          TGZ=$(ls -1 ../../switchboard-router-*.tgz switchboard-router-*.tgz 2>/dev/null | head -1)
+          TGZ=$(ls -1 switchboard-router-*.tgz 2>/dev/null | head -1)
           if [ -z "$TGZ" ]; then
-            echo "No tarball produced"
+            echo "No tarball in the cli-tarball artifact"
             exit 1
           fi
-          cp "$TGZ" ../../switchboard-router.tgz
-          cp "$TGZ" ../../"switchboard-router-${VER}.tgz" 2>/dev/null || true
-          ls -la ../../switchboard-router*.tgz
-        env:
-          VER: ${{ needs.resolve-version.outputs.version }}
+          # Stable name so /releases/latest/download/switchboard-router.tgz always works
+          cp "$TGZ" switchboard-router.tgz
+          ls -la switchboard-router*.tgz
 
       - name: Extract changelog blurb
         id: notes
@@ -213,12 +231,74 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  docker:
-    name: Docker images (GHCR)
+  # Each arch builds on its OWN native runner and pushes by digest; the merge
+  # job then stitches them into one multi-arch manifest. Building linux/arm64
+  # on an amd64 runner meant QEMU-emulating the whole Next build (~10min+).
+  # ubuntu-24.04-arm is free for public repos.
+  docker-build:
+    name: Docker ${{ matrix.arch }}
     needs: [resolve-version, test]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          sbom: false
+          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
+          # Per-arch cache scope: one shared scope would have the two jobs
+          # clobbering each other's layers.
+          cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}
+
+      - name: Export digest
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  docker:
+    name: Docker manifest (GHCR)
+    needs: [resolve-version, docker-build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digest-*
+          merge-multiple: true
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -238,15 +318,12 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=${{ needs.resolve-version.outputs.tag }}
             type=raw,value=latest
 
-      - name: Build and push (GHCR)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
-          provenance: false
-          sbom: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create and push manifest list
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
+
+      - name: Inspect
+        run: docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:${{ needs.resolve-version.outputs.version }}"
