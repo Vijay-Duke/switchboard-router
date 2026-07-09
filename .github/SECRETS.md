@@ -25,13 +25,15 @@ If unset, release still publishes to **GHCR**:
 
 ## Docs (GitHub Pages)
 
-No deploy key needed. Enable:
+No deploy key needed. Source must be **GitHub Actions** (not branch deploy).
 
-1. Settings → Pages → Source: **GitHub Actions**
-2. Push to `master` with `gitbook/**` changes (or run **Deploy docs** workflow)
+```bash
+# one-time (or Settings → Pages → Source: GitHub Actions)
+gh api -X POST repos/Vijay-Duke/switchboard-router/pages -f build_type=workflow
+```
 
-Site URL (project pages):  
-`https://vijay-duke.github.io/switchboard-router/`
+Then push `gitbook/**` to master (or run **Deploy docs**).  
+URL: https://vijay-duke.github.io/switchboard-router/
 
 ## Legacy 9router
 

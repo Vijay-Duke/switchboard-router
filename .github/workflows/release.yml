@@ -63,7 +63,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - run: npm install --no-audit --no-fund
       - working-directory: tests
         run: npm install --no-audit --no-fund
@@ -79,9 +78,6 @@ jobs:
     name: Publish switchboard-router to npm
     needs: [resolve-version, test]
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: cli
     steps:
       - uses: actions/checkout@v4
 
@@ -89,10 +85,9 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-          cache: npm
-          cache-dependency-path: cli/package.json
 
       - name: Align package version to tag
+        working-directory: cli
         run: |
           node -e "
             const fs = require('fs');
@@ -103,12 +98,18 @@ jobs:
         env:
           VER: ${{ needs.resolve-version.outputs.version }}
 
-      - name: Install + build
+      # CLI pack builds the root Next app into cli/app — need root deps first
+      - name: Install root app deps
+        run: npm install --no-audit --no-fund
+
+      - name: Install CLI deps + build
+        working-directory: cli
         run: |
           npm install --no-audit --no-fund
           npm run build
 
       - name: Publish to npm
+        working-directory: cli
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -134,8 +135,9 @@ jobs:
           fi
 
       - name: Build CLI tarball for release assets
-        working-directory: cli
         run: |
+          npm install --no-audit --no-fund
+          cd cli
           npm install --no-audit --no-fund
           node -e "
             const fs = require('fs');

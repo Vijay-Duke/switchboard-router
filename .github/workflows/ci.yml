@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          # package-lock.json is gitignored in this repo — no cache
 
       - name: Install root deps (src/ imports)
         run: npm install --no-audit --no-fund
@@ -29,7 +29,7 @@ jobs:
         working-directory: tests
         run: npm install --no-audit --no-fund
 
-      - name: Run unit tests (known-pass subset; suite has baseline reds)
+      - name: Run unit tests (known-pass subset)
         working-directory: tests
         run: |
           npx vitest run \
@@ -50,8 +50,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: gitbook/package.json
       - run: npm install --no-audit --no-fund
       - run: npm run build
         env:
@@ -66,8 +64,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: cli/package.json
+      # CLI pack runs root Next.js build then bundles into cli/
+      - name: Install root app deps
+        run: npm install --no-audit --no-fund
       - name: Install CLI deps
         working-directory: cli
         run: npm install --no-audit --no-fund
