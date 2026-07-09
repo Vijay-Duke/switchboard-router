@@ -5,8 +5,10 @@
 #
 # Or: Actions → Release → Run workflow (enter tag without "v", e.g. 0.5.21)
 #
-# Required repo secrets:
-#   NPM_TOKEN          — npm automation token with publish rights for switchboard-router
+# npm publishing uses Trusted Publishing (OIDC) — no NPM_TOKEN secret.
+# The trusted publisher on npmjs.com must name THIS repo and THIS workflow
+# filename (release.yml); npm only validates that at publish time.
+#
 # Optional (Docker Hub; GHCR uses GITHUB_TOKEN):
 #   DOCKERHUB_USERNAME
 #   DOCKERHUB_TOKEN
@@ -78,6 +80,9 @@ jobs:
     name: Publish switchboard-router to npm
     needs: [resolve-version, test]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # mint the OIDC token npm exchanges for a short-lived credential
     steps:
       - uses: actions/checkout@v4
 
@@ -85,6 +90,13 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+
+      # setup-node's Node 22 bundles npm 10.x, which has no OIDC support and
+      # would silently fall back to token auth (then fail, with no token).
+      - name: Upgrade npm for trusted publishing (needs >= 11.5.1)
+        run: |
+          npm install -g npm@latest
+          npm -v
 
       - name: Align package version to tag
         working-directory: cli
@@ -108,11 +120,11 @@ jobs:
           npm install --no-audit --no-fund
           npm run build
 
-      - name: Publish to npm
+      # No NODE_AUTH_TOKEN: npm exchanges the Actions OIDC token for a
+      # short-lived publish credential, and attaches provenance automatically.
+      - name: Publish to npm (trusted publishing)
         working-directory: cli
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   github-release:
     name: GitHub Release

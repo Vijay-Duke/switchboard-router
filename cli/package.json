@@ -5,6 +5,14 @@
   "bin": {
     "switchboard": "./cli.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vijay-Duke/switchboard-router.git"
+  },
+  "homepage": "https://github.com/Vijay-Duke/switchboard-router#readme",
+  "bugs": {
+    "url": "https://github.com/Vijay-Duke/switchboard-router/issues"
+  },
   "files": [
     "cli.js",
     "src",
