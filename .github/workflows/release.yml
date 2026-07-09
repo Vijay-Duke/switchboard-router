@@ -62,16 +62,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Lockfiles are gitignored in this repo, so `npm ci` is not possible and
+      # the cache key hashes package.json instead. This still reuses the ~/.npm
+      # tarball cache; only version resolution goes to the network.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: |
-            package-lock.json
-            tests/package-lock.json
-      - run: npm ci --no-audit --no-fund
+            package.json
+            tests/package.json
+      - run: npm install --no-audit --no-fund
       - working-directory: tests
-        run: npm ci --no-audit --no-fund
+        run: npm install --no-audit --no-fund
       - working-directory: tests
         run: |
           npx vitest run \
@@ -99,9 +102,10 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           cache: npm
+          # Lockfiles are gitignored here, so key the cache on package.json.
           cache-dependency-path: |
-            package-lock.json
-            cli/package-lock.json
+            package.json
+            cli/package.json
 
       # Fail loudly if a future Node bump ships an npm without OIDC support,
       # rather than falling back to token auth and erroring obscurely.
@@ -114,15 +118,12 @@ jobs:
 
       # CLI pack builds the root Next app into cli/app — need root deps first
       - name: Install root app deps
-        run: npm ci --no-audit --no-fund
+        run: npm install --no-audit --no-fund
 
       - name: Install CLI deps
         working-directory: cli
-        run: npm ci --no-audit --no-fund
+        run: npm install --no-audit --no-fund
 
-      # AFTER npm ci: `npm ci` aborts when package.json and package-lock.json
-      # disagree on the version, so the rewrite has to follow the install.
-      # --no-git-tag-version keeps the lockfile in step with package.json.
       - name: Align package version to tag
         working-directory: cli
         run: npm version "$VER" --no-git-tag-version --allow-same-version
