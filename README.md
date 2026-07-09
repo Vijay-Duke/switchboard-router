@@ -65,7 +65,9 @@ Production:
 
 ```bash
 npm run build
-PORT=20128 HOSTNAME=0.0.0.0 npm run start
+PORT=20128 HOSTNAME=127.0.0.1 npm run start
+# Prefer custom-server (socket-derived IP, H1-safe):
+# PORT=20128 npm run start:standalone
 ```
 
 CLI launcher from this monorepo:
@@ -138,7 +140,8 @@ See [`.env.example`](./.env.example). Common settings:
 |----------|---------|---------|
 | `DATA_DIR` | `~/.switchboard` | SQLite + app state |
 | `PORT` | `20128` | HTTP port |
-| `HOSTNAME` | `0.0.0.0` | Bind address (use `127.0.0.1` for local-only) |
+| `HOSTNAME` | `127.0.0.1` | Bind address (`0.0.0.0` to expose on LAN; non-loopback `/v1` needs an API key by default) |
+| `REQUIRE_API_KEY` | `true` | Require gateway API key for non-loopback LLM API access |
 | `INITIAL_PASSWORD` | `123456` | Override if you enable password flows |
 
 Docker: [DOCKER.md](./DOCKER.md)
@@ -168,17 +171,33 @@ npx vitest run unit/switchboard-auto.test.js
 
 ---
 
-## Releases
+## Releases (CI/CD — no local publish)
 
-- **Source + tags:** https://github.com/Vijay-Duke/switchboard-router  
-- **Downloads:** https://github.com/Vijay-Duke/switchboard-router/releases  
+Everything ships from GitHub Actions. You do **not** need to run `npm publish` locally.
 
-Install from a release asset:
+| Workflow | Trigger | What it does |
+|----------|---------|----------------|
+| **CI** | push / PR | unit tests, docs build, CLI pack dry-run |
+| **Release** | tag `v*` or manual | tests → **npm publish** `switchboard-router` → GitHub Release + tarball → Docker to GHCR |
+| **Deploy docs** | `gitbook/**` on master | static docs → GitHub Pages |
 
 ```bash
-npm i -g ./switchboard-router-0.5.20.tgz
+# Cut a release (from a clean master)
+git tag v0.5.21
+git push origin v0.5.21
+# Or: Actions → Release → Run workflow → version 0.5.21
+```
+
+```bash
+npm i -g switchboard-router@latest
 switchboard
 ```
+
+**Secrets:** see [`.github/SECRETS.md`](.github/SECRETS.md) — at least `NPM_TOKEN` for npm.  
+**Docs:** enable Pages → Source: GitHub Actions → https://vijay-duke.github.io/switchboard-router/  
+**Images:** `ghcr.io/vijay-duke/switchboard-router`
+
+Downloads / notes: https://github.com/Vijay-Duke/switchboard-router/releases
 
 ---
 

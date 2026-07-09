@@ -1,14 +1,17 @@
+# Kept for backward compatibility: tag pushes also run release.yml which builds Docker.
+# This workflow only runs on workflow_dispatch if you need a Docker-only rebuild.
 name: Build and Push Docker Image
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (e.g. latest or 0.5.21)"
+        required: true
+        default: "latest"
 
 env:
   GHCR_IMAGE: ghcr.io/${{ github.repository }}
-  DOCKERHUB_IMAGE: decolua/9router
 
 jobs:
   build-and-push:
@@ -29,32 +32,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            ${{ env.GHCR_IMAGE }}
-            ${{ env.DOCKERHUB_IMAGE }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable={{is_default_branch}}
-
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache
-          cache-to: type=registry,ref=${{ env.GHCR_IMAGE }}:buildcache,mode=max
+          tags: |
+            ${{ env.GHCR_IMAGE }}:${{ inputs.tag }}
+            ${{ env.GHCR_IMAGE }}:latest
           platforms: linux/amd64,linux/arm64
           provenance: false
           sbom: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

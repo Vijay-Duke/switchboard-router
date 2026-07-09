@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useLayoutEffect } from "react";
+import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useRouter, usePathname } from "next/navigation";
 import { Globe, X } from "lucide-react";
@@ -15,11 +15,12 @@ function extractLangFromPath(pathname) {
 
 export default function LanguageSwitcher({ currentLang }) {
   const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
   const current = getLanguage(currentLang);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     setMounted(true);
   }, []);
 
@@ -27,7 +28,9 @@ export default function LanguageSwitcher({ currentLang }) {
   useEffect(() => {
     if (open) {
       document.body.style.overflow = "hidden";
-      return () => { document.body.style.overflow = ""; };
+      return () => {
+        document.body.style.overflow = "";
+      };
     }
   }, [open]);
 
@@ -39,7 +42,10 @@ export default function LanguageSwitcher({ currentLang }) {
   };
 
   const modal = open && (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4" onClick={() => setOpen(false)}>
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4"
+      onClick={() => setOpen(false)}
+    >
       <div
         className="bg-white rounded-xl shadow-2xl max-w-md w-full max-h-[80vh] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -86,11 +92,13 @@ export default function LanguageSwitcher({ currentLang }) {
         aria-label="Switch language"
       >
         <Globe className="w-4 h-4" />
-        <span className="hidden sm:inline">{current.flag} {current.native}</span>
+        <span className="hidden sm:inline">
+          {current.flag} {current.native}
+        </span>
         <span className="sm:hidden">{current.flag}</span>
       </button>
 
-      {open && createPortal(modal, document.body)}
+      {mounted && open && createPortal(modal, document.body)}
     </>
   );
 }

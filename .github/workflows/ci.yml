@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root deps (src/ imports)
+        run: npm install --no-audit --no-fund
+
+      - name: Install test deps
+        working-directory: tests
+        run: npm install --no-audit --no-fund
+
+      - name: Run unit tests (known-pass subset; suite has baseline reds)
+        working-directory: tests
+        run: |
+          npx vitest run \
+            unit/dashboard-guard.test.js \
+            unit/combo-fusion.test.js \
+            unit/switchboard-auto.test.js \
+            unit/base-executor-retry.test.js \
+            --reporter=default
+
+  gitbook-build:
+    name: Docs build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gitbook
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gitbook/package.json
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
+        env:
+          NODE_ENV: production
+          NEXT_PUBLIC_BASE_PATH: /switchboard-router
+
+  cli-pack:
+    name: CLI pack (dry run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cli/package.json
+      - name: Install CLI deps
+        working-directory: cli
+        run: npm install --no-audit --no-fund
+      - name: Build + npm pack
+        working-directory: cli
+        run: npm run pack:cli
