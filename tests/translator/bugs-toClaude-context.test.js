@@ -35,7 +35,7 @@ describe("OpenAI → Claude context mapping", () => {
 
   // openai-to-claude.js:298 — tool_choice "none" mapped to {type:"auto"} (loses "do not call" intent)
   // KNOWN BUG
-  it.fails("tool_choice=none is not turned into auto", () => {
+  it("tool_choice=none is not turned into auto", () => {
     const out = T({
       messages: [{ role: "user", content: "hi" }],
       tools: [{ type: "function", function: { name: "f", parameters: { type: "object", properties: {} } } }],

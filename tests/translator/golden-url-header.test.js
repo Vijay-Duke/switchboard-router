@@ -27,9 +27,18 @@ const SPECIALIZED = new Set([
 function sanitize(headers) {
   const out = {};
   for (const [k, v] of Object.entries(headers)) {
+    if (k === "X-CLIENT-VERSION" || k === "X-CORE-VERSION") {
+      out[k] = "<VERSION>";
+      continue;
+    }
+    if (k === "X-PLATFORM-VERSION") {
+      out[k] = "<NODE_VERSION>";
+      continue;
+    }
     out[k] = typeof v === "string"
       ? v.replace(/Bearer .+/, "Bearer <TOK>")
           .replace(/sk-test-APIKEY|tok-test-ACCESS/g, "<CRED>")
+          .replace(/Switchboard\/\d+(?:\.\d+)+/g, "Switchboard/<VERSION>")
           .replace(/kimi-\d{10,}/g, "kimi-<TS>")
       : v;
   }
