@@ -260,6 +260,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # GHCR rejects uppercase in a repository name, and this owner is
+      # "Vijay-Duke". docker/metadata-action lowercases for us; a hand-written
+      # image ref does not.
+      - name: Compute lowercase image name
+        id: img
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v6
@@ -268,7 +275,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           provenance: false
           sbom: false
-          outputs: type=image,name=ghcr.io/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ steps.img.outputs.image }},push-by-digest=true,name-canonical=true,push=true
           # Per-arch cache scope: one shared scope would have the two jobs
           # clobbering each other's layers.
           cache-from: type=gha,scope=docker-${{ matrix.arch }}
@@ -308,11 +315,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute lowercase image name
+        id: img
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ steps.img.outputs.image }}
           tags: |
             type=semver,pattern={{version}},value=${{ needs.resolve-version.outputs.tag }}
             type=semver,pattern={{major}}.{{minor}},value=${{ needs.resolve-version.outputs.tag }}
@@ -323,7 +334,7 @@ jobs:
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf 'ghcr.io/${{ github.repository }}@sha256:%s ' *)
+            $(printf '${{ steps.img.outputs.image }}@sha256:%s ' *)
 
       - name: Inspect
-        run: docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:${{ needs.resolve-version.outputs.version }}"
+        run: docker buildx imagetools inspect "${{ steps.img.outputs.image }}:${{ needs.resolve-version.outputs.version }}"
