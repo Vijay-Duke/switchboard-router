@@ -8,10 +8,14 @@ export const UNSUPPORTED_SCHEMA_CONSTRAINTS = [
   // Basic constraints (not supported by Gemini API)
   "minLength", "maxLength", "exclusiveMinimum", "exclusiveMaximum",
   "minItems", "maxItems", "format",
+  // String/array constraints Gemini rejects (wave8)
+  "pattern", "uniqueItems",
+  // Numeric constraints Gemini rejects (decolua/9router#2309)
+  "multipleOf", "minimum", "maximum",
   // Claude rejects these in VALIDATED mode
   "default", "examples",
   // JSON Schema meta keywords
-  "$schema", "$defs", "definitions", "const", "$ref", "$comment",
+  "$schema", "$defs", "definitions", "const", "$ref", "$comment", "ref",
   // Annotation keywords (rejected by Gemini/Antigravity - e.g. MCP tool schemas set these)
   "deprecated", "readOnly", "writeOnly",
   // Object validation keywords (not supported)
@@ -44,6 +48,7 @@ export function convertOpenAIContentToParts(content) {
     parts.push({ text: content });
   } else if (Array.isArray(content)) {
     for (const item of content) {
+      if (!item || typeof item !== "object") continue; // null entries crash (wave15)
       if (item.type === OPENAI_BLOCK.TEXT) {
         parts.push({ text: item.text });
       } else if (item.type === OPENAI_BLOCK.IMAGE_URL && item.image_url?.url?.startsWith("data:")) {
@@ -320,6 +325,31 @@ export function cleanJSONSchemaForAntigravity(schema) {
 
   // Phase 2.5: Infer missing type=object when properties exist (Gemini requirement)
   ensureObjectType(cleaned);
+
+  // Phase 2.7: Convert invalid property values (e.g. property: "object") to proper schemas.
+  // Claude Code tools sometimes have properties like { "field": "object" } where the value
+  // is a plain JSON Schema type string instead of a schema object. Gemini/Vertex rejects these.
+  // decolua/9router PR#1600 / #1564.
+  function fixInvalidPropertyValues(obj) {
+    if (!obj || typeof obj !== "object") return;
+    if (Array.isArray(obj)) { obj.forEach(fixInvalidPropertyValues); return; }
+    if (obj.properties && typeof obj.properties === "object" && !Array.isArray(obj.properties)) {
+      for (const [key, val] of Object.entries(obj.properties)) {
+        if (typeof val === "string") {
+          const t = val.toLowerCase();
+          if (t === "object") obj.properties[key] = { type: "object", properties: {} };
+          else if (["string", "number", "integer", "boolean", "array"].includes(t)) obj.properties[key] = { type: t };
+          else obj.properties[key] = { type: "string", description: val };
+        } else if (val !== null && typeof val === "object") {
+          fixInvalidPropertyValues(val);
+        }
+      }
+    }
+    for (const [key, val] of Object.entries(obj)) {
+      if (key !== "properties" && val && typeof val === "object") fixInvalidPropertyValues(val);
+    }
+  }
+  fixInvalidPropertyValues(cleaned);
 
   // Phase 3: Remove all unsupported keywords at ALL levels (including inside arrays)
   removeUnsupportedKeywords(cleaned, UNSUPPORTED_SCHEMA_CONSTRAINTS);

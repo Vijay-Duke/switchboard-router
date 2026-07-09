@@ -11,6 +11,50 @@ import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 import { SSE_DONE } from "../utils/sseConstants.js";
 import crypto from "crypto";
 
+/** Convert Responses API JSON (from convertResponsesStreamToJson) → chat.completion */
+function responsesJsonToChatCompletion(jsonResponse, model) {
+  const output = Array.isArray(jsonResponse?.output) ? jsonResponse.output : [];
+  let text = "";
+  const toolCalls = [];
+  for (const item of output) {
+    if (item?.type === "message" && Array.isArray(item.content)) {
+      for (const part of item.content) {
+        if (part?.type === "output_text" && typeof part.text === "string") text += part.text;
+        else if (typeof part?.text === "string") text += part.text;
+      }
+    }
+    if (item?.type === "function_call") {
+      toolCalls.push({
+        id: item.call_id || `call_${item.name}_${toolCalls.length}`,
+        type: "function",
+        function: {
+          name: item.name,
+          arguments: typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments || {}),
+        },
+      });
+    }
+  }
+  const message = { role: "assistant", content: text || (toolCalls.length ? null : "") };
+  if (toolCalls.length) message.tool_calls = toolCalls;
+  const usage = jsonResponse?.usage || {};
+  return {
+    id: jsonResponse?.id || `chatcmpl-${Date.now()}`,
+    object: "chat.completion",
+    created: jsonResponse?.created_at || Math.floor(Date.now() / 1000),
+    model: jsonResponse?.model || model,
+    choices: [{
+      index: 0,
+      message,
+      finish_reason: toolCalls.length ? "tool_calls" : "stop",
+    }],
+    usage: {
+      prompt_tokens: usage.input_tokens || 0,
+      completion_tokens: usage.output_tokens || 0,
+      total_tokens: (usage.input_tokens || 0) + (usage.output_tokens || 0),
+    },
+  };
+}
+
 export class GithubExecutor extends BaseExecutor {
   constructor() {
     super("github", PROVIDERS.github);
@@ -111,7 +155,9 @@ export class GithubExecutor extends BaseExecutor {
   }
 
   transformRequest(model, body, stream, credentials) {
-    const transformed = { ...body };
+    // stream_options.include_usage + body.stream sync
+    super.transformRequest(model, body, stream, credentials);
+    const transformed = body && typeof body === "object" ? body : { ...body };
     if (this.requiresMaxCompletionTokens(model) && transformed.max_tokens !== undefined) {
       transformed.max_completion_tokens = transformed.max_tokens;
       delete transformed.max_tokens;
@@ -187,6 +233,28 @@ export class GithubExecutor extends BaseExecutor {
 
     if (!response.ok) {
       return { response, url, headers, transformedBody };
+    }
+
+    // Non-stream client: GitHub still often returns SSE for /responses.
+    // Aggregate to a single OpenAI chat.completion JSON so nonStreamingHandler
+    // does not 502 on "Invalid JSON" (wave6).
+    if (!stream && response.body) {
+      try {
+        const { convertResponsesStreamToJson } = await import("../transformer/streamToJsonConverter.js");
+        const jsonResponse = await convertResponsesStreamToJson(response.body);
+        const chat = responsesJsonToChatCompletion(jsonResponse, model);
+        return {
+          response: new Response(JSON.stringify(chat), {
+            status: 200,
+            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+          }),
+          url,
+          headers,
+          transformedBody,
+        };
+      } catch (e) {
+        log?.warn?.("GITHUB", `non-stream responses aggregate failed: ${e.message}`);
+      }
     }
 
     const state = initState("openai-responses");

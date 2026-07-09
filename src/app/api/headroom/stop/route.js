@@ -1,3 +1,4 @@
+// @ts-check
 import { NextResponse } from "next/server";
 import { stopHeadroomProxy } from "@/lib/headroom/process";
 

@@ -5,25 +5,11 @@ const DEFAULT_MITM_ROUTER_BASE = "http://localhost:20128";
 const DEFAULT_HEADROOM_URL = process.env.HEADROOM_URL || "http://localhost:8787";
 
 const DEFAULT_SETTINGS = {
-  cloudEnabled: false,
-  tunnelEnabled: false,
-  tunnelUrl: "",
-  tunnelProvider: "cloudflare",
-  tailscaleEnabled: false,
-  tailscaleUrl: "",
   stickyRoundRobinLimit: 3,
   providerStrategies: {},
   comboStrategy: "fallback",
   comboStickyRoundRobinLimit: 1,
   comboStrategies: {},
-  requireLogin: true,
-  tunnelDashboardAccess: true,
-  authMode: "password",
-  oidcIssuerUrl: "",
-  oidcClientId: "",
-  oidcClientSecret: "",
-  oidcScopes: "openid profile email",
-  oidcLoginLabel: "Sign in with OIDC",
   enableObservability: true,
   observabilityMaxRecords: 1000,
   observabilityBatchSize: 20,
@@ -91,18 +77,12 @@ export async function updateSettings(updates) {
 }
 
 export async function isCloudEnabled() {
-  const settings = await getSettings();
-  return settings.cloudEnabled === true;
+  // Cloud / remote hosting removed — always local-only.
+  return false;
 }
 
 export async function getCloudUrl() {
-  const settings = await getSettings();
-  return (
-    settings.cloudUrl ||
-    process.env.CLOUD_URL ||
-    process.env.NEXT_PUBLIC_CLOUD_URL ||
-    ""
-  );
+  return "";
 }
 
 export async function exportSettings() {

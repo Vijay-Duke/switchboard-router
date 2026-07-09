@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 /**
  * ModelAvailabilityBadge — compact inline status indicator

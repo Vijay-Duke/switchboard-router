@@ -289,6 +289,19 @@ export async function saveRequestUsage(entry) {
         ]
       );
 
+      // Retention: prevent unbounded usageHistory growth (scout P0 OOM path).
+      // Defaults to 50k rows; override with USAGE_HISTORY_MAX env.
+      const maxHist = parseInt(process.env.USAGE_HISTORY_MAX || "50000", 10);
+      if (Number.isFinite(maxHist) && maxHist > 0) {
+        const cnt = db.get(`SELECT COUNT(*) as c FROM usageHistory`);
+        if (cnt && cnt.c > maxHist) {
+          db.run(
+            `DELETE FROM usageHistory WHERE id IN (SELECT id FROM usageHistory ORDER BY id ASC LIMIT ?)`,
+            [cnt.c - maxHist]
+          );
+        }
+      }
+
       const dateKey = getLocalDateKey(entry.timestamp);
       const row = db.get(`SELECT data FROM usageDaily WHERE dateKey = ?`, [dateKey]);
       const day = row ? parseJson(row.data, {}) : {
@@ -581,8 +594,9 @@ export async function getUsageStats(period = "all") {
 
     for (const r of filtered) {
       const tokens = parseJson(r.tokens, {}) || {};
-      const promptTokens = tokens.prompt_tokens || 0;
-      const completionTokens = tokens.completion_tokens || 0;
+      // Prefer denormalized columns, then OpenAI-shaped, then Claude-shaped (wave14).
+      const promptTokens = r.promptTokens || tokens.prompt_tokens || tokens.input_tokens || 0;
+      const completionTokens = r.completionTokens || tokens.completion_tokens || tokens.output_tokens || 0;
       const cachedTokens = tokens.cached_tokens || tokens.cache_read_input_tokens || 0;
       const entryCost = r.cost || 0;
       const providerDisplayName = providerNodeNameMap[r.provider] || r.provider;

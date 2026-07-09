@@ -1,3 +1,4 @@
+// @ts-check
 import { handleImageGeneration } from "@/sse/handlers/imageGeneration.js";
 
 export async function OPTIONS() {

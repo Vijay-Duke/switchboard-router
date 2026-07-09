@@ -9,6 +9,46 @@ import { buildRequestDetail, extractRequestConfig, saveUsageStats } from "./requ
 import { saveRequestDetail } from "@/lib/usageDb.js";
 import { SSE_HEADERS_CORS as SSE_HEADERS } from "../../utils/sseConstants.js";
 
+/**
+ * Convert raw NDJSON (one JSON object per line) into SSE frames (`data: …\n\n`).
+ * Used for Ollama /api/chat streaming which returns application/x-ndjson.
+ */
+function ndjsonToSseTransform() {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = "";
+  return new TransformStream({
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        // Already SSE? forward as-is (plus blank line for framing)
+        if (trimmed.startsWith("data:") || trimmed.startsWith("event:")) {
+          controller.enqueue(encoder.encode(line + "\n"));
+          continue;
+        }
+        try {
+          JSON.parse(trimmed); // validate
+          controller.enqueue(encoder.encode(`data: ${trimmed}\n\n`));
+        } catch {
+          // skip non-JSON noise
+        }
+      }
+    },
+    flush(controller) {
+      const trimmed = buffer.trim();
+      if (!trimmed) return;
+      try {
+        JSON.parse(trimmed);
+        controller.enqueue(encoder.encode(`data: ${trimmed}\n\n`));
+      } catch { /* ignore */ }
+    },
+  });
+}
+
 // Codex returns Responses API SSE → which client format to translate INTO, by request sourceFormat.
 // Gemini-family all map to ANTIGRAVITY decoder; unknown sources fall back to OPENAI.
 const CODEX_SOURCE_TO_TARGET = {
@@ -37,7 +77,7 @@ function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent,
     return createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, apiKey);
   }
 
-  return createPassthroughStreamWithLogger(provider, reqLogger, model, connectionId, body, onStreamComplete, apiKey);
+  return createPassthroughStreamWithLogger(provider, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, apiKey);
 }
 
 /**
@@ -60,7 +100,21 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
   // and clamped so untrusted upstream text never reaches the client verbatim
   // (the UI may render error.message as HTML).
   const upstreamContentType = (providerResponse.headers.get('content-type') || '').toLowerCase();
-  if (upstreamContentType && !upstreamContentType.includes('text/event-stream') && !upstreamContentType.includes('application/json')) {
+  // Ollama (and similar) stream as application/x-ndjson, not text/event-stream.
+  // Wrap NDJSON lines as SSE `data:` frames so the existing translator path works
+  // (decolua/9router#2386). Without this, the client sees "blocked pipe: non-SSE".
+  const isNdjson = upstreamContentType.includes('application/x-ndjson') || upstreamContentType.includes('application/ndjson');
+  if (isNdjson && providerResponse.body) {
+    providerResponse = new Response(providerResponse.body.pipeThrough(ndjsonToSseTransform()), {
+      status: providerResponse.status,
+      statusText: providerResponse.statusText,
+      headers: (() => {
+        const h = new Headers(providerResponse.headers);
+        h.set('content-type', 'text/event-stream');
+        return h;
+      })(),
+    });
+  } else if (upstreamContentType && !upstreamContentType.includes('text/event-stream') && !upstreamContentType.includes('application/json')) {
     const bodyText = await providerResponse.text().catch(() => '');
     const titleMatch = bodyText.match(/<title>([^<]+)<\/title>/i);
     const sanitizedTitle = (titleMatch?.[1] || '').replace(/<[^>]*>/g, '').replace(/[\r\n]+/g, ' ').trim().slice(0, 160);

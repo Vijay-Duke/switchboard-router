@@ -1,3 +1,4 @@
+// @ts-check
 import { NextResponse } from "next/server";
 import { getCustomModels, addCustomModel, deleteCustomModel } from "@/models";
 

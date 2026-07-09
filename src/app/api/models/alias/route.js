@@ -1,3 +1,4 @@
+// @ts-check
 import { NextResponse } from "next/server";
 import { getModelAliases, setModelAlias, deleteModelAlias } from "@/models";
 

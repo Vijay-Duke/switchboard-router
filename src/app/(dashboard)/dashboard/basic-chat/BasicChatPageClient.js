@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button } from "@/shared/components";

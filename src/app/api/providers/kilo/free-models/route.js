@@ -1,3 +1,4 @@
+// @ts-check
 import { NextResponse } from "next/server";
 
 const KILO_MODELS_URL = "https://api.kilo.ai/api/gateway/models";

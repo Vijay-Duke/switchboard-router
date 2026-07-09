@@ -1,22 +1,16 @@
 // Port of grep_wrapper (rtk/src/cmds/system/pipe_cmd.rs:50-86)
-// Input format: "file:lineno:content" — splitn(3, ':') in Rust
+// Input format: "file:lineno:content" — Windows-drive-aware (see parseGrepLine)
 import { GREP_PER_FILE_MAX } from "../constants.js";
+import { parseGrepLine } from "../autodetect.js";
 
 export function grep(input) {
   const byFile = new Map();
   let total = 0;
 
   for (const line of input.split("\n")) {
-    // splitn(3, ':') — only split on first 2 colons
-    const first = line.indexOf(":");
-    if (first === -1) continue;
-    const second = line.indexOf(":", first + 1);
-    if (second === -1) continue;
-    const file = line.slice(0, first);
-    const lineNumStr = line.slice(first + 1, second);
-    const content = line.slice(second + 1);
-    // Rust: parts[1].parse::<usize>().is_ok()
-    if (!/^\d+$/.test(lineNumStr)) continue;
+    const parsed = parseGrepLine(line);
+    if (!parsed) continue;
+    const { file, lineNum: lineNumStr, content } = parsed;
     total++;
     if (!byFile.has(file)) byFile.set(file, []);
     byFile.get(file).push([lineNumStr, content]);

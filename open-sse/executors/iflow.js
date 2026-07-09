@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
+import { refreshIflowToken } from "../services/tokenRefresh.js";
 
 /**
  * IFlowExecutor - Executor for iFlow API with HMAC-SHA256 signature
@@ -8,6 +9,22 @@ import { PROVIDERS } from "../config/providers.js";
 export class IFlowExecutor extends BaseExecutor {
   constructor() {
     super("iflow", PROVIDERS.iflow);
+  }
+
+  /**
+   * Mid-request 401/403 recovery (chatCore) and usage force-refresh.
+   * Base returns null; iflow OAuth refresh lives on tokenRefresh (wave13).
+   */
+  async refreshCredentials(credentials, log) {
+    if (!credentials?.refreshToken) return null;
+    const result = await refreshIflowToken(credentials.refreshToken, log);
+    if (!result?.accessToken) return null;
+    return {
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken || credentials.refreshToken,
+      expiresAt: result.expiresAt,
+      expiresIn: result.expiresIn,
+    };
   }
 
   /**
@@ -63,9 +80,10 @@ export class IFlowExecutor extends BaseExecutor {
       "x-iflow-signature": signature
     };
 
-    // Add authorization
-    if (credentials.apiKey) {
-      headers["Authorization"] = `Bearer ${credentials.apiKey}`;
+    // Add authorization — OAuth connections only populate accessToken
+    const bearer = credentials.apiKey || credentials.accessToken;
+    if (bearer) {
+      headers["Authorization"] = `Bearer ${bearer}`;
     }
 
     // Add streaming header

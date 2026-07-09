@@ -52,6 +52,7 @@ export class AzureExecutor extends DefaultExecutor {
   }
 
   transformRequest(model, body, stream, credentials) {
-    return body;
+    // Inherit stream_options.include_usage + body.stream sync from BaseExecutor
+    return super.transformRequest(model, body, stream, credentials);
   }
 }

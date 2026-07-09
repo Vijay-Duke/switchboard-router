@@ -1,3 +1,4 @@
+// @ts-check
 import { getUsageStats, statsEmitter, getActiveRequests } from "@/lib/usageDb";
 
 export const dynamic = "force-dynamic";

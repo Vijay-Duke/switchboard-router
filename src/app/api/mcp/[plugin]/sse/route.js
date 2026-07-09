@@ -1,3 +1,4 @@
+// @ts-check
 import { registerSession, unregisterSession, findPlugin } from "@/lib/mcp/stdioSseBridge";
 
 export const runtime = "nodejs";

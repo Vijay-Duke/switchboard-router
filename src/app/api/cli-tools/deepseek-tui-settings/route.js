@@ -1,3 +1,4 @@
+// @ts-check
 "use server";
 
 import { NextResponse } from "next/server";
@@ -9,7 +10,7 @@ import os from "os";
 
 const execAsync = promisify(exec);
 
-const PROVIDER_NAME = "9router";
+const PROVIDER_NAME = "switchboard";
 
 const getDeepSeekDir = () => path.join(os.homedir(), ".deepseek");
 const getDeepSeekConfigPath = () => path.join(getDeepSeekDir(), "config.toml");
@@ -51,8 +52,8 @@ const parseToml = (content) => {
     return result;
 };
 
-// Build TOML config for 9Router (openai provider mode)
-const build9RouterConfig = (baseUrl, apiKey, model) => {
+// Build TOML config for Switchboard (openai provider mode)
+const buildSwitchboardConfig = (baseUrl, apiKey, model) => {
     const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
     return `provider = "openai"
 
@@ -92,8 +93,8 @@ const readConfigToml = async () => {
     }
 };
 
-// Detect 9Router by checking if provider is "openai" and base_url points to localhost/127.0.0.1
-const has9RouterConfig = (config) => {
+// Detect Switchboard by checking if provider is "openai" and base_url points to localhost/127.0.0.1
+const hasSwitchboardConfig = (config) => {
     if (!config) return false;
     const provider = config.provider;
     if (provider !== "openai") return false;
@@ -113,7 +114,7 @@ export async function GET() {
         return NextResponse.json({
             installed: true,
             settings: config,
-            has9Router: has9RouterConfig(config),
+            hasSwitchboard: hasSwitchboardConfig(config),
             configPath: getDeepSeekConfigPath(),
         });
     } catch (error) {
@@ -132,7 +133,7 @@ export async function POST(request) {
         const dir = getDeepSeekDir();
         await fs.mkdir(dir, { recursive: true });
 
-        const newConfig = build9RouterConfig(baseUrl, apiKey || "sk_9router", model);
+        const newConfig = buildSwitchboardConfig(baseUrl, apiKey || "sk_switchboard", model);
         await fs.writeFile(getDeepSeekConfigPath(), newConfig);
 
         return NextResponse.json({

@@ -120,12 +120,26 @@ export class VertexExecutor extends BaseExecutor {
 
   async refreshCredentials(credentials, log) {
     const saJson = parseVertexSaJson(credentials?.apiKey);
-    if (!saJson) return null;
+    if (saJson) {
+      const result = await refreshVertexToken(saJson, log);
+      if (!result) return null;
+      return { accessToken: result.accessToken, expiresAt: result.expiresAt };
+    }
 
-    const result = await refreshVertexToken(saJson, log);
-    if (!result) return null;
+    // ADC authorized_user JSON (wave13) — same mint path as execute()
+    const adcJson = parseVertexAdcJson(credentials?.apiKey);
+    if (adcJson) {
+      const result = await refreshGoogleToken(
+        adcJson.refresh_token,
+        adcJson.client_id,
+        adcJson.client_secret,
+        log
+      );
+      if (!result?.accessToken) return null;
+      return { accessToken: result.accessToken, expiresAt: result.expiresAt };
+    }
 
-    return { accessToken: result.accessToken, expiresAt: result.expiresAt };
+    return null;
   }
 
   async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {

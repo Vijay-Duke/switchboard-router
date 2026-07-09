@@ -1,21 +1,14 @@
-import os from "os";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { existsSync } from "fs";
-import { cleanupProviderConnections, getSettings, updateSettings, getApiKeys } from "@/lib/localDb";
-import {
-  enableTunnel, enableTailscale,
-  isTunnelManuallyDisabled, isTunnelReconnecting, isTailscaleReconnecting,
-  getTunnelService, getTailscaleService, setTunnelUnexpectedExitCallback,
-  killCloudflared, isCloudflaredRunning, ensureCloudflared,
-  isTailscaleRunning, isTailscaleRunningStrict, isDaemonAlive, startFunnel,
-  checkInternet,
-  RESTART_COOLDOWN_MS, NETWORK_SETTLE_MS,
-  WATCHDOG_INTERVAL_MS, NETWORK_CHECK_INTERVAL_MS, VIRTUAL_IFACE_REGEX,
-} from "@/lib/tunnel";
+import { cleanupProviderConnections, getSettings, updateSettings, getApiKeys, deleteOldRoutingEvents } from "@/lib/localDb";
 import { getMitmStatus, startMitm, loadEncryptedPassword, initDbHooks, restoreToolDNS, removeAllDNSEntriesSync } from "@/mitm/manager";
 import { startQuotaAutoPing } from "@/shared/services/quotaAutoPing";
+import { startAutoLearnScheduler } from "open-sse/routing/scheduler.js";
 import { syncToJson as syncMitmAliasCache } from "@/lib/mitmAliasCache";
+
+const ROUTING_RETENTION_DAYS = 90;
+const ROUTING_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 // Inject correct paths and DB hooks into manager.js (CJS) from ESM context
 (function bootstrapMitm() {
@@ -35,39 +28,17 @@ process.setMaxListeners(20);
 // Survive Next.js hot reload
 const g = global.__appSingleton ??= {
   signalHandlersRegistered: false,
-  watchdogInterval: null,
-  networkMonitorInterval: null,
-  lastNetworkFingerprint: null,
-  lastWatchdogTick: Date.now(),
-  lastOnline: null,
   mitmStartInProgress: false,
-  tunnelAutoResumed: false,
-  tailscaleAutoResumed: false,
+  routingRetentionTimer: null,
 };
 
 export async function initializeApp() {
   try {
     await cleanupProviderConnections();
-    const settings = await getSettings();
-
-    // Auto-resume tunnel (once per process)
-    if (settings.tunnelEnabled && !g.tunnelAutoResumed) {
-      g.tunnelAutoResumed = true;
-      console.log("[InitApp] Tunnel was enabled, auto-resuming...");
-      safeRestartTunnel("startup").catch((e) => console.log("[InitApp] Tunnel resume failed:", e.message));
-    }
-
-    // Auto-resume tailscale (once per process)
-    if (settings.tailscaleEnabled && !g.tailscaleAutoResumed) {
-      g.tailscaleAutoResumed = true;
-      console.log("[InitApp] Tailscale was enabled, auto-resuming...");
-      safeRestartTailscale("startup").catch((e) => console.log("[InitApp] Tailscale resume failed:", e.message));
-    }
 
     if (!g.signalHandlersRegistered) {
       const cleanup = () => {
         try { removeAllDNSEntriesSync(); } catch { /* best effort */ }
-        killCloudflared();
         process.exit();
       };
       process.on("SIGINT", cleanup);
@@ -76,23 +47,43 @@ export async function initializeApp() {
       g.signalHandlersRegistered = true;
     }
 
-    ensureCloudflared().catch(() => {});
-
     // Sync mitmAlias DB → JSON cache so standalone MITM server can read it
     syncMitmAliasCache().catch(() => {});
 
-    // Auto-respawn tunnel when cloudflared exits unexpectedly (e.g. network change drop)
-    setTunnelUnexpectedExitCallback(() => {
-      safeRestartTunnel("unexpected-exit").catch(() => {});
-    });
-
-    startWatchdog();
-    startNetworkMonitor();
     autoStartMitm();
     startQuotaAutoPing();
+    startRoutingEventRetention();
+    try {
+      startAutoLearnScheduler({
+        log: {
+          info: (...a) => console.log(...a),
+          warn: (...a) => console.warn(...a),
+          error: (...a) => console.error(...a),
+        },
+      });
+    } catch (e) {
+      console.warn("[InitApp] auto-learn scheduler failed to start:", e?.message || e);
+    }
   } catch (error) {
     console.error("[InitApp] Error:", error);
   }
+}
+
+/** Daily purge of routing_events older than ROUTING_RETENTION_DAYS (default 90). */
+function startRoutingEventRetention() {
+  if (g.routingRetentionTimer) return;
+  const run = () => {
+    deleteOldRoutingEvents(ROUTING_RETENTION_DAYS)
+      .then((n) => {
+        if (n > 0) console.log(`[InitApp] Purged ${n} routing_events older than ${ROUTING_RETENTION_DAYS}d`);
+      })
+      .catch((e) => console.warn("[InitApp] routing retention failed:", e?.message || e));
+  };
+  // Run shortly after boot, then daily
+  setTimeout(run, 30_000);
+  g.routingRetentionTimer = setInterval(run, ROUTING_RETENTION_INTERVAL_MS);
+  // Don't keep process alive solely for retention
+  if (typeof g.routingRetentionTimer.unref === "function") g.routingRetentionTimer.unref();
 }
 
 async function autoStartMitm() {
@@ -111,10 +102,10 @@ async function autoStartMitm() {
     }
 
     const keys = await getApiKeys();
-    const activeKey = keys.find(k => k.isActive !== false);
+    const activeKey = keys.find((k) => k.isActive !== false);
 
     console.log("[InitApp] MITM was enabled, auto-starting...");
-    await startMitm(activeKey?.key || "sk_9router", password);
+    await startMitm(activeKey?.key || "sk_switchboard", password);
     console.log("[InitApp] MITM auto-started");
     try {
       await restoreToolDNS(password);
@@ -127,156 +118,6 @@ async function autoStartMitm() {
   } finally {
     g.mitmStartInProgress = false;
   }
-}
-
-// Cooldown only applies to repeating watchdog ticks (anti hammer-loop).
-// Network/exit events are one-shot transitions → bypass to recover fast.
-const FORCE_RESTART_REASONS = /^(startup|netchange|sleep|sleep\+netchange|online|unexpected-exit)$/;
-
-// ─── Safe restart (4 guards: spawn / cooldown / alive / internet) ────────────
-
-async function safeRestartTunnel(reason) {
-  const svc = getTunnelService();
-  const settings = await getSettings();
-  if (!settings.tunnelEnabled) return;
-  if (svc.cancelToken.cancelled) return;
-  if (svc.spawnInProgress) return;
-
-  const force = FORCE_RESTART_REASONS.test(reason);
-
-  // Process alive = trust cloudflared (self-reconnects via --retries 99, keeps same URL).
-  // Killing a live process on network change drops the tunnel and rotates the quick-tunnel URL.
-  if (isCloudflaredRunning()) return;
-
-  if (!force && Date.now() - svc.lastRestartAt < RESTART_COOLDOWN_MS) {
-    console.log(`[Tunnel] degraded but cooldown active, skip (${reason})`);
-    return;
-  }
-  if (!await checkInternet()) return;
-
-  console.log(`[Tunnel] safeRestart (${reason}) — tunnel unreachable${force ? " [force]" : ""}`);
-  try {
-    await enableTunnel();
-    svc.lastRestartAt = Date.now();
-    console.log("[Tunnel] restart success");
-  } catch (err) {
-    if (!/cloudflared killed|tunnel cancelled/.test(err.message)) {
-      console.log("[Tunnel] restart failed:", err.message);
-    }
-  }
-}
-
-async function safeRestartTailscale(reason) {
-  const svc = getTailscaleService();
-  const settings = await getSettings();
-  if (!settings.tailscaleEnabled) return;
-  if (svc.cancelToken.cancelled) return;
-  if (svc.spawnInProgress) return;
-
-  // Tailscale daemon is OS-level with built-in reconnect; trust it when running (even on netchange).
-  // Startup uses strict probe — cached state is cold after process/dev reload.
-  const running = reason === "startup" ? await isTailscaleRunningStrict() : isTailscaleRunning();
-  if (running) return;
-
-  // Daemon alive but funnel dropped → recover funnel only; never full-restart (preserves login/daemon).
-  if (isDaemonAlive() && svc.activeLocalPort) {
-    try {
-      await startFunnel(svc.activeLocalPort);
-      svc.lastRestartAt = Date.now();
-      console.log("[Tailscale] funnel re-established (daemon alive)");
-    } catch (err) {
-      console.log("[Tailscale] funnel recovery failed:", err.message);
-    }
-    return;
-  }
-
-  const force = FORCE_RESTART_REASONS.test(reason);
-  if (!force && Date.now() - svc.lastRestartAt < RESTART_COOLDOWN_MS) {
-    console.log(`[Tailscale] degraded but cooldown active, skip (${reason})`);
-    return;
-  }
-  if (!await checkInternet()) return;
-
-  console.log(`[Tailscale] safeRestart (${reason}) — daemon not running${force ? " [force]" : ""}`);
-  try {
-    await enableTailscale();
-    svc.lastRestartAt = Date.now();
-    console.log("[Tailscale] restart success");
-  } catch (err) {
-    console.log("[Tailscale] restart failed:", err.message);
-  }
-}
-
-// ─── Watchdog: 60s tick check both services ──────────────────────────────────
-
-function startWatchdog() {
-  if (g.watchdogInterval) return;
-  g.watchdogInterval = setInterval(() => {
-    safeRestartTunnel("watchdog").catch(() => {});
-    safeRestartTailscale("watchdog").catch(() => {});
-  }, WATCHDOG_INTERVAL_MS);
-  if (g.watchdogInterval.unref) g.watchdogInterval.unref();
-}
-
-// ─── Network monitor: detect IPv4 fingerprint change + sleep/wake ────────────
-
-function getNetworkFingerprint() {
-  const interfaces = os.networkInterfaces();
-  const active = [];
-  for (const [name, addrs] of Object.entries(interfaces)) {
-    if (!addrs) continue;
-    if (VIRTUAL_IFACE_REGEX.test(name)) continue;
-    for (const addr of addrs) {
-      if (!addr.internal && addr.family === "IPv4") {
-        active.push(`${name}:${addr.address}`);
-      }
-    }
-  }
-  return active.sort().join("|");
-}
-
-function startNetworkMonitor() {
-  if (g.networkMonitorInterval) return;
-
-  g.lastNetworkFingerprint = getNetworkFingerprint();
-  g.lastWatchdogTick = Date.now();
-  g.lastOnline = null;
-
-  g.networkMonitorInterval = setInterval(async () => {
-    try {
-      const now = Date.now();
-      const elapsed = now - g.lastWatchdogTick;
-      g.lastWatchdogTick = now;
-
-      const currentFingerprint = getNetworkFingerprint();
-      const networkChanged = currentFingerprint !== g.lastNetworkFingerprint;
-      const wasSleep = elapsed > NETWORK_CHECK_INTERVAL_MS * 6;
-      if (networkChanged) g.lastNetworkFingerprint = currentFingerprint;
-
-      // Real reachability check (TCP 1.1.1.1:443) — not just interface presence
-      const online = await checkInternet();
-      const wasOffline = g.lastOnline === false;
-      g.lastOnline = online;
-
-      if (!online) return; // no internet → idle, don't restart
-
-      const onlineEdge = wasOffline; // offline → online transition
-      if (!networkChanged && !wasSleep && !onlineEdge) return;
-
-      // Wait for DHCP/DNS to settle before probing
-      await new Promise((r) => setTimeout(r, NETWORK_SETTLE_MS));
-
-      const reason = onlineEdge ? "online"
-        : wasSleep && networkChanged ? "sleep+netchange"
-        : wasSleep ? "sleep" : "netchange";
-      safeRestartTunnel(reason).catch(() => {});
-      safeRestartTailscale(reason).catch(() => {});
-    } catch (err) {
-      console.log("[NetworkMonitor] error:", err.message);
-    }
-  }, NETWORK_CHECK_INTERVAL_MS);
-
-  if (g.networkMonitorInterval.unref) g.networkMonitorInterval.unref();
 }
 
 export default initializeApp;

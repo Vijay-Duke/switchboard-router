@@ -2,13 +2,50 @@ import fs from "node:fs";
 import path from "path";
 import os from "os";
 
-const APP_NAME = "9router";
+const APP_NAME = "switchboard";
+const LEGACY_APP_NAME = "9router";
+
+function dirLooksPopulated(dir) {
+  try {
+    if (!fs.existsSync(dir)) return false;
+    // Prefer real SQLite; also accept legacy JSON installs
+    if (fs.existsSync(path.join(dir, "db", "data.sqlite"))) return true;
+    if (fs.existsSync(path.join(dir, "db.json"))) return true;
+    const dbDir = path.join(dir, "db");
+    if (fs.existsSync(dbDir)) {
+      const entries = fs.readdirSync(dbDir);
+      if (entries.some((e) => e.endsWith(".sqlite") || e === "data.sqlite")) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
 
 function defaultDir() {
   if (process.platform === "win32") {
-    return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), APP_NAME);
+    const base = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+    const modern = path.join(base, APP_NAME);
+    const legacy = path.join(base, LEGACY_APP_NAME);
+    if (dirLooksPopulated(modern)) return modern;
+    if (dirLooksPopulated(legacy)) {
+      console.warn(
+        `[DATA_DIR] Using legacy path ${legacy} (rename to ${modern} or set DATA_DIR to migrate)`
+      );
+      return legacy;
+    }
+    return modern;
   }
-  return path.join(os.homedir(), `.${APP_NAME}`);
+  const modern = path.join(os.homedir(), `.${APP_NAME}`);
+  const legacy = path.join(os.homedir(), `.${LEGACY_APP_NAME}`);
+  if (dirLooksPopulated(modern)) return modern;
+  if (dirLooksPopulated(legacy)) {
+    console.warn(
+      `[DATA_DIR] Using legacy path ${legacy} (copy/rename to ${modern} or set DATA_DIR to migrate)`
+    );
+    return legacy;
+  }
+  return modern;
 }
 
 export function getDataDir() {

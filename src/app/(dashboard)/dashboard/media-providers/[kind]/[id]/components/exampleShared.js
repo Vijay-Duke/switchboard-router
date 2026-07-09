@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 export function Row({ label, children }) {
   return (

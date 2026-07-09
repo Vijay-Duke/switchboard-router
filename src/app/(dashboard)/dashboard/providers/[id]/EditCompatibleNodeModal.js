@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
@@ -7,7 +8,6 @@ import { Button, Badge, Input, Modal, Select } from "@/shared/components";
 export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose, isAnthropic }) {
   const [formData, setFormData] = useState({
     name: "",
-    prefix: "",
     apiType: "chat",
     baseUrl: "https://api.openai.com/v1",
   });
@@ -21,10 +21,12 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
     if (node) {
       setFormData({
         name: node.name || "",
-        prefix: node.prefix || "",
         apiType: node.apiType || "chat",
         baseUrl: node.baseUrl || (isAnthropic ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"),
       });
+      setValidationResult(null);
+      setCheckKey("");
+      setCheckModelId("");
     }
   }, [node, isAnthropic]);
 
@@ -34,13 +36,12 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
   ];
 
   const handleSubmit = async () => {
-    if (!formData.name.trim() || !formData.prefix.trim() || !formData.baseUrl.trim()) return;
+    if (!formData.name.trim() || !formData.baseUrl.trim()) return;
     setSaving(true);
     try {
       const payload = {
-        name: formData.name,
-        prefix: formData.prefix,
-        baseUrl: formData.baseUrl,
+        name: formData.name.trim(),
+        baseUrl: formData.baseUrl.trim(),
       };
       if (!isAnthropic) {
         payload.apiType = formData.apiType;
@@ -61,7 +62,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
           baseUrl: formData.baseUrl,
           apiKey: checkKey,
           type: isAnthropic ? "anthropic-compatible" : "openai-compatible",
-          modelId: checkModelId.trim() || undefined
+          modelId: checkModelId.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -82,15 +83,8 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
           label="Name"
           value={formData.name}
           onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-          placeholder={`${isAnthropic ? "Anthropic" : "OpenAI"} Compatible (Prod)`}
-          hint="Required. A friendly label for this node."
-        />
-        <Input
-          label="Prefix"
-          value={formData.prefix}
-          onChange={(e) => setFormData({ ...formData, prefix: e.target.value })}
-          placeholder={isAnthropic ? "ac-prod" : "oc-prod"}
-          hint="Required. Used as the provider prefix for model IDs."
+          placeholder={`${isAnthropic ? "Anthropic" : "OpenAI"} Compatible`}
+          hint="Friendly label for this provider."
         />
         {!isAnthropic && (
           <Select
@@ -105,8 +99,14 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
           value={formData.baseUrl}
           onChange={(e) => setFormData({ ...formData, baseUrl: e.target.value })}
           placeholder={isAnthropic ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1"}
-          hint={`Use the base URL (ending in /v1) for your ${isAnthropic ? "Anthropic" : "OpenAI"}-compatible API.`}
+          hint={`Base URL ending in /v1 for your ${isAnthropic ? "Anthropic" : "OpenAI"}-compatible API.`}
         />
+        {node.prefix ? (
+          <p className="text-xs text-text-muted">
+            Model IDs use prefix <code className="bg-sidebar px-1 rounded font-mono">{node.prefix}</code>
+            {" "}(auto-assigned; stable so combos keep working).
+          </p>
+        ) : null}
         <div className="flex gap-2">
           <Input
             label="API Key (for Check)"
@@ -126,7 +126,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
           value={checkModelId}
           onChange={(e) => setCheckModelId(e.target.value)}
           placeholder="e.g. my-model-id"
-          hint="If provider lacks /models endpoint, enter a model ID to validate via chat/completions instead."
+          hint="If the provider has no /models endpoint, test with a model ID."
         />
         {validationResult && (
           <Badge variant={validationResult === "success" ? "success" : "error"}>
@@ -134,7 +134,11 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
           </Badge>
         )}
         <div className="flex gap-2">
-          <Button onClick={handleSubmit} fullWidth disabled={!formData.name.trim() || !formData.prefix.trim() || !formData.baseUrl.trim() || saving}>
+          <Button
+            onClick={handleSubmit}
+            fullWidth
+            disabled={!formData.name.trim() || !formData.baseUrl.trim() || saving}
+          >
             {saving ? "Saving..." : "Save"}
           </Button>
           <Button onClick={onClose} variant="ghost" fullWidth>

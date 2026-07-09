@@ -355,21 +355,11 @@ export class KiroExecutor extends BaseExecutor {
             }
           }
 
-          // Handle messageStopEvent
+          // Handle messageStopEvent — defer finish until usage arrives when possible.
+          // Emitting finish here + setting finishEmitted dropped metrics usage (wave13).
           if (eventType === "messageStopEvent") {
-            const chunk = {
-              id: responseId,
-              object: "chat.completion.chunk",
-              created,
-              model,
-              choices: [{
-                index: 0,
-                delta: {},
-                finish_reason: state.hasToolCalls ? "tool_calls" : "stop"
-              }]
-            };
-            state.finishEmitted = true;
-            controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(chunk)}\n\n`));
+            state.hasMessageStop = true;
+            state.pendingFinishReason = state.hasToolCalls ? "tool_calls" : "stop";
           }
 
           // Handle contextUsageEvent to extract contextUsagePercentage
@@ -413,8 +403,8 @@ export class KiroExecutor extends BaseExecutor {
             }
           }
 
-          // Emit final chunk only after receiving BOTH meteringEvent AND contextUsageEvent
-          if (state.hasMeteringEvent && state.hasContextUsage && !state.finishEmitted) {
+          // Emit final chunk after messageStop + usage signals (or estimates).
+          if (state.hasMessageStop && !state.finishEmitted && (state.hasMeteringEvent || state.hasContextUsage || state.usage)) {
             state.finishEmitted = true;
 
             // Estimate tokens if not available from events
@@ -469,7 +459,7 @@ export class KiroExecutor extends BaseExecutor {
       },
 
       flush(controller) {
-        // Emit finish chunk if not already sent
+        // Emit finish chunk if not already sent (include usage if we got it late)
         if (!state.finishEmitted) {
           state.finishEmitted = true;
           const finishChunk = {
@@ -480,9 +470,10 @@ export class KiroExecutor extends BaseExecutor {
             choices: [{
               index: 0,
               delta: {},
-              finish_reason: state.hasToolCalls ? "tool_calls" : "stop"
+              finish_reason: state.pendingFinishReason || (state.hasToolCalls ? "tool_calls" : "stop")
             }]
           };
+          if (state.usage) finishChunk.usage = state.usage;
           controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(finishChunk)}\n\n`));
         }
 

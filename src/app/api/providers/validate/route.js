@@ -1,3 +1,4 @@
+// @ts-check
 import { NextResponse } from "next/server";
 import { getProviderNodeById } from "@/models";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider, AI_PROVIDERS } from "@/shared/constants/providers";
@@ -152,10 +153,12 @@ export async function POST(request) {
 
         let normalizedBase = node.baseUrl?.trim().replace(/\/$/, "") || "";
         if (normalizedBase.endsWith("/messages")) {
-          normalizedBase = normalizedBase.slice(0, -9); // remove /messages
+          normalizedBase = normalizedBase.slice(0, -"/messages".length);
         }
-
-        const messagesUrl = `${normalizedBase}/v1/messages`;
+        // Avoid /v1/v1/messages when base already ends with /v1
+        const messagesUrl = normalizedBase.endsWith("/v1")
+          ? `${normalizedBase}/messages`
+          : `${normalizedBase}/v1/messages`;
         const model = node.defaultModel || "claude-3-haiku-20240307";
 
         const res = await fetch(messagesUrl, {

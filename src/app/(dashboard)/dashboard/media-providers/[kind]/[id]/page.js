@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import { useParams, notFound, useRouter } from "next/navigation";
 import Link from "next/link";

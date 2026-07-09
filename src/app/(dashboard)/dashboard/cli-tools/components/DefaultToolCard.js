@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import { useState } from "react";
 import { Card, ModelSelectModal } from "@/shared/components";
@@ -19,7 +20,7 @@ export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, ba
   const replaceVars = (text) => {
     const keyToUse = (selectedApiKey && selectedApiKey.trim()) 
       ? selectedApiKey 
-      : (!cloudEnabled ? "sk_9router" : "your-api-key");
+      : (!cloudEnabled ? "sk_switchboard" : "your-api-key");
     
     // Add /v1 suffix only if not already present (DRY - avoid duplicate)
     const normalizedBaseUrl = baseUrl || "http://localhost:20128";
@@ -103,11 +104,11 @@ export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, ba
     return (
       <div className="flex flex-col gap-2 mb-4">
         {tool.notes.map((note, index) => {
-          // Skip cloudCheck note if tunnel or cloud is enabled
-          if (note.type === "cloudCheck" && (cloudEnabled || tunnelEnabled)) return null;
-          
+          // cloudCheck notes assumed remote tunnel/cloud — not applicable in local-only mode
+          if (note.type === "cloudCheck") return null;
+
           const isWarning = note.type === "warning";
-          const isError = note.type === "cloudCheck" && !cloudEnabled && !tunnelEnabled;
+          const isError = false;
           
           let bgClass = "bg-blue-500/10 border-blue-500/30";
           let textClass = "text-blue-600 dark:text-blue-400";
@@ -138,8 +139,8 @@ export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, ba
   };
 
   const canShowGuide = () => {
-    if (tool.requiresExternalUrl && !cloudEnabled && !tunnelEnabled) return false;
-    if (tool.requiresCloud && !cloudEnabled) return false;
+    // Local-only product: always show setup against local base URL.
+    if (tool.requiresCloud) return false;
     return true;
   };
 

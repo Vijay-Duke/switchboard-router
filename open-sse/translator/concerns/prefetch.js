@@ -15,7 +15,7 @@ function isRemoteUrl(url) {
 }
 
 // Collect {get,set} accessors for every remote image URL in a source body.
-function collectImageRefs(body, sourceFormat) {
+export function collectImageRefs(body, sourceFormat) {
   const refs = [];
   const pushOpenAI = (messages) => {
     for (const msg of messages || []) {
@@ -38,6 +38,30 @@ function collectImageRefs(body, sourceFormat) {
       }
     }
   };
+  // Responses API / Codex: images live on input[].content[] as input_image (wave15)
+  const pushResponsesInput = (input) => {
+    for (const item of input || []) {
+      if (!Array.isArray(item?.content)) continue;
+      for (const block of item.content) {
+        if (block?.type !== "input_image") continue;
+        const url = typeof block.image_url === "string"
+          ? block.image_url
+          : block.image_url?.url || block.file_id;
+        if (isRemoteUrl(url)) {
+          refs.push({
+            get: () => (typeof block.image_url === "string"
+              ? block.image_url
+              : block.image_url?.url || block.file_id),
+            set: (v) => {
+              if (typeof block.image_url === "string") block.image_url = v;
+              else if (block.image_url && typeof block.image_url === "object") block.image_url.url = v;
+              else block.image_url = v;
+            },
+          });
+        }
+      }
+    }
+  };
 
   switch (sourceFormat) {
     case FORMATS.OPENAI:
@@ -46,6 +70,13 @@ function collectImageRefs(body, sourceFormat) {
     case FORMATS.CURSOR:
     case FORMATS.COMMANDCODE:
       pushOpenAI(body.messages);
+      // chat+input hybrid: clients may put images on input[] (wave15)
+      if (Array.isArray(body.input)) pushResponsesInput(body.input);
+      break;
+    case FORMATS.OPENAI_RESPONSES:
+    case FORMATS.OPENAI_RESPONSE:
+    case FORMATS.CODEX:
+      pushResponsesInput(body.input);
       break;
     case FORMATS.CLAUDE:
       for (const msg of body.messages || []) {
@@ -67,6 +98,7 @@ function collectImageRefs(body, sourceFormat) {
       break;
     default:
       pushOpenAI(body.messages);
+      if (Array.isArray(body.input)) pushResponsesInput(body.input);
   }
   return refs;
 }

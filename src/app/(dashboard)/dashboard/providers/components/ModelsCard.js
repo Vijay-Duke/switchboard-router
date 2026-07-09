@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import { useState, useCallback, useEffect } from "react";
 import PropTypes from "prop-types";

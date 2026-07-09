@@ -28,12 +28,16 @@ export function compressMessages(body, enabled) {
 
       // Shape 4: OpenAI Responses — top-level { type:"function_call_output", output: string | [{type:"input_text", text}] }
       if (msg.type === "function_call_output") {
+        // Preserve error traces (parity with Claude is_error / Kiro status:error)
+        if (msg.is_error === true || msg.status === "error") continue;
         if (typeof msg.output === "string") {
+          if (looksLikeToolError(msg.output)) continue;
           msg.output = compressText(msg.output, stats, "openai-responses-string");
         } else if (Array.isArray(msg.output)) {
           for (let k = 0; k < msg.output.length; k++) {
             const part = msg.output[k];
             if (part && part.type === "input_text" && typeof part.text === "string") {
+              if (looksLikeToolError(part.text)) continue;
               part.text = compressText(part.text, stats, "openai-responses-array");
             }
           }
@@ -43,6 +47,7 @@ export function compressMessages(body, enabled) {
 
       // Shape 1: OpenAI tool message — { role:"tool", content: "string" }
       if (msg.role === "tool" && typeof msg.content === "string") {
+        if (msg.is_error === true || looksLikeToolError(msg.content)) continue;
         msg.content = compressText(msg.content, stats, "openai-tool");
         continue;
       }
@@ -51,9 +56,11 @@ export function compressMessages(body, enabled) {
 
       // Shape 1b: OpenAI tool message — { role:"tool", content:[{type:"text", text:"..."}] }
       if (msg.role === "tool") {
+        if (msg.is_error === true) continue;
         for (let k = 0; k < msg.content.length; k++) {
           const part = msg.content[k];
           if (part && part.type === "text" && typeof part.text === "string") {
+            if (looksLikeToolError(part.text)) continue;
             part.text = compressText(part.text, stats, "openai-tool-array");
           }
         }
@@ -67,13 +74,15 @@ export function compressMessages(body, enabled) {
         if (block.is_error === true) continue; // preserve error traces
 
         if (typeof block.content === "string") {
-          // Shape 2: claude string form
+          // Shape 2: claude string form — also skip error-shaped content (wave14)
+          if (looksLikeToolError(block.content)) continue;
           block.content = compressText(block.content, stats, "claude-string");
         } else if (Array.isArray(block.content)) {
           // Shape 3: claude array form — compress each text part
           for (let k = 0; k < block.content.length; k++) {
             const part = block.content[k];
             if (part && part.type === "text" && typeof part.text === "string") {
+              if (looksLikeToolError(part.text)) continue;
               part.text = compressText(part.text, stats, "claude-array");
             }
           }
@@ -105,6 +114,7 @@ function compressKiroFormat(body, enabled) {
 
         for (const part of tr.content) {
           if (part && typeof part.text === "string") {
+            if (looksLikeToolError(part.text)) continue;
             part.text = compressText(part.text, stats, "kiro-tool-result");
           }
         }
@@ -115,6 +125,13 @@ function compressKiroFormat(body, enabled) {
     return null;
   }
   return stats;
+}
+
+/** Heuristic: preserve error/stack traces in OpenAI tool results (fail-open for traces). */
+function looksLikeToolError(text) {
+  if (typeof text !== "string" || text.length < 8) return false;
+  return /^\s*(Error|Exception|Traceback|TypeError|ReferenceError|SyntaxError|Failed)\b/m.test(text)
+    || /\bat\s+\S+\s+\([^)]+:\d+:\d+\)/.test(text);
 }
 
 function compressText(text, stats, shape) {

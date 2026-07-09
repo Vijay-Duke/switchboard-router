@@ -1,3 +1,4 @@
+// @ts-check
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { LOCALE_COOKIE, normalizeLocale, isSupportedLocale } from "@/i18n/config";

@@ -72,7 +72,7 @@ export default function Avatar({
   return (
     <div
       className={cn(
-        "rounded-full flex items-center justify-center font-semibold text-white",
+        "rounded-full flex items-center justify-center font-semibold text-on-primary",
         "ring-2 ring-white dark:ring-surface-dark shadow-sm",
         sizes[size],
         getColorFromName(name),

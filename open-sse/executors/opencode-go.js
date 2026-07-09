@@ -43,7 +43,8 @@ export class OpenCodeGoExecutor extends BaseExecutor {
     return headers;
   }
 
-  transformRequest(model, body) {
+  transformRequest(model, body, stream, credentials) {
+    super.transformRequest(model, body, stream, credentials);
     return injectReasoningContent({ provider: this.provider, model, body });
   }
 }

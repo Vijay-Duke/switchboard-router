@@ -28,24 +28,33 @@ export function checkFallbackError(status, errorText, backoffLevel = 0) {
   for (const rule of ERROR_RULES) {
     // Text-based rule: match substring in error message
     if (rule.text && lowerError && lowerError.includes(rule.text)) {
+      const shouldFallback = rule.shouldFallback !== false;
       if (rule.backoff) {
         const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
-        return { shouldFallback: true, cooldownMs: getQuotaCooldown(newLevel), newBackoffLevel: newLevel };
+        return { shouldFallback, cooldownMs: getQuotaCooldown(newLevel), newBackoffLevel: newLevel };
       }
-      return { shouldFallback: true, cooldownMs: rule.cooldownMs };
+      return { shouldFallback, cooldownMs: rule.cooldownMs || 0 };
     }
 
     // Status-based rule: match HTTP status code
     if (rule.status && rule.status === status) {
+      const shouldFallback = rule.shouldFallback !== false;
       if (rule.backoff) {
         const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
-        return { shouldFallback: true, cooldownMs: getQuotaCooldown(newLevel), newBackoffLevel: newLevel };
+        return { shouldFallback, cooldownMs: getQuotaCooldown(newLevel), newBackoffLevel: newLevel };
       }
-      return { shouldFallback: true, cooldownMs: rule.cooldownMs };
+      return { shouldFallback, cooldownMs: rule.cooldownMs || 0 };
     }
   }
 
-  // Default: transient cooldown for any unmatched error
+  // Client errors that didn't match a rule are non-retryable (bad schema, invalid
+  // tool shape, etc.). Rotating accounts won't fix a 400 from the request body.
+  // 408 Request Timeout and 429 are handled above / as backoff when present.
+  if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+    return { shouldFallback: false, cooldownMs: 0 };
+  }
+
+  // Default: transient cooldown for 5xx / unknown
   return { shouldFallback: true, cooldownMs: TRANSIENT_COOLDOWN_MS };
 }
 

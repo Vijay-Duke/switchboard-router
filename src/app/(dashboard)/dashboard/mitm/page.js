@@ -1,3 +1,4 @@
+// @ts-check
 import MitmPageClient from "./MitmPageClient";
 
 export default function MitmPage() {

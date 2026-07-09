@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import { useState, useEffect, useCallback } from "react";
 import Card from "@/shared/components/Card";

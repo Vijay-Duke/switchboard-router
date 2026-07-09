@@ -10,6 +10,19 @@ import { extractReasoningText } from "../concerns/reasoning.js";
 // is then a no-op. Kept intentionally; do NOT couple to request's empty prefix.
 const CLAUDE_OAUTH_TOOL_PREFIX = "proxy_";
 
+// Detect and deduplicate doubled JSON (e.g. {"query":"x"}{"query":"x"}).
+// Some OpenAI-compatible models emit tool arguments as the same object twice.
+// decolua/9router PR#2279.
+function deduplicateDoubledJson(str) {
+  if (!str || str.length < 4) return str;
+  for (let splitAt = 2; splitAt <= Math.floor(str.length / 2); splitAt++) {
+    const left = str.slice(0, splitAt);
+    const right = str.slice(splitAt);
+    if (left === right) return left;
+  }
+  return str;
+}
+
 // Sanitize tool call arguments to fix bad params from non-Anthropic models
 function sanitizeToolArgs(toolName, argsJson) {
   try {
@@ -20,6 +33,17 @@ function sanitizeToolArgs(toolName, argsJson) {
     if (name === "Read") sanitizeReadArgs(args);
     return JSON.stringify(args);
   } catch {
+    const deduplicated = deduplicateDoubledJson(argsJson);
+    if (deduplicated !== argsJson) {
+      try {
+        const args = JSON.parse(deduplicated);
+        const name = toolName.startsWith(CLAUDE_OAUTH_TOOL_PREFIX)
+          ? toolName.slice(CLAUDE_OAUTH_TOOL_PREFIX.length)
+          : toolName;
+        if (name === "Read") sanitizeReadArgs(args);
+        return JSON.stringify(args);
+      } catch { /* fall through */ }
+    }
     return argsJson;
   }
 }
@@ -184,13 +208,15 @@ export function openaiToClaudeResponse(chunk, state) {
     for (const tc of delta.tool_calls) {
       const idx = tc.index ?? 0;
 
-      // GLM/fireworks repeats id+null-name on every arg chunk; open block once per idx
-      if (tc.id && !state.toolCalls.has(idx)) {
+      // Open tool block once per index. Some providers send name/args before id
+      // (or omit id entirely on first chunk) — requiring tc.id dropped those tools.
+      if (!state.toolCalls.has(idx) && (tc.id || tc.function?.name || tc.function?.arguments)) {
         stopThinkingBlock(state, results);
         stopTextBlock(state, results);
 
         const toolBlockIndex = state.nextBlockIndex++;
-        state.toolCalls.set(idx, { id: tc.id, name: tc.function?.name || "", blockIndex: toolBlockIndex });
+        const toolId = tc.id || `toolu_${Date.now()}_${idx}`;
+        state.toolCalls.set(idx, { id: toolId, name: tc.function?.name || "", blockIndex: toolBlockIndex });
 
         // Strip prefix from tool name for response
         let toolName = tc.function?.name || "";
@@ -203,11 +229,18 @@ export function openaiToClaudeResponse(chunk, state) {
           index: toolBlockIndex,
           content_block: {
             type: CLAUDE_BLOCK.TOOL_USE,
-            id: tc.id,
+            id: toolId,
             name: toolName,
             input: {}
           }
         });
+      } else if (tc.id && state.toolCalls.has(idx)) {
+        // Late-arriving real id after synthetic open: prefer real id in state.
+        // (content_block_start already sent with synthetic — clients pair on that.)
+        const existing = state.toolCalls.get(idx);
+        if (existing && String(existing.id).startsWith("toolu_")) {
+          existing.id = tc.id;
+        }
       }
 
       if (tc.function?.arguments) {
@@ -221,8 +254,11 @@ export function openaiToClaudeResponse(chunk, state) {
     }
   }
 
-  // Finish
-  if (choice.finish_reason) {
+  // Finish — guard against duplicate finish_reason chunks (common with
+  // OpenAI-compatible models; without this tool args are emitted twice →
+  // doubled JSON). decolua/9router PR#2279.
+  if (choice.finish_reason && !state.claudeFinishHandled) {
+    state.claudeFinishHandled = true;
     stopThinkingBlock(state, results);
     stopTextBlock(state, results);
 

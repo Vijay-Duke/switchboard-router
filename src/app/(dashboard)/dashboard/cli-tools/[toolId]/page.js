@@ -1,3 +1,4 @@
+// @ts-check
 import { notFound } from "next/navigation";
 import { CLI_TOOLS } from "@/shared/constants/cliTools";
 import { getMachineId } from "@/shared/utils/machine";

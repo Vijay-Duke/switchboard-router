@@ -242,7 +242,7 @@ export const CLI_TOOLS = {
     defaultCommand: "amp",
     modelAliases: ["g25p", "g25f", "cs45", "g54"],
     notes: [
-      { type: "info", text: "Use 9Router model aliases to keep Amp shorthand mappings stable across provider updates." },
+      { type: "info", text: "Use Switchboard model aliases to keep Amp shorthand mappings stable across provider updates." },
       { type: "warning", text: "Suggested shorthand examples: g25p → gemini/gemini-2.5-pro, g25f → gemini/gemini-2.5-flash, cs45 → cc/claude-sonnet-4-5-20250929." },
     ],
     guideSteps: [
@@ -250,7 +250,7 @@ export const CLI_TOOLS = {
       { step: 2, title: "API Key", type: "apiKeySelector" },
       { step: 3, title: "Base URL", value: "{{baseUrl}}", copyable: true },
       { step: 4, title: "Select Model", type: "modelSelector" },
-      { step: 5, title: "Add Shorthands", desc: "Map Amp shorthand names such as g25p or cs45 to 9Router aliases in your local config." },
+      { step: 5, title: "Add Shorthands", desc: "Map Amp shorthand names such as g25p or cs45 to Switchboard aliases in your local config." },
     ],
     codeBlock: {
       language: "bash",
@@ -267,15 +267,15 @@ amp --model "{{model}}"
     name: "Qwen Code",
     image: "/providers/qwen.png",
     color: "#10B981",
-    description: "Alibaba Qwen Code CLI — supports OpenAI, Anthropic & Gemini providers via 9Router",
+    description: "Alibaba Qwen Code CLI — supports OpenAI, Anthropic & Gemini providers via Switchboard",
     docsUrl: "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/model-providers/",
     configType: "guide",
     defaultCommand: "qwen",
     notes: [
-      { type: "info", text: "Qwen Code supports multiple provider types (openai, anthropic, gemini) via modelProviders in settings.json. 9Router works as an OpenAI-compatible endpoint." },
-      { type: "info", text: "Any model available in 9Router can be used — not just Qwen models. Select from Qwen, Claude, Gemini, GPT, and more." },
+      { type: "info", text: "Qwen Code supports multiple provider types (openai, anthropic, gemini) via modelProviders in settings.json. Switchboard works as an OpenAI-compatible endpoint." },
+      { type: "info", text: "Any model available in Switchboard can be used — not just Qwen models. Select from Qwen, Claude, Gemini, GPT, and more." },
       { type: "warning", text: "Config path: Linux/macOS ~/.qwen/settings.json • Windows %USERPROFILE%\\.qwen\\settings.json" },
-      { type: "error", text: "Qwen OAuth free tier was discontinued on 2026-04-15. Use 9Router with alicode/openrouter/anthropic/gemini providers instead." },
+      { type: "error", text: "Qwen OAuth free tier was discontinued on 2026-04-15. Use Switchboard with alicode/openrouter/anthropic/gemini providers instead." },
     ],
     modelAliases: ["coder-model", "qwen3-coder-plus", "qwen3-coder-flash", "vision-model", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gemini-3-flash", "gemini-3.1-pro-high"],
     defaultModels: [
@@ -327,7 +327,7 @@ amp --model "{{model}}"
       { id: "deepseek-chat", name: "DeepSeek V3 Chat", alias: "deepseek-chat" },
     ],
     notes: [
-      { type: "info", text: "DeepSeek TUI uses ~/.deepseek/config.toml for configuration. 9Router will update the provider to 'openai' mode with your base_url, api_key, and model." },
+      { type: "info", text: "DeepSeek TUI uses ~/.deepseek/config.toml for configuration. Switchboard will update the provider to 'openai' mode with your base_url, api_key, and model." },
       { type: "warning", text: "Config path: Linux/macOS ~/.deepseek/config.toml • Windows %USERPROFILE%\\.deepseek\\config.toml" },
     ],
   },
@@ -346,7 +346,7 @@ amp --model "{{model}}"
       },
       {
         type: "info",
-        text: "Configure 9router as an OpenAI-compatible provider to route all jcode requests through 9router's optimization layer."
+        text: "Configure switchboard as an OpenAI-compatible provider to route all jcode requests through switchboard's optimization layer."
       },
       {
         type: "warning",
@@ -360,23 +360,99 @@ amp --model "{{model}}"
       { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro", alias: "gemini", defaultValue: "gemini/gemini-3.1-pro" },
     ],
   },
-  // HIDDEN: gemini-cli
-  // "gemini-cli": {
-  //   id: "gemini-cli",
-  //   name: "Gemini CLI",
-  //   icon: "terminal",
-  //   color: "#4285F4",
-  //   description: "Google Gemini CLI",
-  //   configType: "env",
-  //   envVars: {
-  //     baseUrl: "GEMINI_API_BASE_URL",
-  //     model: "GEMINI_MODEL",
-  //   },
-  //   defaultModels: [
-  //     { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", alias: "pro" },
-  //     { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", alias: "flash" },
-  //   ],
-  // },
+  grok: {
+    id: "grok",
+    name: "Grok CLI",
+    image: "/providers/xai.png",
+    color: "#000000",
+    description: "Open-source Grok terminal coding agent (grok-dev) via Switchboard",
+    docsUrl: "https://github.com/superagent-ai/grok-cli",
+    configType: "custom",
+    defaultCommand: "grok",
+    notes: [
+      {
+        type: "info",
+        when: "installed",
+        text: "Writes ~/.grok/user-settings.json (apiKey, defaultModel) and ~/.grok/switchboard.env (GROK_BASE_URL). Source the env file before launching grok — the CLI only reads base URL from the environment.",
+      },
+      {
+        type: "install",
+        when: "not_installed",
+        text: "Install: curl -fsSL https://raw.githubusercontent.com/superagent-ai/grok-cli/main/install.sh | bash  ·  or  bun add -g grok-dev",
+      },
+    ],
+    defaultModels: [
+      { id: "xai/grok-4", name: "Grok 4", alias: "grok-4", defaultValue: "xai/grok-4" },
+      { id: "xai/grok-3", name: "Grok 3", alias: "grok-3", defaultValue: "xai/grok-3" },
+      { id: "xai/grok-3-mini", name: "Grok 3 Mini", alias: "grok-3-mini", defaultValue: "xai/grok-3-mini" },
+    ],
+  },
+  pi: {
+    id: "pi",
+    name: "Pi",
+    image: "/providers/pi.svg",
+    color: "#38BDF8",
+    description: "Minimal terminal coding agent (pi.dev) with custom OpenAI-compatible provider",
+    docsUrl: "https://pi.dev",
+    configType: "custom",
+    defaultCommand: "pi",
+    notes: [
+      {
+        type: "info",
+        when: "installed",
+        text: "Adds a switchboard provider to ~/.pi/agent/models.json. In Pi use /model (Ctrl+L) and pick switchboard/<model-id>.",
+      },
+      {
+        type: "install",
+        when: "not_installed",
+        text: "Install: npm install -g --ignore-scripts @earendil-works/pi-coding-agent  ·  or  curl -fsSL https://pi.dev/install.sh | sh",
+      },
+    ],
+  },
+  aider: {
+    id: "aider",
+    name: "Aider",
+    image: "/providers/aider.svg",
+    color: "#34D399",
+    description: "AI pair programming in your terminal (OpenAI-compatible)",
+    docsUrl: "https://aider.chat",
+    configType: "custom",
+    defaultCommand: "aider",
+    notes: [
+      {
+        type: "info",
+        when: "installed",
+        text: "Writes ~/.aider.conf.yml with openai-api-base, openai-api-key, and model (openai/<id>).",
+      },
+      {
+        type: "install",
+        when: "not_installed",
+        text: "Install: pipx install aider-chat  ·  or  python -m pip install aider-chat",
+      },
+    ],
+  },
+  "gemini-cli": {
+    id: "gemini-cli",
+    name: "Gemini CLI",
+    image: "/providers/gemini-cli.png",
+    color: "#4285F4",
+    description: "Google Gemini CLI pointed at Switchboard (OpenAI-compatible env)",
+    docsUrl: "https://github.com/google-gemini/gemini-cli",
+    configType: "custom",
+    defaultCommand: "gemini",
+    notes: [
+      {
+        type: "info",
+        when: "installed",
+        text: "Writes ~/.gemini/switchboard.env (OPENAI_* + GEMINI_*). Source it before running gemini so requests hit Switchboard.",
+      },
+      {
+        type: "install",
+        when: "not_installed",
+        text: "Install: npm install -g @google/gemini-cli",
+      },
+    ],
+  },
 };
 
 // Get all provider models for mapping dropdown

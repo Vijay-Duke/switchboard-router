@@ -115,8 +115,27 @@ export async function refreshVertexToken(saJson, log) {
 
 function vertexRefreshHandler(c, log) {
   const saJson = parseVertexSaJson(c.apiKey);
-  if (!saJson) return null;
-  return refreshVertexToken(saJson, log);
+  if (saJson) return refreshVertexToken(saJson, log);
+  // ADC authorized_user in apiKey (wave13) — no OAuth refreshToken field
+  try {
+    const parsed = typeof c.apiKey === "string" ? JSON.parse(c.apiKey) : null;
+    if (
+      parsed?.type === "authorized_user" &&
+      parsed.refresh_token &&
+      parsed.client_id &&
+      parsed.client_secret
+    ) {
+      return refreshGoogleToken(
+        parsed.refresh_token,
+        parsed.client_id,
+        parsed.client_secret,
+        log
+      );
+    }
+  } catch {
+    /* not JSON */
+  }
+  return null;
 }
 
 const REFRESH_HANDLERS = {
@@ -135,6 +154,11 @@ const REFRESH_HANDLERS = {
 };
 
 export async function getAccessToken(provider, credentials, log) {
+  // Vertex SA / ADC mint from apiKey JSON — no OAuth refreshToken (wave12/13)
+  const vertexLike = provider === "vertex" || provider === "vertex-partner";
+  if (vertexLike && credentials?.apiKey) {
+    return _getAccessTokenInternal(provider, credentials, log);
+  }
   if (!credentials || !credentials.refreshToken || typeof credentials.refreshToken !== "string") {
     log?.warn?.("TOKEN_REFRESH", `No valid refresh token available for provider: ${provider}`);
     return null;
@@ -155,7 +179,9 @@ async function _getAccessTokenInternal(provider, credentials, log) {
 }
 
 export async function refreshTokenByProvider(provider, credentials, log) {
-  if (!credentials.refreshToken) return null;
+  // Vertex SA/ADC use apiKey JSON, not refreshToken (wave12)
+  const vertexLike = provider === "vertex" || provider === "vertex-partner";
+  if (!credentials.refreshToken && !(vertexLike && credentials?.apiKey)) return null;
   const handler = REFRESH_HANDLERS[provider];
   return handler ? handler(credentials, log) : refreshAccessToken(provider, credentials.refreshToken, credentials, log);
 }

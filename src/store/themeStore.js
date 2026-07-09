@@ -32,22 +32,10 @@ const useThemeStore = create(
   )
 );
 
-// Apply theme to document
-function applyTheme(theme) {
+// Apply theme to document — console UI is always warm-dark (mock match)
+function applyTheme(_theme) {
   if (typeof window === "undefined") return;
-
-  const root = document.documentElement;
-  const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light";
-
-  const effectiveTheme = theme === "system" ? systemTheme : theme;
-
-  if (effectiveTheme === "dark") {
-    root.classList.add("dark");
-  } else {
-    root.classList.remove("dark");
-  }
+  document.documentElement.classList.add("dark");
 }
 
 export default useThemeStore;

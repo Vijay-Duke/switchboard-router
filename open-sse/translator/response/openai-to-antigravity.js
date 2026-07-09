@@ -46,7 +46,14 @@ export function openaiToAntigravityResponse(chunk, state) {
       }
       const accum = state._toolCallAccum[idx];
       if (tc.id) accum.id = tc.id;
-      if (tc.function?.name) accum.name += tc.function.name;
+      // Name arrives once (or as fragments without full re-send). Prefer set-if-empty
+      // then only append when the delta is a non-duplicate fragment (wave9 — name +=
+      // was doubling "lookup" → "lookuplookup" and breaking toolNameMap).
+      if (tc.function?.name) {
+        const n = tc.function.name;
+        if (!accum.name) accum.name = n;
+        else if (!accum.name.endsWith(n) && !n.startsWith(accum.name)) accum.name += n;
+      }
       if (tc.function?.arguments) accum.arguments += tc.function.arguments;
     }
     // Skip emit — wait for finish_reason

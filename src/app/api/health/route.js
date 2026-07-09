@@ -1,3 +1,4 @@
+// @ts-check
 import { NextResponse } from "next/server";
 
 const CORS_HEADERS = {

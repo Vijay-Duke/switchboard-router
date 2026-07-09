@@ -1,3 +1,4 @@
+// @ts-check
 "use server";
 
 import { NextResponse } from "next/server";
@@ -13,6 +14,10 @@ import { GET as clineGet } from "../cline-settings/route";
 import { GET as kiloGet } from "../kilo-settings/route";
 import { GET as deepseekTuiGet } from "../deepseek-tui-settings/route";
 import { GET as jcodeGet } from "../jcode-settings/route";
+import { GET as grokGet } from "../grok-settings/route";
+import { GET as piGet } from "../pi-settings/route";
+import { GET as aiderGet } from "../aider-settings/route";
+import { GET as geminiCliGet } from "../gemini-cli-settings/route";
 
 const STATUS_GETTERS = {
   claude: claudeGet,
@@ -27,6 +32,10 @@ const STATUS_GETTERS = {
   kilo: kiloGet,
   "deepseek-tui": deepseekTuiGet,
   jcode: jcodeGet,
+  grok: grokGet,
+  pi: piGet,
+  aider: aiderGet,
+  "gemini-cli": geminiCliGet,
 };
 
 // Batch endpoint: gather all CLI tool statuses in one round-trip

@@ -1,3 +1,4 @@
+// @ts-check
 // Ensure proxyFetch is loaded to patch globalThis.fetch
 import "open-sse/index.js";
 

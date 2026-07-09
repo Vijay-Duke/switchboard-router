@@ -13,7 +13,7 @@
  *   {"type":"finish",...}
  *
  * Each upstream "event" arrives as one JSON object per line — we receive it as a string chunk
- * already split per line by the upstream SSE/JSON-line reader in 9router.
+ * already split per line by the upstream SSE/JSON-line reader in switchboard.
  */
 import { register } from "../index.js";
 import { FORMATS } from "../formats.js";
@@ -25,18 +25,24 @@ import { fallbackToolCallId } from "../concerns/toolCall.js";
 import { toOpenAIFinish } from "../concerns/finishReason.js";
 
 function ensureState(state, model) {
+  // Always ensure tool maps exist. When the client speaks openai-responses,
+  // initState() pre-sets responseId, so the old `if (!state.responseId)` guard
+  // skipped Map init and crashed on tool-call events (state.toolIndexById.has).
+  // decolua/9router#2395.
   if (!state.responseId) {
     state.responseId = `chatcmpl-${Date.now()}`;
     state.created = Math.floor(Date.now() / 1000);
     state.model = state.model || model || "commandcode";
     state.chunkIndex = 0;
     state.toolIndex = 0;
-    state.toolIndexById = new Map();
-    state.openTools = new Set();
     state.openText = false;
     state.finishReason = null;
     state.usage = null;
   }
+  if (!(state.toolIndexById instanceof Map)) state.toolIndexById = new Map();
+  if (!(state.openTools instanceof Set)) state.openTools = new Set();
+  if (typeof state.toolIndex !== "number") state.toolIndex = 0;
+  if (typeof state.chunkIndex !== "number") state.chunkIndex = 0;
 }
 
 function makeChunk(state, delta, finishReason = null) {

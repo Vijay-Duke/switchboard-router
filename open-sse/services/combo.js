@@ -251,7 +251,12 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
     log.info("COMBO", `Trying model ${i + 1}/${rotatedModels.length}: ${modelStr}`);
 
     try {
-      const result = await handleSingleModel(body, modelStr);
+      // Deep-clone so modality/tool/strip mutations in one attempt don't poison
+      // later combo models (wave12).
+      const attemptBody = typeof structuredClone === "function"
+        ? structuredClone(body)
+        : JSON.parse(JSON.stringify(body));
+      const result = await handleSingleModel(attemptBody, modelStr);
       
       // Success (2xx) - return response
       if (result.ok) {
@@ -374,12 +379,20 @@ function extractPanelText(json) {
  * Append a synthesized user turn to whichever message array the request format uses.
  * Preserves the original conversation + system prompt so the judge has full context.
  */
-function appendUserTurn(body, text) {
+export function appendUserTurn(body, text) {
   const next = { ...body };
   if (Array.isArray(body.messages)) {
     next.messages = [...body.messages, { role: "user", content: text }];
   } else if (Array.isArray(body.input)) {
-    next.input = [...body.input, { role: "user", content: text }];
+    // Responses API requires typed message items (wave15)
+    next.input = [
+      ...body.input,
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text }],
+      },
+    ];
   } else if (Array.isArray(body.contents)) {
     next.contents = [...body.contents, { role: "user", parts: [{ text }] }];
   } else {

@@ -1,3 +1,4 @@
+// @ts-check
 import { handleEmbeddings } from "@/sse/handlers/embeddings.js";
 
 /**

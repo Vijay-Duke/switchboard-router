@@ -21,11 +21,6 @@ export {
   createProviderNode, updateProviderNode, deleteProviderNode,
 } from "./repos/nodesRepo.js";
 
-// Proxy pools
-export {
-  getProxyPools, getProxyPoolById,
-  createProxyPool, updateProxyPool, deleteProxyPool,
-} from "./repos/proxyPoolsRepo.js";
 
 // API keys
 export {
@@ -66,6 +61,30 @@ export {
 export {
   saveRequestDetail, getRequestDetails, getRequestDetailById,
 } from "./repos/requestDetailsRepo.js";
+
+// Auto-route events + learning versions
+export {
+  insertRoutingEvent,
+  getPromotedLearningVersion,
+  listLearningVersions,
+  createLearningVersion,
+  getLearningVersionById,
+  promoteLearningVersion,
+  rollbackLearningVersion,
+  countRoutingEvents,
+  countRoutingAttempts,
+  getRoutingEvents,
+  getScoreTrendByDay,
+  getLastScheduledLearnAt,
+  getClusterWorkerStats,
+  getModelPerfStats,
+  deleteOldRoutingEvents,
+  deleteRoutingDataForCombo,
+  rekeyRoutingDataForCombo,
+  setRoutingWriteHook,
+  getClusterLatencyP50,
+  listCombosWithRoutingEvents,
+} from "./repos/routingRepo.js";
 
 // Export/import full DB
 export async function exportDb() {

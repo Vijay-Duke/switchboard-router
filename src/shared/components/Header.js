@@ -1,330 +1,241 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import PropTypes from "prop-types";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import HeaderMenu from "@/shared/components/HeaderMenu";
 import HeaderLanguage from "@/shared/components/HeaderLanguage";
-import ThemeToggle from "@/shared/components/ThemeToggle";
-import DonateModal from "@/shared/components/DonateModal";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS } from "@/shared/constants/providers";
 import { translate } from "@/i18n/runtime";
 
+/**
+ * Header matches Switchboard Console mock:
+ * mono crumbs left · online + learning badges right (height 53px).
+ */
 const getPageInfo = (pathname) => {
-  if (!pathname) return { title: "", description: "", breadcrumbs: [] };
+  if (!pathname) return { section: "Console", crumb: "", breadcrumbs: [] };
 
-  // Media provider detail: /dashboard/media-providers/[kind]/[id]
   const mediaDetailMatch = pathname.match(/\/media-providers\/([^/]+)\/([^/]+)$/);
   if (mediaDetailMatch) {
     const kindId = mediaDetailMatch[1];
     const providerId = mediaDetailMatch[2];
     const kindConfig = MEDIA_PROVIDER_KINDS.find((k) => k.id === kindId);
     const provider = AI_PROVIDERS[providerId];
+    const kindLabel =
+      kindId === "web" ? "Web Fetch & Search" : kindConfig?.label || kindId;
     return {
-      title: provider?.name || providerId,
-      description: "",
+      section: "Tools",
+      crumb: provider?.name || providerId,
       breadcrumbs: [
-        { label: "Media Providers", href: `/dashboard/media-providers/${kindId}` },
-        { label: kindConfig?.label || kindId, href: `/dashboard/media-providers/${kindId}` },
+        { label: "Media", href: "/dashboard/media-providers" },
+        { label: kindLabel, href: `/dashboard/media-providers/${kindId}` },
         { label: provider?.name || providerId, image: `/providers/${providerId}.png` },
       ],
     };
   }
 
-  // Media provider kind: /dashboard/media-providers/[kind]
+  if (pathname === "/dashboard/media-providers" || pathname === "/dashboard/media-providers/") {
+    return { section: "Tools", crumb: "Media", breadcrumbs: [] };
+  }
+
   const mediaKindMatch = pathname.match(/\/media-providers\/([^/]+)$/);
   if (mediaKindMatch) {
     const kindId = mediaKindMatch[1];
     const kindConfig = MEDIA_PROVIDER_KINDS.find((k) => k.id === kindId);
+    const label =
+      kindId === "web"
+        ? "Web Fetch & Search"
+        : kindConfig?.label || kindId;
     return {
-      title: kindConfig?.label || kindId,
-      description: `Manage your ${kindConfig?.label || kindId} providers`,
-      icon: kindConfig?.icon || "perm_media",
-      breadcrumbs: [],
+      section: "Tools",
+      crumb: label,
+      breadcrumbs: [
+        { label: "Media", href: "/dashboard/media-providers" },
+        { label },
+      ],
     };
   }
 
-  // Provider detail page: /dashboard/providers/[id]
   const providerMatch = pathname.match(/\/providers\/([^/]+)$/);
   if (providerMatch) {
     const providerId = providerMatch[1];
-    const providerInfo =
-      OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId];
+    const providerInfo = OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId];
     if (providerInfo) {
       return {
-        title: providerInfo.name,
-        description: "",
+        section: "Connect",
+        crumb: providerInfo.name,
         breadcrumbs: [
           { label: "Providers", href: "/dashboard/providers" },
-          {
-            label: providerInfo.name,
-            image: `/providers/${providerInfo.id}.png`,
-          },
+          { label: providerInfo.name, image: `/providers/${providerInfo.id}.png` },
         ],
       };
     }
   }
 
-  if (pathname.includes("/providers") && !pathname.includes("/media-providers"))
-    return {
-      title: "Providers",
-      description: "Manage your AI provider connections",
-      icon: "dns",
-      breadcrumbs: [],
-    };
-  if (pathname.includes("/combos"))
-    return {
-      title: "Combos",
-      description: "Model combos with fallback",
-      icon: "layers",
-      breadcrumbs: [],
-    };
-  if (pathname.includes("/usage"))
-    return {
-      title: "Usage & Analytics",
-      description:
-        "Monitor your API usage, token consumption, and request logs",
-      icon: "bar_chart",
-      breadcrumbs: [],
-    };
-  if (pathname.includes("/auth-files"))
-    return {
-      title: "Auth Files",
-      description: "Map provider credentials stored in the local database",
-      icon: "vpn_key",
-      breadcrumbs: [],
-    };
-  if (pathname.includes("/quota"))
-    return {
-      title: "Quota Tracker",
-      description: "Track and manage your API quota limits",
-      icon: "data_usage",
-      breadcrumbs: [],
-    };
-  if (pathname.includes("/mitm"))
-    return {
-      title: "MITM Proxy",
-      description: "Intercept CLI tool traffic and route through 9Router",
-      icon: "security",
-      breadcrumbs: [],
-    };
-  if (pathname.includes("/token-saver"))
-    return {
-      title: "Token Saver",
-      description: "Compress prompts and outputs to save tokens",
-      icon: "savings",
-      breadcrumbs: [],
-    };
-  if (pathname.includes("/cli-tools"))
-    return {
-      title: "CLI Tools",
-      description: "Configure CLI tools",
-      icon: "terminal",
-      breadcrumbs: [],
-    };
-  if (pathname.includes("/proxy-pools"))
-    return {
-      title: "Proxy Pools",
-      description: "Manage your proxy pool configurations",
-      icon: "lan",
-      breadcrumbs: [],
-    };
-  if (pathname.includes("/skills"))
-    return {
-      title: "Agent Skills",
-      description: "Copy a link and paste to your AI to use 9Router — no install needed",
-      icon: "extension",
-      breadcrumbs: [],
-    };
-  if (pathname.includes("/endpoint"))
-    return {
-      title: "Endpoint",
-      description: "API endpoint configuration",
-      icon: "api",
-      breadcrumbs: [],
-    };
-  if (pathname.includes("/profile"))
-    return {
-      title: "Settings",
-      description: "Manage your preferences",
-      icon: "settings",
-      breadcrumbs: [],
-    };
-  if (pathname.includes("/translator"))
-    return {
-      title: "Translator",
-      description: "Debug translation flow between formats",
-      icon: "translate",
-      breadcrumbs: [],
-    };
-  if (pathname.includes("/console-log"))
-    return {
-      title: "Console Log",
-      description: "Live server console output",
-      icon: "monitor",
-      breadcrumbs: [],
-    };
-  if (pathname === "/dashboard")
-    return {
-      title: "Endpoint",
-      description: "API endpoint configuration",
-      icon: "api",
-      breadcrumbs: [],
-    };
-  return { title: "", description: "", breadcrumbs: [] };
+  if (pathname === "/dashboard") return { section: "Operate", crumb: "Overview", breadcrumbs: [] };
+  if (pathname.includes("/combos")) return { section: "Operate", crumb: "Combos", breadcrumbs: [] };
+  if (pathname.includes("/usage")) return { section: "Operate", crumb: "Usage", breadcrumbs: [] };
+  if (pathname.includes("/quota")) return { section: "Operate", crumb: "Quota", breadcrumbs: [] };
+  if (pathname.includes("/providers")) return { section: "Connect", crumb: "Providers", breadcrumbs: [] };
+  if (pathname.includes("/endpoint")) return { section: "Connect", crumb: "Endpoint & keys", breadcrumbs: [] };
+  if (pathname.includes("/token-saver")) return { section: "Tools", crumb: "Token saver", breadcrumbs: [] };
+  if (pathname.includes("/cli-tools")) return { section: "Tools", crumb: "CLI tools", breadcrumbs: [] };
+  if (pathname.includes("/agent-library")) return { section: "Tools", crumb: "Agent library", breadcrumbs: [] };
+  if (pathname.includes("/skills")) return { section: "Tools", crumb: "Skills", breadcrumbs: [] };
+  if (pathname.includes("/media-providers")) return { section: "Tools", crumb: "Media", breadcrumbs: [] };
+  if (pathname.includes("/profile")) return { section: "Tools", crumb: "Settings", breadcrumbs: [] };
+  if (pathname.includes("/translator")) return { section: "Diagnostics", crumb: "Translator", breadcrumbs: [] };
+  if (pathname.includes("/console-log")) return { section: "Diagnostics", crumb: "Console", breadcrumbs: [] };
+  if (pathname.includes("/mitm")) return { section: "Diagnostics", crumb: "MITM", breadcrumbs: [] };
+  if (pathname.includes("/basic-chat")) return { section: "Operate", crumb: "Chat", breadcrumbs: [] };
+
+  return { section: "Console", crumb: "", breadcrumbs: [] };
 };
 
 export default function Header({ onMenuClick, showMenuButton = true }) {
   const pathname = usePathname();
-  const [displayName, setDisplayName] = useState("");
-  const [loginMethod, setLoginMethod] = useState("");
-  const [donateOpen, setDonateOpen] = useState(false);
-
-  // Memoize page info to prevent unnecessary recalculations
   const pageInfo = useMemo(() => getPageInfo(pathname), [pathname]);
-  const { title, description, icon, breadcrumbs } = pageInfo;
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadAuthStatus() {
-      try {
-        const res = await fetch("/api/auth/status", { cache: "no-store" });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (!cancelled) {
-          setDisplayName(data?.displayName || data?.oidcName || data?.oidcEmail || "");
-          setLoginMethod(data?.loginMethod || "");
-        }
-      } catch {
-        if (!cancelled) {
-          setDisplayName("");
-          setLoginMethod("");
-        }
-      }
-    }
-
-    loadAuthStatus();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const handleLogout = async () => {
-    try {
-      const res = await fetch("/api/auth/logout", { method: "POST" });
-      if (res.ok) {
-        window.location.assign("/login");
-      }
-    } catch (err) {
-      console.error("Failed to logout:", err);
-    }
-  };
+  const { section, crumb, breadcrumbs } = pageInfo;
 
   return (
-    <header className="shrink-0 flex items-center justify-between gap-3 px-4 lg:px-8 pt-3 pb-2 border-b border-border-subtle bg-surface/60 backdrop-blur-xl lg:bg-transparent lg:backdrop-blur-none z-20">
-      {/* Mobile menu button */}
-      <div className="flex items-center gap-3 lg:hidden shrink-0">
+    <header
+      className="shrink-0 z-20 flex items-center justify-between gap-4"
+      style={{
+        height: 53,
+        flex: "0 0 53px",
+        borderBottom: "1px solid #332C1E",
+        background: "#1A160F",
+        padding: "0 18px",
+      }}
+    >
+      <div className="flex items-center gap-3 min-w-0">
         {showMenuButton && (
           <button
+            type="button"
             onClick={onMenuClick}
-            className="text-text-main hover:text-primary transition-colors"
+            className="lg:hidden text-[#A99E86] hover:text-[#E5B454]"
+            aria-label="Open menu"
           >
-            <span className="material-symbols-outlined">menu</span>
+            <span className="material-symbols-outlined text-[22px]">menu</span>
           </button>
         )}
-      </div>
 
-      {/* Page title with breadcrumbs */}
-      <div className="flex flex-col min-w-0 flex-1">
-        {breadcrumbs.length > 0 ? (
-          <div className="flex items-center gap-2">
-            {breadcrumbs.map((crumb, index) => (
-              <div
-                key={`${crumb.label}-${crumb.href || "current"}`}
-                className="flex items-center gap-2"
-              >
-                {index > 0 && (
-                  <span className="material-symbols-outlined text-text-muted text-base">
-                    chevron_right
-                  </span>
-                )}
-                {crumb.href ? (
-                  <Link
-                    href={crumb.href}
-                    className="text-text-muted hover:text-primary transition-colors"
-                  >
-                    {crumb.label}
+        {breadcrumbs?.length > 0 ? (
+          <div
+            className="flex items-center gap-2 min-w-0 truncate"
+            style={{
+              fontSize: 12,
+              color: "#6F6653",
+              fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
+            }}
+          >
+            {breadcrumbs.map((c, index) => (
+              <span key={`${c.label}-${index}`} className="flex items-center gap-2 min-w-0">
+                {index > 0 && <span style={{ color: "#4A4231" }}>/</span>}
+                {c.href ? (
+                  <Link href={c.href} className="hover:text-[#A99E86] truncate">
+                    {translate(c.label)}
                   </Link>
                 ) : (
-                  <div className="flex items-center gap-2">
-                    {crumb.image && (
+                  <span className="flex items-center gap-2 text-[#A99E86] truncate">
+                    {c.image && (
                       <ProviderIcon
-                        src={crumb.image}
-                        alt={crumb.label}
-                        size={28}
-                        className="object-contain rounded max-w-[28px] max-h-[28px]"
-                        fallbackText={crumb.label.slice(0, 2).toUpperCase()}
+                        src={c.image}
+                        alt={c.label}
+                        size={18}
+                        className="object-contain rounded"
+                        fallbackText={c.label.slice(0, 2).toUpperCase()}
                       />
                     )}
-                    <h1 className="text-base lg:text-2xl font-semibold text-text-main tracking-tight truncate">
-                      {translate(crumb.label)}
-                    </h1>
-                  </div>
+                    {translate(c.label)}
+                  </span>
                 )}
-              </div>
+              </span>
             ))}
           </div>
-        ) : title ? (
-          <div>
-            <div className="flex items-center gap-2">
-              {icon && (
-                <span className="material-symbols-outlined text-primary text-xl lg:text-2xl">
-                  {icon}
-                </span>
-              )}
-              <h1 className="text-base lg:text-2xl font-semibold tracking-tight truncate">
-                {translate(title)}
-              </h1>
-            </div>
-            {description && (
-              <p className="hidden lg:block text-sm text-text-muted truncate">
-                {translate(description)}
-              </p>
-            )}
-          </div>
-        ) : null}
-      </div>
-
-      {/* Right actions */}
-      <div className="flex items-center gap-1 shrink-0">
-        {displayName && loginMethod === "OIDC" && (
-          <div className="hidden sm:flex items-center max-w-[220px] px-3 py-1.5 rounded-full border border-border bg-surface/70 text-xs text-text-muted truncate">
-            <span className="material-symbols-outlined text-[14px] mr-1.5 text-primary">person</span>
-            <span className="truncate">{displayName}</span>
-            <span className="ml-2 shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-              OIDC
-            </span>
+        ) : (
+          <div
+            className="truncate"
+            style={{
+              fontSize: 12,
+              color: "#6F6653",
+              fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
+            }}
+          >
+            {section}
+            {crumb ? (
+              <>
+                {" "}
+                <span style={{ color: "#4A4231" }}>/</span>{" "}
+                <span style={{ color: "#A99E86" }}>{translate(crumb)}</span>
+              </>
+            ) : null}
           </div>
         )}
-        <HeaderSearch />
-        <button
-          onClick={() => setDonateOpen(true)}
-          className="flex items-center gap-1.5 px-3 h-8 rounded-lg border border-pink-500/30 bg-pink-500/10 text-pink-600 dark:text-pink-400 hover:bg-pink-500/20 transition-colors text-sm font-medium"
-          aria-label="Donate"
-        >
-          <span className="material-symbols-outlined text-[18px]">volunteer_activism</span>
-          <span className="hidden sm:inline">Donate</span>
-        </button>
-        <ThemeToggle />
-        <HeaderLanguage />
-        <HeaderMenu onLogout={handleLogout} />
       </div>
-      <DonateModal isOpen={donateOpen} onClose={() => setDonateOpen(false)} />
+
+      <div className="flex items-center gap-[9px] shrink-0">
+        <HeaderSearch />
+
+        {/* online badge — mock */}
+        <div
+          className="hidden sm:flex items-center gap-[7px]"
+          style={{
+            background: "#211C14",
+            border: "1px solid #2A2418",
+            borderRadius: 7,
+            padding: "5px 10px",
+          }}
+        >
+          <span className="console-online-dot" />
+          <span
+            style={{
+              fontSize: 11.5,
+              fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
+              color: "#A99E86",
+            }}
+          >
+            online
+          </span>
+        </div>
+
+        {/* Local gateway badge — not a fake "learning auto" claim */}
+        <div
+          className="hidden md:flex items-center gap-[7px]"
+          style={{
+            background: "rgba(229,180,84,.1)",
+            border: "1px solid rgba(229,180,84,.3)",
+            borderRadius: 7,
+            padding: "5px 10px",
+          }}
+        >
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: 2,
+              background: "#E5B454",
+            }}
+          />
+          <span
+            style={{
+              fontSize: 11.5,
+              fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
+              color: "#E5B454",
+              whiteSpace: "nowrap",
+            }}
+          >
+            local gateway
+          </span>
+        </div>
+
+        <HeaderLanguage />
+        <HeaderMenu />
+      </div>
     </header>
   );
 }
@@ -338,8 +249,8 @@ function HeaderSearch() {
   if (!visible) return null;
 
   return (
-    <div className="relative w-[160px] sm:w-[220px]">
-      <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-text-muted text-[16px] pointer-events-none">
+    <div className="relative w-[140px] sm:w-[200px]">
+      <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-[#6F6653] text-[16px] pointer-events-none">
         search
       </span>
       <input
@@ -347,13 +258,13 @@ function HeaderSearch() {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder={placeholder}
-        className="w-full h-8 pl-7 pr-7 rounded-lg border border-border bg-surface/60 text-sm focus:outline-none focus:border-primary/50 transition-colors"
+        className="w-full h-8 pl-7 pr-7 rounded-[7px] border border-[#2A2418] bg-[#211C14] text-[12px] font-mono text-[#A99E86] focus:outline-none focus:border-[#E5B454]/50"
       />
       {query && (
         <button
           type="button"
           onClick={() => setQuery("")}
-          className="absolute right-1 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-main p-0.5 rounded"
+          className="absolute right-1 top-1/2 -translate-y-1/2 text-[#6F6653] hover:text-[#ECE4D2] p-0.5 rounded"
           aria-label="Clear search"
         >
           <span className="material-symbols-outlined text-[16px]">close</span>

@@ -1,61 +1,51 @@
 "use client";
+// @ts-check
+import { useRouter } from "next/navigation";
 
 export default function Footer() {
+  const router = useRouter();
+  const year = new Date().getFullYear();
+
   return (
-    <footer className="border-t border-[#3a2f27] bg-[#120f0d] pt-16 pb-8 px-6">
-      <div className="max-w-7xl mx-auto">
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-8 mb-16">
-          {/* Brand */}
-          <div className="col-span-2 lg:col-span-2">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="size-6 rounded bg-[#f97815] flex items-center justify-center text-white">
-                <span className="material-symbols-outlined text-[16px]">hub</span>
+    <footer className="border-t border-[#2a3444] bg-[#0b0f14]/80">
+      <div className="max-w-7xl mx-auto px-6 py-12">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-10 mb-10">
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="size-6 rounded bg-linear-to-br from-[#2dd4bf] to-[#0f766e] flex items-center justify-center text-white">
+                <span className="material-symbols-outlined text-[14px]">account_tree</span>
               </div>
-              <h3 className="text-white text-lg font-bold">9Router</h3>
+              <h3 className="text-white text-lg font-semibold">Switchboard</h3>
             </div>
-            <p className="text-gray-500 text-sm max-w-xs mb-6">
-              The unified endpoint for AI generation. Connect, route, and manage your AI providers with ease.
+            <p className="text-gray-500 text-sm leading-relaxed max-w-xs">
+              Intelligent model routing for AI coding tools. One endpoint, visible decisions, self-improving combos.
             </p>
-            <div className="flex gap-4">
-              <a className="text-gray-400 hover:text-white transition-colors" href="https://github.com/decolua/9router" target="_blank" rel="noopener noreferrer">
-                <span className="material-symbols-outlined">code</span>
-              </a>
-            </div>
           </div>
-          
-          {/* Product */}
-          <div className="flex flex-col gap-4">
-            <h4 className="font-bold text-white">Product</h4>
-            <a className="text-gray-400 hover:text-[#f97815] text-sm transition-colors" href="#features">Features</a>
-            <a className="text-gray-400 hover:text-[#f97815] text-sm transition-colors" href="/dashboard">Dashboard</a>
-            <a className="text-gray-400 hover:text-[#f97815] text-sm transition-colors" href="https://github.com/decolua/9router" target="_blank" rel="noopener noreferrer">Changelog</a>
+
+          <div className="flex flex-col gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">Product</p>
+            <a className="text-gray-400 hover:text-[#2dd4bf] text-sm transition-colors" href="#features">Features</a>
+            <a className="text-gray-400 hover:text-[#2dd4bf] text-sm transition-colors" href="#how-it-works">How it Works</a>
+            <button
+              type="button"
+              className="text-left text-gray-400 hover:text-[#2dd4bf] text-sm transition-colors bg-transparent border-none p-0 cursor-pointer"
+              onClick={() => router.push("/dashboard")}
+            >
+              Dashboard
+            </button>
           </div>
-          
-          {/* Resources */}
-          <div className="flex flex-col gap-4">
-            <h4 className="font-bold text-white">Resources</h4>
-            <a className="text-gray-400 hover:text-[#f97815] text-sm transition-colors" href="https://github.com/decolua/9router#readme" target="_blank" rel="noopener noreferrer">Documentation</a>
-            <a className="text-gray-400 hover:text-[#f97815] text-sm transition-colors" href="https://github.com/decolua/9router" target="_blank" rel="noopener noreferrer">GitHub</a>
-            <a className="text-gray-400 hover:text-[#f97815] text-sm transition-colors" href="https://www.npmjs.com/package/9router" target="_blank" rel="noopener noreferrer">NPM</a>
-          </div>
-          
-          {/* Legal */}
-          <div className="flex flex-col gap-4">
-            <h4 className="font-bold text-white">Legal</h4>
-            <a className="text-gray-400 hover:text-[#f97815] text-sm transition-colors" href="https://github.com/decolua/9router/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">MIT License</a>
+
+          <div className="flex flex-col gap-2">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-1">Resources</p>
+            <a className="text-gray-400 hover:text-[#2dd4bf] text-sm transition-colors" href="#get-started">Quick Start</a>
+            <a className="text-gray-400 hover:text-[#2dd4bf] text-sm transition-colors" href="/SWITCHBOARD.md">Direction</a>
           </div>
         </div>
-        
-        {/* Bottom */}
-        <div className="border-t border-[#3a2f27] pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
-          <p className="text-gray-600 text-sm">© 2025 9Router. All rights reserved.</p>
-          <div className="flex gap-6">
-            <a className="text-gray-600 hover:text-white text-sm transition-colors" href="https://github.com/decolua/9router" target="_blank" rel="noopener noreferrer">GitHub</a>
-            <a className="text-gray-600 hover:text-white text-sm transition-colors" href="https://www.npmjs.com/package/9router" target="_blank" rel="noopener noreferrer">NPM</a>
-          </div>
+
+        <div className="pt-6 border-t border-[#2a3444] flex flex-col sm:flex-row items-center justify-between gap-3">
+          <p className="text-gray-600 text-sm">© {year} Switchboard. Local, open infrastructure.</p>
         </div>
       </div>
     </footer>
   );
 }
-

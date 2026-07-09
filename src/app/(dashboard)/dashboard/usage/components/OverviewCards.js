@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import PropTypes from "prop-types";
 import Card from "@/shared/components/Card";

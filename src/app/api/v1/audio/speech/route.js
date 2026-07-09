@@ -1,3 +1,4 @@
+// @ts-check
 import { handleTts } from "@/sse/handlers/tts.js";
 
 export async function OPTIONS() {

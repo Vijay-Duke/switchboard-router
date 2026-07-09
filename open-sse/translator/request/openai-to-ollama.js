@@ -83,8 +83,8 @@ function normalizeMessages(messages) {
   for (const msg of messages) {
     // Handle tool result messages (OpenAI format -> Ollama format)
     if (msg.role === ROLE.TOOL) {
-      const toolResult = normalizeContent(msg.content);
-      if (!toolResult) continue;
+      // Keep empty tool results so multi-tool pairs stay complete (wave11).
+      const toolResult = normalizeContent(msg.content) || "";
 
       // Get tool_name from map or use msg.name as fallback
       const toolName = toolCallMap.get(msg.tool_call_id) || msg.name || "unknown_tool";
@@ -113,11 +113,13 @@ function normalizeMessages(messages) {
         }
       }));
 
-      result.push({
+      const assistantMsg = {
         role: ROLE.ASSISTANT,
         content: content,
         tool_calls: ollamaToolCalls
-      });
+      };
+      if (msg.reasoning_content) assistantMsg.thinking = msg.reasoning_content;
+      result.push(assistantMsg);
       continue;
     }
 
@@ -136,6 +138,11 @@ function normalizeMessages(messages) {
 
     if (images.length > 0) {
       out.images = images;
+    }
+
+    // Preserve reasoning_content as thinking for assistant messages (PR#2401).
+    if (role === ROLE.ASSISTANT && msg.reasoning_content) {
+      out.thinking = msg.reasoning_content;
     }
 
     result.push(out);

@@ -1,3 +1,4 @@
+// @ts-check
 "use server";
 
 import { NextResponse } from "next/server";
@@ -64,12 +65,12 @@ export async function GET() {
     }
 
     const settings = await readSettings();
-    const has9Router = !!(settings?.env?.ANTHROPIC_BASE_URL);
+    const hasSwitchboard = !!(settings?.env?.ANTHROPIC_BASE_URL);
 
     return NextResponse.json({
       installed: true,
       settings: settings,
-      has9Router: has9Router,
+      hasSwitchboard: hasSwitchboard,
       settingsPath: getClaudeSettingsPath(),
     });
   } catch (error) {

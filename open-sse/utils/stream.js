@@ -7,6 +7,7 @@ import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatInco
 import { dbg, isDebugEnabled } from "./debugLog.js";
 
 import { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER } from "./sseConstants.js";
+import { createThinkExtractor } from "./thinkExtractor.js";
 
 export { COLORS, formatSSE };
 export { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER };
@@ -73,6 +74,10 @@ export function createSSEStream(options = {}) {
   let openAIResponsesDoneSent = false;
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
 
+  // State for extracting <think>...</think> to reasoning_content across SSE chunks
+  // (MiniMax M3 and similar OpenAI-format tiers). See PR#2463.
+  const extractThink = createThinkExtractor();
+
   return new TransformStream({
     transform(chunk, controller) {
       if (!ttftAt) ttftAt = Date.now();
@@ -108,6 +113,19 @@ export function createSSEStream(options = {}) {
               const parsed = JSON.parse(trimmed.slice(5).trim());
 
               const idFixed = fixInvalidId(parsed);
+
+              // Decloak tool names in Claude content_block_start events.
+              // claude→claude passthrough skips translateResponse (which applies
+              // toolNameMap in TRANSLATE mode), so without this the client gets
+              // suffixed OAuth names (e.g. "Execute_ide"). decolua/9router#2391 / PR#2392.
+              let toolNameDecloaked = false;
+              if (toolNameMap?.size > 0 && parsed?.type === "content_block_start" && parsed?.content_block?.type === "tool_use") {
+                const original = toolNameMap.get(parsed.content_block.name);
+                if (original) {
+                  parsed.content_block = { ...parsed.content_block, name: original };
+                  toolNameDecloaked = true;
+                }
+              }
 
               // Ensure OpenAI-required fields are present on streaming chunks (Letta compat)
               let fieldsInjected = false;
@@ -149,6 +167,25 @@ export function createSSEStream(options = {}) {
               }
 
               const delta = parsed.choices?.[0]?.delta;
+
+              // Extract <think>...</think> from content into reasoning_content.
+              // MiniMax M3 on OpenAI-format provider tiers embeds thinking as XML
+              // tags inside `content` instead of a separate `reasoning_content`.
+              if (typeof delta?.content === "string") {
+                const { content: textOut, reasoning: thinkOut } = extractThink(delta.content);
+                if (thinkOut) {
+                  delta.reasoning_content = (delta.reasoning_content || "") + thinkOut;
+                }
+                if (textOut !== delta.content) {
+                  if (delta.reasoning_content && (!textOut || !textOut.trim())) {
+                    delete delta.content;
+                  } else {
+                    delta.content = textOut || "";
+                  }
+                  fieldsInjected = true;
+                }
+              }
+
               const content = delta?.content;
               const reasoning = delta?.reasoning_content;
               if (content && typeof content === "string") {
@@ -177,7 +214,7 @@ export function createSSEStream(options = {}) {
                 parsed.usage = filterUsageForFormat(buffered, FORMATS.OPENAI);
                 output = `data: ${JSON.stringify(parsed)}\n`;
                 injectedUsage = true;
-              } else if (idFixed || fieldsInjected) {
+              } else if (idFixed || fieldsInjected || toolNameDecloaked) {
                 output = `data: ${JSON.stringify(parsed)}\n`;
                 injectedUsage = true;
               }
@@ -217,6 +254,23 @@ export function createSSEStream(options = {}) {
 
         if (isOpenAIResponsesStream && isOpenAIResponsesTerminalEvent(openAIResponsesEventName, parsed)) {
           openAIResponsesTerminalSeen = true;
+        }
+
+        // Extract <think> tags on OpenAI-shaped provider chunks before translation
+        // (PASSTHROUGH already does this; TRANSLATE path was missing it — wave9).
+        if (typeof parsed?.choices?.[0]?.delta?.content === "string") {
+          const delta = parsed.choices[0].delta;
+          const { content: textOut, reasoning: thinkOut } = extractThink(delta.content);
+          if (thinkOut) {
+            delta.reasoning_content = (delta.reasoning_content || "") + thinkOut;
+          }
+          if (textOut !== delta.content) {
+            if (delta.reasoning_content && (!textOut || !textOut.trim())) {
+              delete delta.content;
+            } else {
+              delta.content = textOut || "";
+            }
+          }
         }
 
         // For Ollama: done=true is the final chunk with finish_reason/usage, must translate
@@ -480,11 +534,12 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
     provider,
     reqLogger,
+    toolNameMap,
     model,
     connectionId,
     body,

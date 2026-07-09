@@ -81,7 +81,10 @@ export class DefaultExecutor extends BaseExecutor {
     super(provider, PROVIDERS[provider] || PROVIDERS.openai);
   }
 
-  transformRequest(model, body) {
+  transformRequest(model, body, stream, credentials) {
+    // Base injects stream_options / body.stream for usage + Accept consistency.
+    super.transformRequest(model, body, stream, credentials);
+
     const transformed = this.applyJsonSchemaFallback(body);
 
     if (transformed && typeof transformed === "object") {
@@ -90,6 +93,11 @@ export class DefaultExecutor extends BaseExecutor {
         delete transformed.client_metadata;
       }
       stripUnsupportedParams(this.provider, model, transformed);
+      // Ensure stream_options survives applyJsonSchemaFallback (mutates body in place usually)
+      if (stream && Array.isArray(transformed.messages) && !transformed.stream_options) {
+        transformed.stream_options = { include_usage: true };
+      }
+      if (stream && transformed.stream !== true) transformed.stream = true;
     }
 
     return injectReasoningContent({ provider: this.provider, model, body: transformed });

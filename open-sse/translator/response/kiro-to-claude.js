@@ -146,12 +146,14 @@ export function kiroToClaudeResponse(chunk, state) {
     if (!state.toolArgBuffers) state.toolArgBuffers = new Map();
     for (const tc of delta.tool_calls) {
       const idx = tc.index ?? 0;
-      if (tc.id) {
+      // Open tool block once per index (re-open on every id delta broke Claude clients — wave11).
+      if (!state.toolCalls.has(idx) && (tc.id || tc.function?.name || tc.function?.arguments)) {
         stopThinkingBlock(state, results);
         stopTextBlock(state, results);
         const toolBlockIndex = state.nextBlockIndex++;
+        const toolId = tc.id || `toolu_${Date.now()}_${idx}`;
         state.toolCalls.set(idx, {
-          id: tc.id,
+          id: toolId,
           name: tc.function?.name || "",
           blockIndex: toolBlockIndex,
         });
@@ -160,11 +162,14 @@ export function kiroToClaudeResponse(chunk, state) {
           index: toolBlockIndex,
           content_block: {
             type: "tool_use",
-            id: tc.id,
+            id: toolId,
             name: tc.function?.name || "",
             input: {},
           },
         });
+      } else if (tc.id && state.toolCalls.has(idx)) {
+        const existing = state.toolCalls.get(idx);
+        if (existing && String(existing.id).startsWith("toolu_")) existing.id = tc.id;
       }
       if (tc.function?.arguments) {
         const toolInfo = state.toolCalls.get(idx);

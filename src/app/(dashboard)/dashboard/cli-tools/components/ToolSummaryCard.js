@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import Link from "next/link";
 import Image from "next/image";
@@ -7,9 +8,22 @@ import { Card } from "@/shared/components";
 // Derive simple connected/configured/not-installed status from API payload
 function getStatus(status) {
   if (!status) return { label: "Unknown", cls: "bg-gray-500/10 text-gray-500" };
-  if (!status.installed) return { label: "Not installed", cls: "bg-gray-500/10 text-gray-500" };
-  if (status.has9Router) return { label: "Connected", cls: "bg-green-500/10 text-green-600 dark:text-green-400" };
-  return { label: "Not configured", cls: "bg-yellow-500/10 text-yellow-600 dark:text-yellow-400" };
+  if (!status.installed) {
+    return {
+      label: "Not installed",
+      cls: "bg-orange-500/15 text-orange-600 dark:text-orange-400 border border-orange-500/25",
+    };
+  }
+  if (status.hasSwitchboard) {
+    return {
+      label: "Connected",
+      cls: "bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20",
+    };
+  }
+  return {
+    label: "Installed · not configured",
+    cls: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/25",
+  };
 }
 
 export default function ToolSummaryCard({ toolId, tool, status }) {

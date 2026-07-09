@@ -1,3 +1,4 @@
+// @ts-check
 import { ollamaModels } from "open-sse/config/ollamaModels.js";
 
 const CORS_HEADERS = {

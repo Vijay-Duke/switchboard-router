@@ -1,9 +1,35 @@
+// @ts-check
 import { NextResponse } from "next/server";
-import { getComboById, updateCombo, deleteCombo, getComboByName } from "@/lib/localDb";
+import {
+  getComboById,
+  updateCombo,
+  deleteCombo,
+  getComboByName,
+  getSettings,
+  updateSettings,
+  deleteRoutingDataForCombo,
+  rekeyRoutingDataForCombo,
+} from "@/lib/localDb";
 import { resetComboRotation } from "open-sse/services/combo.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
+
+/** Move or drop per-combo strategy when combo is renamed or deleted. */
+async function rekeyComboStrategy(oldName, newName) {
+  if (!oldName || oldName === newName) return;
+  const settings = await getSettings();
+  const strategies = { ...(settings.comboStrategies || {}) };
+  if (!(oldName in strategies)) return;
+  if (newName) {
+    // Prefer existing target key if present; otherwise move old → new
+    if (!(newName in strategies)) {
+      strategies[newName] = strategies[oldName];
+    }
+  }
+  delete strategies[oldName];
+  await updateSettings({ comboStrategies: strategies });
+}
 
 // GET /api/combos/[id] - Get combo by ID
 export async function GET(request, { params }) {
@@ -51,7 +77,16 @@ export async function PUT(request, { params }) {
 
     // Invalidate rotation state (models/strategy/name may have changed)
     if (prev?.name) resetComboRotation(prev.name);
-    if (combo.name && combo.name !== prev?.name) resetComboRotation(combo.name);
+    if (combo.name && combo.name !== prev?.name) {
+      resetComboRotation(combo.name);
+      // Keep Auto/Fusion settings + routing history attached to the new name
+      await rekeyComboStrategy(prev.name, combo.name);
+      try {
+        await rekeyRoutingDataForCombo(prev.name, combo.name);
+      } catch (e) {
+        console.warn("rekey routing data failed:", e?.message || e);
+      }
+    }
 
     return NextResponse.json(combo);
   } catch (error) {
@@ -71,8 +106,17 @@ export async function DELETE(request, { params }) {
       return NextResponse.json({ error: "Combo not found" }, { status: 404 });
     }
 
-    if (prev?.name) resetComboRotation(prev.name);
-    
+    if (prev?.name) {
+      resetComboRotation(prev.name);
+      // Drop orphan strategy so Overview / Auto routing don't reference a ghost name
+      await rekeyComboStrategy(prev.name, null);
+      try {
+        await deleteRoutingDataForCombo(prev.name);
+      } catch (e) {
+        console.warn("delete routing data failed:", e?.message || e);
+      }
+    }
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.log("Error deleting combo:", error);

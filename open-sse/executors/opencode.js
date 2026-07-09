@@ -10,7 +10,8 @@ export class OpenCodeExecutor extends BaseExecutor {
     super("opencode", PROVIDERS.opencode);
   }
 
-  transformRequest(model, body) {
+  transformRequest(model, body, stream, credentials) {
+    super.transformRequest(model, body, stream, credentials);
     return injectReasoningContent({ provider: this.provider, model, body });
   }
 
@@ -21,12 +22,13 @@ export class OpenCodeExecutor extends BaseExecutor {
       : `${base}/zen/v1/chat/completions`;
   }
 
-  buildHeaders() {
-    return {
+  buildHeaders(credentials, stream = true) {
+    const headers = {
       "Content-Type": "application/json",
       "Authorization": "Bearer public",
       "x-opencode-client": "desktop",
-      "Accept": "text/event-stream"
     };
+    if (stream) headers["Accept"] = "text/event-stream";
+    return headers;
   }
 }

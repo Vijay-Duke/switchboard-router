@@ -1,3 +1,4 @@
+// @ts-check
 import { NextResponse } from "next/server";
 import { getSettings } from "@/lib/localDb";
 import { startHeadroomProxy } from "@/lib/headroom/process";
@@ -19,7 +20,7 @@ export async function POST() {
     const settings = await getSettings();
     const url = settings.headroomUrl || DEFAULT_HEADROOM_URL;
     if (!isLoopbackHeadroomUrl(url)) {
-      return NextResponse.json({ error: "External Headroom proxies must be started outside 9Router", code: "EXTERNAL_PROXY" }, { status: 400 });
+      return NextResponse.json({ error: "External Headroom proxies must be started outside Switchboard", code: "EXTERNAL_PROXY" }, { status: 400 });
     }
     const port = parsePortFromUrl(url) || 8787;
     const result = await startHeadroomProxy({ port });

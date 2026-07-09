@@ -85,7 +85,12 @@ export function fixToolUseOrdering(messages) {
 const ADAPTIVE_THINKING_UNSUPPORTED = /haiku/i;
 
 function handlesThinkingBlocks(provider) {
-  return provider === "claude" || provider?.startsWith("anthropic-compatible") || provider === "deepseek";
+  // MiniMax Anthropic-compatible tiers also need thinking-block normalization (wave8).
+  return provider === "claude"
+    || provider?.startsWith("anthropic-compatible")
+    || provider === "deepseek"
+    || provider === "minimax"
+    || provider === "minimax-cn";
 }
 
 function buildThinkingPlaceholder(provider) {
@@ -228,6 +233,30 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
 
   // 2. Messages: process in optimized passes
   if (body.messages && Array.isArray(body.messages)) {
+    // Promote lingering system/developer messages out of messages[] into top-level
+    // system. Anthropic rejects role:'system' in messages[]. Safety net for
+    // passthrough + translation edge cases (decolua/9router PR#1600 / #1580).
+    const systemTexts = [];
+    body.messages = body.messages.filter(msg => {
+      if (msg.role === "system" || msg.role === "developer") {
+        const text = typeof msg.content === "string" ? msg.content
+          : Array.isArray(msg.content) ? msg.content.filter(b => b.type === "text").map(b => b.text).join("\n") : "";
+        if (text.trim()) systemTexts.push(text);
+        return false;
+      }
+      return true;
+    });
+    if (systemTexts.length > 0) {
+      const promoted = { type: "text", text: systemTexts.join("\n") };
+      if (Array.isArray(body.system)) {
+        body.system = [...body.system, promoted];
+      } else if (typeof body.system === "string" && body.system.length > 0) {
+        body.system = [{ type: "text", text: body.system }, promoted];
+      } else {
+        body.system = [promoted];
+      }
+    }
+
     const len = body.messages.length;
     let filtered = [];
 
@@ -325,21 +354,42 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
   // 3. Tools: filter built-in tools for non-Anthropic providers, then handle cache_control
   if (body.tools && Array.isArray(body.tools)) {
     // Strip built-in tools (e.g. web_search_20250305) and normalize to Anthropic-native shape
-    // (drop `type` field, fold `function.{name,description,parameters}`) for non-Anthropic providers
+    // (fold `function.{name,description,parameters}`) for non-Anthropic providers.
+    // IMPORTANT: default type to "custom" — strict Anthropic-compatible gateways
+    // (MiniMax) reject tools without type (code 2013). decolua/9router#2195 / #1939.
     if (provider !== "claude") {
       body.tools = body.tools
-        .filter(tool => !tool.type || tool.type === "function")
+        .filter(tool => !tool.type || tool.type === "function" || tool.type === "custom")
         .map(tool => {
           if (tool.function) {
             return {
+              type: "custom",
               name: tool.function.name,
-              description: tool.function.description,
-              input_schema: tool.function.parameters,
+              description: typeof tool.function.description === "string" ? tool.function.description : String(tool.function.description || ""),
+              input_schema: tool.function.parameters || tool.function.input_schema || { type: "object", properties: {} },
             };
           }
           const { type, ...rest } = tool;
-          return rest;
+          return {
+            type: type && type !== "function" ? type : "custom",
+            ...rest,
+            description: typeof rest.description === "string" ? rest.description : String(rest.description || ""),
+          };
         });
+    } else {
+      // Official Anthropic: still default missing type to custom for legacy clients
+      body.tools = body.tools.map(tool => {
+        if (tool.function) {
+          return {
+            type: "custom",
+            name: tool.function.name,
+            description: tool.function.description || "",
+            input_schema: tool.function.parameters || { type: "object", properties: {} },
+          };
+        }
+        if (!tool.type) return { ...tool, type: "custom" };
+        return tool;
+      });
     }
 
     body.tools = body.tools.map((tool, i) => {

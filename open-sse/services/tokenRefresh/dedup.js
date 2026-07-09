@@ -19,7 +19,13 @@ export async function dedupRefresh(provider, oldToken, fn, log) {
   const promise = (async () => {
     try {
       const result = await fn();
-      refreshDedupCache.set(key, { result, expiresAt: Date.now() + REFRESH_RESULT_TTL_MS });
+      // Only cache successful non-null results. Caching null/failed tokens for
+      // 10s sticky-locks dead credentials (wave12).
+      if (result && (result.accessToken || result.copilotToken || result.refreshToken)) {
+        refreshDedupCache.set(key, { result, expiresAt: Date.now() + REFRESH_RESULT_TTL_MS });
+      } else {
+        refreshDedupCache.delete(key);
+      }
       return result;
     } catch (err) {
       refreshDedupCache.delete(key);

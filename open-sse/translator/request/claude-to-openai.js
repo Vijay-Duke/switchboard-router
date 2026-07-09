@@ -4,6 +4,7 @@ import { adjustMaxTokens } from "../formats/maxTokens.js";
 import { encodeDataUri } from "../concerns/image.js";
 import { ROLE, OPENAI_BLOCK, CLAUDE_BLOCK } from "../schema/index.js";
 import { collapseTextParts } from "../concerns/message.js";
+import { coerceSchemaNumericConstraints } from "../formats/openai.js";
 
 function stripAnthropicBillingHeader(text) {
   if (typeof text !== "string") return "";
@@ -69,8 +70,8 @@ export function claudeToOpenAIRequest(model, body, stream) {
       type: OPENAI_BLOCK.FUNCTION,
       function: {
         name: tool.name,
-        description: String(tool.description || ""),
-        parameters: tool.input_schema || { type: "object", properties: {} }
+        description: typeof tool.description === "string" ? tool.description : String(tool.description || ""),
+        parameters: coerceSchemaNumericConstraints(tool.input_schema || { type: "object", properties: {} })
       }
     }));
   }
@@ -160,11 +161,21 @@ function convertClaudeMessage(msg) {
     const parts = [];
     const toolCalls = [];
     const toolResults = [];
+    let reasoningContent = "";
+    let reasoningSignature = null;
 
     for (const block of msg.content) {
       switch (block.type) {
         case CLAUDE_BLOCK.TEXT:
           parts.push({ type: OPENAI_BLOCK.TEXT, text: block.text });
+          break;
+
+        case CLAUDE_BLOCK.THINKING:
+          // Preserve thinking history across the OpenAI pivot (PR#2401 / #2400).
+          // Also keep Claude's signature so prepareClaudeRequest won't drop the
+          // block when pivoting back to native Claude (unsigned thinking is stripped).
+          if (block.thinking) reasoningContent += block.thinking;
+          if (block.signature && !reasoningSignature) reasoningSignature = block.signature;
           break;
 
         case CLAUDE_BLOCK.IMAGE:
@@ -184,7 +195,8 @@ function convertClaudeMessage(msg) {
             type: OPENAI_BLOCK.FUNCTION,
             function: {
               name: block.name,
-              arguments: JSON.stringify(block.input || {})
+              // If input is already a JSON string, don't double-stringify (PR#2279).
+              arguments: typeof block.input === "string" ? block.input : JSON.stringify(block.input || {})
             }
           });
           break;
@@ -225,16 +237,19 @@ function convertClaudeMessage(msg) {
       if (parts.length > 0) {
         result.content = collapseTextParts(parts);
       }
+      if (reasoningContent) result.reasoning_content = reasoningContent;
+      if (reasoningSignature) result.reasoning_signature = reasoningSignature;
       result.tool_calls = toolCalls;
       return result;
     }
 
-    // Return content
-    if (parts.length > 0) {
-      return {
-        role,
-        content: collapseTextParts(parts)
-      };
+    // Return content (and/or reasoning-only assistant turns)
+    if (parts.length > 0 || reasoningContent) {
+      const result2 = { role };
+      if (parts.length > 0) result2.content = collapseTextParts(parts);
+      if (reasoningContent) result2.reasoning_content = reasoningContent;
+      if (reasoningSignature) result2.reasoning_signature = reasoningSignature;
+      return result2;
     }
     
     // Empty content array
@@ -249,10 +264,15 @@ function convertClaudeMessage(msg) {
 // Convert tool choice
 function convertToolChoice(choice) {
   if (!choice) return "auto";
-  if (typeof choice === "string") return choice;
+  if (typeof choice === "string") {
+    // Claude uses "none"; OpenAI accepts "none" as well
+    if (choice === "none" || choice === "auto" || choice === "required") return choice;
+    return "auto";
+  }
   
   switch (choice.type) {
     case "auto": return "auto";
+    case "none": return "none";
     case "any": return "required";
     case "tool": return { type: OPENAI_BLOCK.FUNCTION, function: { name: choice.name } };
     default: return "auto";

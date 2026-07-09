@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import { useParams, notFound, useRouter } from "next/navigation";
 import Link from "next/link";
@@ -6,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Card, Badge, Button, Toggle, AddCustomEmbeddingModal } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS, getProvidersByKind } from "@/shared/constants/providers";
+import MediaKindTabs from "../MediaKindTabs";
 
 // Kinds that support combos (currently disabled for image/tts — temporarily hidden).
 // webSearch/webFetch handled by /web page.
@@ -229,6 +231,14 @@ export default function MediaProviderKindPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-1">
+        <h1 className="text-[17px] font-semibold text-text-main">{kindConfig.label}</h1>
+        <p className="text-xs font-mono text-text-subtle">
+          Media providers · not agent Skills
+        </p>
+      </div>
+      <MediaKindTabs activeKind={kind} />
+
       {(isEmbedding || supportsCombo) && (
         <div className="flex items-center justify-end gap-2">
           {supportsCombo && (

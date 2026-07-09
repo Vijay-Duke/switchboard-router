@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -6,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Card, Badge, Button } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS, getProvidersByKind } from "@/shared/constants/providers";
+import MediaKindTabs from "../MediaKindTabs";
 
 function getEffectiveStatus(conn) {
   const isCooldown = Object.entries(conn).some(
@@ -190,6 +192,12 @@ export default function WebProvidersPage() {
 
   return (
     <div className="flex flex-col gap-8">
+      <div className="flex flex-col gap-1">
+        <h1 className="text-[17px] font-semibold text-text-main">Web Fetch & Search</h1>
+        <p className="text-xs font-mono text-text-subtle">Media providers · not agent Skills</p>
+      </div>
+      <MediaKindTabs activeKind="web" />
+
       <Section
         title="Web Search" icon="search" kind="webSearch"
         providers={searchProviders} connections={connections} combos={searchCombos}

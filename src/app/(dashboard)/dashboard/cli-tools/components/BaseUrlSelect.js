@@ -1,9 +1,10 @@
 "use client";
+// @ts-check
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 
-const STORAGE_KEY = "9router.cliToolEndpointPresets";
+const STORAGE_KEY = "switchboard.cliToolEndpointPresets";
 const CUSTOM_VALUE = "__custom__";
 const SAVE_VALUE = "__save__";
 
@@ -29,24 +30,17 @@ const writeSavedPresets = (presets) => {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
 };
 
-const buildOptions = ({ requiresExternalUrl, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl, cloudEnabled, cloudUrl, savedPresets, withV1 }) => {
+const buildOptions = ({ requiresExternalUrl, savedPresets, withV1 }) => {
   const opts = [];
   const wrap = (url) => (withV1 ? ensureV1(url) : (url || "").replace(/\/+$/, ""));
-  if (!requiresExternalUrl) {
-    const localUrl = wrap(`http://127.0.0.1:${UPDATER_CONFIG.appPort}`);
-    opts.push({ value: "local", label: localUrl, url: localUrl });
-  }
-  if (tunnelEnabled && tunnelPublicUrl) {
-    const u = wrap(tunnelPublicUrl);
-    opts.push({ value: "tunnel", label: u, url: u });
-  }
-  if (tailscaleEnabled && tailscaleUrl) {
-    const u = wrap(tailscaleUrl);
-    opts.push({ value: "tailscale", label: u, url: u });
-  }
-  if (cloudEnabled && cloudUrl) {
-    const u = wrap(cloudUrl);
-    opts.push({ value: "cloud", label: u, url: u });
+  // Local-only product: always offer loopback. requiresExternalUrl no longer forces a remote URL.
+  const localUrl = wrap(`http://127.0.0.1:${UPDATER_CONFIG.appPort}`);
+  opts.push({ value: "local", label: localUrl, url: localUrl });
+  if (typeof window !== "undefined" && window.location?.origin) {
+    const originUrl = wrap(window.location.origin);
+    if (originUrl !== localUrl) {
+      opts.push({ value: "origin", label: originUrl, url: originUrl });
+    }
   }
   savedPresets.forEach((p) => {
     opts.push({ value: `saved:${p.name}`, label: p.baseUrl, url: p.baseUrl, saved: true });
@@ -58,7 +52,7 @@ const buildOptions = ({ requiresExternalUrl, tunnelEnabled, tunnelPublicUrl, tai
 export default function BaseUrlSelect({
   value,
   onChange,
-  requiresExternalUrl = false,
+  requiresExternalUrl = false, // kept for call-site compatibility; ignored
   tunnelEnabled = false,
   tunnelPublicUrl = "",
   tailscaleEnabled = false,
@@ -77,8 +71,8 @@ export default function BaseUrlSelect({
   }, []);
 
   const options = useMemo(
-    () => buildOptions({ requiresExternalUrl, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl, cloudEnabled, cloudUrl, savedPresets, withV1 }),
-    [requiresExternalUrl, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl, cloudEnabled, cloudUrl, savedPresets, withV1]
+    () => buildOptions({ requiresExternalUrl, savedPresets, withV1 }),
+    [requiresExternalUrl, savedPresets, withV1]
   );
 
   // Always default to first option (127.0.0.1) on mount, ignore persisted value

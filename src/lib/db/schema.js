@@ -1,5 +1,5 @@
-// Latest schema version — bumped when a migration is added in ./migrations/
-export const SCHEMA_VERSION = 1;
+// Latest schema version — must match migrations/index.js latestVersion()
+export const SCHEMA_VERSION = 3;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -146,6 +146,65 @@ export const TABLES = {
       "CREATE INDEX IF NOT EXISTS idx_rd_provider ON requestDetails(provider)",
       "CREATE INDEX IF NOT EXISTS idx_rd_model ON requestDetails(model)",
       "CREATE INDEX IF NOT EXISTS idx_rd_conn ON requestDetails(connectionId)",
+    ],
+  },
+  routing_events: {
+    columns: {
+      id: "INTEGER PRIMARY KEY AUTOINCREMENT",
+      timestamp: "TEXT NOT NULL",
+      comboName: "TEXT NOT NULL",
+      sessionId: "TEXT",
+      /** Groups attempt rows from one chat request (fallback chain). */
+      requestId: "TEXT",
+      requestFingerprint: "TEXT",
+      cluster: "TEXT",
+      routerModel: "TEXT",
+      pickedWorker: "TEXT",
+      alternates: "TEXT",
+      routerReason: "TEXT",
+      routerConfidence: "TEXT",
+      routerLatencyMs: "INTEGER",
+      workerStatus: "INTEGER",
+      workerLatencyMs: "INTEGER",
+      /**
+       * Request-level flag: 1 if this chat used a fallback/rescue at all.
+       * Not "this worker retried" — recompute outcomeScore from the row using
+       * meta.attemptFallback / scoring inputs, not this column alone.
+       */
+      fallbackUsed: "INTEGER DEFAULT 0",
+      retries: "INTEGER DEFAULT 0",
+      tokensIn: "INTEGER",
+      tokensOut: "INTEGER",
+      outcomeScore: "REAL",
+      objective: "TEXT",
+      learningVersionId: "TEXT",
+      meta: "TEXT",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_re_combo_ts ON routing_events(comboName, timestamp DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_re_cluster_combo ON routing_events(cluster, comboName)",
+      "CREATE INDEX IF NOT EXISTS idx_re_worker ON routing_events(pickedWorker)",
+      "CREATE INDEX IF NOT EXISTS idx_re_request ON routing_events(comboName, requestId)",
+    ],
+  },
+  router_learning_versions: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      comboName: "TEXT NOT NULL",
+      version: "INTEGER NOT NULL",
+      createdAt: "TEXT NOT NULL",
+      source: "TEXT",
+      banditTable: "TEXT",
+      learnedRules: "TEXT",
+      fewShots: "TEXT",
+      evalScore: "REAL",
+      prevVersionId: "TEXT",
+      promoted: "INTEGER DEFAULT 0",
+      notes: "TEXT",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_rlv_combo ON router_learning_versions(comboName)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_rlv_combo_ver ON router_learning_versions(comboName, version)",
     ],
   },
 };

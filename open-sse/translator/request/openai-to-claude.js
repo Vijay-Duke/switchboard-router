@@ -7,13 +7,15 @@ import { parseDataUri } from "../concerns/image.js";
 import { extractTextContent } from "../formats/gemini.js";
 import { ROLE, OPENAI_BLOCK, CLAUDE_BLOCK } from "../schema/index.js";
 import { getCapabilitiesForModel } from "../../providers/capabilities.js";
+import { DEFAULT_THINKING_CLAUDE_SIGNATURE } from "../../config/defaultThinkingSignature.js";
 
 // Empty prefix matches real Claude Code behavior (no tool name prefix).
 // Previously "proxy_" was used but this is a detectable fingerprint difference.
 const CLAUDE_OAUTH_TOOL_PREFIX = "";
 
 // Convert OpenAI request to Claude format
-export function openaiToClaudeRequest(model, body, stream) {
+// credentials optional — used to decide Claude Code system prompt injection
+export function openaiToClaudeRequest(model, body, stream, credentials = null) {
   // Tool name mapping for Claude OAuth (capitalizedName → originalName)
   const toolNameMap = new Map();
   // Cap max_tokens at the model's real output ceiling (e.g. Opus 4.8 = 128000),
@@ -129,16 +131,18 @@ Respond ONLY with the JSON object, no other text.`);
     }
   }
 
-  // System with Claude Code prompt and cache_control
+  // Claude Code system prompt: only for official Anthropic OAuth (sk-ant-oat).
+  // Third-party Anthropic-compatible gateways (MiniMax, etc.) reject or waste
+  // tokens on "You are Claude Code…" — never inject for them. Wave 6.
+  const token = credentials?.accessToken || credentials?.apiKey || "";
+  const injectClaudeCodePrompt = typeof token === "string" && token.includes("sk-ant-oat");
   const claudeCodePrompt = { type: CLAUDE_BLOCK.TEXT, text: CLAUDE_SYSTEM_PROMPT };
 
   if (systemParts.length > 0) {
     const systemText = systemParts.join("\n");
-    result.system = [
-      claudeCodePrompt,
-      { type: CLAUDE_BLOCK.TEXT, text: systemText, cache_control: { type: "ephemeral", ttl: "1h" } }
-    ];
-  } else {
+    const userSys = { type: CLAUDE_BLOCK.TEXT, text: systemText, cache_control: { type: "ephemeral", ttl: "1h" } };
+    result.system = injectClaudeCodePrompt ? [claudeCodePrompt, userSys] : [userSys];
+  } else if (injectClaudeCodePrompt) {
     result.system = [claudeCodePrompt];
   }
 
@@ -153,7 +157,14 @@ Respond ONLY with the JSON object, no other text.`);
         continue;
       }
 
-      const toolData = toolType === OPENAI_BLOCK.FUNCTION && tool.function ? tool.function : tool;
+      // Function-shaped tools arrive in two flavors from real clients:
+      //   (a) openai-spec: { type: "function", function: { name, ... } }
+      //   (b) legacy/loose: { function: { name, ... } }   (no parent `type`)
+      // Both must yield toolData.name. Treat the bare-function shape as a
+      // function tool too — Anthropic-compatible gateways (notably MiniMax M3)
+      // reject payloads where this falls through with name === undefined,
+      // returning upstream code (2013) "invalid tool type". See #2435 / PR#2473.
+      const toolData = tool.function ?? tool;
       const originalName = toolData.name;
 
       // Claude OAuth requires prefixed tool names to avoid conflicts
@@ -164,7 +175,7 @@ Respond ONLY with the JSON object, no other text.`);
 
       result.tools.push({
         name: toolName,
-        description: toolData.description || "",
+        description: typeof toolData.description === "string" ? toolData.description : String(toolData.description || ""),
         input_schema: toolData.parameters || toolData.input_schema || { type: "object", properties: {}, required: [] }
       });
     }
@@ -245,6 +256,17 @@ function getContentBlocksFromMessage(msg, toolNameMap = new Map()) {
       }
     }
   } else if (msg.role === ROLE.ASSISTANT) {
+    // Map OpenAI reasoning_content → Claude thinking block (PR#2401 / #2400).
+    // Attach signature when present (carried via reasoning_signature) or a default
+    // so prepareClaudeRequest keeps the block for native Claude OAuth.
+    const hasThinkingBlock = Array.isArray(msg.content) && msg.content.some(part => part.type === CLAUDE_BLOCK.THINKING);
+    if (msg.reasoning_content && !hasThinkingBlock) {
+      blocks.push({
+        type: CLAUDE_BLOCK.THINKING,
+        thinking: msg.reasoning_content,
+        signature: msg.reasoning_signature || DEFAULT_THINKING_CLAUDE_SIGNATURE,
+      });
+    }
     if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
         if (part.type === OPENAI_BLOCK.TEXT && part.text) {
@@ -274,7 +296,15 @@ function getContentBlocksFromMessage(msg, toolNameMap = new Map()) {
             type: CLAUDE_BLOCK.TOOL_USE,
             id: tc.id,
             name: toolName,
-            input: safeParseJSON(tc.function.arguments, tc.function.arguments)
+            // Never leave input as a raw string — Anthropic requires object (wave10).
+            input: (() => {
+              const parsed = safeParseJSON(tc.function.arguments, null);
+              if (parsed && typeof parsed === "object") return parsed;
+              if (typeof tc.function.arguments === "object" && tc.function.arguments !== null) {
+                return tc.function.arguments;
+              }
+              return {};
+            })()
           });
         }
       }
@@ -296,7 +326,9 @@ function convertOpenAIToolChoice(choice) {
   // OpenAI string forms: "auto" | "none" | "required"
   if (typeof choice === "string") {
     if (choice === "required") return { type: "any" };
-    return { type: "auto" }; // "auto", "none", or anything unexpected
+    if (choice === "none") return { type: "none" };
+    if (choice === "auto") return { type: "auto" };
+    return { type: "auto" }; // anything unexpected
   }
 
   if (typeof choice === "object") {

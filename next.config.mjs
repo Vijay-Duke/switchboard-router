@@ -7,19 +7,33 @@ const projectRoot = dirname(fileURLToPath(import.meta.url));
 const tracingRoot = process.env.NEXT_TRACING_ROOT_MODE === "workspace"
   ? join(projectRoot, "..")
   : projectRoot;
-const proxyClientMaxBodySize = process.env.NINEROUTER_PROXY_CLIENT_MAX_BODY_SIZE || "128mb";
+const proxyClientMaxBodySize = process.env.SWITCHBOARD_PROXY_CLIENT_MAX_BODY_SIZE || "128mb";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
   output: "standalone",
   serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite"],
+  // Next.js 16 blocks /_next/* cross-origin in dev by default. Without this,
+  // opening the app via 127.0.0.1 or a LAN IP leaves React unhydrated — login
+  // form does a dead native GET submit and appears to "do nothing".
+  allowedDevOrigins: [
+    "127.0.0.1",
+    "localhost",
+    "0.0.0.0",
+    "*.local",
+  ],
   turbopack: {
     root: tracingRoot
   },
   outputFileTracingRoot: tracingRoot,
   outputFileTracingExcludes: {
     "*": ["./gitbook/**/*"]
+  },
+  // Ship skills/*.md with standalone so /api/skills/[id] can serve them
+  outputFileTracingIncludes: {
+    "/api/skills/[id]": ["./skills/**/*"],
+    "/api/skills/*": ["./skills/**/*"],
   },
   images: {
     unoptimized: true

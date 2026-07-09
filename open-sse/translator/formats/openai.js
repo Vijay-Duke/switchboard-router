@@ -4,6 +4,45 @@ import { ROLE, OPENAI_BLOCK, CLAUDE_BLOCK, VALID_OPENAI_CONTENT_TYPES, VALID_OPE
 // Re-export valid-type lists (moved to schema/blocks.js) to keep existing importers working.
 export { VALID_OPENAI_CONTENT_TYPES, VALID_OPENAI_MESSAGE_TYPES };
 
+// JSON Schema keywords whose values must be integers (not strings).
+// MCP tools / clients sometimes serialize numeric constraints as strings,
+// which strict providers (Codex, NIM) reject. See decolua/9router PR#422.
+const NUMERIC_SCHEMA_KEYWORDS = [
+  "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+  "minLength", "maxLength", "minItems", "maxItems",
+  "minProperties", "maxProperties", "multipleOf",
+];
+
+/**
+ * Recursively coerce string numeric values for integer-typed JSON Schema keywords.
+ * Fixes errors like: Invalid schema: '64' is not of type 'integer'
+ * @param {unknown} schema
+ * @returns {unknown}
+ */
+export function coerceSchemaNumericConstraints(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+
+  if (Array.isArray(schema)) {
+    for (const item of schema) coerceSchemaNumericConstraints(item);
+    return schema;
+  }
+
+  for (const key of NUMERIC_SCHEMA_KEYWORDS) {
+    if (typeof schema[key] === "string") {
+      const parsed = Number(schema[key]);
+      if (!Number.isNaN(parsed)) schema[key] = parsed;
+    }
+  }
+
+  for (const value of Object.values(schema)) {
+    if (value && typeof value === "object") {
+      coerceSchemaNumericConstraints(value);
+    }
+  }
+
+  return schema;
+}
+
 // Filter messages to OpenAI standard format
 // Remove: thinking, redacted_thinking, signature, and other non-OpenAI blocks
 // opts.preserveCacheControl: keep cache_control on content blocks (e.g. for DashScope/alicode)
@@ -85,8 +124,30 @@ export function filterToOpenAIFormat(body, opts = {}) {
   // Normalize tools to OpenAI format (from Claude, Gemini, etc.)
   if (body.tools && Array.isArray(body.tools) && body.tools.length > 0) {
     body.tools = body.tools.map(tool => {
-      // Already OpenAI format
-      if (tool.type === OPENAI_BLOCK.FUNCTION && tool.function) return tool;
+      // Already OpenAI format — still coerce description + numeric schema constraints
+      if (tool.type === OPENAI_BLOCK.FUNCTION && tool.function) {
+        const fn = tool.function;
+        return {
+          ...tool,
+          function: {
+            ...fn,
+            description: typeof fn.description === "string" ? fn.description : String(fn.description || ""),
+            parameters: coerceSchemaNumericConstraints(fn.parameters || { type: "object", properties: {} }),
+          },
+        };
+      }
+      // Loose OpenAI shape without parent type: { function: { name, ... } }
+      if (tool.function && !tool.type) {
+        const fn = tool.function;
+        return {
+          type: OPENAI_BLOCK.FUNCTION,
+          function: {
+            name: fn.name,
+            description: typeof fn.description === "string" ? fn.description : String(fn.description || ""),
+            parameters: coerceSchemaNumericConstraints(fn.parameters || { type: "object", properties: {} }),
+          },
+        };
+      }
       
       // Claude format: {name, description, input_schema}
       if (tool.name && (tool.input_schema || tool.description)) {
@@ -94,8 +155,8 @@ export function filterToOpenAIFormat(body, opts = {}) {
           type: OPENAI_BLOCK.FUNCTION,
           function: {
             name: tool.name,
-            description: String(tool.description || ""),
-            parameters: tool.input_schema || { type: "object", properties: {} }
+            description: typeof tool.description === "string" ? tool.description : String(tool.description || ""),
+            parameters: coerceSchemaNumericConstraints(tool.input_schema || { type: "object", properties: {} })
           }
         };
       }
@@ -106,8 +167,8 @@ export function filterToOpenAIFormat(body, opts = {}) {
           type: OPENAI_BLOCK.FUNCTION,
           function: {
             name: fn.name,
-            description: String(fn.description || ""),
-            parameters: fn.parameters || { type: "object", properties: {} }
+            description: typeof fn.description === "string" ? fn.description : String(fn.description || ""),
+            parameters: coerceSchemaNumericConstraints(fn.parameters || { type: "object", properties: {} })
           }
         }));
       }
@@ -119,9 +180,11 @@ export function filterToOpenAIFormat(body, opts = {}) {
   // Normalize tool_choice to OpenAI format
   if (body.tool_choice && typeof body.tool_choice === "object") {
     const choice = body.tool_choice;
-    // Claude format: {type: "auto|any|tool", name?: "..."}
+    // Claude format: {type: "auto|any|tool|none", name?: "..."}
     if (choice.type === "auto") {
       body.tool_choice = "auto";
+    } else if (choice.type === "none") {
+      body.tool_choice = "none";
     } else if (choice.type === "any") {
       body.tool_choice = "required";
     } else if (choice.type === "tool" && choice.name) {

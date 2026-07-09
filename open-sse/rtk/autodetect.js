@@ -18,7 +18,8 @@ import { searchList, SEARCH_LIST_HEADER_RE } from "./filters/searchList.js";
 const RE_GIT_DIFF = /^diff --git /m;
 const RE_GIT_DIFF_HUNK = /^@@ /m;
 const RE_GIT_STATUS = /^On branch |^nothing to commit|^Changes (not |to be )|^Untracked files:/m;
-const RE_GIT_LOG = /^[*|/\\ ]*commit [0-9a-f]{7,40}$/m;
+// Allow decorated headers: "commit abc1234 (HEAD -> main, origin/main)"
+const RE_GIT_LOG = /^[*|/\\ ]*commit [0-9a-f]{7,40}(\s|$|[([<{])/im;
 const RE_PORCELAIN = /^[ MADRCU?!][ MADRCU?!] \S/m;
 const RE_BUILD_OUTPUT = /^(npm (warn|error|ERR!)|yarn (warn|error)|\s*Compiling\s+\S+|\s*Downloading\s+\S+|added \d+ package|\[ERROR\]|BUILD (SUCCESS|FAILED)|\s*Finished\s+|Successfully (installed|built)|ERROR:)/im;
 const RE_TREE_GLYPH = /[├└]──|│  /;
@@ -71,21 +72,39 @@ export function autoDetectFilter(text) {
   return null;
 }
 
-function isGrepLine(line) {
-  // Rust: splitn(3, ':') → parts.len()==3 && parts[1].parse::<usize>().is_ok()
-  const first = line.indexOf(":");
-  if (first === -1) return false;
+/**
+ * Parse a ripgrep-style "file:lineno:content" line, aware of Windows drive letters.
+ * "C:\foo\bar.js:10:x" must not treat the drive colon as the field separator.
+ * @returns {{ file: string, lineNum: string, content: string } | null}
+ */
+export function parseGrepLine(line) {
+  if (!line) return null;
+  // Windows absolute: C:\path or C:/path — skip the drive colon
+  let start = 0;
+  if (/^[A-Za-z]:[\\/]/.test(line)) start = 2;
+  const first = line.indexOf(":", start);
+  if (first === -1) return null;
   const second = line.indexOf(":", first + 1);
-  if (second === -1) return false;
-  const lineno = line.slice(first + 1, second);
-  return /^\d+$/.test(lineno);
+  if (second === -1) return null;
+  const file = line.slice(0, first);
+  const lineNum = line.slice(first + 1, second);
+  if (!/^\d+$/.test(lineNum)) return null;
+  return { file, lineNum, content: line.slice(second + 1) };
+}
+
+function isGrepLine(line) {
+  return parseGrepLine(line) !== null;
 }
 
 function isPathLike(line) {
   const t = line.trim();
   if (t.length === 0) return false;
+  // Drive-letter prefix (C:\Users\… or C:/Users/…) is a Windows absolute path.
+  // Without this, the colon check below rejects all Windows find dumps and RTK
+  // never compresses them (decolua/9router PR#2448 / #2476-adjacent).
+  if (/^[A-Za-z]:[\\/]/.test(t)) return true;
   if (t.includes(":")) return false;
-  return t.startsWith(".") || t.startsWith("/") || t.includes("/");
+  return t.startsWith(".") || t.startsWith("/") || t.includes("/") || t.includes("\\");
 }
 
 function isMostlyPorcelain(head) {

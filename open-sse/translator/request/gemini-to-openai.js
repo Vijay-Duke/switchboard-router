@@ -81,8 +81,15 @@ function convertGeminiContent(content) {
 
   const parts = [];
   const toolCalls = [];
+  let reasoningContent = "";
 
   for (const part of content.parts) {
+    // Thought parts → reasoning_content on the OpenAI pivot (PR#2401 / #2400).
+    if (part.thought === true) {
+      if (part.text !== undefined) reasoningContent += part.text;
+      continue;
+    }
+
     if (part.text !== undefined) {
       parts.push({ type: OPENAI_BLOCK.TEXT, text: part.text });
     }
@@ -123,15 +130,16 @@ function convertGeminiContent(content) {
     if (parts.length > 0) {
       result.content = parts.length === 1 ? parts[0].text : parts;
     }
+    if (reasoningContent) result.reasoning_content = reasoningContent;
     result.tool_calls = toolCalls;
     return result;
   }
 
-  if (parts.length > 0) {
-    return {
-      role,
-      content: collapseTextParts(parts)
-    };
+  if (parts.length > 0 || reasoningContent) {
+    const result = { role };
+    if (parts.length > 0) result.content = collapseTextParts(parts);
+    if (reasoningContent) result.reasoning_content = reasoningContent;
+    return result;
   }
 
   return null;
@@ -146,7 +154,42 @@ function extractGeminiText(content) {
   return "";
 }
 
-// Register
-register(FORMATS.GEMINI, FORMATS.OPENAI, geminiToOpenAIRequest, null);
-register(FORMATS.GEMINI_CLI, FORMATS.OPENAI, geminiToOpenAIRequest, null);
+// Pre-split contents that co-locate functionResponse with other parts (functionCall/text).
+// convertGeminiContent early-returns on the first functionResponse and would drop siblings.
+// decolua/9router#2393 / PR#2394.
+function geminiToOpenAIRequestFixed(model, body, stream) {
+  if (!body || !Array.isArray(body.contents)) {
+    return geminiToOpenAIRequest(model, body, stream);
+  }
+
+  const splitContents = [];
+  for (const content of body.contents) {
+    if (!content || !Array.isArray(content.parts)) {
+      splitContents.push(content);
+      continue;
+    }
+
+    const hasFunctionResponse = content.parts.some(p => p && p.functionResponse);
+    if (!hasFunctionResponse) {
+      splitContents.push(content);
+      continue;
+    }
+
+    for (const part of content.parts) {
+      if (part && part.functionResponse) {
+        splitContents.push({ ...content, parts: [part] });
+      }
+    }
+    const nonFRParts = content.parts.filter(p => !(p && p.functionResponse));
+    if (nonFRParts.length > 0) {
+      splitContents.push({ ...content, parts: nonFRParts });
+    }
+  }
+
+  return geminiToOpenAIRequest(model, { ...body, contents: splitContents }, stream);
+}
+
+// Register (fixed version overrides base — Map.set last wins)
+register(FORMATS.GEMINI, FORMATS.OPENAI, geminiToOpenAIRequestFixed, null);
+register(FORMATS.GEMINI_CLI, FORMATS.OPENAI, geminiToOpenAIRequestFixed, null);
 

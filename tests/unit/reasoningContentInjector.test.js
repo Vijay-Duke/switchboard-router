@@ -79,7 +79,9 @@ describe("injectReasoningContent — DeepSeek thinking round-trip", () => {
       body: bodyWith([{ role: "user", content: "hi" }]),
     });
     expect(out.model).toBe("deepseek-v4-pro");
-    expect(out.extra_body.thinking.type).toBe("disabled");
+    // Wire-level thinking (not Python-SDK extra_body)
+    expect(out.thinking).toEqual({ type: "disabled" });
+    expect(out.extra_body?.thinking).toBeUndefined();
     expect(out.reasoning_effort).toBeUndefined();
   });
 });

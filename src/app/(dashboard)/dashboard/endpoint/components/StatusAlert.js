@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 /** Reusable status alert */
 export default function StatusAlert({ status, className = "" }) {

@@ -1,3 +1,4 @@
+// @ts-check
 import { handleFetch } from "@/sse/handlers/fetch.js";
 
 /**

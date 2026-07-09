@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";

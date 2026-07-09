@@ -7,6 +7,19 @@
       "open-sse/*": ["./open-sse/*"]
     },
     "module": "ESNext",
-    "moduleResolution": "bundler"
-  }
+    "moduleResolution": "bundler",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "preserve",
+    "checkJs": false,
+    "strict": false,
+    "noEmit": true,
+    "allowJs": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force"
+  },
+  "include": ["src/**/*", "open-sse/**/*"],
+  "exclude": ["node_modules", ".next", "cli", "tests", "gitbook"]
 }

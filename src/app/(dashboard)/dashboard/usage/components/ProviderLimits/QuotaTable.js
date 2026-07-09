@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import { useEffect, useMemo, useState } from "react";
 import { formatResetTime, getRemainingPercentage } from "./utils";

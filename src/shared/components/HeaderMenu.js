@@ -33,7 +33,7 @@ MenuItem.propTypes = {
   danger: PropTypes.bool,
 };
 
-export default function HeaderMenu({ onLogout }) {
+export default function HeaderMenu() {
   const [isOpen, setIsOpen] = useState(false);
   const [changelogOpen, setChangelogOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
@@ -95,12 +95,6 @@ export default function HeaderMenu({ onLogout }) {
               danger
               onClick={() => { close(); setShutdownOpen(true); }}
             />
-            <MenuItem
-              icon="logout"
-              label="Logout"
-              danger
-              onClick={() => { close(); onLogout(); }}
-            />
           </div>
         )}
       </div>
@@ -121,6 +115,4 @@ export default function HeaderMenu({ onLogout }) {
   );
 }
 
-HeaderMenu.propTypes = {
-  onLogout: PropTypes.func.isRequired,
-};
+

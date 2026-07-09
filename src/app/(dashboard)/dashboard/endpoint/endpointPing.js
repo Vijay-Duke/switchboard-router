@@ -1,29 +1,28 @@
-import { CLIENT_PING_TIMEOUT_MS } from "./endpointConstants";
+// @ts-check
+// Local health ping helper for endpoint UI (optional client-side checks).
 
-// Browser-side health probe: must reach origin (not just CF/TS edge).
-// cors mode → res.ok=false for 5xx (e.g. Cloudflare 530 when origin dead).
-// /api/health route sets Access-Control-Allow-Origin: * → CORS works through tunnel.
-export async function clientPingUrl(url) {
+export async function clientPingUrl(url, { timeoutMs = 3000 } = {}) {
   if (!url) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${url}/api/health`, {
-      mode: "cors",
+    const res = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
       cache: "no-store",
-      signal: AbortSignal.timeout(CLIENT_PING_TIMEOUT_MS),
+      mode: "cors",
     });
     return res.ok;
-  } catch { return false; }
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-// Race multiple URLs: resolve true as soon as any one passes ping.
 export async function clientPingAny(...urls) {
-  const checks = urls.filter(Boolean).map(clientPingUrl);
-  if (!checks.length) return false;
-  return new Promise((resolve) => {
-    let pending = checks.length;
-    checks.forEach((p) => p.then((ok) => {
-      if (ok) resolve(true);
-      else if (--pending === 0) resolve(false);
-    }));
-  });
+  const targets = urls.flat().filter(Boolean);
+  if (!targets.length) return false;
+  const results = await Promise.all(targets.map((u) => clientPingUrl(u)));
+  return results.some(Boolean);
 }

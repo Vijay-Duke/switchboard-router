@@ -1,3 +1,4 @@
+// @ts-check
 import TokenSaverClient from "./TokenSaverClient";
 
 export default function TokenSaverPage() {

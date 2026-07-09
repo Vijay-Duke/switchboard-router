@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import Link from "next/link";
 import { Card } from "@/shared/components";

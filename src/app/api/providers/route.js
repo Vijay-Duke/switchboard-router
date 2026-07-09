@@ -1,10 +1,10 @@
+// @ts-check
 import { NextResponse } from "next/server";
 import {
   getProviderConnections,
   createProviderConnection,
   getProviderNodeById,
   getProviderNodes,
-  getProxyPoolById,
 } from "@/models";
 import { APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { AI_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider } from "@/shared/constants/providers";
@@ -28,22 +28,9 @@ function normalizeProxyConfig(body = {}) {
   };
 }
 
-async function normalizeProxyPoolId(proxyPoolId) {
-  if (proxyPoolId === undefined || proxyPoolId === null || proxyPoolId === "" || proxyPoolId === "__none__") {
-    return { proxyPoolId: null };
-  }
-
-  const normalizedId = String(proxyPoolId).trim();
-  if (!normalizedId) {
-    return { proxyPoolId: null };
-  }
-
-  const proxyPool = await getProxyPoolById(normalizedId);
-  if (!proxyPool) {
-    return { error: "Proxy pool not found" };
-  }
-
-  return { proxyPoolId: normalizedId };
+/** Proxy pools removed — always clear any pool id on create. */
+async function normalizeProxyPoolId(_proxyPoolId) {
+  return { proxyPoolId: null };
 }
 
 // GET /api/providers - List all connections

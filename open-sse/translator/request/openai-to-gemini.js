@@ -83,12 +83,13 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
     }
   }
 
-  // Build tool responses cache
-  const toolResponses = {};
+  // Build tool responses cache. Use Map so empty-string stubs from
+  // fixMissingToolResponses still count as present (wave11 P0).
+  const toolResponses = new Map();
   if (body.messages && Array.isArray(body.messages)) {
     for (const msg of body.messages) {
       if (msg.role === ROLE.TOOL && msg.tool_call_id) {
-        toolResponses[msg.tool_call_id] = msg.content;
+        toolResponses.set(msg.tool_call_id, msg.content ?? "");
       }
     }
   }
@@ -153,13 +154,13 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
             result.contents.push({ role: GEMINI_ROLE.MODEL, parts });
           }
 
-          // Check if there are actual tool responses in the next messages
-          const hasActualResponses = toolCallIds.some(fid => toolResponses[fid]);
+          // Check if there are tool responses (including empty stubs)
+          const hasActualResponses = toolCallIds.some(fid => toolResponses.has(fid));
 
           if (hasActualResponses) {
             const toolParts = [];
             for (const fid of toolCallIds) {
-              if (!toolResponses[fid]) continue;
+              if (!toolResponses.has(fid)) continue;
 
               let name = tcID2Name[fid];
               if (!name) {
@@ -171,10 +172,10 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
                 }
               }
 
-              let resp = toolResponses[fid];
+              let resp = toolResponses.get(fid);
               let parsedResp = tryParseJSON(resp);
               if (parsedResp === null) {
-                parsedResp = { result: resp };
+                parsedResp = { result: resp ?? "" };
               } else if (typeof parsedResp !== "object") {
                 parsedResp = { result: parsedResp };
               }
@@ -228,8 +229,31 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
     }
   }
 
+  // Map OpenAI tool_choice → Gemini functionCallingConfig (wave10).
+  // Without this, none/required/forced tools are silently treated as AUTO.
+  if (result.tools?.length > 0 && body.tool_choice !== undefined) {
+    result.toolConfig = {
+      functionCallingConfig: mapOpenAIToolChoiceToGemini(body.tool_choice),
+    };
+  }
+
   result.contents = normalizeGeminiContents(result.contents);
   return result;
+}
+
+function mapOpenAIToolChoiceToGemini(choice) {
+  if (choice === "none") return { mode: "NONE" };
+  if (choice === "required") return { mode: "ANY" };
+  if (choice === "auto") return { mode: "AUTO" };
+  if (typeof choice === "object" && choice !== null) {
+    if (choice.type === "none") return { mode: "NONE" };
+    if (choice.type === "any" || choice.type === "required") return { mode: "ANY" };
+    const name = choice.function?.name || choice.name;
+    if (name) {
+      return { mode: "ANY", allowedFunctionNames: [sanitizeGeminiFunctionName(name)] };
+    }
+  }
+  return { mode: "AUTO" };
 }
 
 // OpenAI -> Gemini (standard API)
@@ -279,6 +303,11 @@ function wrapInCloudCodeEnvelope(model, geminiCLI, credentials = null, isAntigra
     }
   };
 
+  // Preserve toolConfig from openai→gemini (tool_choice map) for gemini-cli (wave11).
+  if (geminiCLI.toolConfig) {
+    envelope.request.toolConfig = geminiCLI.toolConfig;
+  }
+
   // Antigravity specific fields
   if (isAntigravity) {
     envelope.requestType = "agent";
@@ -296,8 +325,9 @@ function wrapInCloudCodeEnvelope(model, geminiCLI, credentials = null, isAntigra
       envelope.request.systemInstruction = { role: GEMINI_ROLE.USER, parts: systemParts };
     }
 
-    // Add toolConfig for Antigravity
-    if (geminiCLI.tools?.length > 0) {
+    // Prefer mapped tool_choice (NONE/ANY/allowedFunctionNames); default VALIDATED
+    // only when tools exist and client did not set tool_choice (wave11).
+    if (geminiCLI.tools?.length > 0 && !geminiCLI.toolConfig) {
       envelope.request.toolConfig = {
         functionCallingConfig: { mode: "VALIDATED" }
       };

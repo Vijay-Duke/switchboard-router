@@ -13,6 +13,11 @@ export default function DonateModal({ isOpen, onClose }) {
 
   useEffect(() => {
     if (!isOpen || data) return;
+    if (!GITHUB_CONFIG.donateUrl) {
+      setError("Donations are not configured for this build.");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
     fetch(GITHUB_CONFIG.donateUrl, { cache: "no-store" })
@@ -47,7 +52,7 @@ export default function DonateModal({ isOpen, onClose }) {
         <div className="flex items-center justify-between p-3 border-b border-black/5 dark:border-white/5">
           <h2 className="text-lg font-semibold text-text-main flex items-center gap-2">
             <span className="material-symbols-outlined text-pink-500">volunteer_activism</span>
-            {data?.title || "Support 9Router"}
+            {data?.title || "Support Switchboard"}
           </h2>
           <button
             onClick={onClose}

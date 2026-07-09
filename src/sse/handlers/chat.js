@@ -14,12 +14,55 @@ import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { handleComboChat, handleFusionChat } from "open-sse/services/combo.js";
+import { handleAutoChat } from "open-sse/routing/handleAutoChat.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
+import {
+  insertRoutingEvent,
+  getPromotedLearningVersion,
+  getLearningVersionById,
+  getClusterWorkerStats,
+  getClusterLatencyP50,
+  setRoutingWriteHook,
+} from "@/lib/db/repos/routingRepo.js";
+import {
+  cached,
+  invalidateRoutingCache,
+  statsCacheKey,
+  learningCacheKey,
+} from "open-sse/routing/routingCache.js";
+
+// Hot-path cache invalidation when routing events / learning versions change
+setRoutingWriteHook((comboName) => {
+  if (comboName) {
+    invalidateRoutingCache(`stats:${comboName}:`);
+    invalidateRoutingCache(`learning:${comboName}`);
+  } else {
+    invalidateRoutingCache();
+  }
+});
+
+/**
+ * Load learning artifacts: activeLearningVersionId pin wins over promoted.
+ * @param {string} name
+ * @param {object} [strategy]
+ */
+async function loadLearningCached(name, strategy = {}) {
+  const pin = strategy?.activeLearningVersionId;
+  if (pin) {
+    return cached(`learning:id:${pin}`, () => getLearningVersionById(pin));
+  }
+  return cached(learningCacheKey(name), () => getPromotedLearningVersion(name));
+}
+
+async function loadStatsCached(name, days = 14) {
+  const d = Math.min(90, Math.max(1, Number(days) || 14));
+  return cached(statsCacheKey(name, d), () => getClusterWorkerStats(name, d));
+}
 
 /**
  * Handle chat completion request
@@ -118,16 +161,61 @@ export async function handleChat(request, clientRawRequest = null) {
       });
     }
 
+    if (comboStrategy === "auto") {
+      const strat = comboStrategies[modelStr] || {};
+      // SPEC §2 non-goal: nested combos as router targets
+      const routerId = strat.routerModel || "claude/claude-opus-4-8";
+      if (await getComboModels(routerId)) {
+        log.warn("CHAT", `Auto routerModel is a combo (${routerId}) — rejected`);
+        return errorResponse(
+          HTTP_STATUS.BAD_REQUEST,
+          `routerModel cannot be a combo ("${routerId}"). Use a single provider/model.`
+        );
+      }
+      // Strip nested combos from worker pool (SPEC §2 non-goal)
+      const workerModels = [];
+      for (const m of comboModels) {
+        if (m === routerId) continue;
+        if (await getComboModels(m)) {
+          log.warn("CHAT", `Auto pool drops nested combo worker "${m}"`);
+          continue;
+        }
+        workerModels.push(m);
+      }
+      log.info("CHAT", `Combo "${modelStr}" with ${workerModels.length} workers (strategy: auto)`);
+      return handleAutoChat({
+        body,
+        models: [...workerModels, ...(comboModels.includes(routerId) ? [routerId] : [])],
+        handleSingleModel: (b, m, callOpts) =>
+          handleSingleModelChat(b, m, clientRawRequest, request, apiKey, callOpts),
+        log,
+        comboName: modelStr,
+        strategy: strat,
+        loadLearning: loadLearningCached,
+        loadStats: loadStatsCached,
+        loadClusterP50: (combo, cluster, days) =>
+          cached(`p50:${combo}:${cluster}:${days}`, () =>
+            getClusterLatencyP50(combo, cluster, days)
+          ),
+        recordEvent: (ev) => insertRoutingEvent(ev),
+        autoDepth: 0,
+        clientAbortSignal: request?.signal || null,
+      });
+    }
+
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
-    log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
+    const capacityAutoSwitch = comboStrategies[modelStr]?.capacityAutoSwitch !== false;
+    log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit}, capacitySwitch: ${capacityAutoSwitch})`);
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
+      handleSingleModel: (b, m, callOpts) =>
+        handleSingleModelChat(b, m, clientRawRequest, request, apiKey, callOpts),
       log,
       comboName: modelStr,
       comboStrategy,
-      comboStickyLimit
+      comboStickyLimit,
+      autoSwitch: capacityAutoSwitch,
     });
   }
 
@@ -137,9 +225,15 @@ export async function handleChat(request, clientRawRequest = null) {
 
 /**
  * Handle single model chat request
+ * @param {object} [callOpts]
+ * @param {string} [callOpts.sourceFormatOverride] - Force request format (e.g. router uses "openai")
+ * @param {boolean} [callOpts.bypassPromptFilters] - Disable caveman/ponytail/headroom/rtk (router calls)
+ * @param {AbortSignal} [callOpts.signal] - Abort upstream on timeout
+ * @param {number} [callOpts.autoDepth] - Auto-combo recursion depth
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, callOpts = null) {
   const modelInfo = await getModelInfo(modelStr);
+  const autoDepth = callOpts?.autoDepth || 0;
 
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {
@@ -162,7 +256,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
               cleanRawReq = { ...clientRawRequest, body: cleanBody };
             }
-            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
+            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, callOpts);
           },
           log,
           comboName: modelStr,
@@ -171,16 +265,71 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         });
       }
 
+      if (comboStrategy === "auto") {
+        if (autoDepth >= 2) {
+          log.warn("CHAT", `Auto combo recursion limit at "${modelStr}" (depth ${autoDepth})`);
+          return errorResponse(
+            HTTP_STATUS.BAD_REQUEST,
+            `Auto combo recursion limit — "${modelStr}" cannot nest further`
+          );
+        }
+        const strat = comboStrategies[modelStr] || {};
+        const routerId = strat.routerModel || "claude/claude-opus-4-8";
+        if (await getComboModels(routerId)) {
+          return errorResponse(
+            HTTP_STATUS.BAD_REQUEST,
+            `routerModel cannot be a combo ("${routerId}")`
+          );
+        }
+        const workerModels = [];
+        for (const m of comboModels) {
+          if (m === routerId) continue;
+          if (await getComboModels(m)) {
+            log.warn("CHAT", `Auto pool drops nested combo worker "${m}"`);
+            continue;
+          }
+          workerModels.push(m);
+        }
+        log.info(
+          "CHAT",
+          `Combo "${modelStr}" with ${workerModels.length} workers (strategy: auto, depth=${autoDepth})`
+        );
+        return handleAutoChat({
+          body,
+          models: [
+            ...workerModels,
+            ...(comboModels.includes(routerId) ? [routerId] : []),
+          ],
+          handleSingleModel: (b, m, opts) =>
+            handleSingleModelChat(b, m, clientRawRequest, request, apiKey, opts),
+          log,
+          comboName: modelStr,
+          strategy: strat,
+          loadLearning: loadLearningCached,
+          loadStats: loadStatsCached,
+          loadClusterP50: (combo, cluster, days) =>
+            cached(`p50:${combo}:${cluster}:${days}`, () =>
+              getClusterLatencyP50(combo, cluster, days)
+            ),
+          recordEvent: (ev) => insertRoutingEvent(ev),
+          autoDepth,
+          clientAbortSignal: request?.signal || null,
+        });
+      }
+
       const comboStickyLimit = chatSettings.comboStickyRoundRobinLimit;
-      log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
+      const capacityAutoSwitch = comboStrategies[modelStr]?.capacityAutoSwitch !== false;
+      log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit}, capacitySwitch: ${capacityAutoSwitch})`);
       return handleComboChat({
         body,
         models: comboModels,
-        handleSingleModel: (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
+        handleSingleModel: (b, m, opts) =>
+          handleSingleModelChat(b, m, clientRawRequest, request, apiKey, opts),
         log,
         comboName: modelStr,
         comboStrategy,
-        comboStickyLimit
+        comboStickyLimit,
+        autoSwitch: capacityAutoSwitch,
       });
     }
     log.warn("CHAT", "Invalid model format", { model: modelStr });
@@ -238,11 +387,23 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       }
     }
 
-    // Use shared chatCore
+    // Use shared chatCore — deep-clone body so account retries don't share
+    // modality/tool mutations from a prior attempt (wave12).
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
+    const attemptBody = typeof structuredClone === "function"
+      ? structuredClone(body)
+      : JSON.parse(JSON.stringify(body));
+    // Prefer explicit override (router always OpenAI shape); else detect from endpoint
+    const sourceFormatOverride =
+      callOpts?.sourceFormatOverride ||
+      (request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null);
+
+    // Router / internal JSON-only calls must not get style/compression rewrites
+    const bypassFilters = !!callOpts?.bypassPromptFilters;
+
     const result = await handleChatCore({
-      body: { ...body, model: `${provider}/${model}` },
+      body: { ...attemptBody, model: `${provider}/${model}` },
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
       log,
@@ -251,17 +412,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       userAgent,
       apiKey,
       ccFilterNaming: !!chatSettings.ccFilterNaming,
-      rtkEnabled: !!chatSettings.rtkEnabled,
-      headroomEnabled: !!chatSettings.headroomEnabled,
+      rtkEnabled: bypassFilters ? false : !!chatSettings.rtkEnabled,
+      headroomEnabled: bypassFilters ? false : !!chatSettings.headroomEnabled,
       headroomUrl: chatSettings.headroomUrl || DEFAULT_HEADROOM_URL,
-      headroomCompressUserMessages: !!chatSettings.headroomCompressUserMessages,
-      cavemanEnabled: !!chatSettings.cavemanEnabled,
+      headroomCompressUserMessages: bypassFilters
+        ? false
+        : !!chatSettings.headroomCompressUserMessages,
+      cavemanEnabled: bypassFilters ? false : !!chatSettings.cavemanEnabled,
       cavemanLevel: chatSettings.cavemanLevel || "full",
-      ponytailEnabled: !!chatSettings.ponytailEnabled,
+      ponytailEnabled: bypassFilters ? false : !!chatSettings.ponytailEnabled,
       ponytailLevel: chatSettings.ponytailLevel || "full",
       providerThinking,
-      // Detect source format by endpoint + body
-      sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
+      sourceFormatOverride,
+      abortSignal: callOpts?.signal || null,
       onCredentialsRefreshed: async (newCreds) => {
         await updateProviderCredentials(credentials.connectionId, {
           ...newCreds,
@@ -271,7 +434,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       },
       onRequestSuccess: async () => {
         await clearAccountError(credentials.connectionId, credentials, model);
-      }
+      },
+      // Antigravity empty-stream exhaustion: bench this account so the client's
+      // next retry (or outer account loop) can rotate. decolua/9router PR#2462.
+      onUpstreamEmptyExhausted: async (errMsg, resetsAtMs) => {
+        await markAccountUnavailable(
+          credentials.connectionId,
+          502,
+          typeof errMsg === "string" ? errMsg : (errMsg?.message || "empty stream"),
+          provider,
+          model,
+          resetsAtMs
+        );
+      },
     });
 
     if (result.success) return result.response;

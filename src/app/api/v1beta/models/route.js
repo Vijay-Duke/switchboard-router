@@ -1,3 +1,4 @@
+// @ts-check
 import { PROVIDER_MODELS } from "@/shared/constants/models";
 
 /**

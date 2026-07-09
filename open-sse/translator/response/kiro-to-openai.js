@@ -108,14 +108,23 @@ export function kiroToOpenAIResponse(chunk, state) {
   if (eventType === "toolUseEvent" || data.toolUseEvent) {
     state.hadToolUse = true;
     const toolUse = data.toolUseEvent || data;
-    const toolCallId = toolUse.toolUseId || fallbackToolCallId();
+    const toolCallId = toolUse.toolUseId || fallbackToolCallId(state.toolCallIndex || 0);
     const toolName = toolUse.name || "";
     const toolInput = toolUse.input || {};
+
+    // Stable per-stream index so multi-tool reassembly doesn't collide on 0 (wave9).
+    if (typeof state.toolCallIndex !== "number") state.toolCallIndex = 0;
+    if (!state.toolIdToIndex) state.toolIdToIndex = new Map();
+    let idx = state.toolIdToIndex.get(toolCallId);
+    if (idx === undefined) {
+      idx = state.toolCallIndex++;
+      state.toolIdToIndex.set(toolCallId, idx);
+    }
 
     const openaiChunk = buildChunk(chunkMeta(state), {
       ...(state.chunkIndex === 0 ? { role: ROLE.ASSISTANT } : {}),
       tool_calls: [{
-        index: 0,
+        index: idx,
         id: toolCallId,
         type: OPENAI_BLOCK.FUNCTION,
         function: {

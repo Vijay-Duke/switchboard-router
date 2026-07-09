@@ -1,3 +1,4 @@
+// @ts-check
 import { getProviderConnections, updateProviderConnection } from "@/lib/localDb.js";
 import { getExecutor } from "open-sse/index.js";
 

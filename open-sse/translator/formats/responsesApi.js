@@ -66,17 +66,30 @@ export function convertResponsesApiFormat(body) {
         pendingToolResults = [];
       }
 
-      // Convert content: input_text → text, output_text → text, input_image → image_url
+      // Convert content: input_text → text, output_text → text, input_image → image_url,
+      // input_file → file (wave15)
       const content = Array.isArray(item.content)
         ? item.content.map(c => {
+          if (!c || typeof c !== "object") return null;
           if (c.type === RESPONSES_ITEM.INPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
           if (c.type === RESPONSES_ITEM.OUTPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
           if (c.type === RESPONSES_ITEM.INPUT_IMAGE) {
             const url = c.image_url || c.file_id || "";
             return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url, detail: c.detail || "auto" } };
           }
+          if (c.type === RESPONSES_ITEM.INPUT_FILE) {
+            const fileData = c.file_data || c.data || c.file_url || c.file_id || "";
+            return {
+              type: OPENAI_BLOCK.FILE,
+              file: {
+                ...(fileData ? { file_data: fileData } : {}),
+                ...(c.filename ? { filename: c.filename } : {}),
+                ...(c.file_id && !c.file_data && !c.data ? { file_id: c.file_id } : {}),
+              },
+            };
+          }
           return c;
-        })
+        }).filter(Boolean)
         : item.content;
       result.messages.push({ role: item.role, content });
     }

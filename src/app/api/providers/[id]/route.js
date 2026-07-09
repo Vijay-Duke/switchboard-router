@@ -1,7 +1,7 @@
+// @ts-check
 import { NextResponse } from "next/server";
 import {
   getProviderConnectionById,
-  getProxyPoolById,
   updateProviderConnection,
   deleteProviderConnection,
 } from "@/models";
@@ -33,26 +33,12 @@ function normalizeProxyConfig(body = {}) {
   };
 }
 
+/** Proxy pools removed — any pool field clears binding. */
 async function normalizeProxyPoolUpdate(proxyPoolIdInput) {
   if (proxyPoolIdInput === undefined) {
     return { hasProxyPoolField: false, proxyPoolId: null };
   }
-
-  if (proxyPoolIdInput === null || proxyPoolIdInput === "" || proxyPoolIdInput === "__none__") {
-    return { hasProxyPoolField: true, proxyPoolId: null };
-  }
-
-  const proxyPoolId = String(proxyPoolIdInput).trim();
-  if (!proxyPoolId) {
-    return { hasProxyPoolField: true, proxyPoolId: null };
-  }
-
-  const proxyPool = await getProxyPoolById(proxyPoolId);
-  if (!proxyPool) {
-    return { hasProxyPoolField: true, error: "Proxy pool not found" };
-  }
-
-  return { hasProxyPoolField: true, proxyPoolId };
+  return { hasProxyPoolField: true, proxyPoolId: null };
 }
 
 function shouldMergeProviderSpecificData(existing, incoming, hasLegacyProxy, hasProxyPoolField) {

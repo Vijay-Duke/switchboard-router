@@ -1,3 +1,4 @@
+// @ts-check
 import { handleSearch } from "@/sse/handlers/search.js";
 
 /**

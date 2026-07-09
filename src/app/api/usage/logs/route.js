@@ -1,3 +1,4 @@
+// @ts-check
 import { NextResponse } from "next/server";
 import { getRecentLogs } from "@/lib/usageDb";
 

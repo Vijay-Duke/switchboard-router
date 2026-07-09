@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
@@ -11,7 +12,6 @@ export default function AddCustomEmbeddingModal({ isOpen, onClose, onCreated, on
   const isEdit = !!node;
   const [formData, setFormData] = useState({
     name: "",
-    prefix: "",
     baseUrl: DEFAULT_BASE_URL,
   });
   const [submitting, setSubmitting] = useState(false);
@@ -28,24 +28,22 @@ export default function AddCustomEmbeddingModal({ isOpen, onClose, onCreated, on
     if (isEdit) {
       setFormData({
         name: node.name || "",
-        prefix: node.prefix || "",
         baseUrl: node.baseUrl || DEFAULT_BASE_URL,
       });
     } else {
-      setFormData({ name: "", prefix: "", baseUrl: DEFAULT_BASE_URL });
+      setFormData({ name: "", baseUrl: DEFAULT_BASE_URL });
     }
   }, [isOpen, isEdit, node]);
 
   const handleSubmit = async () => {
-    if (!formData.name.trim() || !formData.prefix.trim() || !formData.baseUrl.trim()) return;
+    if (!formData.name.trim() || !formData.baseUrl.trim()) return;
     setSubmitting(true);
     try {
       const url = isEdit ? `/api/provider-nodes/${node.id}` : "/api/provider-nodes";
       const method = isEdit ? "PUT" : "POST";
       const payload = {
-        name: formData.name,
-        prefix: formData.prefix,
-        baseUrl: formData.baseUrl,
+        name: formData.name.trim(),
+        baseUrl: formData.baseUrl.trim(),
       };
       if (!isEdit) payload.type = "custom-embedding";
 
@@ -115,22 +113,21 @@ export default function AddCustomEmbeddingModal({ isOpen, onClose, onCreated, on
           value={formData.name}
           onChange={(e) => setFormData({ ...formData, name: e.target.value })}
           placeholder="Voyage AI"
-          hint="Required. A friendly label for this embedding provider."
-        />
-        <Input
-          label="Prefix"
-          value={formData.prefix}
-          onChange={(e) => setFormData({ ...formData, prefix: e.target.value })}
-          placeholder="voyage"
-          hint="Required. Used as the provider prefix for model IDs (e.g. voyage/voyage-3)."
+          hint="Friendly label for this embedding provider."
         />
         <Input
           label="Base URL"
           value={formData.baseUrl}
           onChange={(e) => setFormData({ ...formData, baseUrl: e.target.value })}
           placeholder="https://api.voyageai.com/v1"
-          hint="Most embedding APIs are OpenAI-compatible: Voyage, Cohere, Jina, Mistral, Together..."
+          hint="OpenAI-compatible embeddings base URL (Voyage, Cohere, Jina, Mistral…)."
         />
+        {isEdit && node?.prefix ? (
+          <p className="text-xs text-text-muted">
+            Model IDs use prefix <code className="bg-sidebar px-1 rounded font-mono">{node.prefix}</code>
+            {" "}(auto-assigned).
+          </p>
+        ) : null}
         <Input
           label="API Key (for Check)"
           type="password"
@@ -141,8 +138,8 @@ export default function AddCustomEmbeddingModal({ isOpen, onClose, onCreated, on
           label="Model ID (for Check)"
           value={checkModelId}
           onChange={(e) => setCheckModelId(e.target.value)}
-          placeholder="e.g. voyage-3, embed-english-v3.0, text-embedding-3-small"
-          hint="Required for validation. Will send a test embeddings request."
+          placeholder="e.g. voyage-3, embed-english-v3.0"
+          hint="Required for validation. Sends a small embeddings request."
         />
         <div className="flex items-center gap-3">
           <Button
@@ -158,7 +155,7 @@ export default function AddCustomEmbeddingModal({ isOpen, onClose, onCreated, on
           <Button
             onClick={handleSubmit}
             fullWidth
-            disabled={!formData.name.trim() || !formData.prefix.trim() || !formData.baseUrl.trim() || submitting}
+            disabled={!formData.name.trim() || !formData.baseUrl.trim() || submitting}
           >
             {submitting ? (isEdit ? "Saving..." : "Creating...") : (isEdit ? "Save" : "Create")}
           </Button>

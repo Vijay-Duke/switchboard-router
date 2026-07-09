@@ -48,10 +48,16 @@ export function cloakClaudeTools(body) {
   const clientDeclarations = [];
 
   // All client tools get renamed with suffix.
-  // Built-in server tools (web_search_20250305, etc.) carry a `type` and require
-  // an exact reserved `name` — never suffix those or Claude rejects the request.
+  // Built-in server tools (web_search_20250305, computer_*, bash_*, etc.) carry a
+  // non-custom `type` and require an exact reserved `name` — never suffix those.
+  // IMPORTANT: type "custom" / "function" / missing type ARE client tools and MUST
+  // be renamed. prepareClaudeRequest defaults tools to type:"custom" for MiniMax
+  // compatibility; if we skip any tool with a truthy type, OAuth cloaking becomes
+  // a no-op while tool_use history is still suffixed → name mismatch (400).
   for (const tool of tools) {
-    if (tool.type) { clientDeclarations.push(tool); continue; }
+    const t = tool.type;
+    const isClientTool = !t || t === "custom" || t === "function";
+    if (!isClientTool) { clientDeclarations.push(tool); continue; }
     const suffixed = suffix(tool.name);
     toolNameMap.set(suffixed, tool.name);
     clientToolNames.add(tool.name);

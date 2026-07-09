@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";

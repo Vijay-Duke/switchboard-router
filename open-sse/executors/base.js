@@ -76,6 +76,17 @@ export class BaseExecutor {
 
   // Override in subclass for provider-specific transformations
   transformRequest(model, body, stream, credentials) {
+    // Inject stream_options so OpenAI-format streaming returns usage in the
+    // final chunk (forceStream providers + non-stream clients need this for
+    // usage tracking — decolua/9router#2382 / PR#346).
+    if (stream && body && Array.isArray(body.messages) && !body.stream_options) {
+      body.stream_options = { include_usage: true };
+    }
+    // Keep body.stream in sync with the effective stream flag (Accept header
+    // is set from `stream`; mismatch causes 406 on some gateways).
+    if (stream && body && typeof body === "object" && body.stream !== true) {
+      body.stream = true;
+    }
     return body;
   }
 
@@ -124,8 +135,10 @@ export class BaseExecutor {
     };
 
     for (let urlIndex = 0; urlIndex < fallbackCount; urlIndex++) {
-      const url = this.buildUrl(model, stream, urlIndex, credentials);
+      // transformRequest BEFORE buildUrl so executors can set flags that affect
+      // the URL (e.g. Codex _isCompact → /compact). Wave 13 P0.
       const transformedBody = this.transformRequest(model, body, stream, credentials);
+      const url = this.buildUrl(model, stream, urlIndex, credentials);
       const headers = this.buildHeaders(credentials, stream);
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;

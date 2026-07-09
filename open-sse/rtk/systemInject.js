@@ -1,10 +1,20 @@
 // Shared system-prompt injector: appends an instruction into the system message of
 // the final request body, dispatching by format so it works for translated and
 // native-passthrough flows. Used by caveman.js and ponytail.js.
+// Dedup logic from decolua/9router PR#2443 — prevents exponential growth on multi-turn.
 
 import { FORMATS } from "../translator/formats.js";
 
 const SEP = "\n\n";
+
+function isPromptAlreadyInjected(content, prompt) {
+  if (!content || !prompt) return false;
+  const needle = typeof prompt === "string" ? prompt.trim() : "";
+  if (!needle) return false;
+  // Check if the first 100 chars of the prompt appear in content
+  const signature = needle.slice(0, 100);
+  return content.includes(signature);
+}
 
 export function injectSystemPrompt(body, format, prompt) {
   if (!body || !prompt) return;
@@ -30,6 +40,7 @@ export function injectSystemPrompt(body, format, prompt) {
 function injectMessagesSystem(body, prompt) {
   // OpenAI Responses API: top-level string field
   if (typeof body.instructions === "string") {
+    if (isPromptAlreadyInjected(body.instructions, prompt)) return;
     body.instructions = body.instructions
       ? `${body.instructions}${SEP}${prompt}`
       : prompt;
@@ -43,10 +54,21 @@ function injectMessagesSystem(body, prompt) {
 
   const idx = arr.findIndex(m => m && (m.role === "system" || m.role === "developer"));
   if (idx >= 0) {
+    const existing = extractTextFromOpenAIMessage(arr[idx]);
+    if (isPromptAlreadyInjected(existing, prompt)) return;
     appendToOpenAIMessage(arr[idx], prompt);
   } else {
     arr.unshift({ role: "system", content: prompt });
   }
+}
+
+function extractTextFromOpenAIMessage(msg) {
+  if (typeof msg.content === "string") {
+    return msg.content;
+  } else if (Array.isArray(msg.content)) {
+    return msg.content.map(part => part.text || "").join(" ");
+  }
+  return "";
 }
 
 function appendToOpenAIMessage(msg, prompt) {
@@ -64,10 +86,14 @@ function appendToOpenAIMessage(msg, prompt) {
 // Insert before the last cache_control block to keep injection inside the cached prefix.
 function injectClaudeSystem(body, prompt) {
   if (typeof body.system === "string" && body.system.length > 0) {
+    if (isPromptAlreadyInjected(body.system, prompt)) return;
     body.system = `${body.system}${SEP}${prompt}`;
     return;
   }
   if (Array.isArray(body.system)) {
+    const existingText = body.system.map(block => block?.text || "").join(" ");
+    if (isPromptAlreadyInjected(existingText, prompt)) return;
+
     const block = { type: "text", text: prompt };
     let lastCacheIdx = -1;
     for (let i = body.system.length - 1; i >= 0; i--) {
@@ -91,6 +117,8 @@ function injectGeminiSystem(body, prompt) {
   const key = useSnake ? "system_instruction" : "systemInstruction";
   const sys = target[key];
   if (sys && Array.isArray(sys.parts)) {
+    const existingText = sys.parts.map(part => part.text || "").join(" ");
+    if (isPromptAlreadyInjected(existingText, prompt)) return;
     sys.parts.push({ text: prompt });
     return;
   }

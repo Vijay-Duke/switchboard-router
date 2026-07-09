@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 /** Inline tooltip, Claude Code CLI style */
 export default function Tooltip({ text }) {

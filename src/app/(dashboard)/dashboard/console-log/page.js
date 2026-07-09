@@ -1,3 +1,4 @@
+// @ts-check
 import ConsoleLogClient from "./ConsoleLogClient";
 
 // Force dynamic so Next.js standalone build includes the server-side JS file

@@ -1,3 +1,4 @@
+// @ts-check
 import { getMachineId } from "@/shared/utils/machine";
 import CLIToolsPageClient from "./CLIToolsPageClient";
 

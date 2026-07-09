@@ -36,27 +36,48 @@ function shouldInject(message, scope) {
 
 function applyRule(body, rule) {
   if (!rule || !body?.messages) return body;
+  // Skip Claude/Anthropic-shaped bodies (messages with tool_use/tool_result blocks
+  // or top-level system string). injecting OpenAI reasoning_content there causes
+  // MiniMax/Claude-format 400s (wave8).
+  if (isClaudeShapedBody(body)) return body;
   const messages = body.messages.map(m =>
     shouldInject(m, rule.scope) ? { ...m, reasoning_content: PLACEHOLDER } : m
   );
   return { ...body, messages };
 }
 
+function isClaudeShapedBody(body) {
+  if (typeof body.system === "string" || Array.isArray(body.system)) return true;
+  if (!Array.isArray(body.messages)) return false;
+  for (const msg of body.messages) {
+    if (!Array.isArray(msg.content)) continue;
+    for (const block of msg.content) {
+      if (block?.type === "tool_use" || block?.type === "tool_result" || block?.type === "thinking") {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function applyDeepSeekV4ProAlias({ provider, model, body }) {
   const alias = DEEPSEEK_V4_PRO_ALIASES[model];
   if (provider !== "deepseek" || !alias || !body) return body;
 
+  // Wire-level thinking (JSON body). Do NOT use extra_body — that is a Python SDK
+  // concept and is never flattened by our executors (raw JSON.stringify).
   const nextBody = {
     ...body,
     model: DEEPSEEK_V4_PRO,
-    extra_body: {
-      ...(body.extra_body || {}),
-      thinking: {
-        ...(body.extra_body?.thinking || {}),
-        type: alias.thinkingType
-      }
-    }
+    thinking: { type: alias.thinkingType },
   };
+
+  // Drop any stale SDK-shaped nest so it can't confuse proxies
+  if (nextBody.extra_body?.thinking) {
+    const { thinking: _t, ...restExtra } = nextBody.extra_body;
+    if (Object.keys(restExtra).length === 0) delete nextBody.extra_body;
+    else nextBody.extra_body = restExtra;
+  }
 
   if (alias.reasoningEffort) {
     nextBody.reasoning_effort = alias.reasoningEffort;

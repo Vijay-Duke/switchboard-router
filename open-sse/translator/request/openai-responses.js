@@ -8,6 +8,7 @@ import { register } from "../index.js";
 import { FORMATS } from "../formats.js";
 import { normalizeResponsesInput } from "../formats/responsesApi.js";
 import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM } from "../schema/index.js";
+import { coerceSchemaNumericConstraints } from "../formats/openai.js";
 
 // Responses API enforces max 64 chars on call_id (#393)
 const MAX_CALL_ID_LEN = 64;
@@ -67,17 +68,30 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
         pendingToolResults = [];
       }
 
-      // Convert content: input_text → text, output_text → text, input_image → image_url
+      // Convert content: input_text → text, output_text → text, input_image → image_url,
+      // input_file → file (wave15)
       const content = Array.isArray(item.content)
         ? item.content.map(c => {
+          if (!c || typeof c !== "object") return null;
           if (c.type === RESPONSES_ITEM.INPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
           if (c.type === RESPONSES_ITEM.OUTPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
           if (c.type === RESPONSES_ITEM.INPUT_IMAGE) {
             const url = c.image_url || c.file_id || "";
             return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url, detail: c.detail || "auto" } };
           }
+          if (c.type === RESPONSES_ITEM.INPUT_FILE) {
+            const fileData = c.file_data || c.data || c.file_url || c.file_id || "";
+            return {
+              type: OPENAI_BLOCK.FILE,
+              file: {
+                ...(fileData ? { file_data: fileData } : {}),
+                ...(c.filename ? { filename: c.filename } : {}),
+                ...(c.file_id && !c.file_data && !c.data ? { file_id: c.file_id } : {}),
+              },
+            };
+          }
           return c;
-        })
+        }).filter(Boolean)
         : item.content;
       const msg = { role: item.role, content };
       // Attach buffered reasoning to assistant turn (required by xiaomi-mimo thinking mode)
@@ -167,8 +181,8 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
           type: OPENAI_BLOCK.FUNCTION,
           function: {
             name,
-            description: String(tool.description || ""),
-            parameters: normalizeToolParameters(tool.parameters),
+            description: typeof tool.description === "string" ? tool.description : String(tool.description || ""),
+            parameters: coerceSchemaNumericConstraints(normalizeToolParameters(tool.parameters)),
             strict: tool.strict
           }
         };
@@ -206,13 +220,17 @@ function normalizeToolParameters(params) {
  * Convert OpenAI Chat Completions to OpenAI Responses API format
  */
 export function openaiToOpenAIResponsesRequest(model, body, stream, credentials) {
+  // Respect client stream flag (GitHub /responses previously always forced true,
+  // breaking non-stream clients that then tried to JSON.parse SSE). Wave 6.
+  const wantStream = stream !== false;
+
   // Body already in Responses API format (e.g. Cursor CLI calling /chat/completions with input[])
-  if (body.input) return { ...body, model, stream: true };
+  if (body.input) return { ...body, model, stream: wantStream };
 
   const result = {
     model,
     input: [],
-    stream: true,
+    stream: wantStream,
     store: false
   };
 
@@ -233,6 +251,14 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
 
     // Convert user/assistant messages to input items
     if (msg.role === ROLE.USER || msg.role === ROLE.ASSISTANT) {
+      // Preserve reasoning_content as a reasoning item before the message (PR#2401).
+      if (msg.role === ROLE.ASSISTANT && msg.reasoning_content) {
+        result.input.push({
+          type: RESPONSES_ITEM.REASONING,
+          summary: [{ type: RESPONSES_ITEM.SUMMARY_TEXT, text: msg.reasoning_content }]
+        });
+      }
+
       const contentType = msg.role === ROLE.USER ? RESPONSES_ITEM.INPUT_TEXT : RESPONSES_ITEM.OUTPUT_TEXT;
       const content = typeof msg.content === "string"
         ? [{ type: contentType, text: msg.content }]
@@ -300,12 +326,22 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
   // Convert tools format
   if (body.tools && Array.isArray(body.tools)) {
     result.tools = body.tools.map(tool => {
-      if (tool.type === OPENAI_BLOCK.FUNCTION) {
+      if (tool.type === OPENAI_BLOCK.FUNCTION && tool.function) {
         return {
           type: OPENAI_BLOCK.FUNCTION,
           name: tool.function.name,
-          description: String(tool.function.description || ""),
-          parameters: normalizeToolParameters(tool.function.parameters),
+          description: typeof tool.function.description === "string" ? tool.function.description : String(tool.function.description || ""),
+          parameters: coerceSchemaNumericConstraints(normalizeToolParameters(tool.function.parameters)),
+          strict: tool.function.strict
+        };
+      }
+      // Loose shape: { function: { name, ... } } without parent type
+      if (tool.function) {
+        return {
+          type: OPENAI_BLOCK.FUNCTION,
+          name: tool.function.name,
+          description: typeof tool.function.description === "string" ? tool.function.description : String(tool.function.description || ""),
+          parameters: coerceSchemaNumericConstraints(normalizeToolParameters(tool.function.parameters)),
           strict: tool.function.strict
         };
       }

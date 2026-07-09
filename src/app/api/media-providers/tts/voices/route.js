@@ -1,3 +1,4 @@
+// @ts-check
 import { VOICE_FETCHERS } from "open-sse/handlers/ttsCore.js";
 import { NextResponse } from "next/server";
 

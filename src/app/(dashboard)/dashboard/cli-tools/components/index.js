@@ -1,3 +1,4 @@
+// @ts-check
 export { default as ClaudeToolCard } from "./ClaudeToolCard";
 export { default as CodexToolCard } from "./CodexToolCard";
 export { default as DroidToolCard } from "./DroidToolCard";
@@ -12,6 +13,11 @@ export { default as ClineToolCard } from "./ClineToolCard";
 export { default as KiloToolCard } from "./KiloToolCard";
 export { default as DeepSeekTuiToolCard } from "./DeepSeekTuiToolCard";
 export { default as JcodeToolCard } from "./JcodeToolCard";
+export { default as GrokToolCard } from "./GrokToolCard";
+export { default as PiToolCard } from "./PiToolCard";
+export { default as AiderToolCard } from "./AiderToolCard";
+export { default as GeminiCliToolCard } from "./GeminiCliToolCard";
+export { default as OpenAiCompatToolCard } from "./OpenAiCompatToolCard";
 export { default as MitmServerCard } from "./MitmServerCard";
 export { default as MitmToolCard } from "./MitmToolCard";
 export { default as MitmLinkCard } from "./MitmLinkCard";

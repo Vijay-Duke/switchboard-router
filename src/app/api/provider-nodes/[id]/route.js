@@ -1,3 +1,4 @@
+// @ts-check
 import { NextResponse } from "next/server";
 import { deleteProviderConnectionsByProvider, deleteProviderNode, getProviderConnections, getProviderNodeById, updateProviderConnection, updateProviderNode } from "@/models";
 
@@ -6,7 +7,7 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { name, prefix, apiType, baseUrl } = body;
+    const { name, apiType, baseUrl } = body;
     const node = await getProviderNodeById(id);
 
     if (!node) {
@@ -15,10 +16,6 @@ export async function PUT(request, { params }) {
 
     if (!name?.trim()) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
-    }
-
-    if (!prefix?.trim()) {
-      return NextResponse.json({ error: "Prefix is required" }, { status: 400 });
     }
 
     // Only validate apiType for OpenAI Compatible nodes
@@ -31,7 +28,7 @@ export async function PUT(request, { params }) {
     }
 
     let sanitizedBaseUrl = baseUrl.trim();
-    
+
     // Sanitize Base URL for Anthropic Compatible
     if (node.type === "anthropic-compatible") {
       sanitizedBaseUrl = sanitizedBaseUrl.replace(/\/$/, "");
@@ -48,9 +45,12 @@ export async function PUT(request, { params }) {
       }
     }
 
+    // Keep existing prefix so model IDs (prefix/model) stay stable across renames.
+    const prefix = (node.prefix || "").trim() || name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
     const updates = {
       name: name.trim(),
-      prefix: prefix.trim(),
+      prefix,
       baseUrl: sanitizedBaseUrl,
     };
 
@@ -65,7 +65,7 @@ export async function PUT(request, { params }) {
       updateProviderConnection(connection.id, {
         providerSpecificData: {
           ...(connection.providerSpecificData || {}),
-          prefix: prefix.trim(),
+          prefix,
           apiType: node.type === "openai-compatible" ? apiType : undefined,
           baseUrl: sanitizedBaseUrl,
           nodeName: updated.name,

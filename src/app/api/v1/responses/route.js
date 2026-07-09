@@ -1,3 +1,4 @@
+// @ts-check
 import { handleChat } from "@/sse/handlers/chat.js";
 import { initTranslators } from "open-sse/translator/index.js";
 

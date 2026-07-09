@@ -1,3 +1,4 @@
+// @ts-check
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 

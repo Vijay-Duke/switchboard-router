@@ -1,4 +1,5 @@
 "use client";
+// @ts-check
 
 import { cn } from "@/shared/utils/cn";
 import { formatResetTime } from "./utils";

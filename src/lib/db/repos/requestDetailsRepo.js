@@ -4,7 +4,10 @@ import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 const DEFAULT_MAX_RECORDS = 200;
 const DEFAULT_BATCH_SIZE = 20;
 const DEFAULT_FLUSH_INTERVAL_MS = 5000;
+/** Cap each JSON field at 5 KB by default (was unbounded in memory until flush). */
 const DEFAULT_MAX_JSON_SIZE = 5 * 1024;
+/** Hard cap on buffered unflushed records to prevent OOM under load (#2472). */
+const DEFAULT_MAX_BUFFER = 100;
 const CONFIG_CACHE_TTL_MS = 5000;
 
 let cachedConfig = null;
@@ -25,6 +28,7 @@ async function getObservabilityConfig() {
       batchSize: settings.observabilityBatchSize || parseInt(process.env.OBSERVABILITY_BATCH_SIZE || String(DEFAULT_BATCH_SIZE), 10),
       flushIntervalMs: settings.observabilityFlushIntervalMs || parseInt(process.env.OBSERVABILITY_FLUSH_INTERVAL_MS || String(DEFAULT_FLUSH_INTERVAL_MS), 10),
       maxJsonSize: (settings.observabilityMaxJsonSize || parseInt(process.env.OBSERVABILITY_MAX_JSON_SIZE || "5", 10)) * 1024,
+      maxBuffer: parseInt(process.env.OBSERVABILITY_MAX_BUFFER || String(DEFAULT_MAX_BUFFER), 10) || DEFAULT_MAX_BUFFER,
     };
   } catch {
     cachedConfig = {
@@ -33,6 +37,7 @@ async function getObservabilityConfig() {
       batchSize: DEFAULT_BATCH_SIZE,
       flushIntervalMs: DEFAULT_FLUSH_INTERVAL_MS,
       maxJsonSize: DEFAULT_MAX_JSON_SIZE,
+      maxBuffer: DEFAULT_MAX_BUFFER,
     };
   }
   cachedConfigTs = Date.now();
@@ -60,12 +65,45 @@ function generateDetailId(model) {
   return `${timestamp}-${random}-${modelPart}`;
 }
 
+/**
+ * Truncate a field if its JSON serialization exceeds maxSize.
+ * Returns a small preview object instead of the full payload.
+ * Safe for circular structures / non-JSON values (falls back to preview of String()).
+ */
 function truncateField(obj, maxSize) {
-  const str = JSON.stringify(obj || {});
+  if (obj == null) return {};
+  let str;
+  try {
+    str = JSON.stringify(obj);
+  } catch {
+    const preview = String(obj).substring(0, 200);
+    return { _truncated: true, _originalSize: preview.length, _preview: preview, _error: "stringify_failed" };
+  }
   if (str.length > maxSize) {
     return { _truncated: true, _originalSize: str.length, _preview: str.substring(0, 200) };
   }
-  return obj || {};
+  return obj;
+}
+
+/**
+ * Shrink a detail record before it enters the write buffer so large agent
+ * payloads (tool schemas, multi-turn history, images) never sit untruncated
+ * in heap. Addresses decolua/9router#2472 OOM from requestDetails bloat.
+ */
+function shrinkDetail(detail, maxJsonSize) {
+  if (!detail || typeof detail !== "object") return detail;
+  const out = { ...detail };
+  if (out.request?.headers) {
+    out.request = { ...out.request, headers: sanitizeHeaders(out.request.headers) };
+  }
+  out.request = truncateField(out.request, maxJsonSize);
+  out.providerRequest = truncateField(out.providerRequest, maxJsonSize);
+  out.providerResponse = truncateField(out.providerResponse, maxJsonSize);
+  out.response = truncateField(out.response, maxJsonSize);
+  // Drop accidental full-body clones nested under unknown keys
+  if (out.body) out.body = truncateField(out.body, maxJsonSize);
+  if (out.raw) out.raw = truncateField(out.raw, maxJsonSize);
+  return out;
 }
 
 async function flushToDatabase() {
@@ -83,8 +121,9 @@ async function flushToDatabase() {
         for (const item of items) {
           if (!item.id) item.id = generateDetailId(item.model);
           if (!item.timestamp) item.timestamp = new Date().toISOString();
-          if (item.request?.headers) item.request.headers = sanitizeHeaders(item.request.headers);
 
+          // Fields already truncated on push; re-truncate defensively in case
+          // maxJsonSize was lowered between push and flush.
           const record = {
             id: item.id,
             provider: item.provider || null,
@@ -126,7 +165,14 @@ export async function saveRequestDetail(detail) {
   const config = await getObservabilityConfig();
   if (!config.enabled) return;
 
-  writeBuffer.push(detail);
+  // Truncate large payloads BEFORE buffering so heap stays bounded (#2472).
+  const shrunk = shrinkDetail(detail, config.maxJsonSize);
+
+  // Drop oldest if buffer is full (prefer recent errors over old successes).
+  if (writeBuffer.length >= config.maxBuffer) {
+    writeBuffer.shift();
+  }
+  writeBuffer.push(shrunk);
 
   // Trigger immediate flush if batch threshold reached.
   // flushToDatabase() drains entire buffer in a loop, so all pushes during await are persisted.

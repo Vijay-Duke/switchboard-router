@@ -1,3 +1,4 @@
+// @ts-check
 import { NextResponse } from "next/server";
 import { testSingleConnection } from "./testUtils.js";
 

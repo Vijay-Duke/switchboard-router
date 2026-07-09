@@ -58,9 +58,10 @@ const COOLDOWN = {
  */
 export const ERROR_RULES = [
   // --- Text-based rules (checked first, order = priority) ---
+  // shouldFallback:false = request shape bug, not account health — don't rotate (wave12).
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
-  { text: "request not allowed",      cooldownMs: COOLDOWN.short },
-  { text: "improperly formed request", cooldownMs: COOLDOWN.long },
+  { text: "request not allowed",      cooldownMs: COOLDOWN.short, shouldFallback: false },
+  { text: "improperly formed request", cooldownMs: COOLDOWN.long, shouldFallback: false },
   { text: "rate limit",               backoff: true },
   { text: "too many requests",        backoff: true },
   { text: "quota exceeded",           backoff: true },
