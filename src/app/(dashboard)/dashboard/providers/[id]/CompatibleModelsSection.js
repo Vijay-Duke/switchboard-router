@@ -72,10 +72,24 @@ function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias,
   );
 }
 
-export default function CompatibleModelsSection({ providerStorageAlias, providerDisplayAlias, modelAliases, customModels, copied, onCopy, onDeleteAlias, onAddCustomModel, onDeleteCustomModel, connections, isAnthropic }) {
+export default function CompatibleModelsSection({
+  providerStorageAlias,
+  providerDisplayAlias,
+  modelAliases,
+  customModels,
+  copied,
+  onCopy,
+  onDeleteAlias,
+  onAddCustomModel,
+  onDeleteCustomModel,
+  onRefreshModels,
+  connections,
+  isAnthropic,
+}) {
   const [newModel, setNewModel] = useState("");
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState("");
   const [testingModelId, setTestingModelId] = useState(null);
   const [modelTestResults, setModelTestResults] = useState({});
 
@@ -129,9 +143,10 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
     if (!activeConnection) return;
 
     setImporting(true);
+    setImportMessage("");
     try {
       const res = await fetch(`/api/providers/${activeConnection.id}/models`);
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         alert(data.error || "Failed to import models");
         return;
@@ -141,19 +156,52 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
         alert("No models returned from /models.");
         return;
       }
-      let importedCount = 0;
+
+      const existing = new Set(allModels.map((m) => m.id));
+      const toAdd = [];
+      const seen = new Set();
       for (const model of models) {
-        const modelId = model.id || model.name || model.model;
-        if (!modelId) continue;
-        if (allModels.some((entry) => entry.id === modelId)) continue;
-        await onAddCustomModel(modelId);
-        importedCount += 1;
+        const modelId = String(model.id || model.name || model.model || "").trim();
+        if (!modelId || existing.has(modelId) || seen.has(modelId)) continue;
+        seen.add(modelId);
+        toAdd.push({
+          providerAlias: providerStorageAlias,
+          id: modelId,
+          type: "llm",
+          name: model.display_name || model.displayName || model.name || modelId,
+        });
       }
-      if (importedCount === 0) {
-        alert("No new models were added.");
+
+      if (toAdd.length === 0) {
+        setImportMessage("All models already in list");
+        return;
+      }
+
+      const bulkRes = await fetch("/api/models/custom", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ models: toAdd }),
+      });
+      const bulkData = await bulkRes.json().catch(() => ({}));
+      if (!bulkRes.ok) {
+        // Fallback: sequential add via parent
+        let importedCount = 0;
+        for (const m of toAdd) {
+          await onAddCustomModel(m.id);
+          importedCount += 1;
+        }
+        setImportMessage(importedCount ? `Imported ${importedCount} model(s)` : "No new models were added");
+        return;
+      }
+
+      setImportMessage(`Imported ${bulkData.added ?? toAdd.length} model(s)`);
+      if (typeof onRefreshModels === "function") await onRefreshModels();
+      else if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("customModelChanged"));
       }
     } catch (error) {
       console.log("Error importing models:", error);
+      alert(error?.message || "Import failed");
     } finally {
       setImporting(false);
     }
@@ -183,8 +231,8 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
         <Button size="sm" icon="add" onClick={handleAdd} disabled={!newModel.trim() || adding}>
           {adding ? "Adding..." : "Add"}
         </Button>
-        <Button size="sm" variant="secondary" icon="download" onClick={handleImport} disabled={!canImport || importing}>
-          {importing ? "Importing..." : "Import from /models"}
+        <Button size="sm" variant="secondary" icon="cloud_download" onClick={handleImport} disabled={!canImport || importing}>
+          {importing ? "Importing..." : "Import models"}
         </Button>
       </div>
 
@@ -193,6 +241,7 @@ export default function CompatibleModelsSection({ providerStorageAlias, provider
           Add a connection to enable importing models.
         </p>
       )}
+      {importMessage && <p className="text-xs text-text-muted">{importMessage}</p>}
 
       {allModels.length > 0 && (
         <div className="flex flex-col gap-3">
@@ -225,6 +274,7 @@ CompatibleModelsSection.propTypes = {
   onDeleteAlias: PropTypes.func.isRequired,
   onAddCustomModel: PropTypes.func.isRequired,
   onDeleteCustomModel: PropTypes.func.isRequired,
+  onRefreshModels: PropTypes.func,
   connections: PropTypes.arrayOf(PropTypes.shape({
     id: PropTypes.string,
     isActive: PropTypes.bool,

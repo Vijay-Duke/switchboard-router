@@ -44,6 +44,46 @@ export async function addCustomModel({ providerAlias, id, type = "llm", name }) 
   return added;
 }
 
+/**
+ * Bulk insert custom models in one transaction.
+ * @param {Array<{ providerAlias: string, id: string, type?: string, name?: string }>} models
+ * @returns {Promise<{ added: number, skipped: number }>}
+ */
+export async function addCustomModelsBulk(models) {
+  if (!Array.isArray(models) || models.length === 0) {
+    return { added: 0, skipped: 0 };
+  }
+  const db = await getAdapter();
+  let added = 0;
+  let skipped = 0;
+  db.transaction(() => {
+    for (const m of models) {
+      const providerAlias = m?.providerAlias;
+      const id = m?.id;
+      if (!providerAlias || !id) {
+        skipped += 1;
+        continue;
+      }
+      const type = m.type || m.kind || "llm";
+      const k = customKey(providerAlias, id, type);
+      const row = db.get(`SELECT 1 FROM kv WHERE scope = 'customModels' AND key = ?`, [k]);
+      if (row) {
+        skipped += 1;
+        continue;
+      }
+      const value = stringifyJson({
+        providerAlias,
+        id,
+        type,
+        name: m.name || id,
+      });
+      db.run(`INSERT INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, value]);
+      added += 1;
+    }
+  });
+  return { added, skipped };
+}
+
 export async function deleteCustomModel({ providerAlias, id, type = "llm" }) {
   await customKv.remove(customKey(providerAlias, id, type));
 }

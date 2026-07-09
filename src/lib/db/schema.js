@@ -1,5 +1,4 @@
-// Latest schema version — must match migrations/index.js latestVersion()
-export const SCHEMA_VERSION = 3;
+// Schema version is owned by migrations/index.js → latestVersion().
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;

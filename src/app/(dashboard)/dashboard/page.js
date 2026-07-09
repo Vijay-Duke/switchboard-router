@@ -1,7 +1,7 @@
 // @ts-check
 import OverviewClient from "./OverviewClient";
 import { loadProvidersPage, loadCombosPage } from "@/lib/dashboard/loaders";
-import { getApiKeys, getPromotedLearningVersion } from "@/lib/localDb";
+import { getApiKeys, getPromotedLearningVersion } from "@/lib/db/index.js";
 
 /**
  * Dashboard home = Overview (live endpoint + real combo strategy summary).

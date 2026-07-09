@@ -36,7 +36,7 @@ export {
 // Aliases (model + custom + mitm)
 export {
   getModelAliases, setModelAlias, deleteModelAlias,
-  getCustomModels, addCustomModel, deleteCustomModel,
+  getCustomModels, addCustomModel, addCustomModelsBulk, deleteCustomModel,
   getMitmAlias, setMitmAliasAll,
 } from "./repos/aliasRepo.js";
 
@@ -49,6 +49,16 @@ export {
 export {
   getDisabledModels, getDisabledByProvider, disableModels, enableModels,
 } from "./repos/disabledModelsRepo.js";
+
+// Model probe cache (batch verify)
+export {
+  upsertProbeResult,
+  getProbesForScope,
+  getDeadModelIds,
+  clearProbes,
+  clearProbesForProvider,
+  deleteProbeRows,
+} from "./repos/modelProbeRepo.js";
 
 // Usage
 export {

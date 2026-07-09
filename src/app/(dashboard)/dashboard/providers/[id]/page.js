@@ -14,6 +14,7 @@ import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { translate } from "@/i18n/runtime";
 import { fetchSuggestedModels } from "@/shared/utils/providerModelsFetcher";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
+import { normalizeImportedModel } from "@/shared/utils/importProviderModels";
 import ModelRow from "./ModelRow";
 import PassthroughModelsSection from "./PassthroughModelsSection";
 import CompatibleModelsSection from "./CompatibleModelsSection";
@@ -22,6 +23,8 @@ import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
+import VerifyModelsPanel from "./VerifyModelsPanel";
+import { canonicalModelId } from "@/lib/model-probe/canonicalId.js";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
 
@@ -73,7 +76,10 @@ export default function ProviderDetailPage() {
   const [oneByOneResults, setOneByOneResults] = useState({});
   const [oneByOneSummary, setOneByOneSummary] = useState(null);
   const stopOneByOneRef = useRef(false);
-  const [importingQoderModels, setImportingQoderModels] = useState(false);
+  const [importingModels, setImportingModels] = useState(false);
+  const [importModelsMessage, setImportModelsMessage] = useState("");
+  const [showVerifyPanel, setShowVerifyPanel] = useState(false);
+  const [probeLatencies, setProbeLatencies] = useState(/** @type {Record<string, number>} */ ({}));
   const { copied, copy } = useCopyToClipboard();
 
   const AG_RISK_STORAGE_KEY = "ag_risk_confirmed";
@@ -498,57 +504,157 @@ export default function ProviderDetailPage() {
     }
   };
 
-  // Fetch Qoder model list and automatically add to available models
-  const handleImportQoderModels = async () => {
-    if (importingQoderModels) return;
-    const activeConnection = connections.find((conn) => conn.isActive !== false);
+  /**
+   * Pull live model list from the active connection and register any missing ones
+   * as custom models. Works for every provider that implements GET /api/providers/[id]/models.
+   * Built-in catalog models that were disabled are re-enabled instead of duplicated.
+   */
+  const handleImportModels = async () => {
+    if (importingModels) return;
+    const activeConnection =
+      connections.find((conn) => selectedConnectionIds.includes(conn.id) && conn.isActive !== false) ||
+      connections.find((conn) => conn.isActive !== false);
     if (!activeConnection) {
-      alert(translate("Please add an active Qoder connection first"));
+      alert(translate("Add an active connection first"));
       return;
     }
 
-    setImportingQoderModels(true);
+    setImportingModels(true);
+    setImportModelsMessage("");
     try {
       const res = await fetch(`/api/providers/${activeConnection.id}/models`);
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         alert(data.error || translate("Failed to fetch models"));
         return;
       }
-      const models = data.models || [];
-      if (models.length === 0) {
-        alert(translate("No models returned"));
+      const rawModels = data.models || [];
+      if (rawModels.length === 0) {
+        alert(data.warning || translate("No models returned"));
         return;
       }
 
-      let importedCount = 0;
-      for (const model of models) {
-        const modelId = model.id || model.name;
-        if (!modelId) continue;
-        
-        // Qoder model ID format may be "qoder/auto" or "auto", need to remove prefix
-        const cleanModelId = modelId.replace(/^qoder\//, "");
-        const alreadyExists = customModels.some(
-          (entry) => entry.providerAlias === providerStorageAlias && entry.id === cleanModelId && (entry.kind || entry.type || "llm") === "llm"
-        ) || Object.values(modelAliases).includes(`${providerStorageAlias}/${cleanModelId}`);
-        if (alreadyExists) {
+      // Known-dead probe cache for this connection (skip re-adding/re-testing)
+      let deadIds = new Set();
+      try {
+        const prepRes = await fetch(`/api/providers/${activeConnection.id}/model-probes/prepare`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            models: rawModels.map((m) =>
+              typeof m === "string" ? { id: m } : { id: m.id || m.name || m.model, kind: m.kind || m.type || "llm" }
+            ),
+            providerAlias: providerStorageAlias,
+          }),
+        });
+        if (prepRes.ok) {
+          const prep = await prepRes.json();
+          deadIds = new Set((prep.skippedDead || []).map((m) => m.canonicalId || m.id));
+        }
+      } catch {
+        /* import still works without probe cache */
+      }
+
+      const builtInIds = new Set(models.map((m) => m.id));
+      const toAdd = [];
+      const toReenable = [];
+      const seen = new Set();
+      let skippedDead = 0;
+
+      for (const raw of rawModels) {
+        const normalized = normalizeImportedModel(raw, providerStorageAlias);
+        if (!normalized) continue;
+        const { id, name, type } = normalized;
+        const dedupeKey = `${type}|${id}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+
+        const canon = canonicalModelId(id, providerStorageAlias);
+        if (deadIds.has(canon) || deadIds.has(id)) {
+          skippedDead += 1;
           continue;
         }
 
-        await handleAddCustomModel(cleanModelId, "llm", providerStorageAlias);
-        importedCount += 1;
+        // Already in static catalog — re-enable if user had disabled it
+        if (builtInIds.has(id)) {
+          if (disabledModelIds.includes(id)) toReenable.push(id);
+          continue;
+        }
+
+        const alreadyCustom = customModels.some(
+          (entry) =>
+            entry.providerAlias === providerStorageAlias &&
+            entry.id === id &&
+            (entry.kind || entry.type || "llm") === type
+        );
+        if (alreadyCustom) continue;
+
+        const full = `${providerStorageAlias}/${id}`;
+        if (Object.values(modelAliases).includes(full)) continue;
+
+        toAdd.push({
+          providerAlias: providerStorageAlias,
+          id,
+          type,
+          name,
+        });
       }
-      
-      if (importedCount === 0) {
-        alert(translate("All models already exist, no new models added"));
+
+      let reenabled = 0;
+      if (toReenable.length > 0) {
+        try {
+          for (const id of toReenable) {
+            const en = await fetch(
+              `/api/models/disabled?providerAlias=${encodeURIComponent(providerStorageAlias)}&id=${encodeURIComponent(id)}`,
+              { method: "DELETE" }
+            );
+            if (en.ok) reenabled += 1;
+          }
+          await fetchDisabledModels();
+        } catch {
+          /* ignore re-enable failures */
+        }
+      }
+
+      let added = 0;
+      if (toAdd.length > 0) {
+        const bulkRes = await fetch("/api/models/custom", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ models: toAdd }),
+        });
+        const bulkData = await bulkRes.json().catch(() => ({}));
+        if (!bulkRes.ok) {
+          alert(bulkData.error || translate("Failed to save models"));
+          return;
+        }
+        added = bulkData.added ?? toAdd.length;
+        await fetchCustomModels();
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("customModelChanged"));
+        }
+      }
+
+      const nonLlmQueued = toAdd.filter((m) => m.type !== "llm").length;
+      const parts = [];
+      if (added > 0) parts.push(`${added} new`);
+      if (reenabled > 0) parts.push(`${reenabled} re-enabled`);
+      if (skippedDead > 0) parts.push(`${skippedDead} skipped (known-unavailable)`);
+      if (parts.length === 0) {
+        setImportModelsMessage(translate("All models already in list"));
       } else {
-        alert(translate("Successfully added") + ` ${importedCount} ` + translate("models"));
+        let msg = `Imported ${parts.join(" · ")} (${rawModels.length} from provider)`;
+        if (nonLlmQueued > 0) {
+          msg += ` · non-chat types stored for media pages`;
+        }
+        if (data.warning) msg += ` · ${data.warning}`;
+        setImportModelsMessage(msg);
       }
     } catch (error) {
-      console.log("Error importing Qoder models:", error);
-      alert(translate("Error fetching models") + ": " + error.message);
+      console.log("Error importing models:", error);
+      alert(translate("Error fetching models") + ": " + (error?.message || error));
     } finally {
-      setImportingQoderModels(false);
+      setImportingModels(false);
     }
   };
 
@@ -870,6 +976,7 @@ export default function ProviderDetailPage() {
           onDeleteAlias={handleDeleteAlias}
           onAddCustomModel={(modelId) => handleAddCustomModel(modelId, "llm", providerStorageAlias)}
           onDeleteCustomModel={(modelId) => handleDeleteCustomModel(modelId, "llm", providerStorageAlias)}
+          onRefreshModels={fetchCustomModels}
           connections={connections}
           isAnthropic={isAnthropicCompatible}
         />
@@ -918,6 +1025,7 @@ export default function ProviderDetailPage() {
             isFree={false}
             caps={getCaps(`${providerId}/${model.id}`)}
             thinkingSuffix={resolveThinkingSuffix(model.id)}
+            latencyMs={probeLatencies[model.id] ?? probeLatencies[canonicalModelId(model.id, providerStorageAlias)]}
           />
         ))}
 
@@ -934,8 +1042,8 @@ export default function ProviderDetailPage() {
               fullModel={`${providerDisplayAlias}/${model.id}`}
               alias={existingAlias}
               copied={copied}
-              onCopy={copy}
               onSetAlias={(alias) => handleSetAlias(model.id, alias, providerStorageAlias)}
+              onCopy={copy}
               onDeleteAlias={() => handleDeleteAlias(existingAlias)}
               testStatus={modelTestResults[model.id]}
               onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
@@ -944,6 +1052,7 @@ export default function ProviderDetailPage() {
               onDisable={() => handleDisableModel(model.id)}
               caps={getCaps(`${providerId}/${model.id}`)}
               thinkingSuffix={resolveThinkingSuffix(model.id)}
+              latencyMs={probeLatencies[model.id] ?? probeLatencies[canonicalModelId(model.id, providerStorageAlias)]}
             />
           );
         })}
@@ -956,20 +1065,6 @@ export default function ProviderDetailPage() {
           <span className="material-symbols-outlined text-sm">add</span>
           Add Model
         </button>
-
-        {/* Import Qoder models button — only show for qoder provider */}
-        {providerId === "qoder" && connections.some((conn) => conn.isActive !== false) && (
-          <button
-            onClick={handleImportQoderModels}
-            disabled={importingQoderModels}
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-blue-500/40 px-3 py-2 text-xs text-blue-600 dark:text-blue-400 transition-colors hover:border-blue-500 hover:bg-blue-500/5 sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <span className="material-symbols-outlined text-sm" style={importingQoderModels ? { animation: "spin 1s linear infinite" } : undefined}>
-              {importingQoderModels ? "progress_activity" : "download"}
-            </span>
-            {importingQoderModels ? translate("Fetching...") : translate("Fetch Qoder Models")}
-          </button>
-        )}
 
         {/* Suggested models from provider API — show only models not yet added */}
         {suggestedModels.length > 0 && (() => {
@@ -1432,8 +1527,30 @@ export default function ProviderDetailPage() {
               ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
             ].filter((m) => { const k = getModelKind(m); return !k || k === "llm"; }).map((m) => m.id);
             const activeIds = allIds.filter((id) => !disabledModelIds.includes(id));
+            const canImport = connections.some((conn) => conn.isActive !== false);
             return (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
+                {canImport && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={importingModels ? "progress_activity" : "cloud_download"}
+                    onClick={handleImportModels}
+                    disabled={importingModels}
+                  >
+                    {importingModels ? "Importing..." : "Import models"}
+                  </Button>
+                )}
+                {canImport && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon="science"
+                    onClick={() => setShowVerifyPanel((v) => !v)}
+                  >
+                    {showVerifyPanel ? "Hide verify" : "Verify models"}
+                  </Button>
+                )}
                 {disabledModelIds.length > 0 && (
                   <Button size="sm" variant="secondary" icon="restart_alt" onClick={handleEnableAll}>
                     Active All
@@ -1451,6 +1568,42 @@ export default function ProviderDetailPage() {
         {!!modelsTestError && (
           <p className="text-xs text-red-500 mb-3 break-words">{modelsTestError}</p>
         )}
+        {importModelsMessage && (
+          <p className="text-xs text-text-muted mb-3">{importModelsMessage}</p>
+        )}
+        {showVerifyPanel && (() => {
+          const activeConnection =
+            connections.find((conn) => selectedConnectionIds.includes(conn.id) && conn.isActive !== false) ||
+            connections.find((conn) => conn.isActive !== false);
+          const customRows = getProviderCustomModelRows({
+            customModels,
+            modelAliases,
+            providerAlias: providerStorageAlias,
+            builtInModels: models,
+            type: "llm",
+          });
+          const verifyList = [
+            ...customRows.map((m) => ({ id: m.id, name: m.name || m.id, kind: "llm" })),
+            ...models
+              .filter((m) => {
+                const k = getModelKind(m);
+                return (!k || k === "llm") && !disabledModelIds.includes(m.id);
+              })
+              .map((m) => ({ id: m.id, name: m.name || m.id, kind: "llm" })),
+          ];
+          return (
+            <VerifyModelsPanel
+              connectionId={activeConnection?.id}
+              providerAlias={providerStorageAlias}
+              models={verifyList}
+              onClose={() => setShowVerifyPanel(false)}
+              onLatencyMap={(map) => setProbeLatencies((prev) => ({ ...prev, ...map }))}
+              onComplete={async (s) => {
+                if (s?.removed > 0) await fetchCustomModels();
+              }}
+            />
+          );
+        })()}
         {renderModelsSection()}
       </Card>
 
