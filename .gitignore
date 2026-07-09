@@ -51,6 +51,8 @@ source/*
 .cursor/*
 docs/*
 !docs/ARCHITECTURE.md
+!docs/auto-router/
+!docs/auto-router/**
 test/*
 open-sse/test/*
 RM.vn.md
