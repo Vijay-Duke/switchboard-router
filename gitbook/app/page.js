@@ -1,25 +1,26 @@
 import { DEFAULT_LANG } from "@/constants/languages";
 
-// Static-friendly redirect to default language (meta refresh + client script)
+// Must include basePath for GitHub project pages (e.g. /switchboard-router).
+// Raw absolute "/en/" sends users to vijay-duke.github.io/en/ → 404.
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH || "";
+const TARGET = `${BASE}/${DEFAULT_LANG}/`.replace(/\/{2,}/g, "/");
+
 export const metadata = {
-  title: "Redirecting...",
-  other: {
-    "http-equiv:refresh": `0; url=/${DEFAULT_LANG}/`
-  }
+  title: "Switchboard Docs",
+  description: "Smart AI model router — maximize subscriptions, minimize costs",
 };
 
 export default function HomePage() {
-  const target = `/${DEFAULT_LANG}/`;
   return (
     <>
       <script
         dangerouslySetInnerHTML={{
-          __html: `window.location.replace("${target}");`
+          __html: `window.location.replace(${JSON.stringify(TARGET)});`,
         }}
       />
-      <meta httpEquiv="refresh" content={`0; url=${target}`} />
+      <meta httpEquiv="refresh" content={`0;url=${TARGET}`} />
       <p style={{ padding: "2rem", textAlign: "center" }}>
-        Redirecting to <a href={target}>{target}</a>...
+        Redirecting to <a href={TARGET}>{TARGET}</a>…
       </p>
     </>
   );

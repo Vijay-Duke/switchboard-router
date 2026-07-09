@@ -49,10 +49,19 @@ data/
 logs/*
 source/*
 .cursor/*
-docs/*
-!docs/ARCHITECTURE.md
-!docs/switchboard/
-!docs/switchboard/**
+# Personal / local-only notes (not part of the product)
+docs/
+SWITCHBOARD.md
+CLAUDE.md
+AGENTS.md
+**/AGENTS.md
+README.zh-CN.md
+captain-definition
+skills/
+switchboard-console-overview.png
+switchboard-router-*.tgz
+*.tgz
+.vscode/
 test/*
 open-sse/test/*
 RM.vn.md
@@ -63,6 +72,7 @@ Thanks.md
 PUBLIC.en.md
 PR/*
 package-lock.json
+docs/REVIEW-*.md
 
 
 #Ignore vscode AI rules
