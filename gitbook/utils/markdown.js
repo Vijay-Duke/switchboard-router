@@ -134,6 +134,7 @@ export function MarkdownRenderer({ content }) {
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       rehypePlugins={[rehypeHighlight]}
+      skipHtml
       className="markdown-content"
       components={{
         h1: ({ node, children, ...props }) => {

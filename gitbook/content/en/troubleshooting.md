@@ -1,351 +1,71 @@
 # Troubleshooting
 
-Common issues and solutions when using Switchboard.
+## Cannot Connect To Switchboard
 
----
+Check that the app is running:
 
-## "Language model did not provide messages"
+```bash
+curl http://localhost:20128/api/health
+```
 
-**Problem:** Request fails with empty response or error message.
+Then open:
 
-**Causes:**
-- Provider quota exhausted
-- API key invalid or expired
-- Model not available
+```text
+http://localhost:20128/dashboard
+```
 
-**Solutions:**
+If the port is already in use, stop the other process or run Switchboard with a different `PORT`.
 
-1. **Check quota status:**
-   ```
-   Dashboard → Providers → View quota tracker
-   ```
-   If quota is exhausted, wait for reset or switch provider.
+## 401 Unauthorized
 
-2. **Use combo fallback:**
-   ```
-   Dashboard → Combos → Create fallback chain
-   Example: cc/claude-opus → glm/glm-4.7 → if/kimi-k2
-   ```
+Your client did not send a valid key.
 
-3. **Verify provider connection:**
-   ```
-   Dashboard → Providers → Reconnect if needed
-   ```
+1. Open **Endpoint & Keys**.
+2. Create or copy an active key.
+3. Send `Authorization: Bearer sk-...`.
 
----
-
-## Rate Limiting
-
-**Problem:** "Rate limit exceeded" or "Too many requests" errors.
-
-**Causes:**
-- Subscription quota depleted (5-hour/daily/weekly limits)
-- API rate limits hit
-- Too many concurrent requests
-
-**Solutions:**
-
-1. **Check reset time:**
-   ```
-   Dashboard → Quota Tracking → View reset countdown
-   ```
-
-2. **Switch to cheap tier:**
-   ```
-   Use: glm/glm-4.7 ($0.6/1M tokens)
-        minimax/MiniMax-M2.1 ($0.20/1M tokens)
-   ```
-
-3. **Add fallback combo:**
-   ```
-   Dashboard → Combos → Add backup models
-   Primary: cc/claude-opus (subscription)
-   Backup: glm/glm-4.7 (cheap)
-   Emergency: if/kimi-k2 (free)
-   ```
-
----
-
-## OAuth Token Expired
-
-**Problem:** "Unauthorized" or "Token expired" errors.
-
-**Causes:**
-- OAuth token expired (auto-refresh failed)
-- Provider session invalidated
-- Network issues during refresh
-
-**Solutions:**
-
-1. **Auto-refresh (default):**
-   Switchboard automatically refreshes tokens. Wait 30 seconds and retry.
-
-2. **Manual reconnect:**
-   ```
-   Dashboard → Providers → [Provider Name] → Reconnect
-   → Complete OAuth flow again
-   ```
-
-3. **Check provider status:**
-   Verify provider service is online (Claude Code, Codex, etc.)
-
----
-
-## High Costs
-
-**Problem:** Unexpected high usage or costs.
-
-**Causes:**
-- Using expensive models unnecessarily
-- No fallback to cheaper tiers
-- Large context windows
-
-**Solutions:**
-
-1. **Check usage stats:**
-   ```
-   Dashboard → Usage Stats → View token consumption
-   → Identify high-cost models
-   ```
-
-2. **Switch to cheaper models:**
-   ```
-   Replace: cc/claude-opus ($20-100/month subscription)
-   With: glm/glm-4.7 ($0.6/1M tokens)
-         minimax/MiniMax-M2.1 ($0.20/1M tokens)
-   ```
-
-3. **Use free tier:**
-   ```
-   if/kimi-k2-thinking (FREE)
-   qw/qwen3-coder-plus (FREE)
-   kr/claude-sonnet-4.5 (FREE)
-   gc/gemini-3-flash-preview (FREE 180K/month)
-   ```
-
-4. **Optimize prompts:**
-   - Reduce context size
-   - Use streaming for long responses
-   - Cache common prompts
-
----
-
-## Connection Refused
-
-**Problem:** "ECONNREFUSED" or "Cannot connect to localhost:20128".
-
-**Causes:**
-- Switchboard not running
-- Port 20128 blocked
-- Firewall blocking connection
-
-**Solutions:**
-
-1. **Start Switchboard:**
-   ```bash
-   switchboard
-   ```
-   Dashboard should open at http://localhost:3000
-
-2. **Verify port 20128:**
-   ```bash
-   # Check if port is listening
-   lsof -i :20128
-   
-   # Or on Windows
-   netstat -ano | findstr :20128
-   ```
-
-3. **Check firewall:**
-   - macOS: System Settings → Network → Firewall
-   - Windows: Windows Defender Firewall → Allow app
-   - Linux: `sudo ufw allow 20128`
-
-4. **Use cloud endpoint:**
-   If localhost doesn't work (e.g., Cursor IDE):
-   ```
-   Endpoint: /v1
-   ```
-
----
-
-## Dashboard Not Opening
-
-**Problem:** Dashboard doesn't load at http://localhost:3000.
-
-**Causes:**
-- Port 3000 already in use
-- Switchboard crashed
-- Browser cache issues
-
-**Solutions:**
-
-1. **Check if Switchboard is running:**
-   ```bash
-   # Check process
-   ps aux | grep switchboard
-   
-   # Check port 3000
-   lsof -i :3000
-   ```
-
-2. **Kill conflicting process:**
-   ```bash
-   # macOS/Linux
-   lsof -ti:3000 | xargs kill -9
-   
-   # Windows
-   netstat -ano | findstr :3000
-   taskkill /PID <PID> /F
-   ```
-
-3. **Restart Switchboard:**
-   ```bash
-   # Stop
-   pkill -f switchboard
-   
-   # Start
-   switchboard
-   ```
-
-4. **Clear browser cache:**
-   - Chrome: Ctrl+Shift+Delete → Clear cache
-   - Try incognito mode
-
-5. **Check firewall settings:**
-   Ensure port 3000 is not blocked.
-
----
+If you intentionally disabled **Require API key**, remember that only local clients should be able to reach the service.
 
 ## Model Not Found
 
-**Problem:** "Model not found" or "Invalid model" errors.
+Use the dashboard model picker or call:
 
-**Causes:**
-- Provider not connected
-- Model ID typo
-- Provider inactive
+```bash
+curl http://localhost:20128/v1/models \
+  -H "Authorization: Bearer sk-..."
+```
 
-**Solutions:**
+If a provider was just added, test the provider connection and refresh the model list.
 
-1. **Verify provider connection:**
-   ```
-   Dashboard → Providers → Check status (green = active)
-   ```
+## Provider Fails Or Returns Empty Output
 
-2. **Check model ID format:**
-   ```
-   Correct: cc/claude-opus-4-5-20251101
-   Wrong: claude-opus-4-5-20251101
-   
-   Format: [provider-prefix]/[model-name]
-   ```
+Common causes:
 
-3. **List available models:**
-   ```bash
-   curl http://localhost:20128/v1/models \
-     -H "Authorization: Bearer your-api-key"
-   ```
+- The provider account is not connected.
+- The provider token expired.
+- The model is disabled or unavailable.
+- The request uses a capability the model does not support.
 
-4. **Reconnect provider:**
-   ```
-   Dashboard → Providers → [Provider] → Reconnect
-   ```
+Try reconnecting the provider, testing a simpler model, or routing through a fallback combo.
 
----
+## OAuth Token Expired
 
-## Slow Response
+Open **Providers**, reconnect the provider, and complete the OAuth flow again. If the provider keeps failing, check whether the upstream service is available.
 
-**Problem:** Requests take too long or timeout.
+## Requests Are Going To The Wrong Model
 
-**Causes:**
-- Provider latency
-- Network issues
-- Large context/response
-- Provider rate limiting
+Check whether the client is using:
 
-**Solutions:**
+- A raw model ID.
+- A model alias.
+- A combo name.
 
-1. **Check provider status:**
-   ```
-   Dashboard → Providers → View latency stats
-   ```
+For combos, open **Combos** and confirm the strategy and model order.
 
-2. **Switch to faster model:**
-   ```
-   Fast: cc/claude-haiku-4-5 (Haiku is faster than Opus)
-         gc/gemini-3-flash-preview
-         qw/qwen3-coder-flash
-   ```
+## Cursor Cannot Use Localhost
 
-3. **Use streaming:**
-   ```json
-   {
-     "model": "cc/claude-opus-4-5",
-     "messages": [...],
-     "stream": true
-   }
-   ```
+Some Cursor setups do not call local endpoints directly. Use the **CLI Tools** Cursor guide. If you expose Switchboard through your own public URL, keep API keys required and use HTTPS.
 
-4. **Check network:**
-   ```bash
-   # Test latency
-   ping api.anthropic.com
-   ping api.openai.com
-   ```
+## Need More Detail
 
-5. **Reduce context size:**
-   - Trim message history
-   - Use smaller prompts
-   - Enable context pruning in CLI tool
-
----
-
-## API Key Invalid
-
-**Problem:** "Invalid API key" or "Authentication failed" errors.
-
-**Causes:**
-- Wrong API key copied
-- API key expired
-- API key not generated
-
-**Solutions:**
-
-1. **Regenerate API key:**
-   ```
-   Dashboard → Settings → API Keys → Generate New Key
-   → Copy and use new key
-   ```
-
-2. **Verify key format:**
-   ```
-   Correct: 9r_xxxxxxxxxxxxxxxxxxxxxxxx
-   Wrong: Missing 9r_ prefix
-   ```
-
-3. **Check key in CLI config:**
-   ```bash
-   # Cursor
-   Settings → Models → OpenAI API Key
-   
-   # Cline
-   Settings → API Key
-   
-   # Environment variable
-   export OPENAI_API_KEY="9r_your_key"
-   ```
-
-4. **Test API key:**
-   ```bash
-   curl http://localhost:20128/v1/models \
-     -H "Authorization: Bearer 9r_your_key"
-   ```
-
----
-
-## Need More Help?
-
-- **GitHub Issues:** [github.com/switchboard/issues](/issues)
-- **Documentation:** [switchboard.com/docs](/docs)
-- **FAQ:** [faq.md](faq.md)
+Use **Usage**, **Console Log**, and request logs when debugging. Enable detailed request logs only while investigating because they can contain prompt and response data.

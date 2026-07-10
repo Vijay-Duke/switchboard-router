@@ -29,17 +29,23 @@ cd cli && npm install && npm run pack:cli
 | Workflow | When | What |
 |----------|------|------|
 | **CI** | push / PR | tests, docs build, CLI pack |
-| **Release** | tag `v*` or Actions → Release | npm publish, GitHub release + tarball, GHCR image |
-| **Deploy docs** | `gitbook/**` on master | GitHub Pages |
+| **Release** | new immutable tag `v*` | npm publish, GitHub release + tarball, GHCR image |
+| **Deploy docs** | `gitbook/**` on `main` or `master` | GitHub Pages deployment only; never a product release |
 
 ### Cut a release
 
 ```bash
-git tag v0.5.21
-git push origin v0.5.21
+git switch master
+git pull --ff-only origin master
+git tag -a v0.5.22 -m "Release v0.5.22"
+git push origin v0.5.22
 ```
 
-Or: **Actions → Release → Run workflow** → enter version without `v`.
+Release tags matching `v*` are immutable. Never delete, recreate, or force-update
+an existing release tag. If a release needs a code or packaging correction,
+increment the patch version (for example, `v0.5.22` → `v0.5.23`) and create a
+new tag. A failed workflow may only be rerun against its original tag and commit;
+the tag itself must not move.
 
 Release always attaches a stable asset name:
 
@@ -49,11 +55,9 @@ Release always attaches a stable asset name:
 
 See [`.github/SECRETS.md`](.github/SECRETS.md).
 
-| Secret | Required for |
-|--------|----------------|
-| `NPM_TOKEN` | `npm publish` of `switchboard-router` |
-
-`GITHUB_TOKEN` is enough for GHCR and GitHub Releases.
+The npm package uses Trusted Publishing (OIDC), so the release workflow does not
+use an `NPM_TOKEN`. `GITHUB_TOKEN` is provided automatically for GHCR and GitHub
+Releases.
 
 ### Docs Pages
 

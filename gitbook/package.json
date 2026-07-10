@@ -4,16 +4,18 @@
   "type": "module",
   "scripts": {
     "dev": "next dev -p 3001",
-    "build": "next build",
+    "check:markdown": "node scripts/check-markdown.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "build": "npm run check:markdown && next build",
     "start": "next start -p 3001",
     "deploy": "npm run build && npx wrangler pages deploy out --project-name=switchboard-docs --commit-dirty=true"
   },
   "dependencies": {
-    "lucide-react": "^0.563.0",
-    "next": "16.1.1",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "react-markdown": "^9.0.1",
+    "lucide-react": "^1.24.0",
+    "next": "^16.2.10",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.0",
     "rehype-slug": "^6.0.0",
     "remark-gfm": "^4.0.0"
