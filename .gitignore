@@ -92,3 +92,6 @@ graphify-out/*
 
 # vitest scratch data dir (DATA_DIR override)
 tests/.tmp-data/
+
+# Local Pi sub-agent transcripts (may contain prompts or credentials)
+.pi-subagents/

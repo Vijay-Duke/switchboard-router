@@ -22,15 +22,11 @@ function loadApiKeySecret() {
 const API_KEY_SECRET = loadApiKeySecret();
 
 /**
- * Generate 6-char random keyId
+ * Generate random keyId with >=128 bits of entropy (32-char hex).
+ * crypto.randomBytes avoids Math.random's ~31-bit entropy.
  */
 function generateKeyId() {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < 6; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  return crypto.randomBytes(16).toString("hex");
 }
 
 /**
