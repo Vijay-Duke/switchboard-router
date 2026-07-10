@@ -65,3 +65,21 @@ describe("release trigger invariants", () => {
     expect(docker).not.toContain("${{ inputs.tag }}");
   });
 });
+
+describe("GitHub Actions runtime support", () => {
+  const workflows = [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/docker-publish.yml",
+    ".github/workflows/gitbook-pages.yml",
+  ].map((workflow) => fs.readFileSync(path.join(repoRoot, workflow), "utf8")).join("\n");
+
+  it("does not use deprecated Node 20 action majors", () => {
+    expect(workflows).not.toContain("actions/checkout@v4");
+    expect(workflows).not.toContain("actions/setup-node@v4");
+    expect(workflows).not.toContain("actions/upload-artifact@v4");
+    expect(workflows).not.toContain("actions/download-artifact@v4");
+    expect(workflows).not.toContain("actions/upload-pages-artifact@v3");
+    expect(workflows).not.toContain("actions/deploy-pages@v4");
+  });
+});
