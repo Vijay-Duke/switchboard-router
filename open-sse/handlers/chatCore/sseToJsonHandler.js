@@ -60,9 +60,11 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
     providerRequest: finalBody || translatedBody || null
   };
 
-  // Codex/Responses API SSE path
-  const isCodexResponsesApi = isResponsesProvider(provider) || sourceFormat === FORMATS.OPENAI_RESPONSES;
-  if (isCodexResponsesApi) {
+  // The parser is selected by the provider's wire format, not the client's.
+  // A Responses API client can still be routed to a Chat Completions provider;
+  // parsing that upstream SSE as Responses events produces an in_progress JSON
+  // response with no output.
+  if (isResponsesProvider(provider)) {
     try {
       const jsonResponse = await convertResponsesStreamToJson(providerResponse.body);
       if (onRequestSuccess) await onRequestSuccess();
