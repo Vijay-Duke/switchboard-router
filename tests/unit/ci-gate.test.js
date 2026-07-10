@@ -40,3 +40,28 @@ describe.each([
     }
   });
 });
+
+describe("release trigger invariants", () => {
+  const release = fs.readFileSync(path.join(repoRoot, ".github/workflows/release.yml"), "utf8");
+  const docs = fs.readFileSync(path.join(repoRoot, ".github/workflows/gitbook-pages.yml"), "utf8");
+  const docker = fs.readFileSync(path.join(repoRoot, ".github/workflows/docker-publish.yml"), "utf8");
+
+  it("creates product releases only from v* tag pushes", () => {
+    expect(release).toContain('      - "v*"');
+    expect(release).not.toContain("workflow_dispatch:");
+    expect(release).toContain("tag_name: ${{ needs.resolve-version.outputs.tag }}");
+  });
+
+  it("keeps documentation deployment separate from product releases", () => {
+    expect(docs).toContain('      - "gitbook/**"');
+    expect(docs).toContain("workflow_dispatch:");
+    expect(docs).not.toContain("action-gh-release");
+  });
+
+  it("allows Docker recovery builds only from an existing release tag", () => {
+    expect(docker).toContain("release_tag:");
+    expect(docker).toContain("ref: ${{ inputs.release_tag }}");
+    expect(docker).toContain("Expected an immutable v* release tag");
+    expect(docker).not.toContain("${{ inputs.tag }}");
+  });
+});

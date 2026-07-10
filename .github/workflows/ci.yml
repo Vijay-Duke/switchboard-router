@@ -20,14 +20,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          # package-lock.json is gitignored in this repo — no cache
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tests/package-lock.json
 
       - name: Install root deps (src/ imports)
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Install test deps
         working-directory: tests
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Lint
+        run: npm run lint
 
       # Security-boundary and packaging regressions must never ship green.
       # Keep this list in sync with tests that guard an invariant, not a feature.
@@ -56,11 +65,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tests/package-lock.json
       - name: Install root deps
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Install test deps
         working-directory: tests
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Run Windows portability invariants
         working-directory: tests
         run: npx vitest run unit/standalone-start.test.js unit/launch.test.js unit/cli-disable-mitm.test.js --reporter=default
@@ -76,7 +89,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --no-audit --no-fund
+          cache: npm
+          cache-dependency-path: gitbook/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run build
         env:
           NODE_ENV: production
@@ -90,12 +106,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            cli/package-lock.json
       # CLI pack runs root Next.js build then bundles into cli/
       - name: Install root app deps
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Install CLI deps
         working-directory: cli
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
       - name: Build + npm pack
         working-directory: cli
         run: npm run pack:cli

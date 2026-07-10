@@ -11,6 +11,7 @@
     "build:bun": "bun --bun next build --webpack && node scripts/copy-custom-server.mjs",
     "start:bun": "node scripts/start-standalone.mjs --runtime bun",
     "start:standalone": "node scripts/start-standalone.mjs",
+    "lint": "eslint .",
     "cli:pack": "npm --prefix cli run pack:cli",
     "cli:publish": "npm --prefix cli run publish:cli"
   },
@@ -54,7 +55,11 @@
     "@tailwindcss/postcss": "^4.1.18",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.10",
-    "postcss": "^8.5.6",
+    "postcss": "8.5.16",
     "tailwindcss": "^4"
+  },
+  "overrides": {
+    "dompurify": "3.4.11",
+    "postcss": "$postcss"
   }
 }
