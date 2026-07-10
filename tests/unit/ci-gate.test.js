@@ -19,6 +19,7 @@ const GATED = [
   "unit/cli-model-catalogs.test.js", // external CLI config schemas and preservation
   "unit/cli-model-route-writes.test.js", // routes write the schemas the clients actually consume
   "unit/cli-tool-guides.test.js", // manual guides match supported client capabilities
+  "unit/pi-multi-model-ui.test.js", // multi-model picker does not imply unsaved selections persist
   "unit/droid-managed-models.test.js", // Factory model ownership/default behavior
   "unit/oauth-cursor-auto-import.test.js", // optional-dependency fallback
   "unit/ci-gate.test.js", // this list itself

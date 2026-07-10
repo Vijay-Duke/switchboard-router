@@ -32,6 +32,7 @@ export default function ModelSelectModal({
   kindFilter = null,
   addedModelValues = [],
   closeOnSelect = true,
+  selectionHint,
 }) {
   // Filter activeProviders by serviceKinds when kindFilter set (e.g. "webSearch", "webFetch")
   const filteredActiveProviders = useMemo(() => {
@@ -407,22 +408,37 @@ export default function ModelSelectModal({
     }
   };
 
+  const handleClose = () => {
+    onClose();
+    setSearchQuery("");
+  };
+
   return (
     <Modal
       isOpen={isOpen}
-      onClose={() => {
-        onClose();
-        setSearchQuery("");
-      }}
+      onClose={handleClose}
       title={title}
       size="md"
       className="p-4!"
-      footer={null}
+      footer={!closeOnSelect ? (
+        <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <span role="status" aria-live="polite" className="text-xs text-text-muted">
+            {addedModelValues.length} model{addedModelValues.length === 1 ? "" : "s"} selected
+          </span>
+          <button
+            type="button"
+            onClick={handleClose}
+            className="min-h-11 rounded-lg bg-primary px-4 text-sm font-medium text-on-primary hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2"
+          >
+            Done selecting
+          </button>
+        </div>
+      ) : null}
     >
       {/* Info bar */}
       <div className="flex items-center gap-2 mb-3 px-2.5 py-2 bg-primary/8 border border-primary/20 rounded-lg text-xs text-text-muted">
         <span className="material-symbols-outlined text-primary shrink-0" style={{ fontSize: "14px" }}>info</span>
-        <span>Click to add, click again to remove. Changes are saved automatically.</span>
+        <span>{selectionHint || "Click a model to select it. Click it again to remove it."}</span>
       </div>
 
       {/* Search - compact */}
@@ -578,4 +594,5 @@ ModelSelectModal.propTypes = {
   kindFilter: PropTypes.string,
   addedModelValues: PropTypes.arrayOf(PropTypes.string),
   closeOnSelect: PropTypes.bool,
+  selectionHint: PropTypes.string,
 };

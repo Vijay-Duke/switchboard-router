@@ -57,6 +57,7 @@ jobs:
             unit/cli-model-catalogs.test.js \
             unit/cli-model-route-writes.test.js \
             unit/cli-tool-guides.test.js \
+            unit/pi-multi-model-ui.test.js \
             unit/droid-managed-models.test.js \
             unit/ci-gate.test.js \
             unit/oauth-cursor-auto-import.test.js \

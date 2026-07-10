@@ -620,6 +620,9 @@ export default function OpenAiCompatToolCard({
         modelAliases={modelAliases}
         addedModelValues={multipleModels ? selectedModels : []}
         closeOnSelect={!multipleModels}
+        selectionHint={multipleModels
+          ? "Select any number of models. Close this picker when finished, then click Apply to save."
+          : undefined}
         title={`${multipleModels ? "Add Models" : "Select Model"} for ${tool.name}`}
       />
 
