@@ -44,17 +44,21 @@ const HEADER_HOOKS = {
   claudeOverlay: (h) => {
     const cached = getCachedClaudeHeaders();
     if (!cached) return;
-    for (const lcKey of Object.keys(cached)) {
+    // getCachedClaudeHeaders() hands back the live cache object. Merging this
+    // request's static anthropic-beta flags into it would persist them into
+    // every later request, for every model.
+    const overlay = { ...cached };
+    for (const lcKey of Object.keys(overlay)) {
       const titleKey = lcKey.replace(/(^|-)([a-z])/g, (_, sep, ch) => sep + ch.toUpperCase());
       if (lcKey === "anthropic-beta") {
         const staticBetaStr = h[titleKey] || h[lcKey] || "";
         const flags = new Set(staticBetaStr.split(",").map(f => f.trim()).filter(Boolean));
-        for (const f of cached[lcKey].split(",").map(f => f.trim()).filter(Boolean)) flags.add(f);
-        cached[lcKey] = Array.from(flags).join(",");
+        for (const f of overlay[lcKey].split(",").map(f => f.trim()).filter(Boolean)) flags.add(f);
+        overlay[lcKey] = Array.from(flags).join(",");
       }
       if (titleKey !== lcKey && h[titleKey] !== undefined) delete h[titleKey];
     }
-    Object.assign(h, cached);
+    Object.assign(h, overlay);
   },
 };
 

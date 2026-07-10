@@ -98,14 +98,21 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
   if (body.messages && Array.isArray(body.messages)) {
     for (let i = 0; i < body.messages.length; i++) {
       const msg = body.messages[i];
-      const role = msg.role;
+      // Gemini has no developer role; treat it as system like the OpenAI path does.
+      const role = msg.role === ROLE.DEVELOPER ? ROLE.SYSTEM : msg.role;
       const content = msg.content;
 
       if (role === ROLE.SYSTEM && body.messages.length > 1) {
-        result.systemInstruction = {
-          role: GEMINI_ROLE.USER,
-          parts: [{ text: typeof content === "string" ? content : extractTextContent(content) }]
-        };
+        const text = typeof content === "string" ? content : extractTextContent(content);
+        if (text) {
+          // Multiple system/developer messages must accumulate — assigning here
+          // dropped every one but the last.
+          const existing = result.systemInstruction?.parts?.[0]?.text;
+          result.systemInstruction = {
+            role: GEMINI_ROLE.USER,
+            parts: [{ text: existing ? `${existing}\n${text}` : text }]
+          };
+        }
       } else if (role === ROLE.USER || (role === ROLE.SYSTEM && body.messages.length === 1)) {
         const parts = convertOpenAIContentToParts(content);
         if (parts.length > 0) {
