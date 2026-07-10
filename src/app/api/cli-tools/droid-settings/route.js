@@ -7,11 +7,24 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import {
+  isSwitchboardManagedModel,
+  normalizeManagedModelNames,
+} from "./managedModels.js";
 
 const execAsync = promisify(exec);
 
 const getDroidDir = () => path.join(os.homedir(), ".factory");
 const getDroidSettingsPath = () => path.join(getDroidDir(), "settings.json");
+
+const parseSettings = (content) => JSON.parse(content.replace(/,(\s*[}\]])/g, "$1"));
+
+const writeSettings = async (settingsPath, settings) => {
+  await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2), { mode: 0o600 });
+  try {
+    await fs.chmod(settingsPath, 0o600);
+  } catch { /* best-effort hardening on filesystems without chmod */ }
+};
 
 // Check if droid CLI is installed (via which/where or config file exists)
 const checkDroidInstalled = async () => {
@@ -40,8 +53,7 @@ const readSettings = async () => {
     const content = await fs.readFile(settingsPath, "utf-8");
     // Tolerate JSONC (trailing commas) and treat unparseable files as "no config"
     // rather than throwing a 500 that the UI misreads as "tool not installed".
-    const stripped = content.replace(/,(\s*[}\]])/g, "$1");
-    return JSON.parse(stripped);
+    return parseSettings(content);
   } catch (error) {
     return null;
   }
@@ -50,7 +62,7 @@ const readSettings = async () => {
 // Check if settings has Switchboard customModels
 const hasSwitchboardConfig = (settings) => {
   if (!settings || !settings.customModels) return false;
-  return settings.customModels.some(m => m.id?.startsWith("custom:Switchboard"));
+  return settings.customModels.some(isSwitchboardManagedModel);
 };
 
 // GET - Check droid CLI and read current settings
@@ -88,7 +100,9 @@ export async function POST(request) {
     const { baseUrl, apiKey, model, models, activeModel } = await request.json();
     
     // Accept either `models` (array) or `model` (string, legacy)
-    const modelsArray = Array.isArray(models) ? models.slice() : (typeof model === "string" ? [model] : []);
+    const modelsArray = normalizeManagedModelNames(
+      Array.isArray(models) ? models : (typeof model === "string" ? [model] : [])
+    );
     
     if (!baseUrl || modelsArray.length === 0) {
       return NextResponse.json({ error: "baseUrl and at least one model are required" }, { status: 400 });
@@ -104,8 +118,10 @@ export async function POST(request) {
     let settings = {};
     try {
       const existingSettings = await fs.readFile(settingsPath, "utf-8");
-      settings = JSON.parse(existingSettings);
-    } catch { /* No existing settings */ }
+      settings = parseSettings(existingSettings);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
 
     // Ensure customModels array exists
     if (!settings.customModels) {
@@ -113,7 +129,8 @@ export async function POST(request) {
     }
 
     // Remove all existing Switchboard configs
-    settings.customModels = settings.customModels.filter(m => !m.id?.startsWith("custom:Switchboard"));
+    settings.customModels = settings.customModels.filter((entry) => !isSwitchboardManagedModel(entry));
+    const managedStartIndex = settings.customModels.length;
 
     // Normalize baseUrl to ensure /v1 suffix
     const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
@@ -150,16 +167,17 @@ export async function POST(request) {
     }
 
     // Set default model if applicable
-    if (defaultIndex >= 0 && settings.customModels[defaultIndex]) {
+    const absoluteDefaultIndex = managedStartIndex + defaultIndex;
+    if (defaultIndex >= 0 && settings.customModels[absoluteDefaultIndex]) {
       // Reorder so the default comes first
-      const [defaultEntry] = settings.customModels.splice(defaultIndex, 1);
+      const [defaultEntry] = settings.customModels.splice(absoluteDefaultIndex, 1);
       settings.customModels.unshift({ ...defaultEntry, index: 0 });
       // Re-index the rest
       settings.customModels.forEach((m, i) => { m.index = i; });
     }
 
     // Write settings
-    await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2));
+    await writeSettings(settingsPath, settings);
 
     return NextResponse.json({
       success: true,
@@ -181,7 +199,7 @@ export async function DELETE() {
     let settings = {};
     try {
       const existingSettings = await fs.readFile(settingsPath, "utf-8");
-      settings = JSON.parse(existingSettings);
+      settings = parseSettings(existingSettings);
     } catch (error) {
       if (error.code === "ENOENT") {
         return NextResponse.json({
@@ -194,7 +212,7 @@ export async function DELETE() {
 
     // Remove Switchboard customModels
     if (settings.customModels) {
-      settings.customModels = settings.customModels.filter(m => !m.id?.startsWith("custom:Switchboard"));
+      settings.customModels = settings.customModels.filter((entry) => !isSwitchboardManagedModel(entry));
       
       // Remove customModels array if empty
       if (settings.customModels.length === 0) {
@@ -203,7 +221,7 @@ export async function DELETE() {
     }
 
     // Write updated settings
-    await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2));
+    await writeSettings(settingsPath, settings);
 
     return NextResponse.json({
       success: true,

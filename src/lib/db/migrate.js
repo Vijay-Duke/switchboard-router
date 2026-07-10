@@ -3,7 +3,7 @@ import path from "node:path";
 import { LEGACY_FILES, DB_DIR, DATA_FILE } from "./paths.js";
 import { TABLES, buildCreateTableSql } from "./schema.js";
 import { MIGRATIONS, latestVersion } from "./migrations/index.js";
-import { getMetaSync, setMetaSync } from "./helpers/metaStore.js";
+import { getMetaSync, setMetaSync } from "./helpers/metaStoreSync.js";
 import { makeBackupDir, backupFile, pruneOldBackups } from "./backup.js";
 import { getAppVersion } from "./version.js";
 import { stringifyJson } from "./helpers/jsonCol.js";

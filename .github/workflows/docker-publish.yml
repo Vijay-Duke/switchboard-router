@@ -1,17 +1,13 @@
-# Kept for backward compatibility: tag pushes also run release.yml which builds Docker.
-# This workflow only runs on workflow_dispatch if you need a Docker-only rebuild.
+# Docker-only recovery path. Normal images are built by release.yml.
+# A recovery rebuild must originate from an existing immutable v* release tag.
 name: Build and Push Docker Image
 
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: "Image tag (e.g. latest or 0.5.21)"
+      release_tag:
+        description: "Existing immutable release tag (for example v0.5.22)"
         required: true
-        default: "latest"
-
-env:
-  GHCR_IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   build-and-push:
@@ -22,6 +18,25 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+
+      - name: Validate immutable release tag
+        id: release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if ! echo "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "Expected an immutable v* release tag, got: $RELEASE_TAG"
+            exit 1
+          fi
+          if [ "$(git tag --points-at HEAD | grep -Fx "$RELEASE_TAG")" != "$RELEASE_TAG" ]; then
+            echo "$RELEASE_TAG does not point at the checked-out commit"
+            exit 1
+          fi
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -32,14 +47,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Compute lowercase image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
-            ${{ env.GHCR_IMAGE }}:${{ inputs.tag }}
-            ${{ env.GHCR_IMAGE }}:latest
+            ${{ steps.image.outputs.name }}:${{ steps.release.outputs.version }}
+            ${{ steps.image.outputs.name }}:latest
           platforms: linux/amd64,linux/arm64
           provenance: false
           sbom: false
