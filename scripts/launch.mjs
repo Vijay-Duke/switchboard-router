@@ -41,6 +41,22 @@ export function resolveCommand(name) {
   return { file: name, prefixArgs: [] };
 }
 
+/**
+ * Next does not use the HOSTNAME environment variable as its socket bind for
+ * `dev`/`start`; it must receive --hostname explicitly. Keep the environment
+ * value too because the locality guard uses the same resolved bind contract.
+ * @param {string} command
+ * @param {string[]} args
+ * @param {string} hostname
+ */
+export function withBindHostname(command, args, hostname) {
+  const nextIndex = command === "next" ? -1 : command === "bun" ? args.indexOf("next") : -2;
+  const subcommandIndex = nextIndex + 1;
+  if (nextIndex < -1 || !["dev", "start"].includes(args[subcommandIndex])) return args;
+  if (args.some((arg) => arg === "--hostname" || arg === "-H" || arg.startsWith("--hostname="))) return args;
+  return [...args, "--hostname", hostname];
+}
+
 function main() {
   const [cmd, ...args] = process.argv.slice(2);
   if (!cmd) {
@@ -50,8 +66,9 @@ function main() {
 
   const env = { ...process.env, HOSTNAME: process.env.HOSTNAME || "127.0.0.1" };
   const { file, prefixArgs } = resolveCommand(cmd);
+  const bindArgs = withBindHostname(cmd, args, env.HOSTNAME);
 
-  const child = spawn(file, [...prefixArgs, ...args], { stdio: "inherit", env, windowsHide: true });
+  const child = spawn(file, [...prefixArgs, ...bindArgs], { stdio: "inherit", env, windowsHide: true });
   child.on("error", (err) => {
     console.error(`[launch] failed to start ${cmd}: ${err.message}`);
     process.exit(1);

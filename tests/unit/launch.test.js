@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveCommand } from "../../scripts/launch.mjs";
+import { resolveCommand, withBindHostname } from "../../scripts/launch.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 let probe;
@@ -91,5 +91,27 @@ describe("resolveCommand", () => {
   it("falls back to a PATH lookup for non-npm executables", () => {
     // `bun` is not an npm package here; spawn() resolves it (and bun.exe) itself.
     expect(resolveCommand("bun")).toEqual({ file: "bun", prefixArgs: [] });
+  });
+});
+
+describe("withBindHostname", () => {
+  it("passes the resolved loopback bind to next dev", () => {
+    expect(withBindHostname("next", ["dev", "--webpack", "--port", "20128"], "127.0.0.1"))
+      .toEqual(["dev", "--webpack", "--port", "20128", "--hostname", "127.0.0.1"]);
+  });
+
+  it("passes the resolved bind through the Bun next wrapper", () => {
+    expect(withBindHostname("bun", ["--bun", "next", "dev", "--webpack"], "127.0.0.1"))
+      .toEqual(["--bun", "next", "dev", "--webpack", "--hostname", "127.0.0.1"]);
+  });
+
+  it("does not override an explicit Next hostname", () => {
+    const args = ["dev", "--hostname", "0.0.0.0"];
+    expect(withBindHostname("next", args, "127.0.0.1")).toEqual(args);
+  });
+
+  it("leaves unrelated commands untouched", () => {
+    const args = ["probe.cjs", "value"];
+    expect(withBindHostname("node", args, "127.0.0.1")).toEqual(args);
   });
 });
