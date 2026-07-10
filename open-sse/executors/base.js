@@ -1,9 +1,28 @@
-import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
+import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS, MAX_TOTAL_RETRY_WAIT_MS } from "../config/runtimeConfig.js";
 import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { assertPublicUrlResolved } from "../utils/ssrfGuard.js";
+
+/**
+ * Sleep that resolves early when the caller disconnects, and always clears its
+ * timer — a plain setTimeout keeps a cancelled request's retry chain alive.
+ * @param {number} ms
+ * @param {AbortSignal} [signal]
+ */
+export function sleepUntilAborted(ms, signal) {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise(resolve => {
+    const done = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener?.("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal?.addEventListener?.("abort", done, { once: true });
+  });
+}
 
 /**
  * BaseExecutor - Base class for provider executors
@@ -79,7 +98,7 @@ export class BaseExecutor {
   transformRequest(model, body, stream, credentials) {
     // Inject stream_options so OpenAI-format streaming returns usage in the
     // final chunk (forceStream providers + non-stream clients need this for
-    // usage tracking — decolua/9router#2382 / PR#346).
+    // usage tracking — Switchboard#2382 / PR#346).
     if (stream && body && Array.isArray(body.messages) && !body.stream_options) {
       body.stream_options = { include_usage: true };
     }
@@ -117,9 +136,13 @@ export class BaseExecutor {
     // Merge default retry config with provider-specific config
     const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
 
+    // Request-wide sleep budget, shared across attempts AND fallback URLs.
+    let retryWaitBudgetMs = MAX_TOTAL_RETRY_WAIT_MS;
+
     // Schedule retry via retryConfig[statusKey]. Returns true when caller should `urlIndex--; continue`
     // response (optional) lets a subclass hook compute a dynamic delay (e.g. antigravity Retry-After).
     const tryRetry = async (urlIndex, statusKey, reason, response = null) => {
+      if (signal?.aborted) return false;
       const { attempts, delayMs } = resolveRetryEntry(retryConfig[statusKey]);
       if (attempts <= 0 || retryAttemptsByUrl[urlIndex] >= attempts) return false;
       // Hook: subclass may derive delay from the response (headers/body). null → skip retry, use fallback.
@@ -129,10 +152,16 @@ export class BaseExecutor {
         if (dynamic === false) return false; // hook vetoes retry (e.g. Retry-After too long)
         if (dynamic != null) waitMs = dynamic;
       }
+      // Out of budget → give up on this URL now and let the caller fall back.
+      if (waitMs > retryWaitBudgetMs) {
+        log?.debug?.("RETRY", `${reason} skipped: ${waitMs / 1000}s exceeds remaining budget ${retryWaitBudgetMs / 1000}s`);
+        return false;
+      }
+      retryWaitBudgetMs -= waitMs;
       retryAttemptsByUrl[urlIndex]++;
       log?.debug?.("RETRY", `${reason} retry ${retryAttemptsByUrl[urlIndex]}/${attempts} after ${waitMs / 1000}s`);
-      await new Promise(resolve => setTimeout(resolve, waitMs));
-      return true;
+      await sleepUntilAborted(waitMs, signal);
+      return !signal?.aborted;
     };
 
     for (let urlIndex = 0; urlIndex < fallbackCount; urlIndex++) {

@@ -1,5 +1,5 @@
 /**
- * Regression tests for high-impact fixes ported from decolua/9router issues/PRs.
+ * Regression tests for high-impact fixes ported from Switchboard issues/PRs.
  */
 import { describe, it, expect } from "vitest";
 import { extractThinkTags, createThinkExtractor } from "../../open-sse/utils/thinkExtractor.js";

@@ -28,7 +28,7 @@ function ensureState(state, model) {
   // Always ensure tool maps exist. When the client speaks openai-responses,
   // initState() pre-sets responseId, so the old `if (!state.responseId)` guard
   // skipped Map init and crashed on tool-call events (state.toolIndexById.has).
-  // decolua/9router#2395.
+  // Switchboard#2395.
   if (!state.responseId) {
     state.responseId = `chatcmpl-${Date.now()}`;
     state.created = Math.floor(Date.now() / 1000);

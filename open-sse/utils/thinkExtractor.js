@@ -3,7 +3,7 @@
 // pattern to avoid relying on a shared regex.
 // Used for providers (e.g. MiniMax M3 OpenAI tier) that embed reasoning as
 // XML tags inside `content` instead of a separate `reasoning_content` field.
-// Ported from decolua/9router PR#2463.
+// Ported from Switchboard PR#2463.
 
 const OPEN_TAG = "<think>";
 const CLOSE_TAG = "</think>";

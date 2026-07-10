@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   })),
   getSettings: vi.fn(),
   validateApiKey: vi.fn(),
-  getConsistentMachineId: vi.fn(),
+  hasValidCliToken: vi.fn(),
 }));
 
 vi.mock("next/server", () => ({
@@ -24,8 +24,8 @@ vi.mock("@/lib/db/index.js", () => ({
   validateApiKey: mocks.validateApiKey,
 }));
 
-vi.mock("@/shared/utils/machineId", () => ({
-  getConsistentMachineId: mocks.getConsistentMachineId,
+vi.mock("@/shared/utils/cliToken.js", () => ({
+  hasValidCliToken: mocks.hasValidCliToken,
 }));
 
 const { proxy, __test__ } = await import("../../src/dashboardGuard.js");
@@ -46,9 +46,12 @@ describe("dashboard guard public LLM API access", () => {
     // C1 default: requireApiKey on
     mocks.getSettings.mockResolvedValue({ requireApiKey: true });
     mocks.validateApiKey.mockResolvedValue(false);
-    mocks.getConsistentMachineId.mockResolvedValue("cli-token");
+    mocks.hasValidCliToken.mockImplementation(async (request) => (
+      request.headers.get("x-switchboard-cli-token") === "cli-token"
+    ));
     delete process.env.SWITCHBOARD_TRUST_REAL_IP;
-    delete process.env.HOSTNAME;
+    delete process.env.SWITCHBOARD_LOCAL_PEERS;
+    process.env.HOSTNAME = "127.0.0.1"; // default: loopback bind (npm scripts)
   });
 
   it("allows loopback public LLM API without API key", async () => {
@@ -62,7 +65,7 @@ describe("dashboard guard public LLM API access", () => {
     mocks.getSettings.mockResolvedValue({ requireApiKey: false });
     const response = await proxy(request("/v1/chat/completions", {
       host: "router.example.com",
-      "x-9r-real-ip": "10.204.111.34",
+      "x-switchboard-real-ip": "10.204.111.34",
     }));
     expect(response).toBe(mocks.nextResponse);
   });
@@ -79,39 +82,138 @@ describe("dashboard guard public LLM API access", () => {
     process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
     const response = await proxy(request("/v1/chat/completions", {
       host: "localhost",
-      "x-9r-real-ip": "10.204.111.34",
+      "x-switchboard-real-ip": "10.204.111.34",
     }));
 
     expect(response.status).toBe(401);
     expect(response.body.error).toBe("API key required");
   });
 
-  it("ignores spoofed x-9r-real-ip when custom-server trust flag is unset (H1)", async () => {
+  it("ignores spoofed x-switchboard-real-ip when custom-server trust flag is unset (H1)", async () => {
     // Without SWITCHBOARD_TRUST_REAL_IP, spoofed loopback IP must not grant local access
     const response = await proxy(request("/api/settings", {
       host: "192.168.1.10:20128",
-      "x-9r-real-ip": "127.0.0.1",
+      "x-switchboard-real-ip": "127.0.0.1",
     }));
     expect(response.status).toBe(403);
   });
 
-  it("rejects Host-header loopback claim on a public bind with no trust flag (H1)", async () => {
-    // Bare `next start` on 0.0.0.0: nothing derived the peer from the socket,
-    // so a `Host: localhost` header proves nothing.
+  it("rejects Host: localhost on a wildcard bind with no socket proof (P0)", async () => {
+    // A remote client controls Host. On HOSTNAME=0.0.0.0 without custom-server.js
+    // there is no socket-derived IP, so locality cannot be established: fail closed.
     process.env.HOSTNAME = "0.0.0.0";
+    const response = await proxy(request("/api/settings", {
+      host: "localhost:20128",
+      origin: "http://localhost:20128",
+    }));
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe("Local only");
+  });
+
+  it("allows loopback dashboard on a wildcard bind behind custom-server", async () => {
+    // custom-server.js sets the trust flag and rewrites the IP from the TCP socket.
+    process.env.HOSTNAME = "0.0.0.0";
+    process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
+    const response = await proxy(request("/api/settings", {
+      host: "localhost:20128",
+      origin: "http://localhost:20128",
+      "x-switchboard-real-ip": "127.0.0.1",
+    }));
+    expect(response).toBe(mocks.nextResponse);
+  });
+
+  it("fails closed when trust flag is set but the real-ip header is missing", async () => {
+    process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
     const response = await proxy(request("/api/settings", { host: "localhost:20128" }));
     expect(response.status).toBe(403);
+  });
+
+  it("still rejects LAN Host on wildcard bind without CLI token", async () => {
+    process.env.HOSTNAME = "0.0.0.0";
+    const response = await proxy(request("/api/settings", {
+      host: "192.168.1.10:20128",
+    }));
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe("Local only");
+  });
+
+  it("treats an allowlisted socket peer as local (Docker bridge gateway)", async () => {
+    process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
+    process.env.SWITCHBOARD_LOCAL_PEERS = "172.17.0.0/16";
+    const response = await proxy(request("/api/settings", {
+      host: "localhost:20128",
+      origin: "http://localhost:20128",
+      "x-switchboard-real-ip": "172.17.0.1",
+    }));
+    expect(response).toBe(mocks.nextResponse);
+  });
+
+  it("does not extend the allowlist beyond its mask", async () => {
+    process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
+    process.env.SWITCHBOARD_LOCAL_PEERS = "172.17.0.0/16";
+    const response = await proxy(request("/api/settings", {
+      host: "localhost:20128",
+      "x-switchboard-real-ip": "172.18.0.1",
+    }));
+    expect(response.status).toBe(403);
+  });
+
+  it("never applies the allowlist to a client header without the trust flag", async () => {
+    process.env.HOSTNAME = "0.0.0.0";
+    process.env.SWITCHBOARD_LOCAL_PEERS = "172.17.0.0/16";
+    const response = await proxy(request("/api/settings", {
+      host: "localhost:20128",
+      "x-switchboard-real-ip": "172.17.0.1",
+    }));
+    expect(response.status).toBe(403);
+  });
+
+  it("matches allowlist entries by mask, not by string prefix", () => {
+    process.env.SWITCHBOARD_LOCAL_PEERS = "10.1.2.0/24,192.168.5.7";
+    expect(__test__.isTrustedPeer("10.1.2.255")).toBe(true);
+    expect(__test__.isTrustedPeer("10.1.20.1")).toBe(false); // prefix-match trap
+    expect(__test__.isTrustedPeer("192.168.5.7")).toBe(true);
+    expect(__test__.isTrustedPeer("192.168.5.70")).toBe(false);
+    expect(__test__.isTrustedPeer("127.0.0.1")).toBe(true); // loopback always
+  });
+
+  it("accepts IPv6 loopback in every Host/real-ip spelling", () => {
+    for (const h of ["::1", "[::1]", "[::1]:20128", "::ffff:127.0.0.1", "127.0.0.1:20128", "localhost"]) {
+      expect(__test__.isLoopbackHostname(h), h).toBe(true);
+    }
+    for (const h of ["", null, "[::1", "192.168.1.10:20128", "evil.example", "127.0.0.1.evil.com"]) {
+      expect(__test__.isLoopbackHostname(h), String(h)).toBe(false);
+    }
   });
 
   it("allows loopback peer IP when trust flag is set", async () => {
     process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
     const response = await proxy(request("/v1/chat/completions", {
-      host: "router.example.com",
-      "x-9r-real-ip": "127.0.0.1",
+      host: "localhost:20128",
+      "x-switchboard-real-ip": "127.0.0.1",
     }));
 
     expect(response).toBe(mocks.nextResponse);
     expect(mocks.validateApiKey).not.toHaveBeenCalled();
+  });
+
+  it("rejects a hostile Host from a loopback peer (DNS rebinding)", async () => {
+    // The socket says local, but the browser was lured to evil.example → 127.0.0.1.
+    // Host validation must apply in the trusted-real-ip branch too.
+    process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
+    const response = await proxy(request("/api/settings", {
+      host: "evil.example",
+      "x-switchboard-real-ip": "127.0.0.1",
+    }));
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe("Local only");
+  });
+
+  it("rejects a hostile Host on a loopback bind (DNS rebinding)", async () => {
+    process.env.HOSTNAME = "127.0.0.1";
+    const response = await proxy(request("/api/settings", { host: "evil.example" }));
+    expect(response.status).toBe(403);
   });
 
   it("allows loopback rewritten public LLM API without API key", async () => {
@@ -186,9 +288,12 @@ describe("dashboard guard local-only access", () => {
     vi.clearAllMocks();
     mocks.getSettings.mockResolvedValue({ requireApiKey: true });
     mocks.validateApiKey.mockResolvedValue(false);
-    mocks.getConsistentMachineId.mockResolvedValue("cli-token");
+    mocks.hasValidCliToken.mockImplementation(async (request) => (
+      request.headers.get("x-switchboard-cli-token") === "cli-token"
+    ));
     delete process.env.SWITCHBOARD_TRUST_REAL_IP;
-    delete process.env.HOSTNAME;
+    delete process.env.SWITCHBOARD_LOCAL_PEERS;
+    process.env.HOSTNAME = "127.0.0.1"; // default: loopback bind (npm scripts)
   });
 
   it("rejects local-only route from non-loopback host without CLI token", async () => {
@@ -213,8 +318,8 @@ describe("dashboard guard local-only access", () => {
     process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
     const response = await proxy(request("/api/cli-tools/antigravity-mitm", {
       host: "tunnel.example.com",
-      "x-9r-via-proxy": "1",
-      "x-9r-real-ip": "127.0.0.1",
+      "x-switchboard-via-proxy": "1",
+      "x-switchboard-real-ip": "127.0.0.1",
     }));
 
     expect(response.status).toBe(403);
@@ -232,7 +337,7 @@ describe("dashboard guard local-only access", () => {
   it("allows local-only route with valid CLI token", async () => {
     const response = await proxy(request("/api/mcp/filesystem/sse", {
       host: "router.example.com",
-      "x-9r-cli-token": "cli-token",
+      "x-switchboard-cli-token": "cli-token",
     }));
 
     expect(response).toBe(mocks.nextResponse);
@@ -242,7 +347,7 @@ describe("dashboard guard local-only access", () => {
     process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
     const response = await proxy(request("/api/settings", {
       host: "192.168.1.10:20128",
-      "x-9r-real-ip": "192.168.1.20",
+      "x-switchboard-real-ip": "192.168.1.20",
     }));
 
     expect(response.status).toBe(403);

@@ -1,7 +1,7 @@
 // Shared system-prompt injector: appends an instruction into the system message of
 // the final request body, dispatching by format so it works for translated and
 // native-passthrough flows. Used by caveman.js and ponytail.js.
-// Dedup logic from decolua/9router PR#2443 — prevents exponential growth on multi-turn.
+// Dedup logic from Switchboard PR#2443 — prevents exponential growth on multi-turn.
 
 import { FORMATS } from "../translator/formats.js";
 

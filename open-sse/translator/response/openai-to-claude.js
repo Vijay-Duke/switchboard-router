@@ -12,7 +12,7 @@ const CLAUDE_OAUTH_TOOL_PREFIX = "proxy_";
 
 // Detect and deduplicate doubled JSON (e.g. {"query":"x"}{"query":"x"}).
 // Some OpenAI-compatible models emit tool arguments as the same object twice.
-// decolua/9router PR#2279.
+// Switchboard PR#2279.
 function deduplicateDoubledJson(str) {
   if (!str || str.length < 4) return str;
   for (let splitAt = 2; splitAt <= Math.floor(str.length / 2); splitAt++) {
@@ -256,7 +256,7 @@ export function openaiToClaudeResponse(chunk, state) {
 
   // Finish — guard against duplicate finish_reason chunks (common with
   // OpenAI-compatible models; without this tool args are emitted twice →
-  // doubled JSON). decolua/9router PR#2279.
+  // doubled JSON). Switchboard PR#2279.
   if (choice.finish_reason && !state.claudeFinishHandled) {
     state.claudeFinishHandled = true;
     stopThinkingBlock(state, results);

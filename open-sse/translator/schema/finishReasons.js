@@ -40,7 +40,7 @@ export const GEMINI_FINISH = {
 // Gemini finishReasons that mean the turn was aborted upstream, not completed.
 // Forwarding them as a clean stop makes the client treat a broken turn (e.g. an
 // aborted tool call) as a finished answer. Shared with the antigravity empty-stream guard.
-// decolua/9router PR#2462.
+// Switchboard PR#2462.
 export const GEMINI_ERROR_FINISH_REASONS = new Set([
   GEMINI_FINISH.MALFORMED_FUNCTION_CALL,
   GEMINI_FINISH.UNEXPECTED_TOOL_CALL,

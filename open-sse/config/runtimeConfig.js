@@ -71,6 +71,11 @@ export const DEFAULT_RETRY_CONFIG = {
   504: { attempts: 2, delayMs: 3000 }
 };
 
+// Ceiling on time spent sleeping between retries for one client request, summed
+// across every attempt and every fallback base URL. Clients typically deadline
+// at 30-60s; blowing past that looks like a hang and starves provider fallback.
+export const MAX_TOTAL_RETRY_WAIT_MS = 20000;
+
 // Normalize a retry entry to { attempts, delayMs }
 export function resolveRetryEntry(entry) {
   if (entry == null) return { attempts: 0, delayMs: RETRY_CONFIG.delayMs };

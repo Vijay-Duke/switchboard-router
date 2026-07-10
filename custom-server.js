@@ -1,6 +1,6 @@
 const http = require("http");
 
-// H1: mark that x-9r-real-ip is derived from the TCP socket by this wrapper.
+// H1: mark that x-switchboard-real-ip is derived from the TCP socket by this wrapper.
 // dashboardGuard only trusts that header when this env is set.
 process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
 
@@ -23,11 +23,11 @@ http.createServer = (...args) => {
     // Direct/public sockets remain keyed by the unspoofable peer address.
     const proxyIp = xRealIp || (xff ? String(xff).split(",")[0].trim() : "");
     const ip = isLoopbackProxy && proxyIp ? proxyIp : socketIp;
-    delete req.headers["x-9r-real-ip"];
+    delete req.headers["x-switchboard-real-ip"];
     delete req.headers["x-forwarded-for"];
-    delete req.headers["x-9r-via-proxy"];
-    req.headers["x-9r-real-ip"] = ip;
-    if (viaProxy) req.headers["x-9r-via-proxy"] = "1";
+    delete req.headers["x-switchboard-via-proxy"];
+    req.headers["x-switchboard-real-ip"] = ip;
+    if (viaProxy) req.headers["x-switchboard-via-proxy"] = "1";
     return handler(req, res);
   };
   return origCreate(...rest, wrapped);

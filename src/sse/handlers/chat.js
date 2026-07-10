@@ -23,6 +23,7 @@ import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
+import { hasValidCliToken } from "@/shared/utils/cliToken.js";
 import {
   insertRoutingEvent,
   getPromotedLearningVersion,
@@ -114,7 +115,7 @@ export async function handleChat(request, clientRawRequest = null) {
   // Enforce API key if enabled in settings (L3 shared gate)
   const settings = await getSettings();
   const denied = await gateRequireApiKey(settings, apiKey, {
-    isValidApiKey, log, errorResponse, HTTP_STATUS,
+    isValidApiKey, log, errorResponse, HTTP_STATUS, request, hasValidCliToken,
   });
   if (denied) return denied;
 
@@ -438,7 +439,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         await clearAccountError(credentials.connectionId, credentials, model);
       },
       // Antigravity empty-stream exhaustion: bench this account so the client's
-      // next retry (or outer account loop) can rotate. decolua/9router PR#2462.
+      // next retry (or outer account loop) can rotate. Switchboard PR#2462.
       onUpstreamEmptyExhausted: async (errMsg, resetsAtMs) => {
         await markAccountUnavailable(
           credentials.connectionId,

@@ -24,24 +24,47 @@ vi.mock("fs/promises", () => ({
   constants: { R_OK: 4 },
 }));
 
+// Mock the sqlite3 CLI fallback. `promisify` on this callback-style fn yields
+// the second callback arg, so hand back a { stdout } shape.
+const mockCliRows = { enabled: false, rows: {}, noItemTable: false };
+vi.mock("child_process", () => ({
+  execFile: (cmd, args, opts, cb) => {
+    const done = typeof opts === "function" ? opts : cb;
+    if (!mockCliRows.enabled) return done(new Error("sqlite3: command not found"));
+    const sql = args[1];
+    // Real sqlite3 errors on any itemTable query when the schema is missing.
+    if (mockCliRows.noItemTable) return done(new Error("Error: no such table: itemTable"));
+    if (sql.startsWith("SELECT 1")) return done(null, { stdout: "" });
+    const key = /key='([^']+)'/.exec(sql)?.[1];
+    return done(null, { stdout: mockCliRows.rows[key] ?? "" });
+  },
+}));
+
 // Shared mock db instance
 const mockDbInstance = {
   prepare: vi.fn(),
   close: vi.fn(),
   __throwOnConstruct: false,
+  __moduleMissing: false,
 };
 
-// Mock better-sqlite3 as a class so `new Database(...)` works
-vi.mock("better-sqlite3", () => ({
-  default: class MockDatabase {
-    constructor() {
-      if (mockDbInstance.__throwOnConstruct) {
-        throw new Error("SQLITE_CANTOPEN");
+// Mock better-sqlite3 as a class so `new Database(...)` works. The factory itself
+// can throw, standing in for the optional package being absent entirely.
+vi.mock("better-sqlite3", () => {
+  if (mockDbInstance.__moduleMissing) {
+    throw new Error("Cannot find package 'better-sqlite3'");
+  }
+  return {
+    default: class MockDatabase {
+      constructor() {
+        if (mockDbInstance.__throwOnConstruct) {
+          throw new Error("SQLITE_CANTOPEN");
+        }
+        return mockDbInstance;
       }
-      return mockDbInstance;
-    }
-  },
-}));
+    },
+  };
+});
 
 // We need to dynamically import after mocks are registered
 let GET;
@@ -52,6 +75,10 @@ describe("GET /api/oauth/cursor/auto-import", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     mockDbInstance.__throwOnConstruct = false;
+    mockCliRows.enabled = false;
+    mockCliRows.rows = {};
+    mockCliRows.noItemTable = false;
+    mockDbInstance.__moduleMissing = false;
     // Force darwin so macOS-specific logic is exercised
     Object.defineProperty(process, "platform", { value: "darwin", writable: true });
     // Re-import to pick up fresh mocks each run
@@ -83,6 +110,63 @@ describe("GET /api/oauth/cursor/auto-import", () => {
     expect(response.body.found).toBe(false);
     expect(response.body.error).toContain("could not open it");
     expect(response.body.error).toContain("SQLITE_CANTOPEN");
+  });
+
+  it("asks the user to log in when native bindings fail but the CLI reads an empty db", async () => {
+    vi.mocked(fsPromises.access).mockResolvedValue();
+    mockDbInstance.__throwOnConstruct = true;
+    mockCliRows.enabled = true; // sqlite3 opens the db, finds no token pair
+
+    const response = await GET();
+
+    expect(response.body.found).toBe(false);
+    expect(response.body.error).toContain("Please login to Cursor IDE first");
+    expect(response.body.error).not.toContain("could not open");
+  });
+
+  it("falls back to the CLI when better-sqlite3 is not installed at all", async () => {
+    // The packaged CLI strips better-sqlite3 and reinstalls it best-effort; a
+    // top-level import would kill this route before the fallback could run.
+    vi.mocked(fsPromises.access).mockResolvedValue();
+    mockDbInstance.__moduleMissing = true;
+    mockCliRows.enabled = true;
+    mockCliRows.rows = {
+      "cursorAuth/accessToken": "cli-token",
+      "storage.serviceMachineId": "cli-machine",
+    };
+    vi.resetModules();
+    const { GET: freshGet } = await import("../../src/app/api/oauth/cursor/auto-import/route.js");
+
+    const response = await freshGet();
+
+    expect(response.body).toMatchObject({ found: true, accessToken: "cli-token" });
+  });
+
+  it("reports an unreadable db when the schema has no itemTable", async () => {
+    vi.mocked(fsPromises.access).mockResolvedValue();
+    mockDbInstance.__throwOnConstruct = true; // native path also cannot read it
+    mockCliRows.enabled = true;
+    mockCliRows.noItemTable = true; // valid SQLite file, wrong schema
+
+    const response = await GET();
+
+    expect(response.body.found).toBe(false);
+    expect(response.body.error).toContain("could not open it");
+    expect(response.body.error).not.toContain("Please login");
+  });
+
+  it("imports via the CLI when native bindings fail", async () => {
+    vi.mocked(fsPromises.access).mockResolvedValue();
+    mockDbInstance.__throwOnConstruct = true;
+    mockCliRows.enabled = true;
+    mockCliRows.rows = {
+      "cursorAuth/accessToken": "cli-token",
+      "storage.serviceMachineId": "cli-machine",
+    };
+
+    const response = await GET();
+
+    expect(response.body).toMatchObject({ found: true, accessToken: "cli-token", machineId: "cli-machine" });
   });
 
   // ── Token extraction ──────────────────────────────────────────────────

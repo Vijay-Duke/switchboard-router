@@ -7,7 +7,7 @@ export { VALID_OPENAI_CONTENT_TYPES, VALID_OPENAI_MESSAGE_TYPES };
 
 // JSON Schema keywords whose values must be integers (not strings).
 // MCP tools / clients sometimes serialize numeric constraints as strings,
-// which strict providers (Codex, NIM) reject. See decolua/9router PR#422.
+// which strict providers (Codex, NIM) reject. See Switchboard PR#422.
 const NUMERIC_SCHEMA_KEYWORDS = [
   "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
   "minLength", "maxLength", "minItems", "maxItems",
@@ -195,4 +195,3 @@ export function filterToOpenAIFormat(body, opts = {}) {
 
   return body;
 }
-

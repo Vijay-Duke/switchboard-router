@@ -156,7 +156,7 @@ function extractGeminiText(content) {
 
 // Pre-split contents that co-locate functionResponse with other parts (functionCall/text).
 // convertGeminiContent early-returns on the first functionResponse and would drop siblings.
-// decolua/9router#2393 / PR#2394.
+// Switchboard#2393 / PR#2394.
 function geminiToOpenAIRequestFixed(model, body, stream) {
   if (!body || !Array.isArray(body.contents)) {
     return geminiToOpenAIRequest(model, body, stream);

@@ -10,7 +10,7 @@ export const UNSUPPORTED_SCHEMA_CONSTRAINTS = [
   "minItems", "maxItems", "format",
   // String/array constraints Gemini rejects (wave8)
   "pattern", "uniqueItems",
-  // Numeric constraints Gemini rejects (decolua/9router#2309)
+  // Numeric constraints Gemini rejects (Switchboard#2309)
   "multipleOf", "minimum", "maximum",
   // Claude rejects these in VALIDATED mode
   "default", "examples",
@@ -329,7 +329,7 @@ export function cleanJSONSchemaForAntigravity(schema) {
   // Phase 2.7: Convert invalid property values (e.g. property: "object") to proper schemas.
   // Claude Code tools sometimes have properties like { "field": "object" } where the value
   // is a plain JSON Schema type string instead of a schema object. Gemini/Vertex rejects these.
-  // decolua/9router PR#1600 / #1564.
+  // Switchboard PR#1600 / #1564.
   function fixInvalidPropertyValues(obj) {
     if (!obj || typeof obj !== "object") return;
     if (Array.isArray(obj)) { obj.forEach(fixInvalidPropertyValues); return; }

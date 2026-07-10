@@ -5,7 +5,6 @@ import { homedir } from "os";
 import { join } from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import Database from "better-sqlite3";
 
 const execFileAsync = promisify(execFile);
 
@@ -75,10 +74,14 @@ const normalize = (value) => {
 };
 
 /**
- * Extract tokens via better-sqlite3 (bundled dependency).
- * This is the preferred strategy — no external CLI required.
+ * Extract tokens via better-sqlite3.
+ * Preferred strategy — no external CLI required. The package is OPTIONAL: the
+ * packaged CLI strips it and reinstalls it best-effort, so it is imported here
+ * rather than at module scope. A top-level import would fail the whole route
+ * before the sqlite3-CLI fallback could run.
  */
-function extractTokensViaBetterSqlite(dbPath) {
+async function extractTokensViaBetterSqlite(dbPath) {
+  const { default: Database } = await import("better-sqlite3");
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
     const keys = [...ACCESS_TOKEN_KEYS, ...MACHINE_ID_KEYS];
@@ -111,6 +114,8 @@ function extractTokensViaBetterSqlite(dbPath) {
 /**
  * Extract tokens via sqlite3 CLI.
  * Fallback when better-sqlite3 native bindings are unavailable.
+ * Returns `opened: false` when sqlite3 is missing or the database is unreadable —
+ * the caller must not report "could not open" once some strategy has read it.
  */
 async function extractTokensViaCLI(dbPath) {
   const normalize = (raw) => {
@@ -129,6 +134,15 @@ async function extractTokensViaCLI(dbPath) {
     });
     return stdout.trim();
   };
+
+  // Probe the table we actually need. `SELECT 1` would succeed on an empty or
+  // non-Cursor SQLite file, and every itemTable query below is swallowed — so
+  // the user would be told to log in when the real problem is the schema.
+  try {
+    await query("SELECT 1 FROM itemTable LIMIT 1");
+  } catch {
+    return { accessToken: null, machineId: null, opened: false };
+  }
 
   // Try each key in priority order
   let accessToken = null;
@@ -161,7 +175,7 @@ async function extractTokensViaCLI(dbPath) {
     }
   }
 
-  return { accessToken, machineId };
+  return { accessToken, machineId, opened: true };
 }
 
 /**
@@ -223,7 +237,7 @@ export async function GET() {
     // Strategy 1: better-sqlite3 (bundled — no external tools required)
     let sqliteError = null;
     try {
-      const tokens = extractTokensViaBetterSqlite(dbPath);
+      const tokens = await extractTokensViaBetterSqlite(dbPath);
       if (tokens.accessToken && tokens.machineId) {
         return NextResponse.json({
           found: true,
@@ -237,8 +251,10 @@ export async function GET() {
     }
 
     // Strategy 2: sqlite3 CLI
+    let cliOpenedDb = false;
     try {
       const tokens = await extractTokensViaCLI(dbPath);
+      cliOpenedDb = tokens.opened;
       if (tokens.accessToken && tokens.machineId) {
         return NextResponse.json({
           found: true,
@@ -250,8 +266,10 @@ export async function GET() {
       // sqlite3 CLI not available either
     }
 
-    // Strategy 3: ask user to paste manually
-    if (sqliteError) {
+    // Strategy 3: ask user to paste manually. Only claim the DB is unreadable
+    // when every strategy failed to open it — a readable DB with no token pair
+    // means the user has not logged in to Cursor.
+    if (sqliteError && !cliOpenedDb) {
       return NextResponse.json({
         found: false,
         error: `Cursor database was found but could not open it: ${sqliteError.message}`,

@@ -1,4 +1,5 @@
 import { ensureDirs, DATA_FILE } from "./paths.js";
+import { isBuildPhase } from "@/lib/buildPhase.js";
 
 // Use global to survive Next.js dev hot-reload (module state resets on reload)
 if (!global._dbAdapter) global._dbAdapter = { instance: null, initPromise: null, logged: false };
@@ -53,6 +54,14 @@ async function trySqlJs() {
 }
 
 async function initAdapter() {
+  // `next build` must never open the operator's database: it would run migrations
+  // against live data and bake the result into static output. Every page that
+  // reads the DB is `force-dynamic`, so reaching this during a build is a bug.
+  if (isBuildPhase()) {
+    throw new Error(
+      `[DB] refusing to open ${DATA_FILE} during next build — mark the calling page 'force-dynamic'`
+    );
+  }
   ensureDirs();
   // Order per runtime:
   //   Bun:  bun:sqlite → sql.js

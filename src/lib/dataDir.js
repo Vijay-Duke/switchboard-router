@@ -5,47 +5,43 @@ import os from "os";
 const APP_NAME = "switchboard";
 const LEGACY_APP_NAME = "9router";
 
-function dirLooksPopulated(dir) {
-  try {
-    if (!fs.existsSync(dir)) return false;
-    // Prefer real SQLite; also accept legacy JSON installs
-    if (fs.existsSync(path.join(dir, "db", "data.sqlite"))) return true;
-    if (fs.existsSync(path.join(dir, "db.json"))) return true;
-    const dbDir = path.join(dir, "db");
-    if (fs.existsSync(dbDir)) {
-      const entries = fs.readdirSync(dbDir);
-      if (entries.some((e) => e.endsWith(".sqlite") || e === "data.sqlite")) return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-function defaultDir() {
+function appDir(name) {
   if (process.platform === "win32") {
     const base = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
-    const modern = path.join(base, APP_NAME);
-    const legacy = path.join(base, LEGACY_APP_NAME);
-    if (dirLooksPopulated(modern)) return modern;
-    if (dirLooksPopulated(legacy)) {
-      console.warn(
-        `[DATA_DIR] Using legacy path ${legacy} (rename to ${modern} or set DATA_DIR to migrate)`
-      );
-      return legacy;
-    }
-    return modern;
+    return path.join(base, name);
   }
-  const modern = path.join(os.homedir(), `.${APP_NAME}`);
-  const legacy = path.join(os.homedir(), `.${LEGACY_APP_NAME}`);
-  if (dirLooksPopulated(modern)) return modern;
-  if (dirLooksPopulated(legacy)) {
-    console.warn(
-      `[DATA_DIR] Using legacy path ${legacy} (copy/rename to ${modern} or set DATA_DIR to migrate)`
-    );
+  return path.join(os.homedir(), `.${name}`);
+}
+
+// Real application state, as opposed to caches the CLI creates before the server
+// ever runs (`runtime/` from the npm postinstall, `bin/`, `logs/`). Treating any
+// directory entry as "populated" would let that warm-up hide a legacy database.
+const STATE_ENTRIES = [
+  "db/data.sqlite",
+  "machine-id",
+  "jwt-secret",
+  "auth",
+  "db.json", // pre-SQLite installs
+];
+
+export function hasAppState(dir) {
+  return STATE_ENTRIES.some((entry) => fs.existsSync(path.join(dir, entry)));
+}
+
+/**
+ * Adopt the legacy 9router directory in place when the new one holds no state.
+ * Nothing is copied: an existing install keeps its providers, keys and history,
+ * and the old directory stays intact if the user downgrades.
+ */
+function defaultDir() {
+  const current = appDir(APP_NAME);
+  if (hasAppState(current)) return current;
+  const legacy = appDir(LEGACY_APP_NAME);
+  if (hasAppState(legacy)) {
+    console.warn(`[DATA_DIR] using legacy data directory '${legacy}' (set DATA_DIR='${current}' to switch)`);
     return legacy;
   }
-  return modern;
+  return current;
 }
 
 export function getDataDir() {

@@ -29,8 +29,10 @@ export default {
       "User-Agent": "antigravity/1.107.0 darwin/arm64",
     },
     retry: {
+      // Two base URLs × exponential backoff: keep attempts low so a rate-limited
+      // account falls through to the next URL/account inside a client deadline.
       "429": {
-        attempts: 6,
+        attempts: 3,
       },
       "500": {
         attempts: 3,

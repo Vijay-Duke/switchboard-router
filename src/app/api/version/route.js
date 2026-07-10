@@ -87,7 +87,7 @@ function looksLikeOurPackage(meta, expectedName) {
   const desc = (meta.description || "").toLowerCase();
   // Known good markers for this product line
   if (
-    /switchboard|9router|routing|router|openai|claude|gateway|model/.test(desc)
+    /switchboard|routing|router|openai|claude|gateway|model/.test(desc)
   ) {
     return true;
   }

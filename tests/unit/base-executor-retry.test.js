@@ -45,6 +45,41 @@ describe("BaseExecutor.execute — retry by status (config-driven)", () => {
   });
 });
 
+describe("BaseExecutor.execute — retry wait budget & cancellation", () => {
+  it("stops retrying once the request-wide sleep budget is exhausted", async () => {
+    // 15s per retry, 20s budget → exactly one sleep fits; the rest fall through.
+    const ex = makeExec({ baseUrl: "https://x/api", retry: { 503: { attempts: 5, delayMs: 15000 } } });
+    fetchMock.mockResolvedValue(res(503));
+    vi.useFakeTimers();
+    try {
+      const promise = ex.execute({ model: "m", body: {}, stream: false, credentials: creds });
+      await vi.advanceTimersByTimeAsync(120000);
+      const out = await promise;
+      expect(out.response.status).toBe(503);
+      expect(fetchMock).toHaveBeenCalledTimes(2); // 1 initial + 1 affordable retry
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("abandons the retry sleep as soon as the caller disconnects", async () => {
+    const ex = makeExec({ baseUrl: "https://x/api", retry: { 503: { attempts: 5, delayMs: 5000 } } });
+    fetchMock.mockResolvedValue(res(503));
+    const controller = new AbortController();
+    vi.useFakeTimers();
+    try {
+      const promise = ex.execute({ model: "m", body: {}, stream: false, credentials: creds, signal: controller.signal });
+      await vi.advanceTimersByTimeAsync(1); // enter the first retry sleep
+      controller.abort();
+      const out = await promise;
+      expect(out.response.status).toBe(503);
+      expect(fetchMock).toHaveBeenCalledTimes(1); // never re-fetched after abort
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("BaseExecutor.execute — baseUrls fallback", () => {
   it("falls over to the next url on 429 (shouldRetry)", async () => {
     const ex = makeExec({ baseUrls: ["https://a/api", "https://b/api"], retry: { 429: { attempts: 0 } } });

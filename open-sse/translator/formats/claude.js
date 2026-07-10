@@ -235,7 +235,7 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
   if (body.messages && Array.isArray(body.messages)) {
     // Promote lingering system/developer messages out of messages[] into top-level
     // system. Anthropic rejects role:'system' in messages[]. Safety net for
-    // passthrough + translation edge cases (decolua/9router PR#1600 / #1580).
+    // passthrough + translation edge cases (Switchboard PR#1600 / #1580).
     const systemTexts = [];
     body.messages = body.messages.filter(msg => {
       if (msg.role === "system" || msg.role === "developer") {
@@ -356,7 +356,7 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
     // Strip built-in tools (e.g. web_search_20250305) and normalize to Anthropic-native shape
     // (fold `function.{name,description,parameters}`) for non-Anthropic providers.
     // IMPORTANT: default type to "custom" — strict Anthropic-compatible gateways
-    // (MiniMax) reject tools without type (code 2013). decolua/9router#2195 / #1939.
+    // (MiniMax) reject tools without type (code 2013). Switchboard#2195 / #1939.
     if (provider !== "claude") {
       body.tools = body.tools
         .filter(tool => !tool.type || tool.type === "function" || tool.type === "custom")

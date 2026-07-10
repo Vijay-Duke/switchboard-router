@@ -122,7 +122,7 @@ export function createSSEStream(options = {}) {
           // Decloak tool names in Claude content_block_start events.
           // claude→claude passthrough skips translateResponse (which applies
           // toolNameMap in TRANSLATE mode), so without this the client gets
-          // suffixed OAuth names (e.g. "Execute_ide"). decolua/9router#2391 / PR#2392.
+          // suffixed OAuth names (e.g. "Execute_ide"). Switchboard#2391 / PR#2392.
           let toolNameDecloaked = false;
           if (toolNameMap?.size > 0 && parsed?.type === "content_block_start" && parsed?.content_block?.type === "tool_use") {
             const original = toolNameMap.get(parsed.content_block.name);

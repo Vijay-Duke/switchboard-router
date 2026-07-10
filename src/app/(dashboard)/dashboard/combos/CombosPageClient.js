@@ -149,7 +149,7 @@ export default function CombosPageClient({ initialData }) {
     const doomed = combos.find((c) => c.id === id);
     setConfirmState({
       title: "Delete Combo",
-      message: "Delete this combo?",
+      message: doomed?.name ? `Delete combo “${doomed.name}”?` : "Delete this combo?",
       onConfirm: async () => {
         setConfirmState(null);
         try {
@@ -165,11 +165,15 @@ export default function CombosPageClient({ initialData }) {
                 return next;
               });
             }
+          } else {
+            const err = await res.json().catch(() => ({}));
+            alert(err.error || `Failed to delete combo (HTTP ${res.status})`);
           }
         } catch (error) {
           console.log("Error deleting combo:", error);
+          alert(error?.message || "Failed to delete combo");
         }
-      }
+      },
     });
   };
 

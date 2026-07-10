@@ -101,7 +101,7 @@ function isPathLike(line) {
   if (t.length === 0) return false;
   // Drive-letter prefix (C:\Users\… or C:/Users/…) is a Windows absolute path.
   // Without this, the colon check below rejects all Windows find dumps and RTK
-  // never compresses them (decolua/9router PR#2448 / #2476-adjacent).
+  // never compresses them (Switchboard PR#2448 / #2476-adjacent).
   if (/^[A-Za-z]:[\\/]/.test(t)) return true;
   if (t.includes(":")) return false;
   return t.startsWith(".") || t.startsWith("/") || t.includes("/") || t.includes("\\");

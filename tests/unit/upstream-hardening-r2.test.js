@@ -1,5 +1,5 @@
 /**
- * Round-2 regression tests for high-impact fixes ported from decolua/9router.
+ * Round-2 regression tests for high-impact fixes ported from Switchboard.
  */
 import { describe, it, expect } from "vitest";
 import { stripOrphanedToolResults } from "../../open-sse/translator/concerns/toolCall.js";

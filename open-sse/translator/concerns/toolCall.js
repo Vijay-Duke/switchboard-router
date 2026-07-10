@@ -226,7 +226,7 @@ export function fixMissingToolResponses(body) {
 /**
  * Strip orphaned tool results — results that reference a tool call no longer
  * present in the same request. Mutates body in-place. Returns count removed.
- * decolua/9router PR#2298 / #2236.
+ * Switchboard PR#2298 / #2236.
  */
 export function stripOrphanedToolResults(body) {
   if (!body || typeof body !== "object") return 0;

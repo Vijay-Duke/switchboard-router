@@ -1,9 +1,7 @@
 // @ts-check
 import { getApiKeys } from "@/lib/db/index.js";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
-import { getConsistentMachineId } from "@/shared/utils/machineId";
-
-const CLI_TOKEN_SALT = "9r-cli-auth";
+import { CLI_TOKEN_HEADER, getCliToken } from "@/shared/utils/cliToken.js";
 
 function createSilentWavFile() {
   const sampleRate = 16000;
@@ -47,7 +45,7 @@ async function getInternalHeaders() {
 
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-  headers["x-9r-cli-token"] = await getConsistentMachineId(CLI_TOKEN_SALT);
+  headers[CLI_TOKEN_HEADER] = await getCliToken();
   return headers;
 }
 

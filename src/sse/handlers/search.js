@@ -15,6 +15,7 @@ import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleComboChat, getComboModelsFromData } from "open-sse/services/combo.js";
 import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
+import { hasValidCliToken } from "@/shared/utils/cliToken.js";
 
 /**
  * Handle web search request for the SSE/Next.js server.
@@ -49,7 +50,7 @@ export async function handleSearch(request) {
   // Enforce API key if enabled in settings (L3 shared gate)
   const settings = await getSettings();
   const denied = await gateRequireApiKey(settings, apiKey, {
-    isValidApiKey, log, errorResponse, HTTP_STATUS,
+    isValidApiKey, log, errorResponse, HTTP_STATUS, request, hasValidCliToken,
   });
   if (denied) return denied;
 
