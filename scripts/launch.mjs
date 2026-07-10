@@ -57,6 +57,31 @@ export function withBindHostname(command, args, hostname) {
   return [...args, "--hostname", hostname];
 }
 
+/**
+ * Drain a child's output even if the launcher's terminal disappears. Passing
+ * stdio through with `inherit` gives the child the same dead pipe; a later log
+ * can then raise EPIPE inside framework error handling and wedge the server.
+ *
+ * @param {NodeJS.ReadableStream} source
+ * @param {NodeJS.WritableStream & { destroyed?: boolean }} destination
+ */
+export function forwardOutput(source, destination) {
+  let writable = true;
+  const stopWriting = () => { writable = false; };
+
+  destination.on("error", stopWriting);
+  source.on("data", (chunk) => {
+    // Keep consuming source after the destination breaks so the child never
+    // blocks on a full stdout/stderr pipe.
+    if (!writable || destination.destroyed) return;
+    try {
+      destination.write(chunk);
+    } catch {
+      writable = false;
+    }
+  });
+}
+
 function main() {
   const [cmd, ...args] = process.argv.slice(2);
   if (!cmd) {
@@ -68,7 +93,13 @@ function main() {
   const { file, prefixArgs } = resolveCommand(cmd);
   const bindArgs = withBindHostname(cmd, args, env.HOSTNAME);
 
-  const child = spawn(file, [...prefixArgs, ...bindArgs], { stdio: "inherit", env, windowsHide: true });
+  const child = spawn(file, [...prefixArgs, ...bindArgs], {
+    stdio: ["inherit", "pipe", "pipe"],
+    env,
+    windowsHide: true,
+  });
+  forwardOutput(child.stdout, process.stdout);
+  forwardOutput(child.stderr, process.stderr);
   child.on("error", (err) => {
     console.error(`[launch] failed to start ${cmd}: ${err.message}`);
     process.exit(1);
