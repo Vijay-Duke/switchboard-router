@@ -139,7 +139,6 @@ function buildSseResponse(providerResponse, log, onSuccess) {
       "Cache-Control": "no-cache, no-transform",
       "Connection": "keep-alive",
       "X-Accel-Buffering": "no",
-      "Access-Control-Allow-Origin": "*",
     },
   });
 }

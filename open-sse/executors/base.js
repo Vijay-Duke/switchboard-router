@@ -209,9 +209,15 @@ export class BaseExecutor {
         const cl = response.headers?.get?.("content-length") || "?";
         dbg("FETCH", `${this.provider.toUpperCase()} ← ${response.status} | ttft=${Date.now() - fetchT0}ms | ct=${ct} | cl=${cl}`);
 
-        if (await tryRetry(urlIndex, response.status, `status ${response.status}`, response)) { urlIndex--; continue; }
+        if (await tryRetry(urlIndex, response.status, `status ${response.status}`, response)) {
+          try { await response.body?.cancel?.(); } catch {}
+          urlIndex--;
+          continue;
+        }
 
         if (this.shouldRetry(response.status, urlIndex)) {
+          // Drain body before retry to avoid undici pool pinning
+          try { await response.body?.cancel?.(); } catch {}
           log?.debug?.("RETRY", `${response.status} on ${url}, trying fallback ${urlIndex + 1}`);
           lastStatus = response.status;
           continue;

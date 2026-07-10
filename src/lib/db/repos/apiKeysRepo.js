@@ -101,7 +101,7 @@ export async function validateApiKey(key) {
       continue;
     }
     // Legacy plaintext row — constant-time-ish compare then upgrade
-    if (row.key === key) {
+    if (timingSafeEqualStr(String(row.key || ""), key)) {
       try {
         db.run(`UPDATE apiKeys SET key = ? WHERE id = ?`, [packApiKeyRecord(key), row.id]);
       } catch { /* best-effort migrate */ }

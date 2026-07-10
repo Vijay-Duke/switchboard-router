@@ -373,8 +373,16 @@ export async function getUsageHistory(filter = {}) {
 
   if (filter.provider) { conds.push("provider = ?"); params.push(filter.provider); }
   if (filter.model) { conds.push("model = ?"); params.push(filter.model); }
-  if (filter.startDate) { conds.push("timestamp >= ?"); params.push(new Date(filter.startDate).toISOString()); }
-  if (filter.endDate) { conds.push("timestamp <= ?"); params.push(new Date(filter.endDate).toISOString()); }
+  // startDate/endDate arrive straight from query params; toISOString() throws a
+  // RangeError on an unparseable date, which surfaced as a 500. Ignore garbage.
+  const isoOrNull = (value) => {
+    const ms = new Date(value).getTime();
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+  };
+  const startIso = filter.startDate ? isoOrNull(filter.startDate) : null;
+  const endIso = filter.endDate ? isoOrNull(filter.endDate) : null;
+  if (startIso) { conds.push("timestamp >= ?"); params.push(startIso); }
+  if (endIso) { conds.push("timestamp <= ?"); params.push(endIso); }
 
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   const rows = db.all(`SELECT timestamp, provider, model, connectionId, apiKey, endpoint, cost, status, tokens FROM usageHistory ${where} ORDER BY id ASC`, params);
@@ -448,7 +456,12 @@ export async function getUsageStats(period = "all") {
   const stats = {
     totalRequests: 0,
     totalPromptTokens: 0, totalCompletionTokens: 0, totalCachedTokens: 0, totalCost: 0,
-    byProvider: {}, byModel: {}, byAccount: {}, byApiKey: {}, byEndpoint: {},
+    // Keys derive from request data (model, endpoint, apiKey). With a normal
+    // prototype, a row keyed "__proto__" makes `if (!byModel[k])` see
+    // Object.prototype and the initializer writes onto it. Same guard the
+    // daily aggregator already applies.
+    byProvider: ensureNullProto({}), byModel: ensureNullProto({}), byAccount: ensureNullProto({}),
+    byApiKey: ensureNullProto({}), byEndpoint: ensureNullProto({}),
     last10Minutes: [],
     pending: pendingRequests,
     activeRequests: [],

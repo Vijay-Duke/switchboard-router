@@ -10,7 +10,7 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
 const { BaseExecutor } = await import("../../open-sse/executors/base.js");
 
 function res(status) {
-  return { status, headers: { get: () => "" } };
+  return { status, headers: { get: () => "" }, body: { cancel: vi.fn().mockResolvedValue(undefined) } };
 }
 
 function makeExec(config) {
@@ -26,13 +26,17 @@ beforeEach(() => fetchMock.mockReset());
 describe("BaseExecutor.execute — retry by status (config-driven)", () => {
   it("retries 502 `attempts` times then succeeds", async () => {
     const ex = makeExec({ baseUrl: "https://x/api", retry: { 502: { attempts: 3, delayMs: 0 } } });
+    const first = res(502);
+    const second = res(502);
     fetchMock
-      .mockResolvedValueOnce(res(502))
-      .mockResolvedValueOnce(res(502))
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second)
       .mockResolvedValueOnce(res(200));
     const out = await ex.execute({ model: "m", body: {}, stream: false, credentials: creds });
     expect(out.response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(first.body.cancel).toHaveBeenCalledOnce();
+    expect(second.body.cancel).toHaveBeenCalledOnce();
   });
 
   it("stops after exhausting 502 attempts on a single url and throws", async () => {

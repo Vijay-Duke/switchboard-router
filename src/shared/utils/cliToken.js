@@ -4,6 +4,7 @@
  * Same secret as dashboardGuard and server-side model pings.
  */
 import { getConsistentMachineId } from "@/shared/utils/machineId";
+import { timingSafeEqualStr } from "@/lib/crypto/secrets.js";
 
 export const CLI_TOKEN_HEADER = "x-switchboard-cli-token";
 export const CLI_TOKEN_SALT = "switchboard-cli-auth";
@@ -26,7 +27,7 @@ export async function getCliToken() {
 export async function hasValidCliToken(request) {
   const token = request?.headers?.get?.(CLI_TOKEN_HEADER);
   if (!token) return false;
-  return token === (await getCliToken());
+  return timingSafeEqualStr(token, await getCliToken());
 }
 
 /** Test helper — clears in-memory cache. */

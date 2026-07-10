@@ -56,7 +56,7 @@ npm i -g https://github.com/Vijay-Duke/switchboard-router/releases/latest/downlo
 ```bash
 docker run -d --name switchboard -p 127.0.0.1:20128:20128 \
   -v "$HOME/.switchboard:/app/data" -e DATA_DIR=/app/data \
-  -e SWITCHBOARD_LOCAL_PEERS=172.16.0.0/12 \
+  -e SWITCHBOARD_LOCAL_PEERS=172.30.0.1 \
   ghcr.io/vijay-duke/switchboard-router:latest
 ```
 

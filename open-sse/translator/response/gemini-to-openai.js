@@ -1,4 +1,4 @@
-import { register } from "../index.js";
+import { register } from "../registry.js";
 import { FORMATS } from "../formats.js";
 import { ROLE, OPENAI_BLOCK, OPENAI_FINISH, DEFAULT_IMAGE_MIME } from "../schema/index.js";
 import { buildChunk } from "../concerns/chunk.js";
@@ -144,4 +144,3 @@ register(FORMATS.GEMINI, FORMATS.OPENAI, null, geminiToOpenAIResponse);
 register(FORMATS.GEMINI_CLI, FORMATS.OPENAI, null, geminiToOpenAIResponse);
 register(FORMATS.ANTIGRAVITY, FORMATS.OPENAI, null, geminiToOpenAIResponse);
 register(FORMATS.VERTEX, FORMATS.OPENAI, null, geminiToOpenAIResponse);
-

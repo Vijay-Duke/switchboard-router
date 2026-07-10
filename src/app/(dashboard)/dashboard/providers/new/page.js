@@ -39,7 +39,7 @@ export default function NewProviderPage() {
   const validate = () => {
     const newErrors = {};
     if (!formData.provider) newErrors.provider = "Please select a provider";
-    if (formData.authMethod === "api_key" && !formData.apiKey) {
+    if (formData.authMethod === "api_key" && !formData.apiKey.trim()) {
       newErrors.apiKey = "API Key is required";
     }
     setErrors(newErrors);
@@ -55,7 +55,7 @@ export default function NewProviderPage() {
       const response = await fetch("/api/providers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
+          body: JSON.stringify({ ...formData, apiKey: formData.apiKey.trim() }),
       });
 
       if (response.ok) {
@@ -157,6 +157,7 @@ export default function NewProviderPage() {
             <Input
               label="API Key"
               type="password"
+              autoComplete="off"
               placeholder="Enter your API key"
               value={formData.apiKey}
               onChange={(e) => handleChange("apiKey", e.target.value)}
@@ -164,18 +165,6 @@ export default function NewProviderPage() {
               hint="Your API key will be encrypted and stored securely."
               required
             />
-          )}
-
-          {/* OAuth2 Button */}
-          {formData.authMethod === "oauth2" && (
-            <Card.Section>
-              <p className="text-sm text-text-muted mb-4">
-                Connect your account using OAuth2 authentication.
-              </p>
-              <Button type="button" variant="secondary" icon="link">
-                Connect with OAuth2
-              </Button>
-            </Card.Section>
           )}
 
           {/* Display Name */}
@@ -218,4 +207,3 @@ export default function NewProviderPage() {
     </div>
   );
 }
-

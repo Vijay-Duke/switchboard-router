@@ -1,4 +1,4 @@
-import { register } from "../index.js";
+import { register } from "../registry.js";
 import { FORMATS } from "../formats.js";
 import { ROLE, CLAUDE_BLOCK, MODEL_FALLBACK } from "../schema/index.js";
 import { fromOpenAIFinish } from "../concerns/finishReason.js";
@@ -93,9 +93,44 @@ function stopTextBlock(state, results) {
 
 // Convert OpenAI stream chunk to Claude format
 export function openaiToClaudeResponse(chunk, state) {
+  const results = [];
+
+  // Flush: stream ended without finish_reason. Synthesize terminal events
+  // so the client doesn't hang waiting for message_stop.
+  if (chunk === null && !state.claudeFinishHandled) {
+    state.claudeFinishHandled = true;
+    stopThinkingBlock(state, results);
+    stopTextBlock(state, results);
+
+    for (const [idx, toolInfo] of state.toolCalls) {
+      const buffered = state.toolArgBuffers?.get(idx);
+      if (buffered) {
+        const sanitized = sanitizeToolArgs(toolInfo.name, buffered);
+        results.push({
+          type: "content_block_delta",
+          index: toolInfo.blockIndex,
+          delta: { type: "input_json_delta", partial_json: sanitized }
+        });
+      }
+      results.push({
+        type: "content_block_stop",
+        index: toolInfo.blockIndex
+      });
+    }
+
+    state.finishReason = "stop";
+    const finalUsage = state.usage || { input_tokens: 0, output_tokens: 0 };
+    results.push({
+      type: "message_delta",
+      delta: { stop_reason: "end_turn" },
+      usage: finalUsage
+    });
+    results.push({ type: "message_stop" });
+    return results.length > 0 ? results : null;
+  }
+
   if (!chunk || !chunk.choices?.[0]) return null;
 
-  const results = [];
   const choice = chunk.choices[0];
   const delta = choice.delta;
 

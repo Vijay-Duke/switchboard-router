@@ -10,6 +10,7 @@ import EndpointRow from "./components/EndpointRow";
 import SecurityWarning from "./components/SecurityWarning";
 import { queryKeys } from "@/shared/query/keys";
 import { fetchJson } from "@/shared/query/fetchJson";
+import { useNotificationStore } from "@/store/notificationStore";
 
 /**
  * @typedef {object} EndpointInitialData
@@ -25,6 +26,7 @@ import { fetchJson } from "@/shared/query/fetchJson";
 export default function EndpointPageClient({ initialData }) {
   const queryClient = useQueryClient();
   const machineId = initialData?.machineId || "";
+  const notify = useNotificationStore((s) => s.error);
 
   const keysQuery = useQuery({
     queryKey: queryKeys.endpoint.keys(),
@@ -67,6 +69,7 @@ export default function EndpointPageClient({ initialData }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.endpoint.settings() });
     },
+    onError: () => notify("Failed to update API key requirement"),
   });
 
   const createKeyMutation = useMutation({
@@ -81,6 +84,7 @@ export default function EndpointPageClient({ initialData }) {
       setShowAddModal(false);
       queryClient.invalidateQueries({ queryKey: queryKeys.endpoint.keys() });
     },
+    onError: () => notify("Failed to create API key"),
   });
 
   const deleteKeyMutation = useMutation({
@@ -89,6 +93,7 @@ export default function EndpointPageClient({ initialData }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.endpoint.keys() });
     },
+    onError: () => notify("Failed to delete API key"),
   });
 
   const toggleKeyMutation = useMutation({
@@ -100,6 +105,7 @@ export default function EndpointPageClient({ initialData }) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.endpoint.keys() });
     },
+    onError: () => notify("Failed to toggle API key"),
   });
 
   /**
@@ -119,6 +125,21 @@ export default function EndpointPageClient({ initialData }) {
       if (next.has(keyId)) next.delete(keyId);
       else next.add(keyId);
       return next;
+    });
+  };
+
+  const handleRequireApiKeyChange = () => {
+    if (!requireApiKey) {
+      requireApiKeyMutation.mutate(true);
+      return;
+    }
+    setConfirmState({
+      title: "Disable API key protection?",
+      message: "Any client that can reach this Switchboard endpoint will be able to use your provider accounts.",
+      onConfirm: () => {
+        setConfirmState(null);
+        requireApiKeyMutation.mutate(false);
+      },
     });
   };
 
@@ -164,7 +185,7 @@ export default function EndpointPageClient({ initialData }) {
           </div>
           <Toggle
             checked={requireApiKey}
-            onChange={() => requireApiKeyMutation.mutate(!requireApiKey)}
+            onChange={handleRequireApiKeyChange}
           />
         </div>
 

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { CardSkeleton } from "@/shared/components";
 import { CLI_TOOLS } from "@/shared/constants/cliTools";
 import { getModelsByProviderId, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
+import { resolveProviderId } from "@/shared/constants/providers";
 import {
   ClaudeToolCard, CodexToolCard, DroidToolCard, OpenClawToolCard,
   HermesToolCard, DefaultToolCard, OpenCodeToolCard, CoworkToolCard,
@@ -46,20 +47,26 @@ export default function ToolDetailClient({ toolId, machineId }) {
     return () => { mounted = false; };
   }, []);
 
-  const getActiveProviders = () => connections.filter((c) => c.isActive !== false);
+  const getActiveProviders = () => connections
+    .filter((c) => c.isActive !== false)
+    .map((connection) => ({
+      ...connection,
+      provider: resolveProviderId(connection.provider),
+    }));
 
   const getAllAvailableModels = () => {
     const activeProviders = getActiveProviders();
     const models = [];
     const seenModels = new Set();
     activeProviders.forEach((conn) => {
-      const alias = PROVIDER_ID_TO_ALIAS[conn.provider] || conn.provider;
-      const providerModels = getModelsByProviderId(conn.provider);
+      const providerId = resolveProviderId(conn.provider);
+      const alias = PROVIDER_ID_TO_ALIAS[providerId] || providerId;
+      const providerModels = getModelsByProviderId(providerId);
       providerModels.forEach((m) => {
         const modelValue = `${alias}/${m.id}`;
         if (!seenModels.has(modelValue)) {
           seenModels.add(modelValue);
-          models.push({ value: modelValue, label: `${alias}/${m.id}`, provider: conn.provider, alias, connectionName: conn.name, modelId: m.id });
+          models.push({ value: modelValue, label: `${alias}/${m.id}`, provider: providerId, alias, connectionName: conn.name, modelId: m.id });
         }
       });
     });

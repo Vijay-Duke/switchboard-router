@@ -86,7 +86,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
 
       // Client is Responses API → return as-is
       if (sourceFormat === FORMATS.OPENAI_RESPONSES) {
-        return { success: true, response: new Response(JSON.stringify(jsonResponse), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
+        return { success: true, response: new Response(JSON.stringify(jsonResponse), { headers: { "Content-Type": "application/json" } }) };
       }
 
       // Build OpenAI completion then project to client format (preserves tool_calls
@@ -123,7 +123,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
       };
       const finalResp = projectCompletionToClientFormat(openAICompletion, sourceFormat);
 
-      return { success: true, response: new Response(JSON.stringify(finalResp), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
+      return { success: true, response: new Response(JSON.stringify(finalResp), { headers: { "Content-Type": "application/json" } }) };
     } catch (err) {
       console.error("[ChatCore] Responses API SSE→JSON failed:", err);
       return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Failed to convert streaming response to JSON");
@@ -167,7 +167,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
     // Without this, non-streaming clients received raw OpenAI JSON (#2347).
     const finalResp = projectCompletionToClientFormat(parsed, sourceFormat);
 
-    return { success: true, response: new Response(JSON.stringify(finalResp), { headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } }) };
+    return { success: true, response: new Response(JSON.stringify(finalResp), { headers: { "Content-Type": "application/json" } }) };
   } catch (err) {
     console.error("[ChatCore] Chat Completions SSE→JSON failed:", err);
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Failed to convert streaming response to JSON");

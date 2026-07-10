@@ -4,7 +4,7 @@
 // here, or refreshTokenByProvider silently returns null for those providers.
 import "../initOpenSseDeps.js";
 import * as log from "../utils/logger.js";
-import { updateProviderConnection } from "../../lib/localDb.js";
+import { updateProviderConnection } from "../../lib/db/index.js";
 import {
   getProjectIdForConnection,
   invalidateProjectId,

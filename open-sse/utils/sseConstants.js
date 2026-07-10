@@ -18,6 +18,5 @@ export const SSE_HEADERS_NO_BUFFER = {
 export const SSE_HEADERS_CORS = {
   "Content-Type": "text/event-stream",
   "Cache-Control": "no-cache",
-  "Connection": "keep-alive",
-  "Access-Control-Allow-Origin": "*"
+  "Connection": "keep-alive"
 };

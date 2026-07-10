@@ -1,16 +1,20 @@
 {
   "name": "switchboard-app",
-  "version": "0.5.20",
+  "version": "0.5.22",
   "description": "Switchboard — intelligent model routing dashboard",
   "private": true,
   "scripts": {
-    "dev": "node scripts/launch.mjs next dev --webpack --port 20127",
+    "dev": "node scripts/launch.mjs next dev --webpack",
     "build": "next build --webpack && node scripts/copy-custom-server.mjs",
     "start": "node scripts/launch.mjs next start",
-    "dev:bun": "node scripts/launch.mjs bun --bun next dev --webpack --port 20127",
+    "dev:bun": "node scripts/launch.mjs bun --bun next dev --webpack",
     "build:bun": "bun --bun next build --webpack && node scripts/copy-custom-server.mjs",
     "start:bun": "node scripts/start-standalone.mjs --runtime bun",
     "start:standalone": "node scripts/start-standalone.mjs",
+    "check:i18n": "node scripts/i18n-parity-check.mjs",
+    "generate:providers": "node scripts/generate-provider-registry.mjs",
+    "check:providers": "node scripts/generate-provider-registry.mjs --check",
+    "check:versions": "node scripts/assert-release-version.mjs",
     "lint": "eslint .",
     "cli:pack": "npm --prefix cli run pack:cli",
     "cli:publish": "npm --prefix cli run publish:cli"

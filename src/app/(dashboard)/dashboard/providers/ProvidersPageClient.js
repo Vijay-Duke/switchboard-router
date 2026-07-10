@@ -10,6 +10,7 @@ import {
   Toggle,
 } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
+import { useNotificationStore } from "@/store/notificationStore";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 import {
   FREE_PROVIDERS,
@@ -20,7 +21,6 @@ import {
 } from "@/shared/constants/providers";
 import Link from "next/link";
 import { getErrorCode, getRelativeTime } from "@/shared/utils";
-import { useNotificationStore } from "@/store/notificationStore";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
 import ModelAvailabilityBadge from "./components/ModelAvailabilityBadge";
 import AddCompatibleModal from "./components/AddCompatibleModal";
@@ -154,12 +154,15 @@ export default function ProvidersPageClient({ initialData }) {
         fetch("/api/providers"),
         fetch("/api/provider-nodes"),
       ]);
+      if (!connectionsRes.ok || !nodesRes.ok) {
+        throw new Error("Failed to fetch provider data");
+      }
       const connectionsData = await connectionsRes.json();
       const nodesData = await nodesRes.json();
       if (connectionsRes.ok) setConnections(connectionsData.connections || []);
       if (nodesRes.ok) setProviderNodes(nodesData.nodes || []);
     } catch (error) {
-      console.log("Error fetching data:", error);
+      notify.error("Failed to fetch provider data");
     } finally {
       setLoading(false);
     }

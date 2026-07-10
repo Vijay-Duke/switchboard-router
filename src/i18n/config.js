@@ -1,38 +1,6 @@
 export const LOCALES = [
   "en",
-  "vi",
   "zh-CN",
-  "zh-TW",
-  "ja",
-  "pt-BR",
-  "pt-PT",
-  "ko",
-  "es",
-  "de",
-  "fr",
-  "he",
-  "ar",
-  "ru",
-  "pl",
-  "cs",
-  "nl",
-  "tr",
-  "uk",
-  "tl",
-  "id",
-  "th",
-  "hi",
-  "bn",
-  "ur",
-  "ro",
-  "sv",
-  "it",
-  "el",
-  "hu",
-  "fi",
-  "da",
-  "no",
-  "fa",
 ];
 export const DEFAULT_LOCALE = "en";
 export const LOCALE_COOKIE = "locale";
@@ -75,109 +43,8 @@ export const LOCALE_NAMES = {
 };
 
 export function normalizeLocale(locale) {
-  if (locale === "zh" || locale === "zh-CN") {
-    return "zh-CN";
-  }
-  if (locale === "en") {
-    return "en";
-  }
-  if (locale === "vi") {
-    return "vi";
-  }
-  if (locale === "zh-TW") {
-    return "zh-TW";
-  }
-  if (locale === "ja") {
-    return "ja";
-  }
-  if (locale === "pt-BR") {
-    return "pt-BR";
-  }
-  if (locale === "pt-PT") {
-    return "pt-PT";
-  }
-  if (locale === "ko") {
-    return "ko";
-  }
-  if (locale === "es") {
-    return "es";
-  }
-  if (locale === "de") {
-    return "de";
-  }
-  if (locale === "fr") {
-    return "fr";
-  }
-  if (locale === "he") {
-    return "he";
-  }
-  if (locale === "ar") {
-    return "ar";
-  }
-  if (locale === "ru") {
-    return "ru";
-  }
-  if (locale === "pl") {
-    return "pl";
-  }
-  if (locale === "cs") {
-    return "cs";
-  }
-  if (locale === "nl") {
-    return "nl";
-  }
-  if (locale === "tr") {
-    return "tr";
-  }
-  if (locale === "uk") {
-    return "uk";
-  }
-  if (locale === "tl") {
-    return "tl";
-  }
-  if (locale === "id") {
-    return "id";
-  }
-  if (locale === "th") {
-    return "th";
-  }
-  if (locale === "hi") {
-    return "hi";
-  }
-  if (locale === "bn") {
-    return "bn";
-  }
-  if (locale === "ur") {
-    return "ur";
-  }
-  if (locale === "ro") {
-    return "ro";
-  }
-  if (locale === "sv") {
-    return "sv";
-  }
-  if (locale === "it") {
-    return "it";
-  }
-  if (locale === "el") {
-    return "el";
-  }
-  if (locale === "hu") {
-    return "hu";
-  }
-  if (locale === "fi") {
-    return "fi";
-  }
-  if (locale === "da") {
-    return "da";
-  }
-  if (locale === "no") {
-    return "no";
-  }
-  if (locale === "fa") {
-    return "fa";
-  }
-  return DEFAULT_LOCALE;
+  const normalized = locale === "zh" ? "zh-CN" : locale;
+  return LOCALES.includes(normalized) ? normalized : DEFAULT_LOCALE;
 }
 
 export function isSupportedLocale(locale) {

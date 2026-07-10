@@ -28,6 +28,7 @@ export const MEMORY_CONFIG = {
   sessionTtlMs: 2 * 60 * 60 * 1000,
   sessionCleanupIntervalMs: 30 * 60 * 1000,
   dnsCacheTtlMs: 5 * 60 * 1000,
+  dnsCacheMaxSize: 256,
   proxyDispatchersMaxSize: 20,
 };
 

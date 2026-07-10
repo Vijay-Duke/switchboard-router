@@ -9,6 +9,7 @@ import { cn } from "@/shared/utils/cn";
 import { APP_CONFIG } from "@/shared/constants/config";
 import { LOCALE_COOKIE, normalizeLocale } from "@/i18n/config";
 import { LOCALE_FLAGS } from "@/shared/constants/locales";
+import { useNotificationStore } from "@/store/notificationStore";
 
 function getLocaleFromCookie() {
   if (typeof document === "undefined") return "en";
@@ -24,6 +25,7 @@ function getLocaleFromCookie() {
  */
 export default function ProfilePageClient({ initialData }) {
   const { theme, setTheme, isDark } = useTheme();
+  const notify = useNotificationStore((s) => s.error);
   const [locale, setLocale] = useState("en");
   const [langOpen, setLangOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
@@ -165,9 +167,9 @@ export default function ProfilePageClient({ initialData }) {
       });
       if (res.ok) {
         setSettings(prev => ({ ...prev, fallbackStrategy: strategy }));
-      }
+      } else throw new Error(`HTTP ${res.status}`);
     } catch (err) {
-      console.error("Failed to update settings:", err);
+      notify("Failed to update settings");
     }
   };
 
@@ -180,9 +182,9 @@ export default function ProfilePageClient({ initialData }) {
       });
       if (res.ok) {
         setSettings(prev => ({ ...prev, comboStrategy: strategy }));
-      }
+      } else throw new Error(`HTTP ${res.status}`);
     } catch (err) {
-      console.error("Failed to update combo strategy:", err);
+      notify("Failed to update combo strategy");
     }
   };
 
@@ -198,9 +200,9 @@ export default function ProfilePageClient({ initialData }) {
       });
       if (res.ok) {
         setSettings(prev => ({ ...prev, stickyRoundRobinLimit: numLimit }));
-      }
+      } else throw new Error(`HTTP ${res.status}`);
     } catch (err) {
-      console.error("Failed to update sticky limit:", err);
+      notify("Failed to update sticky limit");
     }
   };
 
@@ -216,9 +218,9 @@ export default function ProfilePageClient({ initialData }) {
       });
       if (res.ok) {
         setSettings(prev => ({ ...prev, comboStickyRoundRobinLimit: numLimit }));
-      }
+      } else throw new Error(`HTTP ${res.status}`);
     } catch (err) {
-      console.error("Failed to update combo sticky limit:", err);
+      notify("Failed to update combo sticky limit");
     }
   };
 
@@ -235,20 +237,20 @@ export default function ProfilePageClient({ initialData }) {
       });
       if (res.ok) {
         setSettings(prev => ({ ...prev, enableObservability: enabled }));
-      }
+      } else throw new Error(`HTTP ${res.status}`);
     } catch (err) {
-      console.error("Failed to update enableObservability:", err);
+      notify("Failed to update observability setting");
     }
   };
 
   const reloadSettings = async () => {
     try {
       const res = await fetch("/api/settings");
-      if (!res.ok) return;
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setSettings(data);
     } catch (err) {
-      console.error("Failed to reload settings:", err);
+      notify("Failed to reload settings");
     }
   };
 

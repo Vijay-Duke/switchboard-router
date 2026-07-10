@@ -1,6 +1,7 @@
 "use client";
 // @ts-check
 import OpenAiCompatToolCard from "./OpenAiCompatToolCard";
+import { quoteShellValue } from "@/lib/cli/shellEnv";
 
 const ENDPOINT = "/api/cli-tools/grok-settings";
 
@@ -19,9 +20,9 @@ export default function GrokToolCard(props) {
         },
         {
           filename: "~/.grok/switchboard.env",
-          content: `export GROK_API_KEY="${apiKey}"
-export GROK_BASE_URL="${baseUrl}"
-export GROK_MODEL="${model}"
+          content: `export GROK_API_KEY=${quoteShellValue(apiKey)}
+export GROK_BASE_URL=${quoteShellValue(baseUrl)}
+export GROK_MODEL=${quoteShellValue(model)}
 `,
         },
       ]}

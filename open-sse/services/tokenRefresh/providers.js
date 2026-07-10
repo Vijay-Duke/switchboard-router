@@ -3,6 +3,7 @@ import { OAUTH_ENDPOINTS, GITHUB_COPILOT } from "../../config/appConstants.js";
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { dedupRefresh } from "./dedup.js";
 import { getOpenSseDeps } from "../../runtimeDeps.js";
+import { isValidAwsRegion } from "../../utils/awsRegion.js";
 
 /** M10: never log raw OAuth error bodies (may echo tokens). Keep status + error code only. */
 function safeRefreshError(errorText = "", status = 0) {
@@ -371,7 +372,7 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
 
   if (clientId && clientSecret) {
     const isIDC = authMethod === "idc";
-    const endpoint = isIDC && region
+    const endpoint = isIDC && isValidAwsRegion(region)
       ? `https://oidc.${region}.amazonaws.com/token`
       : "https://oidc.us-east-1.amazonaws.com/token";
 

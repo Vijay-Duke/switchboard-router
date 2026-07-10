@@ -27,6 +27,56 @@ export async function writeCliFile(filePath, content, { secret = false } = {}) {
 }
 
 /**
+ * Replace several related CLI files as one recoverable operation. Each file is
+ * atomically replaced; if a later replacement fails, every prior file is
+ * restored to its exact previous bytes (or removed if it did not exist).
+ *
+ * @param {Array<{ filePath: string, content: string|Buffer|null, secret?: boolean }>} operations
+ */
+export async function replaceCliFiles(operations) {
+  const snapshots = await Promise.all(operations.map(async ({ filePath }) => {
+    try {
+      return { exists: true, value: await fs.readFile(filePath) };
+    } catch (error) {
+      if (error?.code === "ENOENT") return { exists: false, value: null };
+      throw error;
+    }
+  }));
+
+  const apply = async ({ filePath, content, secret = false }) => {
+    if (content !== null) {
+      await writeCliFile(filePath, content, { secret });
+      return;
+    }
+    try {
+      await fs.unlink(filePath);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  };
+
+  try {
+    for (const operation of operations) await apply(operation);
+  } catch (error) {
+    const rollback = await Promise.allSettled(operations.map(({ filePath, secret = false }, index) => (
+      apply({
+        filePath,
+        content: snapshots[index].exists ? snapshots[index].value : null,
+        secret,
+      })
+    )));
+    const failures = rollback.filter((result) => result.status === "rejected");
+    if (failures.length > 0) {
+      throw new AggregateError(
+        [error, ...failures.map((result) => result.reason)],
+        "Failed to replace CLI files and roll them back cleanly",
+      );
+    }
+    throw error;
+  }
+}
+
+/**
  * @param {Record<string, any>} value
  * @param {string[]} keys
  */

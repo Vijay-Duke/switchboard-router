@@ -198,6 +198,7 @@ export default function EditConnectionModal({ isOpen, connection, onSave, onClos
         <Input
           label="Priority"
           type="number"
+          min={1}
           value={formData.priority}
           onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value, 10) || 1 })}
         />
@@ -208,6 +209,7 @@ export default function EditConnectionModal({ isOpen, connection, onSave, onClos
               <Input
                 label="API Key"
                 type="password"
+                autoComplete="off"
                 value={formData.apiKey}
                 onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
                 placeholder="Enter new API key"
@@ -309,4 +311,3 @@ EditConnectionModal.propTypes = {
   onSave: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,
 };
-

@@ -7,7 +7,7 @@
 // Each provider becomes its own test; providers without an llm model or without an
 // active credential are skipped automatically.
 import { describe, it, expect, beforeAll } from "vitest";
-import { getProviderConnections } from "../../../src/lib/localDb.js";
+import { getProviderConnections } from "../../../src/lib/db/index.js";
 import { getProviderCredentials } from "../../../src/sse/services/auth.js";
 import { checkAndRefreshToken } from "../../../src/sse/services/tokenRefresh.js";
 import { handleChatCore } from "../../../open-sse/handlers/chatCore.js";

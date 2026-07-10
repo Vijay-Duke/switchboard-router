@@ -10,6 +10,21 @@ function getInputJsonDelta(events) {
 }
 
 describe("openaiToClaudeResponse tool argument sanitization", () => {
+  it("flushes buffered tools and terminates when upstream omits finish_reason", () => {
+    const state = createState();
+    openaiToClaudeResponse({
+      id: "chatcmpl-no-finish",
+      model: "test-model",
+      choices: [{ delta: { tool_calls: [{ index: 0, id: "toolu_1", function: { name: "Read", arguments: '{"file_path":"/tmp/a"}' } }] } }],
+    }, state);
+
+    const events = openaiToClaudeResponse(null, state);
+    expect(JSON.parse(getInputJsonDelta(events))).toEqual({ file_path: "/tmp/a" });
+    expect(events).toContainEqual({ type: "content_block_stop", index: 0 });
+    expect(events.at(-1)).toEqual({ type: "message_stop" });
+    expect(openaiToClaudeResponse(null, state)).toBeNull();
+  });
+
   it("drops invalid Read pages and clamps numeric bounds", () => {
     const state = createState();
 

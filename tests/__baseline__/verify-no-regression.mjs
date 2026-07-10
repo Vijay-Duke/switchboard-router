@@ -2,6 +2,10 @@
 // PASS nếu KHÔNG có test nào pass(baseline) → fail(now). Test mới được phép.
 // Usage: node tests/__baseline__/verify-no-regression.mjs <current-results.json>
 import { readFileSync } from "fs";
+import { relative } from "path";
+import { fileURLToPath } from "url";
+
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 const knownFails = new Set(
   readFileSync(new URL("./known-fails.txt", import.meta.url), "utf8")
@@ -14,7 +18,7 @@ if (!resultsPath) { console.error("Missing results.json path"); process.exit(2);
 const r = JSON.parse(readFileSync(resultsPath, "utf8"));
 const nowFails = r.testResults.flatMap(f =>
   f.assertionResults.filter(a => a.status === "failed")
-    .map(a => f.name.split("/app/")[1] + " :: " + a.fullName)
+    .map(a => `${relative(repoRoot, f.name).replaceAll("\\", "/")} :: ${a.fullName}`)
 );
 
 // Regression = fail bây giờ NHƯNG không có trong baseline known-fails

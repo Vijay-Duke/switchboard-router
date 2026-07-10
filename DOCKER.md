@@ -13,7 +13,7 @@ docker run -d \
   -p 127.0.0.1:20128:20128 \
   -v "$HOME/.switchboard:/app/data" \
   -e DATA_DIR=/app/data \
-  -e SWITCHBOARD_LOCAL_PEERS=172.16.0.0/12 \
+  -e SWITCHBOARD_LOCAL_PEERS=172.30.0.1 \
   --name switchboard \
   switchboard:latest
 ```
@@ -32,7 +32,7 @@ calls returns `403 Local only`.
 
 The flags only work as a pair:
 
-- `-e SWITCHBOARD_LOCAL_PEERS=172.16.0.0/12` trusts the Docker bridge range,
+- `-e SWITCHBOARD_LOCAL_PEERS=172.30.0.1` trusts only the configured Compose bridge gateway,
   applied only to the socket-derived peer address.
 - `-p 127.0.0.1:20128:20128` publishes on the host's loopback interface only, so
   nothing off-machine can reach the container and benefit from that trust.
@@ -86,7 +86,7 @@ docker run -d \
   -p 127.0.0.1:20128:20128 \
   -v "$HOME/.switchboard:/app/data" \
   -e DATA_DIR=/app/data \
-  -e SWITCHBOARD_LOCAL_PEERS=172.16.0.0/12 \
+  -e SWITCHBOARD_LOCAL_PEERS=172.30.0.1 \
   -e PORT=20128 \
   -e HOSTNAME=0.0.0.0 \
   -e DEBUG=true \
@@ -125,7 +125,7 @@ services:
       - "$HOME/.switchboard:/app/data"
     environment:
       DATA_DIR: /app/data
-      SWITCHBOARD_LOCAL_PEERS: 172.16.0.0/12
+      SWITCHBOARD_LOCAL_PEERS: 172.30.0.1
       HEADROOM_URL: http://headroom:8787
     depends_on:
       - headroom
@@ -160,7 +160,7 @@ cd app && docker build -t switchboard .
 docker run --rm -p 127.0.0.1:20128:20128 \
   -v "$HOME/.switchboard:/app/data" \
   -e DATA_DIR=/app/data \
-  -e SWITCHBOARD_LOCAL_PEERS=172.16.0.0/12 \
+  -e SWITCHBOARD_LOCAL_PEERS=172.30.0.1 \
   switchboard
 ```
 

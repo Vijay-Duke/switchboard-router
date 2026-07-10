@@ -11,7 +11,10 @@ const cache = new Map(); // key: fetcher.url → { data, expiresAt }
  * @returns {Promise<Array<{ id: string, name: string, contextLength?: number }>>}
  */
 export async function fetchSuggestedModels(fetcher) {
-  if (!fetcher?.url || !fetcher?.type) return [];
+  // This helper calls public endpoints without credentials. Authenticated
+  // catalogs (for example CommandCode's Provider API) are discovered through
+  // the active connection route instead, so never probe them anonymously.
+  if (!fetcher?.url || !fetcher?.type || fetcher.requiresAuth) return [];
 
   const cached = cache.get(fetcher.url);
   if (cached && Date.now() < cached.expiresAt) return cached.data;

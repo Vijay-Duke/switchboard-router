@@ -86,35 +86,6 @@ export function startLocalServer(onCallback, fixedPort = null) {
   });
 }
 
-/**
- * Wait for callback with timeout
- * @param {number} timeoutMs - Timeout in milliseconds
- * @returns {Promise<Object>} - Callback params
- */
-export function waitForCallback(timeoutMs = 300000) {
-  return new Promise((resolve, reject) => {
-    let resolved = false;
-
-    const timeout = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        reject(new Error("Authentication timeout"));
-      }
-    }, timeoutMs);
-
-    const onCallback = (params) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timeout);
-        resolve(params);
-      }
-    };
-
-    // Return the callback function
-    resolve.__onCallback = onCallback;
-  });
-}
-
 // Singleton proxy server for Codex OAuth callback on fixed port
 let codexProxyServer = null;
 let codexProxyTimeout = null;
@@ -125,12 +96,33 @@ const CODEX_PORT = CODEX_CONFIG.fixedPort;
 // Pending exchange sessions keyed by state — used by server-side exchange mode
 const pendingExchanges = new Map();
 
+/** True while any registered session is still waiting for its callback. */
+function hasPendingSession(sessions) {
+  for (const session of sessions.values()) {
+    if (session.status === "pending") return true;
+  }
+  return false;
+}
+
+/**
+ * Drop sessions whose flow was abandoned. The modal clears its own session
+ * after polling; a closed popup never does, so without this the map grows
+ * for the life of the process.
+ */
+function sweepStaleSessions(sessions, ttlMs) {
+  const now = Date.now();
+  for (const [state, session] of sessions) {
+    if (now - session.createdAt > ttlMs) sessions.delete(state);
+  }
+}
+
 /**
  * Register a pending exchange session for server-side mode.
  * Modal client calls this before opening popup.
  */
 export function registerCodexSession({ state, codeVerifier, redirectUri }) {
   if (!state || !codeVerifier || !redirectUri) return false;
+  sweepStaleSessions(pendingExchanges, CODEX_PROXY_TIMEOUT_MS);
   pendingExchanges.set(state, {
     codeVerifier,
     redirectUri,
@@ -243,7 +235,9 @@ export function startCodexProxy(appPort) {
           res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
           res.end(renderCodexResultPage(false, err.message));
         } finally {
-          stopCodexProxy();
+          // Another connect flow may still be waiting on this fixed port; the
+          // 5-minute timeout is the backstop that always tears it down.
+          if (!hasPendingSession(pendingExchanges)) stopCodexProxy();
         }
         return;
       }
@@ -252,7 +246,7 @@ export function startCodexProxy(appPort) {
       const redirectUrl = `http://localhost:${appPort}/callback${url.search}`;
       res.writeHead(302, { Location: redirectUrl });
       res.end();
-      stopCodexProxy();
+      if (!hasPendingSession(pendingExchanges)) stopCodexProxy();
     });
 
     server.listen(CODEX_PORT, "127.0.0.1", () => {
@@ -299,6 +293,7 @@ const xaiPendingExchanges = new Map();
 
 export function registerXaiSession({ state, codeVerifier, redirectUri }) {
   if (!state || !codeVerifier || !redirectUri) return false;
+  sweepStaleSessions(xaiPendingExchanges, XAI_PROXY_TIMEOUT_MS);
   xaiPendingExchanges.set(state, {
     codeVerifier,
     redirectUri,
@@ -385,7 +380,7 @@ export function startXaiProxy(appPort) {
           res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
           res.end(renderXaiResultPage(false, err.message));
         } finally {
-          stopXaiProxy();
+          if (!hasPendingSession(xaiPendingExchanges)) stopXaiProxy();
         }
         return;
       }
@@ -394,7 +389,7 @@ export function startXaiProxy(appPort) {
       const redirectUrl = `http://localhost:${appPort}/callback${url.search}`;
       res.writeHead(302, { Location: redirectUrl });
       res.end();
-      stopXaiProxy();
+      if (!hasPendingSession(xaiPendingExchanges)) stopXaiProxy();
     });
 
     server.listen(XAI_PROXY_PORT, "127.0.0.1", () => {

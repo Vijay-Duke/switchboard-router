@@ -30,6 +30,10 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   default: vi.fn(),
 }));
 
+vi.mock("../../open-sse/utils/ssrfGuard.js", () => ({
+  assertPublicUrlResolved: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { handleEmbeddingsCore } from "../../open-sse/handlers/embeddingsCore.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -469,12 +473,12 @@ describe("handleEmbeddingsCore — success path", () => {
     expect(body.data[0]).toHaveProperty("index");
   });
 
-  it("response includes CORS header Access-Control-Allow-Origin: *", async () => {
+  it("response does not grant wildcard cross-origin access", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     const result = await handleEmbeddingsCore(makeOptions());
 
-    expect(result.response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(result.response.headers.get("Access-Control-Allow-Origin")).toBeNull();
   });
 
   it("response Content-Type is application/json", async () => {

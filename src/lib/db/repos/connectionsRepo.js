@@ -12,31 +12,38 @@ const OPTIONAL_FIELDS = [
 ];
 
 // H2: encrypt these at rest inside the JSON `data` blob
-const SECRET_FIELDS = ["accessToken", "refreshToken", "idToken", "apiKey"];
+const SECRET_FIELDS = new Set([
+  "accessToken", "refreshToken", "idToken", "apiKey",
+  "copilotToken", "cookies",
+]);
 
-function encryptSecretsInPlace(obj) {
-  if (!obj || typeof obj !== "object") return obj;
-  for (const f of SECRET_FIELDS) {
-    if (typeof obj[f] === "string" && obj[f]) obj[f] = encryptSecret(obj[f]);
+function mapSecrets(value, transform, secretContext = false) {
+  if (typeof value === "string") {
+    return secretContext && value ? transform(value) : value;
   }
-  return obj;
+  if (Array.isArray(value)) {
+    return value.map((item) => mapSecrets(item, transform, secretContext));
+  }
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key,
+      mapSecrets(child, transform, secretContext || SECRET_FIELDS.has(key)),
+    ])
+  );
 }
 
-function decryptSecretsInPlace(obj) {
-  if (!obj || typeof obj !== "object") return obj;
-  for (const f of SECRET_FIELDS) {
-    if (typeof obj[f] === "string" && obj[f]) {
-      const plain = decryptSecret(obj[f]);
-      if (plain != null) obj[f] = plain;
-    }
-  }
-  return obj;
+function encryptSecrets(obj) {
+  return mapSecrets(obj, encryptSecret);
+}
+
+function decryptSecrets(obj) {
+  return mapSecrets(obj, (stored) => decryptSecret(stored) ?? stored);
 }
 
 function rowToConn(row) {
   if (!row) return null;
-  const extra = parseJson(row.data, {});
-  decryptSecretsInPlace(extra);
+  const extra = decryptSecrets(parseJson(row.data, {}));
   return {
     ...extra,
     id: row.id,
@@ -53,7 +60,7 @@ function rowToConn(row) {
 
 function connToRow(c) {
   const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, ...rest } = c;
-  const sealed = encryptSecretsInPlace({ ...rest });
+  const sealed = encryptSecrets(rest);
   return {
     id,
     provider,

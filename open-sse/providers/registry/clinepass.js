@@ -2,6 +2,7 @@ export default {
   id: "clinepass",
   priority: 85,
   alias: "clinepass",
+  aliases: ["cline-pass"],
   uiAlias: "clinepass",
   display: {
     name: "ClinePass",

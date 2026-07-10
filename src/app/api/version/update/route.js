@@ -10,13 +10,11 @@ export async function POST() {
     );
   }
 
-  try {
-    // Kill sibling processes (cloudflared, MITM, stray next-server) to release file locks on Windows
-    await killAppProcesses();
-  } catch { /* best effort */ }
-
-  // Schedule detached updater then exit current server process
+  // Start the detached updater before stopping the launcher. Killing the CLI
+  // parent also terminates this server, so awaiting cleanup here can prevent
+  // the updater from ever being spawned.
   spawnUpdaterAndExit();
+  setTimeout(() => { killAppProcesses().catch(() => {}); }, 100);
 
   return NextResponse.json({ success: true, message: "Updater started. This app will exit shortly." });
 }

@@ -21,7 +21,9 @@ services:
       # Your browser reaches the container as the bridge gateway, never as
       # 127.0.0.1, so the dashboard's own /api/* calls would all return
       # "403 Local only". Trust the Docker bridge range for the socket peer.
-      SWITCHBOARD_LOCAL_PEERS: 172.16.0.0/12
+      SWITCHBOARD_LOCAL_PEERS: 172.30.0.1
+    networks:
+      - switchboard-net
     depends_on:
       - headroom
 
@@ -33,6 +35,15 @@ services:
       # switchboard reaches this over the compose network; publish for local
       # debugging only, never to the LAN.
       - "127.0.0.1:8787:8787"
+    networks:
+      - switchboard-net
+
+networks:
+  switchboard-net:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1
 
 volumes:
   switchboard-data:

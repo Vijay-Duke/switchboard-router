@@ -8,6 +8,7 @@ import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifi
 import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModal, CapacityBadges, Select } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { useNotificationStore } from "@/store/notificationStore";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -16,6 +17,7 @@ const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
  * @param {{ initialData?: { combos?: any[], connections?: any[], settings?: any, modelCaps?: Record<string, any> } }} props
  */
 export default function CombosPageClient({ initialData }) {
+  const notify = useNotificationStore((s) => s.error);
   const [combos, setCombos] = useState(() => (initialData?.combos || []).filter((c) => !c.kind || c.kind === "llm"));
   const [loading, setLoading] = useState(!initialData);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -34,9 +36,12 @@ export default function CombosPageClient({ initialData }) {
         fetch("/api/settings"),
         fetch("/api/models"),
       ]);
+      if (![combosRes, providersRes, settingsRes, modelsRes].every((res) => res.ok)) {
+        throw new Error("One or more combo resources failed to load");
+      }
       const combosData = await combosRes.json();
       const providersData = await providersRes.json();
-      const settingsData = settingsRes.ok ? await settingsRes.json() : {};
+      const settingsData = await settingsRes.json();
 
       // Only LLM combos here - webSearch/webFetch combos belong to media-providers/web
       if (combosRes.ok) setCombos((combosData.combos || []).filter((c) => !c.kind || c.kind === "llm"));
@@ -51,7 +56,7 @@ export default function CombosPageClient({ initialData }) {
       }
       setComboStrategies(settingsData.comboStrategies || {});
     } catch (error) {
-      console.log("Error fetching data:", error);
+      notify("Failed to fetch combo data");
     } finally {
       setLoading(false);
     }
@@ -84,10 +89,10 @@ export default function CombosPageClient({ initialData }) {
         setShowCreateModal(false);
       } else {
         const err = await res.json();
-        alert(err.error || "Failed to create combo");
+        notify(err.error || "Failed to create combo");
       }
     } catch (error) {
-      console.log("Error creating combo:", error);
+      notify("Failed to create combo");
     }
   };
 
@@ -138,10 +143,10 @@ export default function CombosPageClient({ initialData }) {
         setEditingCombo(null);
       } else {
         const err = await res.json();
-        alert(err.error || "Failed to update combo");
+        notify(err.error || "Failed to update combo");
       }
     } catch (error) {
-      console.log("Error updating combo:", error);
+      notify("Failed to update combo");
     }
   };
 
@@ -167,11 +172,10 @@ export default function CombosPageClient({ initialData }) {
             }
           } else {
             const err = await res.json().catch(() => ({}));
-            alert(err.error || `Failed to delete combo (HTTP ${res.status})`);
+            notify(err.error || `Failed to delete combo (HTTP ${res.status})`);
           }
         } catch (error) {
-          console.log("Error deleting combo:", error);
-          alert(error?.message || "Failed to delete combo");
+          notify("Failed to delete combo");
         }
       },
     });
@@ -210,15 +214,17 @@ export default function CombosPageClient({ initialData }) {
         updated[comboName] = next;
       }
 
-      await fetch("/api/settings", {
+      const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ comboStrategies: updated }),
       });
+      if (!res.ok) throw new Error(`Failed to update combo strategy (${res.status})`);
 
       setComboStrategies(updated);
     } catch (error) {
-      console.log("Error updating combo strategy:", error);
+      notify("Failed to update combo strategy");
+      throw error;
     }
   };
 

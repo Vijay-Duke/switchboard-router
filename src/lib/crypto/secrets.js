@@ -105,8 +105,8 @@ export function unpackApiKeyRecord(stored) {
 
 export function timingSafeEqualStr(a, b) {
   if (typeof a !== "string" || typeof b !== "string") return false;
-  const ba = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ba.length !== bb.length) return false;
+  // Hash both sides to a fixed width so length mismatches do not return early.
+  const ba = crypto.createHash("sha256").update(a).digest();
+  const bb = crypto.createHash("sha256").update(b).digest();
   return crypto.timingSafeEqual(ba, bb);
 }

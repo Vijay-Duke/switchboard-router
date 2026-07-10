@@ -14,7 +14,6 @@ const KIND_SLUG_MAP = {
 export async function OPTIONS() {
   return new Response(null, {
     headers: {
-      "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, OPTIONS",
       "Access-Control-Allow-Headers": "*",
     },
@@ -38,13 +37,12 @@ export async function GET(_request, { params }) {
             type: "invalid_request_error",
           },
         },
-        { status: 404, headers: { "Access-Control-Allow-Origin": "*" } }
+        { status: 404 }
       );
     }
 
     const data = await buildModelsList(kindFilter);
     return Response.json({ object: "list", data }, {
-      headers: { "Access-Control-Allow-Origin": "*" },
     });
   } catch (error) {
     console.log("Error fetching models by kind:", error);

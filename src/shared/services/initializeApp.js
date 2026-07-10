@@ -10,6 +10,8 @@ import { getMitmStatus, startMitm, loadEncryptedPassword, initDbHooks, restoreTo
 import { startQuotaAutoPing } from "@/shared/services/quotaAutoPing";
 import { startAutoLearnScheduler } from "open-sse/routing/scheduler.js";
 import { syncToJson as syncMitmAliasCache } from "@/lib/mitmAliasCache";
+import { closeAdapter } from "@/lib/db/driver.js";
+import { flushPendingRequestDetails } from "@/lib/db/repos/requestDetailsRepo.js";
 
 const ROUTING_RETENTION_DAYS = 90;
 const ROUTING_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -34,6 +36,7 @@ const g = global.__appSingleton ??= {
   signalHandlersRegistered: false,
   mitmStartInProgress: false,
   routingRetentionTimer: null,
+  shuttingDown: false,
 };
 
 export async function initializeApp() {
@@ -41,9 +44,16 @@ export async function initializeApp() {
     await cleanupProviderConnections();
 
     if (!g.signalHandlersRegistered) {
-      const cleanup = () => {
+      const cleanup = async () => {
+        if (g.shuttingDown) return;
+        g.shuttingDown = true;
+        const forceExit = setTimeout(() => process.exit(1), 1800);
+        forceExit.unref?.();
+        try { await flushPendingRequestDetails(); } catch { /* best effort */ }
+        try { await closeAdapter(); } catch { /* best effort */ }
         try { removeAllDNSEntriesSync(); } catch { /* best effort */ }
-        process.exit();
+        clearTimeout(forceExit);
+        process.exit(0);
       };
       process.on("SIGINT", cleanup);
       process.on("SIGTERM", cleanup);

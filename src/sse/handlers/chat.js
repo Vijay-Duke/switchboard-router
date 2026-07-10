@@ -218,8 +218,8 @@ export async function handleChat(request, clientRawRequest = null) {
     });
   }
 
-  // Single model request
-  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey);
+  // Single model request — pass request.signal so abandoned calls abort upstream
+  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, { signal: request?.signal || null });
 }
 
 /**

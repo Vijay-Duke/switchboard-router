@@ -32,11 +32,10 @@ export function createBetterSqliteAdapter(filePath) {
     try { db.close(); } catch {}
   }
 
-  // Ensure WAL is flushed and -wal/-shm files removed on shutdown
+  // Ensure WAL is flushed on shutdown — beforeExit only. CLI parent handles
+  // SIGINT/SIGTERM with SIGTERM → 2s wait → SIGKILL, giving checkpoint time.
   const onShutdown = () => gracefulClose();
   process.once("beforeExit", onShutdown);
-  process.once("SIGINT", () => { onShutdown(); process.exit(0); });
-  process.once("SIGTERM", () => { onShutdown(); process.exit(0); });
 
   return {
     driver: "better-sqlite3",

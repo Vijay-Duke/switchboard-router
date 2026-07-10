@@ -274,7 +274,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   return {
     success: true,
     response: new Response(JSON.stringify(translatedResponse), {
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+      headers: { "Content-Type": "application/json" }
     })
   };
 }

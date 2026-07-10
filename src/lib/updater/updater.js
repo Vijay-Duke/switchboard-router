@@ -174,10 +174,19 @@ function runInstall() {
 
 function openBrowser(url) {
   const platform = process.platform;
-  const cmd = platform === "darwin" ? `open "${url}"`
-    : platform === "win32" ? `start "" "${url}"`
-    : `xdg-open "${url}"`;
-  try { spawn(cmd, { shell: true, detached: true, stdio: "ignore" }).unref(); } catch { /* ignore */ }
+  const launcher = platform === "darwin"
+    ? { command: "open", args: [url] }
+    : platform === "win32"
+      ? { command: "rundll32.exe", args: ["url.dll,FileProtocolHandler", url] }
+      : { command: "xdg-open", args: [url] };
+  try {
+    spawn(launcher.command, launcher.args, {
+      shell: false,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    }).unref();
+  } catch { /* ignore */ }
 }
 
 // Wait until app port is listening (server alive again), then open dashboard

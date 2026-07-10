@@ -739,6 +739,7 @@ export function parseConnectRPCFrame(buffer) {
   if (buffer.length < 5 + length) return null;
 
   let payload = buffer.slice(5, 5 + length);
+  let decompressFailed = false;
 
   // Decompress if gzip
   if (flags === 0x01) {
@@ -746,10 +747,15 @@ export function parseConnectRPCFrame(buffer) {
       payload = new Uint8Array(zlib.gunzipSync(Buffer.from(payload)));
     } catch (err) {
       log("PARSE", `Decompression failed: ${err.message}`);
+      // Handing the still-compressed bytes back would have callers decode gzip
+      // as protobuf and emit garbage. Drop the payload, keep `consumed` so the
+      // caller can still advance past this frame.
+      payload = new Uint8Array(0);
+      decompressFailed = true;
     }
   }
 
-  return { flags, length, payload, consumed: 5 + length };
+  return { flags, length, payload, consumed: 5 + length, decompressFailed };
 }
 
 function extractToolCall(toolCallData) {

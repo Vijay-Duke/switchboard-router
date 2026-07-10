@@ -13,6 +13,7 @@ import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveCopilotModels } from "open-sse/services/copilotModels.js";
 import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
+import { resolveProviderModels } from "open-sse/services/providerModels.js";
 import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { capabilitiesFromServiceKind } from "open-sse/providers/capabilities.js";
 
@@ -349,6 +350,32 @@ export async function buildModelsList(kindFilter) {
         }
       }
 
+      // Every registry provider gets a best-effort live discovery attempt.
+      // Provider-specific resolvers above remain authoritative where an API
+      // needs custom authentication or response expansion; all other
+      // providers use their registry transport/models endpoint. Static models
+      // remain in rawModelIds when discovery is unavailable.
+      if (!liveResolver && !hasExplicitEnabledModels) {
+        try {
+          const live = await resolveProviderModels(conn);
+          if (live?.models?.length) {
+            rawModelIds = live.models.map((m) => m.id);
+            liveModelKindById = new Map(
+              live.models
+                .filter((m) => m?.id)
+                .map((m) => [m.id, modelKind(m)])
+            );
+            liveCapabilitiesById = new Map(
+              live.models
+                .filter((m) => m?.id && m.capabilities)
+                .map((m) => [m.id, m.capabilities])
+            );
+          }
+        } catch (err) {
+          console.log(`Generic live model fetch failed for ${providerId}: ${err?.message || err}`);
+        }
+      }
+
       const modelIds = rawModelIds
         .map((modelId) => {
           if (modelId.startsWith(`${outputAlias}/`)) {
@@ -465,7 +492,6 @@ export async function buildModelsList(kindFilter) {
 export async function OPTIONS() {
   return new Response(null, {
     headers: {
-      "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, OPTIONS",
       "Access-Control-Allow-Headers": "*",
     },
@@ -480,7 +506,6 @@ export async function GET() {
   try {
     const data = await buildModelsList([LLM_KIND]);
     return Response.json({ object: "list", data }, {
-      headers: { "Access-Control-Allow-Origin": "*" },
     });
   } catch (error) {
     console.log("Error fetching models:", error);

@@ -33,6 +33,10 @@ const API_TYPE_OPTIONS = [
   { value: "responses", label: "Responses API" },
 ];
 
+function isValidHttpUrl(value) {
+  try { return ["http:", "https:"].includes(new URL(value).protocol); } catch { return false; }
+}
+
 function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
   const config = VARIANT_CONFIG[variant];
   const initialFormData = () => ({
@@ -48,6 +52,7 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
   const [checkModelId, setCheckModelId] = useState("");
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
+  const baseUrlValid = isValidHttpUrl(formData.baseUrl.trim());
 
   useEffect(() => {
     if (!isOpen) return;
@@ -67,7 +72,10 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
   }, [formData.apiType]);
 
   const handleSubmit = async () => {
-    if (!formData.name.trim() || !formData.baseUrl.trim()) return;
+    if (!formData.name.trim() || !baseUrlValid) {
+      setError("Enter a valid http:// or https:// base URL");
+      return;
+    }
     setSubmitting(true);
     setError("");
     try {
@@ -169,6 +177,7 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
         <Input
           label="API Key (for Check)"
           type="password"
+          autoComplete="off"
           value={checkKey}
           onChange={(e) => setCheckKey(e.target.value)}
         />
@@ -182,7 +191,7 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <Button
             onClick={handleValidate}
-            disabled={!checkKey || validating || !formData.baseUrl.trim()}
+            disabled={!checkKey || validating || !baseUrlValid}
             variant="secondary"
             className="w-full sm:w-auto"
           >
@@ -195,7 +204,7 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
           <Button
             onClick={handleSubmit}
             fullWidth
-            disabled={!formData.name.trim() || !formData.baseUrl.trim() || submitting}
+            disabled={!formData.name.trim() || !baseUrlValid || submitting}
           >
             {submitting ? "Creating..." : "Create"}
           </Button>

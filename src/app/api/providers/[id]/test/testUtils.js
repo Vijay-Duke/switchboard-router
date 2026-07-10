@@ -2,8 +2,9 @@
 import { getProviderConnectionById, updateProviderConnection } from "@/lib/db/index.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { testProxyUrl } from "@/lib/network/proxyTest";
-import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, resolveProviderId } from "@/shared/constants/providers";
 import { getDefaultModel } from "open-sse/config/providerModels.js";
+import { safeAwsRegion } from "open-sse/utils/awsRegion.js";
 import { resolveOllamaLocalHost, PROVIDERS } from "open-sse/config/providers.js";
 import {
   refreshProviderCredentials,
@@ -97,6 +98,8 @@ const OAUTH_TEST_CONFIG = {
     authPrefix: "Bearer ",
   },
   cline: { refreshable: true },
+  // ClinePass uses the same WorkOS-backed API and token lifecycle as Cline.
+  clinepass: { refreshable: true },
   gitlab: {
     // Test by hitting the GitLab user API — requires api or read_user scope
     url: "https://gitlab.com/api/v4/user",
@@ -118,13 +121,13 @@ const OAUTH_TEST_CONFIG = {
   },
 };
 
-async function probeClineAccessToken(accessToken) {
-  const res = await fetch("https://api.cline.bot/api/v1/users/me", {
+async function probeClineAccessToken(accessToken, effectiveProxy = null) {
+  const res = await fetchWithConnectionProxy("https://api.cline.bot/api/v1/users/me", {
     method: "GET",
     headers: buildClineHeaders(accessToken, {
       Accept: "application/json",
     }),
-  });
+  }, effectiveProxy);
 
   return res;
 }
@@ -222,9 +225,9 @@ async function refreshOAuthToken(connection) {
       const psd = connection.providerSpecificData || {};
       const clientId = psd.clientId || connection.clientId;
       const clientSecret = psd.clientSecret || connection.clientSecret;
-      const region = psd.region || connection.region;
+      const region = safeAwsRegion(psd.region || connection.region);
       if (clientId && clientSecret) {
-        const endpoint = `https://oidc.${region || "us-east-1"}.amazonaws.com/token`;
+        const endpoint = `https://oidc.${region}.amazonaws.com/token`;
         const response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -259,7 +262,7 @@ async function refreshOAuthToken(connection) {
       return { accessToken: data.access_token, expiresIn: data.expires_in, refreshToken: data.refresh_token || refreshToken };
     }
 
-    if (provider === "cline") {
+    if (provider === "cline" || provider === "clinepass") {
       const response = await fetch(CLINE_CONFIG.refreshUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -342,9 +345,9 @@ async function testOAuthConnection(connection, effectiveProxy = null) {
     return { valid: false, error: initial.error, refreshed };
   }
 
-  if (connection.provider === "cline") {
+  if (connection.provider === "cline" || connection.provider === "clinepass") {
     const tryProbe = async (token) => {
-      const res = await probeClineAccessToken(token);
+      const res = await probeClineAccessToken(token, effectiveProxy);
       if (res.ok) return { valid: true, error: null, refreshed, newTokens };
       if (res.status === 401) return { valid: false, error: "Token invalid or revoked", refreshed };
       if (res.status === 403) return { valid: false, error: "Access denied", refreshed };
@@ -734,6 +737,14 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
       }
+      case "clinepass": {
+        // ClinePass API keys are plain Bearer tokens; OAuth tokens use the
+        // WorkOS prefix handled by testOAuthConnection above.
+        const res = await fetchWithConnectionProxy("https://api.cline.bot/api/v1/models", {
+          headers: { Accept: "application/json", Authorization: `Bearer ${connection.apiKey}` },
+        }, effectiveProxy);
+        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+      }
       default:
         return { valid: false, error: "Provider test not supported" };
     }
@@ -748,6 +759,13 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
 export async function testSingleConnection(id) {
   const connection = await getProviderConnectionById(id);
   if (!connection) return { valid: false, error: "Connection not found", latencyMs: 0, testedAt: new Date().toISOString() };
+
+  // Older records may use a registry alias (for example `cline-pass`). Keep
+  // persistence untouched, but use the canonical provider ID for dispatch.
+  const testConnection = {
+    ...connection,
+    provider: resolveProviderId(connection.provider),
+  };
 
   const effectiveProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
 
@@ -768,9 +786,9 @@ export async function testSingleConnection(id) {
   let result;
 
   if (connection.authType === "apikey" || connection.authType === "cookie") {
-    result = await testApiKeyConnection(connection, effectiveProxy);
+    result = await testApiKeyConnection(testConnection, effectiveProxy);
   } else {
-    result = await testOAuthConnection(connection, effectiveProxy);
+    result = await testOAuthConnection(testConnection, effectiveProxy);
   }
 
   const latencyMs = Date.now() - start;

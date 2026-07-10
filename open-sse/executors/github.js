@@ -246,7 +246,7 @@ export class GithubExecutor extends BaseExecutor {
         return {
           response: new Response(JSON.stringify(chat), {
             status: 200,
-            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+            headers: { "Content-Type": "application/json" },
           }),
           url,
           headers,
@@ -404,6 +404,9 @@ export class GithubExecutor extends BaseExecutor {
       } else if (typeof expiresAtMs === "string") {
         expiresAtMs = new Date(expiresAtMs).getTime();
       }
+      // An unparseable expiry yields NaN, and every NaN comparison is false —
+      // which would silently mean "never refresh". Treat it as expired.
+      if (!Number.isFinite(expiresAtMs)) return true;
       if (expiresAtMs - Date.now() < 5 * 60 * 1000) return true;
     }
     return super.needsRefresh(credentials);

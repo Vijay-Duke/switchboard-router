@@ -66,6 +66,7 @@ export default function ProviderDetailPage() {
   const [thinkingMode, setThinkingMode] = useState("auto");
   const [autoPing, setAutoPing] = useState({ enabled: false, connections: {} });
   const [suggestedModels, setSuggestedModels] = useState([]);
+  const [discoveredModels, setDiscoveredModels] = useState([]);
   const [kiloFreeModels, setKiloFreeModels] = useState([]);
   const [disabledModelIds, setDisabledModelIds] = useState([]);
   const [confirmState, setConfirmState] = useState(null);
@@ -144,7 +145,14 @@ export default function ProviderDetailPage() {
   const isOAuth = !!OAUTH_PROVIDERS[providerId] || !!FREE_PROVIDERS[providerId] || authModes.includes("oauth");
   const supportsApiKeyAuth = !!APIKEY_PROVIDERS[providerId] || authModes.includes("apikey");
   const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
-  const models = getModelsByProviderId(providerId);
+  const staticModels = getModelsByProviderId(providerId);
+  const models = (() => {
+    const byId = new Map(staticModels.map((model) => [model.id, model]));
+    for (const model of discoveredModels) {
+      if (model?.id) byId.set(model.id, { ...byId.get(model.id), ...model });
+    }
+    return [...byId.values()];
+  })();
   const providerAlias = getProviderAlias(providerId);
   
   const isOpenAICompatible = isOpenAICompatibleProvider(providerId);
@@ -433,6 +441,32 @@ export default function ProviderDetailPage() {
     fetchDisabledModels();
   }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
 
+  // Keep the visible catalog current for every provider. The API route uses
+  // the provider's live endpoint when available and returns the static
+  // registry catalog when discovery is unavailable.
+  useEffect(() => {
+    if (isCompatible) return;
+    const activeConnection = connections.find((connection) => connection.isActive !== false);
+    if (!activeConnection) {
+      setDiscoveredModels([]);
+      return;
+    }
+
+    let cancelled = false;
+    fetch(`/api/providers/${activeConnection.id}/models`, { cache: "no-store" })
+      .then((response) => response.json().catch(() => ({})))
+      .then((data) => {
+        if (!cancelled && Array.isArray(data.models) && data.models.length > 0) {
+          setDiscoveredModels(data.models);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connections, isCompatible]);
+
   // Fetch suggested models from provider's public API (if configured)
   useEffect(() => {
     const fetcher = (OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId] || FREE_PROVIDERS[providerId] || FREE_TIER_PROVIDERS[providerId])?.modelsFetcher;
@@ -534,32 +568,10 @@ export default function ProviderDetailPage() {
         return;
       }
 
-      // Known-dead probe cache for this connection (skip re-adding/re-testing)
-      let deadIds = new Set();
-      try {
-        const prepRes = await fetch(`/api/providers/${activeConnection.id}/model-probes/prepare`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            models: rawModels.map((m) =>
-              typeof m === "string" ? { id: m } : { id: m.id || m.name || m.model, kind: m.kind || m.type || "llm" }
-            ),
-            providerAlias: providerStorageAlias,
-          }),
-        });
-        if (prepRes.ok) {
-          const prep = await prepRes.json();
-          deadIds = new Set((prep.skippedDead || []).map((m) => m.canonicalId || m.id));
-        }
-      } catch {
-        /* import still works without probe cache */
-      }
-
       const builtInIds = new Set(models.map((m) => m.id));
       const toAdd = [];
       const toReenable = [];
       const seen = new Set();
-      let skippedDead = 0;
 
       for (const raw of rawModels) {
         const normalized = normalizeImportedModel(raw, providerStorageAlias);
@@ -568,12 +580,6 @@ export default function ProviderDetailPage() {
         const dedupeKey = `${type}|${id}`;
         if (seen.has(dedupeKey)) continue;
         seen.add(dedupeKey);
-
-        const canon = canonicalModelId(id, providerStorageAlias);
-        if (deadIds.has(canon) || deadIds.has(id)) {
-          skippedDead += 1;
-          continue;
-        }
 
         // Already in static catalog — re-enable if user had disabled it
         if (builtInIds.has(id)) {
@@ -639,7 +645,6 @@ export default function ProviderDetailPage() {
       const parts = [];
       if (added > 0) parts.push(`${added} new`);
       if (reenabled > 0) parts.push(`${reenabled} re-enabled`);
-      if (skippedDead > 0) parts.push(`${skippedDead} skipped (known-unavailable)`);
       if (parts.length === 0) {
         setImportModelsMessage(translate("All models already in list"));
       } else {
@@ -1530,17 +1535,16 @@ export default function ProviderDetailPage() {
             const canImport = connections.some((conn) => conn.isActive !== false);
             return (
               <div className="flex flex-wrap gap-2">
-                {canImport && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    icon={importingModels ? "progress_activity" : "cloud_download"}
-                    onClick={handleImportModels}
-                    disabled={importingModels}
-                  >
-                    {importingModels ? "Importing..." : "Import models"}
-                  </Button>
-                )}
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={importingModels ? "progress_activity" : "cloud_download"}
+                  onClick={handleImportModels}
+                  disabled={importingModels || !canImport}
+                  title={canImport ? "Import models from the active connection" : "Add an active connection to import models"}
+                >
+                  {importingModels ? "Importing..." : "Import models"}
+                </Button>
                 {canImport && (
                   <Button
                     size="sm"

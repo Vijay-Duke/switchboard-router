@@ -38,30 +38,18 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      # Security-boundary and packaging regressions must never ship green.
-      # Keep this list in sync with tests that guard an invariant, not a feature.
-      - name: Run unit tests (known-pass subset)
+      - name: Check advertised locale parity
+        run: npm run check:i18n
+
+      - name: Check generated provider registry
+        run: npm run check:providers
+
+      - name: Check package version parity
+        run: npm run check:versions
+
+      - name: Run full test suite
         working-directory: tests
-        run: |
-          npx vitest run \
-            unit/dashboard-guard.test.js \
-            unit/require-api-key-gate.test.js \
-            unit/combo-fusion.test.js \
-            unit/switchboard-auto.test.js \
-            unit/base-executor-retry.test.js \
-            unit/data-dir.test.js \
-            unit/standalone-start.test.js \
-            unit/launch.test.js \
-            unit/responses-non-stream.test.js \
-            unit/cli-disable-mitm.test.js \
-            unit/cli-model-catalogs.test.js \
-            unit/cli-model-route-writes.test.js \
-            unit/cli-tool-guides.test.js \
-            unit/pi-multi-model-ui.test.js \
-            unit/droid-managed-models.test.js \
-            unit/ci-gate.test.js \
-            unit/oauth-cursor-auto-import.test.js \
-            --reporter=default
+        run: npx vitest run --reporter=default
 
   windows-invariants:
     name: Windows launcher and recovery

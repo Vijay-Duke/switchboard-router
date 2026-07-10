@@ -100,6 +100,28 @@ describe("DB SQLite layer — public API parity", () => {
     expect(back.providerSpecificData).toEqual({ foo: "bar" });
   });
 
+  it("providerConnections: encrypts nested provider secrets at rest", async () => {
+    const c = await sqliteDb.createProviderConnection({
+      provider: "nested-secret", authType: "oauth", email: "nested@example.com",
+      providerSpecificData: {
+        copilotToken: "copilot-secret",
+        cookies: { session: "cookie-secret", nested: ["cookie-two"] },
+      },
+    });
+    const back = await sqliteDb.getProviderConnectionById(c.id);
+    expect(back.providerSpecificData).toEqual({
+      copilotToken: "copilot-secret",
+      cookies: { session: "cookie-secret", nested: ["cookie-two"] },
+    });
+
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const adapter = await getAdapter();
+    const raw = adapter.get("SELECT data FROM providerConnections WHERE id = ?", [c.id]).data;
+    expect(raw).not.toContain("copilot-secret");
+    expect(raw).not.toContain("cookie-secret");
+    expect(raw).not.toContain("cookie-two");
+  });
+
   it("providerNodes: CRUD", async () => {
     const n = await sqliteDb.createProviderNode({ type: "openai", name: "Test", baseUrl: "https://api.test", apiType: "openai" });
     expect(n.id).toBeDefined();

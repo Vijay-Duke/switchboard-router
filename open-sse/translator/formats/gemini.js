@@ -179,10 +179,9 @@ function convertEnumValuesToStrings(obj) {
 
   if (obj.enum && Array.isArray(obj.enum)) {
     obj.enum = obj.enum.map(v => String(v));
-    // Gemini API requires type:"string" when enum is present — without it returns 400
-    if (!obj.type) {
-      obj.type = "string";
-    }
+    // Gemini API only accepts enum on type:"string". Leaving a declared
+    // type:"integer"/"number" beside the now-stringified values returns 400.
+    obj.type = "string";
   }
 
   for (const value of Object.values(obj)) {
@@ -198,8 +197,10 @@ function mergeAllOf(obj) {
 
   if (obj.allOf && Array.isArray(obj.allOf)) {
     const merged = {};
+    const rest = {};
 
     for (const item of obj.allOf) {
+      if (!item || typeof item !== "object") continue;
       if (item.properties) {
         if (!merged.properties) merged.properties = {};
         Object.assign(merged.properties, item.properties);
@@ -212,9 +213,19 @@ function mergeAllOf(obj) {
           }
         }
       }
+      // A `$ref` to a plain enum/scalar expands to an allOf item whose whole
+      // definition is `type`/`enum`/`items`/… — dropping those left the caller
+      // with an untyped property and a lost enum.
+      for (const [k, v] of Object.entries(item)) {
+        if (k === "properties" || k === "required") continue;
+        if (!(k in rest)) rest[k] = v;
+      }
     }
 
     delete obj.allOf;
+    for (const [k, v] of Object.entries(rest)) {
+      if (!(k in obj)) obj[k] = v; // explicit keys on the parent win
+    }
     if (merged.properties) obj.properties = { ...obj.properties, ...merged.properties };
     if (merged.required) obj.required = [...(obj.required || []), ...merged.required];
   }
@@ -316,12 +327,15 @@ export function cleanJSONSchemaForAntigravity(schema) {
 
   // Phase 1: Convert and prepare
   convertConstToEnum(cleaned);
-  convertEnumValuesToStrings(cleaned);
 
   // Phase 2: Flatten complex structures
   mergeAllOf(cleaned);
   flattenAnyOfOneOf(cleaned);
   flattenTypeArrays(cleaned);
+
+  // Phase 2.1: Normalize enums *after* flattening, so enums lifted out of
+  // allOf/anyOf branches are stringified and typed too.
+  convertEnumValuesToStrings(cleaned);
 
   // Phase 2.5: Infer missing type=object when properties exist (Gemini requirement)
   ensureObjectType(cleaned);

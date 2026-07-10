@@ -8,25 +8,8 @@ import { applyThinking, captureThinking } from "./concerns/thinkingUnified.js";
 import { captureSessionId } from "../utils/sessionManager.js";
 import { AntigravityExecutor } from "../executors/antigravity.js";
 import { PROVIDERS } from "../providers/index.js";
-
-// Registry for translators. Lazy-init guards against circular-import order:
-// translator modules call register() (side-effect) before this module's body runs.
-// var (not let): hoisted as undefined so register() can run during circular import (no TDZ).
-var requestRegistry;
-var responseRegistry;
-
-// Register translator
-export function register(from, to, requestFn, responseFn) {
-  requestRegistry ??= new Map();
-  responseRegistry ??= new Map();
-  const key = `${from}:${to}`;
-  if (requestFn) {
-    requestRegistry.set(key, requestFn);
-  }
-  if (responseFn) {
-    responseRegistry.set(key, responseFn);
-  }
-}
+import { getRequestTranslator, getResponseTranslator } from "./registry.js";
+export { register } from "./registry.js";
 
 // No-op: translators self-register via the static imports at the bottom of this file.
 function ensureInitialized() {}
@@ -79,13 +62,13 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
     // Direct route: if a translator is registered for this exact source:target
     // pair, use it instead of pivoting through OpenAI. This is lossless for
     // pairs like claude:kiro (avoids the claude->openai->kiro double-hop).
-    const directFn = requestRegistry.get(`${sourceFormat}:${targetFormat}`);
+    const directFn = getRequestTranslator(sourceFormat, targetFormat);
     if (directFn) {
       result = directFn(model, result, stream, credentials);
     } else {
       // Step 1: source -> openai (if source is not openai)
       if (sourceFormat !== FORMATS.OPENAI) {
-        const toOpenAI = requestRegistry.get(`${sourceFormat}:${FORMATS.OPENAI}`);
+        const toOpenAI = getRequestTranslator(sourceFormat, FORMATS.OPENAI);
         if (toOpenAI) {
           result = toOpenAI(model, result, stream, credentials);
           // Log OpenAI intermediate format
@@ -95,7 +78,7 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
 
       // Step 2: openai -> target (if target is not openai)
       if (targetFormat !== FORMATS.OPENAI) {
-        const fromOpenAI = requestRegistry.get(`${FORMATS.OPENAI}:${targetFormat}`);
+        const fromOpenAI = getRequestTranslator(FORMATS.OPENAI, targetFormat);
         if (fromOpenAI) {
           result = fromOpenAI(model, result, stream, credentials);
         }
@@ -160,7 +143,7 @@ export function translateResponse(targetFormat, sourceFormat, chunk, state) {
   // target:source pair, use it instead of pivoting through OpenAI. Mirrors the
   // request-side direct route (e.g. kiro:claude — KiroExecutor already emits
   // OpenAI-shaped chunks, so this converts them straight to Claude SSE).
-  const directFn = responseRegistry.get(`${targetFormat}:${sourceFormat}`);
+  const directFn = getResponseTranslator(targetFormat, sourceFormat);
   if (directFn) {
     const converted = directFn(chunk, state);
     return converted ? (Array.isArray(converted) ? converted : [converted]) : [];
@@ -168,7 +151,7 @@ export function translateResponse(targetFormat, sourceFormat, chunk, state) {
 
   // Step 1: target -> openai (if target is not openai)
   if (targetFormat !== FORMATS.OPENAI) {
-    const toOpenAI = responseRegistry.get(`${targetFormat}:${FORMATS.OPENAI}`);
+    const toOpenAI = getResponseTranslator(targetFormat, FORMATS.OPENAI);
     if (toOpenAI) {
       results = [];
       const converted = toOpenAI(chunk, state);
@@ -181,7 +164,7 @@ export function translateResponse(targetFormat, sourceFormat, chunk, state) {
 
   // Step 2: openai -> source (if source is not openai)
   if (sourceFormat !== FORMATS.OPENAI) {
-    const fromOpenAI = responseRegistry.get(`${FORMATS.OPENAI}:${sourceFormat}`);
+    const fromOpenAI = getResponseTranslator(FORMATS.OPENAI, sourceFormat);
     if (fromOpenAI) {
       const finalResults = [];
       for (const r of results) {

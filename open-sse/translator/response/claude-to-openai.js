@@ -1,4 +1,4 @@
-import { register } from "../index.js";
+import { register } from "../registry.js";
 import { FORMATS } from "../formats.js";
 import { ROLE, OPENAI_BLOCK, CLAUDE_BLOCK, OPENAI_FINISH } from "../schema/index.js";
 import { buildChunk } from "../concerns/chunk.js";
@@ -192,4 +192,3 @@ const convertStopReason = (reason) => toOpenAIFinish(reason, "claude");
 
 // Register
 register(FORMATS.CLAUDE, FORMATS.OPENAI, null, claudeToOpenAIResponse);
-

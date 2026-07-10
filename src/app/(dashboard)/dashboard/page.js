@@ -8,6 +8,7 @@ import { getApiKeys, getPromotedLearningVersion } from "@/lib/db/index.js";
  */
 export default async function DashboardPage() {
   let providerCount = 0;
+  let readyProviderCount = 0;
   let keyCount = 0;
   let comboCount = 0;
   /** @type {any} */
@@ -29,6 +30,12 @@ export default async function DashboardPage() {
       connections.map((c) => c.provider || c.providerId).filter(Boolean)
     );
     providerCount = providerIds.size || connections.length;
+    readyProviderCount = new Set(
+      connections
+        .filter((c) => c.isActive !== false && (c.testStatus === "active" || c.testStatus === "success"))
+        .map((c) => c.provider || c.providerId)
+        .filter(Boolean)
+    ).size;
 
     for (const c of connections) {
       const used = c.quotaUsed ?? c.usagePercent ?? c.quotaPercent ?? null;
@@ -98,6 +105,7 @@ export default async function DashboardPage() {
     <OverviewClient
       initialData={{
         providerCount,
+        readyProviderCount,
         keyCount,
         comboCount,
         defaultCombo,

@@ -22,9 +22,10 @@ import ModelCatalogInput from "./ModelCatalogInput";
  * @param {string} props.endpoint - e.g. /api/cli-tools/grok-settings
  * @param {string} [props.installHint]
  * @param {string} [props.runHint]
- * @param {(ctx: { baseUrl: string, apiKey: string, model: string, models: string[] }) => Array<{filename: string, content: string}>} [props.buildManualConfigs]
+ * @param {(ctx: { baseUrl: string, apiKey: string, model: string, models: string[], defaultModel: string }) => Array<{filename: string, content: string}>} [props.buildManualConfigs]
  * @param {boolean} [props.multipleModels]
  * @param {boolean} [props.hasDefaultModel]
+ * @param {boolean} [props.requiresModelScope]
  * @param {boolean} props.isExpanded
  * @param {Function} props.onToggle
  * @param {boolean} [props.hasActiveProviders]
@@ -45,6 +46,7 @@ export default function OpenAiCompatToolCard({
   buildManualConfigs,
   multipleModels = false,
   hasDefaultModel = true,
+  requiresModelScope = false,
   isExpanded,
   onToggle,
   hasActiveProviders,
@@ -82,7 +84,10 @@ export default function OpenAiCompatToolCard({
     if (!status.installed) return "not_installed";
     const base = status.settings?.baseUrl;
     if (!base) return "not_configured";
-    if (status.hasSwitchboard || matchKnownEndpoint(base, { tunnelPublicUrl, tailscaleUrl })) {
+    const endpointMatches = status.hasSwitchboard
+      || matchKnownEndpoint(base, { tunnelPublicUrl, tailscaleUrl });
+    const modelScopeMatches = !requiresModelScope || status.settings?.scopeConfigured === true;
+    if (endpointMatches && modelScopeMatches) {
       return "configured";
     }
     return "other";
@@ -275,7 +280,13 @@ export default function OpenAiCompatToolCard({
       : [selectedModel || "provider/model-id"];
     const model = selectedModel || models[0];
     if (typeof buildManualConfigs === "function") {
-      return buildManualConfigs({ baseUrl: base, apiKey: keyToUse, model, models });
+      return buildManualConfigs({
+        baseUrl: base,
+        apiKey: keyToUse,
+        model,
+        models,
+        defaultModel: selectedModel || models[0],
+      });
     }
     return [
       {

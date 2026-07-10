@@ -1,6 +1,5 @@
-// The workflows run a hand-maintained subset, not the full suite. That list has
-// silently drifted twice, letting a security-boundary test exist while neither
-// CI nor release ran it. These files guard an invariant — pin them.
+// CI and release must either run the full suite or explicitly pin every
+// security/packaging invariant below.
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
@@ -30,9 +29,10 @@ describe.each([
   [".github/workflows/release.yml"],
 ])("%s runs every invariant test", (workflow) => {
   const yaml = fs.readFileSync(path.join(repoRoot, workflow), "utf8");
+  const runsFullSuite = /npx vitest run --reporter=default/.test(yaml);
 
   it.each(GATED)("gates %s", (testFile) => {
-    expect(yaml).toContain(testFile);
+    expect(runsFullSuite || yaml.includes(testFile)).toBe(true);
   });
 
   it("has no broken line continuations in the vitest invocation", () => {
@@ -56,6 +56,8 @@ describe("release trigger invariants", () => {
     expect(release).toContain('      - "v*"');
     expect(release).not.toContain("workflow_dispatch:");
     expect(release).toContain("tag_name: ${{ needs.resolve-version.outputs.tag }}");
+    expect(release).toContain("assert-release-version.mjs");
+    expect(release).not.toContain("npm version");
   });
 
   it("keeps documentation deployment separate from product releases", () => {

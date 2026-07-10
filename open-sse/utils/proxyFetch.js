@@ -131,6 +131,15 @@ async function resolveRealIP(hostname) {
     resolver.setServers(GOOGLE_DNS_SERVERS);
     const resolve4 = promisify(resolver.resolve4.bind(resolver));
     const addresses = await resolve4(hostname);
+    if (DNS_CACHE.size >= MEMORY_CONFIG.dnsCacheMaxSize) {
+      const now = Date.now();
+      for (const [key, value] of DNS_CACHE) {
+        if (value.expiry <= now) DNS_CACHE.delete(key);
+      }
+      while (DNS_CACHE.size >= MEMORY_CONFIG.dnsCacheMaxSize) {
+        DNS_CACHE.delete(DNS_CACHE.keys().next().value);
+      }
+    }
     DNS_CACHE.set(hostname, { ip: addresses[0], expiry: Date.now() + MEMORY_CONFIG.dnsCacheTtlMs });
     return addresses[0];
   } catch (error) {
@@ -223,29 +232,66 @@ async function getDispatcher(proxyUrl) {
   if (!proxyDispatchers.has(normalized)) {
     // Evict oldest entry if max size reached
     if (proxyDispatchers.size >= MEMORY_CONFIG.proxyDispatchersMaxSize) {
-      proxyDispatchers.delete(proxyDispatchers.keys().next().value);
+      const oldestKey = proxyDispatchers.keys().next().value;
+      const oldest = proxyDispatchers.get(oldestKey);
+      proxyDispatchers.delete(oldestKey);
+      Promise.resolve(oldest?.close?.()).catch(() => {});
     }
     const { ProxyAgent } = await import("undici");
     proxyDispatchers.set(normalized, new ProxyAgent({ uri: normalized }));
   }
-
-  return proxyDispatchers.get(normalized);
+  const dispatcher = proxyDispatchers.get(normalized);
+  // Refresh insertion order so eviction is true least-recently-used.
+  proxyDispatchers.delete(normalized);
+  proxyDispatchers.set(normalized, dispatcher);
+  return dispatcher;
 }
 
 /**
  * Create HTTPS request with manual socket connection (bypass DNS)
  */
-async function createBypassRequest(parsedUrl, realIP, options) {
+export async function createBypassRequest(parsedUrl, realIP, options) {
   const httpsModule = await import("https");
   const netModule = await import("net");
   // CJS modules expose exports via .default in ESM dynamic import context
   const https = httpsModule.default ?? httpsModule;
   const net = netModule.default ?? netModule;
 
+  const CONNECT_TIMEOUT_MS = 10_000;
+
   return new Promise((resolve, reject) => {
     const socket = new net.Socket();
+    let settled = false;
+    let req;
+
+    function cleanup() {
+      socket.setTimeout(0);
+      if (options.signal) options.signal.removeEventListener("abort", onAbort);
+    }
+
+    function onAbort() {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket.destroy();
+      req?.destroy();
+      reject(new DOMException("The operation was aborted.", "AbortError"));
+    }
+
+    if (options.signal?.aborted) { onAbort(); return; }
+    if (options.signal) options.signal.addEventListener("abort", onAbort, { once: true });
+
+    socket.setTimeout(CONNECT_TIMEOUT_MS, () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket.destroy();
+      reject(new Error(`[ProxyFetch] connect timeout after ${CONNECT_TIMEOUT_MS}ms to ${realIP}`));
+    });
 
     socket.connect(HTTPS_PORT, realIP, () => {
+      socket.setTimeout(0);
+
       const reqOptions = {
         socket,
         // SNI + cert hostname are validated against the hostname the caller
@@ -263,7 +309,7 @@ async function createBypassRequest(parsedUrl, realIP, options) {
         },
       };
 
-      const req = https.request(reqOptions, (res) => {
+      req = https.request(reqOptions, (res) => {
         const response = {
           ok: res.statusCode >= HTTP_SUCCESS_MIN && res.statusCode < HTTP_SUCCESS_MAX,
           status: res.statusCode,
@@ -277,17 +323,29 @@ async function createBypassRequest(parsedUrl, realIP, options) {
           },
           json: async () => JSON.parse(await response.text()),
         };
+        settled = true;
+        cleanup();
         resolve(response);
       });
 
-      req.on("error", reject);
+      req.on("error", (err) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(err);
+      });
       if (options.body) {
         req.write(typeof options.body === "string" ? options.body : JSON.stringify(options.body));
       }
       req.end();
     });
 
-    socket.on("error", reject);
+    socket.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    });
   });
 }
 

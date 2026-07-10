@@ -40,6 +40,8 @@ export default {
     { id: "gemini-3-flash-preview", name: "Gemini 3 Flash Preview" },
     { id: "gpt-5.2", name: "GPT 5.2" },
     { id: "gpt-5.3-codex", name: "GPT 5.3 Codex" },
+    { id: "composer-2.5", name: "Composer 2.5" },
+    { id: "composer-2.5-fast", name: "Composer 2.5 Fast" },
   ],
   oauth: {
     apiEndpoint: "https://api2.cursor.sh",

@@ -127,7 +127,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
       success: false,
       response: new Response(JSON.stringify({ error: { message: `[${status}]: ${shortMsg}` } }), {
         status,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+        headers: { 'Content-Type': 'application/json' },
       }),
     };
   }

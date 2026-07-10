@@ -9,6 +9,8 @@ import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
+import { resolveProviderModels } from "open-sse/services/providerModels.js";
+import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -88,6 +90,17 @@ const getStaticProviderModels = (providerId) =>
     id: model.id,
     name: model.name || model.id,
   }));
+
+const withStaticFallback = (providerId, result, reason = "Live model discovery returned no models") => {
+  if (result?.models?.length) return result;
+  const models = getStaticProviderModels(providerId);
+  if (!models.length) return result || { models: [] };
+  return {
+    ...(result || {}),
+    models,
+    warning: result?.warning || `${reason}; using the static registry catalog.`,
+  };
+};
 
 // Generic custom resolver for OAuth providers that need refresh-on-401 + token persist.
 // Receives a `fetchFn(token)` and returns parsed models or throws.
@@ -267,6 +280,18 @@ const PROVIDER_MODELS_CONFIG = {
       };
     }
   },
+  clinepass: {
+    customResolver: async (connection) => {
+      const result = await resolveClinepassModels({
+        accessToken: connection.accessToken,
+        apiKey: connection.apiKey,
+      });
+      return result || {
+        models: [],
+        warning: "ClinePass returned no live models; falling back to static catalog.",
+      };
+    },
+  },
 
   // Custom resolvers (non-OpenAI-shaped APIs / token-refresh flows)
   kiro: {
@@ -384,6 +409,13 @@ const PROVIDER_MODELS_CONFIG = {
       const data = await response.json();
       return { models: parseOpenAIStyleModels(data) };
     }
+  },
+  cursor: {
+    customResolver: async (connection) => withStaticFallback(
+      connection.provider,
+      await resolveProviderModels(connection),
+      "Cursor model discovery failed",
+    ),
   }
 };
 
@@ -391,9 +423,10 @@ const PROVIDER_MODELS_CONFIG = {
  * GET /api/providers/[id]/models - Get models list from provider
  */
 export async function GET(request, { params }) {
+  let connection;
   try {
     const { id } = await params;
-    const connection = await getProviderConnectionById(id);
+    connection = await getProviderConnectionById(id);
 
     if (!connection) {
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
@@ -475,6 +508,20 @@ export async function GET(request, { params }) {
 
     const config = PROVIDER_MODELS_CONFIG[connection.provider];
     if (!config) {
+      const discovered = await resolveProviderModels(connection);
+      const resolved = withStaticFallback(
+        connection.provider,
+        discovered,
+        `Provider ${connection.provider} does not expose a configured model endpoint`,
+      );
+      if (resolved.models?.length) {
+        return NextResponse.json({
+          provider: connection.provider,
+          connectionId: connection.id,
+          models: resolved.models,
+          ...(resolved.warning ? { warning: resolved.warning } : {}),
+        });
+      }
       return NextResponse.json(
         { error: `Provider ${connection.provider} does not support models listing` },
         { status: 400 }
@@ -485,13 +532,23 @@ export async function GET(request, { params }) {
     if (typeof config.customResolver === "function") {
       const result = await config.customResolver(connection);
       if (result.error) {
-        return NextResponse.json({ error: result.error }, { status: result.status || 500 });
+        const fallback = withStaticFallback(connection.provider, result, result.error);
+        if (!fallback.models?.length) {
+          return NextResponse.json({ error: result.error }, { status: result.status || 500 });
+        }
+        return NextResponse.json({
+          provider: connection.provider,
+          connectionId: connection.id,
+          models: fallback.models,
+          ...(fallback.warning ? { warning: fallback.warning } : {}),
+        });
       }
+      const resolved = withStaticFallback(connection.provider, result);
       return NextResponse.json({
         provider: connection.provider,
         connectionId: connection.id,
-        models: result.models,
-        ...(result.warning ? { warning: result.warning } : {})
+        models: resolved.models,
+        ...(resolved.warning ? { warning: resolved.warning } : {})
       });
     }
 
@@ -531,6 +588,15 @@ export async function GET(request, { params }) {
     if (!response.ok) {
       const errorText = await response.text();
       console.log(`Error fetching models from ${connection.provider}:`, errorText);
+      const staticModels = getStaticProviderModels(connection.provider);
+      if (staticModels.length) {
+        return NextResponse.json({
+          provider: connection.provider,
+          connectionId: connection.id,
+          models: staticModels,
+          warning: `Live model discovery failed (${response.status}); using the static registry catalog.`,
+        });
+      }
       return NextResponse.json(
         { error: `Failed to fetch models: ${response.status}` },
         { status: response.status }
@@ -539,14 +605,25 @@ export async function GET(request, { params }) {
 
     const data = await response.json();
     const models = config.parseResponse(data);
+    const resolvedModels = models.length ? models : getStaticProviderModels(connection.provider);
 
     return NextResponse.json({
       provider: connection.provider,
       connectionId: connection.id,
-      models
+      models: resolvedModels,
+      ...(models.length ? {} : { warning: "Live model discovery returned no models; using the static registry catalog." }),
     });
   } catch (error) {
     console.log("Error fetching provider models:", error);
+    const staticModels = connection ? getStaticProviderModels(connection.provider) : [];
+    if (staticModels.length) {
+      return NextResponse.json({
+        provider: connection.provider,
+        connectionId: connection.id,
+        models: staticModels,
+        warning: "Live model discovery failed; using the static registry catalog.",
+      });
+    }
     return NextResponse.json({ error: "Failed to fetch models" }, { status: 500 });
   }
 }

@@ -4,8 +4,35 @@ import fs from "fs";
 import os from "os";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 
-const KILL_TIMEOUT_MS = 5000;
-const PROCESS_WAIT_MS = 1500;
+const PROCESS_WAIT_MS = 2000;
+
+function isPidAlive(pid) {
+  try { process.kill(Number(pid), 0); return true; } catch { return false; }
+}
+
+async function terminateOwnedPid(pid) {
+  const numericPid = Number(pid);
+  if (!Number.isInteger(numericPid) || numericPid <= 1 || numericPid === process.pid) return;
+  try {
+    if (process.platform === "win32") {
+      execSync(`taskkill /T /PID ${numericPid}`, { stdio: "ignore", windowsHide: true, timeout: 3000 });
+    } else {
+      process.kill(numericPid, "SIGTERM");
+    }
+  } catch { /* already dead or inaccessible */ }
+  const deadline = Date.now() + PROCESS_WAIT_MS;
+  while (isPidAlive(numericPid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (!isPidAlive(numericPid)) return;
+  try {
+    if (process.platform === "win32") {
+      execSync(`taskkill /F /T /PID ${numericPid}`, { stdio: "ignore", windowsHide: true, timeout: 3000 });
+    } else {
+      process.kill(numericPid, "SIGKILL");
+    }
+  } catch { /* best effort */ }
+}
 
 // Kill MITM server by PID file (MITM may run as admin/sudo)
 function killMitmByPidFile() {
@@ -22,76 +49,30 @@ function killMitmByPidFile() {
     if (!pid) return;
 
     if (process.platform === "win32") {
-      // taskkill first (works if same user); fallback to PowerShell Stop-Process which can kill admin process if our token allows
-      try { execSync(`taskkill /F /T /PID ${pid}`, { stdio: "ignore", windowsHide: true, timeout: 3000 }); } catch {
+      try { execSync(`taskkill /T /PID ${pid}`, { stdio: "ignore", windowsHide: true, timeout: 3000 }); } catch {
         try { execSync(`powershell -NonInteractive -WindowStyle Hidden -Command "Stop-Process -Id ${pid} -Force"`, { stdio: "ignore", windowsHide: true, timeout: 3000 }); } catch { /* best effort */ }
       }
     } else {
       try {
-        execSync(`sudo -n kill -9 ${pid} 2>/dev/null`, { stdio: "ignore", timeout: 3000 });
+        execSync(`sudo -n kill -TERM ${pid} 2>/dev/null`, { stdio: "ignore", timeout: 3000 });
       } catch {
-        try { process.kill(pid, "SIGKILL"); } catch { /* best effort */ }
+        try { process.kill(pid, "SIGTERM"); } catch { /* best effort */ }
       }
     }
     try { fs.unlinkSync(mitmPidFile); } catch { /* best effort */ }
   } catch { /* best effort */ }
 }
 
-// Collect PIDs of all switchboard-related processes (excluding current)
+// Collect only PIDs recorded by the CLI launcher. Process-name substring
+// matching can terminate unrelated Next.js apps and developer tools.
 function collectAppPids() {
-  const pids = [];
-  const platform = process.platform;
-
-  if (platform === "win32") {
-    try {
-      const psCmd = `powershell -NonInteractive -WindowStyle Hidden -Command "Get-WmiObject Win32_Process -Filter 'Name=\\"node.exe\\"' | Select-Object ProcessId,CommandLine | ConvertTo-Csv -NoTypeInformation"`;
-      const output = execSync(psCmd, { encoding: "utf8", windowsHide: true, timeout: KILL_TIMEOUT_MS });
-      const lines = output.split("\n").slice(1).filter(l => l.trim());
-      lines.forEach(line => {
-        const lower = line.toLowerCase();
-        // Match anything running from switchboard install dir or wrapper cli.js
-        const isAppProcess = lower.includes("switchboard") ||
-          lower.includes("next-server") ||
-          lower.includes("\\bin\\app\\") ||
-          lower.includes("/bin/app/") ||
-          lower.includes("cli.js");
-        if (isAppProcess) {
-          const match = line.match(/^"(\d+)"/);
-          if (match && match[1] && match[1] !== process.pid.toString()) pids.push(match[1]);
-        }
-      });
-    } catch { /* no processes */ }
-
-    // Kill cloudflared + tray binaries (hold app dir lock)
-    for (const procName of ["tray_windows_release"]) {
-      try {
-        const cmd = `powershell -NonInteractive -WindowStyle Hidden -Command "Get-Process ${procName} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id"`;
-        const out = execSync(cmd, { encoding: "utf8", windowsHide: true, timeout: KILL_TIMEOUT_MS });
-        out.split("\n").forEach(l => {
-          const pid = l.trim();
-          if (pid && !isNaN(pid)) pids.push(pid);
-        });
-      } catch { /* not running */ }
-    }
-  } else {
-    try {
-      const output = execSync("ps aux 2>/dev/null", { encoding: "utf8", timeout: KILL_TIMEOUT_MS });
-      output.split("\n").forEach(line => {
-        const isAppProcess = line.includes("switchboard") ||
-          line.includes("next-server") ||
-                    line.includes("/bin/app/") ||
-          line.includes("tray_darwin") ||
-          line.includes("tray_linux");
-        if (isAppProcess) {
-          const parts = line.trim().split(/\s+/);
-          const pid = parts[1];
-          if (pid && !isNaN(pid) && pid !== process.pid.toString()) pids.push(pid);
-        }
-      });
-    } catch { /* no processes */ }
-  }
-
-  return pids;
+  try {
+    const stateFile = path.join(getDataDir(), "runtime", "owned-processes.json");
+    const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    return [state.cliPid, state.serverPid]
+      .map(Number)
+      .filter((pid) => Number.isInteger(pid) && pid > 1 && pid !== process.pid);
+  } catch { return []; }
 }
 
 // Copy updater.js into DATA_DIR so npm -g can overwrite node_modules safely
@@ -138,21 +119,7 @@ function ensureRuntimeUpdater(bundledPath) {
 export async function killAppProcesses() {
   killMitmByPidFile();
   const pids = collectAppPids();
-  const platform = process.platform;
-
-  pids.forEach(pid => {
-    try {
-      if (platform === "win32") {
-        execSync(`taskkill /F /PID ${pid} 2>nul`, { stdio: "ignore", shell: true, windowsHide: true, timeout: 3000 });
-      } else {
-        execSync(`kill -9 ${pid} 2>/dev/null`, { stdio: "ignore", timeout: 3000 });
-      }
-    } catch { /* already dead */ }
-  });
-
-  if (pids.length > 0) {
-    await new Promise(r => setTimeout(r, PROCESS_WAIT_MS));
-  }
+  await Promise.all([...new Set(pids)].map(terminateOwnedPid));
 }
 
 // Resolve npx/switchboard binary to relaunch after update (cross-platform)

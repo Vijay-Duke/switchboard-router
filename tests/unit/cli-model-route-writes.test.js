@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { parse as parseYaml } from "yaml";
 import { parseTOML } from "confbox";
 
@@ -44,11 +45,214 @@ describe("CLI catalog routes write native client schemas", () => {
     expect((await POST(post({ ...payload, apiKey: { value: "bad" } }))).status).toBe(400);
   });
 
-  it("writes Pi's models array", async () => {
-    const { POST } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
+  it("repairs structurally invalid Pi provider catalogs during Apply", async () => {
+    const piDir = path.join(home, ".pi/agent");
+    await fs.mkdir(piDir, { recursive: true });
+    await fs.writeFile(path.join(piDir, "models.json"), JSON.stringify({ providers: [] }));
+    await fs.writeFile(path.join(piDir, "settings.json"), JSON.stringify({ theme: "dark" }));
+    const { POST, DELETE } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
     expect((await POST(post())).status).toBe(200);
-    const config = JSON.parse(await fs.readFile(path.join(home, ".pi/agent/models.json"), "utf8"));
+    const config = JSON.parse(await fs.readFile(path.join(piDir, "models.json"), "utf8"));
+    expect(Array.isArray(config.providers)).toBe(false);
     expect(config.providers.switchboard.models.map((entry) => entry.id)).toEqual(payload.models);
+    expect((await DELETE()).status).toBe(200);
+  });
+
+  it("ignores a malformed prior model list instead of crashing Apply", async () => {
+    const piDir = path.join(home, ".pi/agent");
+    await fs.mkdir(piDir, { recursive: true });
+    await fs.writeFile(path.join(piDir, "models.json"), JSON.stringify({
+      providers: { switchboard: { models: { id: "not-an-array" } } },
+    }));
+    await fs.writeFile(path.join(piDir, "settings.json"), JSON.stringify({}));
+    const { POST, DELETE } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
+    expect((await POST(post())).status).toBe(200);
+    const config = JSON.parse(await fs.readFile(path.join(piDir, "models.json"), "utf8"));
+    expect(config.providers.switchboard.models.map((entry) => entry.id)).toEqual(payload.models);
+    expect((await DELETE()).status).toBe(200);
+  });
+
+  it("does not mark a remote URL containing localhost text as a local Switchboard endpoint", async () => {
+    const piDir = path.join(home, ".pi/agent");
+    await fs.mkdir(piDir, { recursive: true });
+    await fs.writeFile(path.join(piDir, "models.json"), JSON.stringify({
+      providers: { switchboard: { baseUrl: "https://evil.example/localhost/v1", models: [] } },
+    }));
+    await fs.writeFile(path.join(piDir, "settings.json"), JSON.stringify({}));
+    const { GET } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
+    const status = await (await GET()).json();
+    expect(status.hasSwitchboard).toBe(false);
+  });
+
+  it("recognizes its provider after Pi rewrites object keys in a different order", async () => {
+    const piDir = path.join(home, ".pi/agent");
+    await fs.mkdir(piDir, { recursive: true });
+    await fs.writeFile(path.join(piDir, "models.json"), JSON.stringify({ providers: {} }));
+    await fs.writeFile(path.join(piDir, "settings.json"), JSON.stringify({}));
+    const { POST, DELETE } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
+    expect((await POST(post())).status).toBe(200);
+
+    const config = JSON.parse(await fs.readFile(path.join(piDir, "models.json"), "utf8"));
+    const provider = config.providers.switchboard;
+    config.providers.switchboard = {
+      models: provider.models,
+      compat: provider.compat,
+      authHeader: provider.authHeader,
+      apiKey: provider.apiKey,
+      api: provider.api,
+      baseUrl: provider.baseUrl,
+    };
+    await fs.writeFile(path.join(piDir, "models.json"), JSON.stringify(config));
+    expect((await DELETE()).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(path.join(piDir, "models.json"), "utf8")).providers.switchboard).toBeUndefined();
+  });
+
+  it("scopes Pi to selected Switchboard models and restores prior settings", async () => {
+    const piDir = path.join(home, ".pi/agent");
+    await fs.mkdir(piDir, { recursive: true });
+    await fs.writeFile(path.join(piDir, "models.json"), JSON.stringify({
+      providers: {
+        zai: { models: [{ id: "glm-4.5-air" }] },
+        switchboard: { baseUrl: "https://prior.example/v1", models: [{ id: "prior/model" }] },
+      },
+    }));
+    await fs.writeFile(path.join(piDir, "settings.json"), JSON.stringify({
+      theme: "dark",
+      defaultProvider: "zai",
+      defaultModel: "glm-4.5-air",
+      enabledModels: ["zai/glm-4.5-air"],
+    }));
+    const { GET, POST, DELETE } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
+    const before = await (await GET()).json();
+    expect(before.settings.scopeConfigured).toBe(false);
+    expect((await POST(post())).status).toBe(200);
+    const config = JSON.parse(await fs.readFile(path.join(piDir, "models.json"), "utf8"));
+    const settings = JSON.parse(await fs.readFile(path.join(piDir, "settings.json"), "utf8"));
+    expect(config.providers.switchboard.models.map((entry) => entry.id)).toEqual(payload.models);
+    expect(config.providers.zai.models[0].id).toBe("glm-4.5-air");
+    expect(settings).toMatchObject({
+      theme: "dark",
+      defaultProvider: "switchboard",
+      defaultModel: payload.defaultModel,
+      enabledModels: payload.models.map((model) => `switchboard/${model}`),
+    });
+    const status = await (await GET()).json();
+    expect(status.settings.defaultModel).toBe(payload.defaultModel);
+    expect(status.settings.scopeConfigured).toBe(true);
+
+    expect((await DELETE()).status).toBe(200);
+    const restoredModels = JSON.parse(await fs.readFile(path.join(piDir, "models.json"), "utf8"));
+    const restoredSettings = JSON.parse(await fs.readFile(path.join(piDir, "settings.json"), "utf8"));
+    expect(restoredModels.providers.switchboard).toEqual({
+      baseUrl: "https://prior.example/v1",
+      models: [{ id: "prior/model" }],
+    });
+    expect(restoredModels.providers.zai.models[0].id).toBe("glm-4.5-air");
+    expect(restoredSettings).toEqual({
+      theme: "dark",
+      defaultProvider: "zai",
+      defaultModel: "glm-4.5-air",
+      enabledModels: ["zai/glm-4.5-air"],
+    });
+
+    // Reset is idempotent even when the user had a pre-existing provider named
+    // switchboard, and a later Apply starts a fresh backup cycle.
+    expect((await DELETE()).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(path.join(piDir, "models.json"), "utf8"))).toEqual(restoredModels);
+    expect(JSON.parse(await fs.readFile(path.join(piDir, "settings.json"), "utf8"))).toEqual(restoredSettings);
+    expect((await POST(post())).status).toBe(200);
+    expect((await DELETE()).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(path.join(piDir, "models.json"), "utf8"))).toEqual(restoredModels);
+    expect(JSON.parse(await fs.readFile(path.join(piDir, "settings.json"), "utf8"))).toEqual(restoredSettings);
+  });
+
+  it("does not restore a default model after the user switches away from Switchboard", async () => {
+    const piDir = path.join(home, ".pi/agent");
+    await fs.mkdir(piDir, { recursive: true });
+    await fs.writeFile(path.join(piDir, "models.json"), JSON.stringify({ providers: {} }));
+    await fs.writeFile(path.join(piDir, "settings.json"), JSON.stringify({
+      defaultProvider: "zai",
+      defaultModel: "glm-4.5-air",
+    }));
+    const { POST, DELETE } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
+    expect((await POST(post({ ...payload, models: ["switchboard/model"], defaultModel: "switchboard/model" }))).status).toBe(200);
+
+    // Simulate a user selecting another provider while retaining the same
+    // model-id string. Reset must not overwrite that current choice.
+    const current = JSON.parse(await fs.readFile(path.join(piDir, "settings.json"), "utf8"));
+    current.defaultProvider = "zai";
+    await fs.writeFile(path.join(piDir, "settings.json"), JSON.stringify(current));
+    expect((await DELETE()).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(path.join(piDir, "settings.json"), "utf8"))).toMatchObject({
+      defaultProvider: "zai",
+      defaultModel: "switchboard/model",
+    });
+  });
+
+  it("serializes concurrent Pi applies so settings and models stay in the same generation", async () => {
+    const piDir = path.join(home, ".pi/agent");
+    await fs.mkdir(piDir, { recursive: true });
+    await fs.writeFile(path.join(piDir, "models.json"), JSON.stringify({ providers: {} }));
+    await fs.writeFile(path.join(piDir, "settings.json"), JSON.stringify({ theme: "dark" }));
+    const { POST, DELETE } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
+    const first = ["provider-one/model-a", "provider-one/model-b"];
+    const second = ["provider-two/model-a"];
+    const [firstResponse, secondResponse] = await Promise.all([
+      POST(post({ ...payload, models: first, defaultModel: first[0] })),
+      POST(post({ ...payload, models: second, defaultModel: second[0] })),
+    ]);
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+
+    const config = JSON.parse(await fs.readFile(path.join(piDir, "models.json"), "utf8"));
+    const settings = JSON.parse(await fs.readFile(path.join(piDir, "settings.json"), "utf8"));
+    const catalog = config.providers.switchboard.models.map((entry) => entry.id);
+    expect([first, second]).toContainEqual(catalog);
+    expect(settings.enabledModels).toEqual(catalog.map((model) => `switchboard/${model}`));
+    expect(settings.defaultModel).toBe(catalog[0]);
+    expect((await DELETE()).status).toBe(200);
+  });
+
+  it("writes a source-safe Grok env and restores the previous user configuration", async () => {
+    const grokDir = path.join(home, ".grok");
+    const settingsPath = path.join(grokDir, "user-settings.json");
+    const envPath = path.join(grokDir, "switchboard.env");
+    await fs.mkdir(grokDir, { recursive: true });
+    const previousSettings = { theme: "dark", apiKey: "prior-key", defaultModel: "prior-model" };
+    const previousEnv = "export CUSTOM_VALUE='keep'\n";
+    await fs.writeFile(settingsPath, JSON.stringify(previousSettings));
+    await fs.writeFile(envPath, previousEnv);
+    const { POST, DELETE } = await import("../../src/app/api/cli-tools/grok-settings/route.js");
+    const hostile = {
+      baseUrl: "http://127.0.0.1:20128",
+      apiKey: "key'$(printf PWNED);$HOME",
+      model: "vendor/model'$(printf BAD)",
+    };
+
+    expect((await POST(post(hostile))).status).toBe(200);
+    const sourced = execFileSync(
+      "/bin/sh",
+      [
+        "-c",
+        '. "$1"; printf "%s\\n%s\\n%s" "$GROK_API_KEY" "$GROK_BASE_URL" "$GROK_MODEL"',
+        "sh",
+        envPath,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(sourced.split("\n")).toEqual([
+      hostile.apiKey,
+      `${hostile.baseUrl}/v1`,
+      hostile.model,
+    ]);
+    expect((await POST(post({ ...hostile, apiKey: "bad\ncommand" }))).status).toBe(400);
+
+    expect((await DELETE()).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(settingsPath, "utf8"))).toEqual(previousSettings);
+    expect(await fs.readFile(envPath, "utf8")).toBe(previousEnv);
+    expect((await DELETE()).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(settingsPath, "utf8"))).toEqual(previousSettings);
+    expect(await fs.readFile(envPath, "utf8")).toBe(previousEnv);
   });
 
   it("writes jcode's repeated model entries", async () => {

@@ -1,17 +1,11 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { assertPublicUrl } from "@/shared/utils/ssrfGuard.js";
+import { assertPublicUrlResolved } from "@/shared/utils/ssrfGuard.js";
 import { isLocalRequest } from "@/dashboardGuard";
 
 // Fetch with timeout wrapper
-const fetchWithTimeout = (url, options, timeout = 10000) => {
-  return Promise.race([
-    fetch(url, options),
-    new Promise((_, reject) => 
-      setTimeout(() => reject(new Error("Request timeout")), timeout)
-    )
-  ]);
-};
+const fetchWithTimeout = (url, options, timeout = 10000) =>
+  fetch(url, { ...options, signal: AbortSignal.timeout(timeout), redirect: "error" });
 
 // Validate URL format
 const isValidUrl = (url) => {
@@ -70,7 +64,7 @@ export async function POST(request) {
     // SSRF guard for remote callers; local host keeps self-hosted nodes (e.g. ollama-local)
     if (!isLocalRequest(request)) {
       try {
-        assertPublicUrl(baseUrl);
+        await assertPublicUrlResolved(baseUrl);
       } catch {
         return NextResponse.json({ error: "URL not allowed" }, { status: 400 });
       }

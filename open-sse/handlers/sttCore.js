@@ -149,7 +149,7 @@ async function transcribeOpenAICompatible(cfg, file, model, token, formData) {
   if (!res.ok) return upstreamError(res);
   const ct = res.headers.get("content-type") || "application/json";
   const txt = await res.text();
-  return { success: true, response: new Response(txt, { status: 200, headers: { "Content-Type": ct, "Access-Control-Allow-Origin": "*" } }) };
+  return { success: true, response: new Response(txt, { status: 200, headers: { "Content-Type": ct } }) };
 }
 
 function jsonResponse(obj) {
@@ -157,7 +157,7 @@ function jsonResponse(obj) {
     success: true,
     response: new Response(JSON.stringify(obj), {
       status: 200,
-      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+      headers: { "Content-Type": "application/json" },
     }),
   };
 }

@@ -12,7 +12,7 @@ const PROVIDER_API = {
 
 export async function OPTIONS() {
   return new Response(null, {
-    headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, OPTIONS" },
+    headers: { "Access-Control-Allow-Methods": "GET, OPTIONS" },
   });
 }
 
@@ -27,7 +27,7 @@ export async function GET(request) {
     if (!provider || !PROVIDER_API[provider]) {
       return Response.json(
         { error: { message: `provider must be one of: ${Object.keys(PROVIDER_API).join(", ")}`, type: "invalid_request_error" } },
-        { status: 400, headers: { "Access-Control-Allow-Origin": "*" } },
+        { status: 400 },
       );
     }
 
@@ -38,7 +38,7 @@ export async function GET(request) {
     if (!res.ok || data.error) {
       return Response.json(
         { error: { message: data.error || `Upstream ${res.status}`, type: "server_error" } },
-        { status: res.status, headers: { "Access-Control-Allow-Origin": "*" } },
+        { status: res.status },
       );
     }
 
@@ -58,12 +58,11 @@ export async function GET(request) {
     }));
 
     return Response.json({ object: "list", data: data_out }, {
-      headers: { "Access-Control-Allow-Origin": "*" },
     });
   } catch (err) {
     return Response.json(
       { error: { message: err.message || "Failed", type: "server_error" } },
-      { status: 502, headers: { "Access-Control-Allow-Origin": "*" } },
+      { status: 502 },
     );
   }
 }

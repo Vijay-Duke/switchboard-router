@@ -4,6 +4,7 @@ import { getExecutor } from "../executors/index.js";
 import { refreshWithRetry } from "../services/tokenRefresh.js";
 import { withCredentialRefreshLock } from "../services/oauthCredentialManager.js";
 import { getEmbeddingAdapter } from "./embeddingProviders/index.js";
+import { assertPublicUrlResolved } from "../utils/ssrfGuard.js";
 
 /**
  * Core embeddings handler — orchestrator only. Provider-specific URL/headers/body/normalize
@@ -51,6 +52,7 @@ export async function handleEmbeddingsCore({
 
   let providerResponse;
   try {
+    await assertPublicUrlResolved(url);
     providerResponse = await fetch(url, {
       method: "POST",
       headers,
@@ -83,6 +85,8 @@ export async function handleEmbeddingsCore({
       try {
         const retryHeaders = adapter.buildHeaders(credentials, ctx);
         const retryUrl = adapter.buildUrl(model, credentials, ctx);
+        await assertPublicUrlResolved(retryUrl);
+        await providerResponse.body?.cancel?.().catch?.(() => {});
         providerResponse = await fetch(retryUrl, {
           method: "POST",
           headers: retryHeaders,
@@ -120,7 +124,6 @@ export async function handleEmbeddingsCore({
     response: new Response(JSON.stringify(normalized), {
       headers: {
         "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
       },
     }),
   };

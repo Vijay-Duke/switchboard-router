@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
-const { spawn, exec, execSync } = require("child_process");
+const { spawn, execSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
 const os = require("os");
+const { openBrowser: openBrowserWithoutShell } = require("./src/shared/openBrowser");
 
 // Native spinner - no external dependency
 function createSpinner(text) {
@@ -90,12 +91,6 @@ function getDisplayHost() {
   return host;
 }
 const MAX_PORT_ATTEMPTS = 10;
-// Identifiers for killAllAppProcesses — bin + package name only
-const PROCESS_IDENTIFIERS = [
-  "switchboard",
-  "switchboard-router",
-];
-
 // Parse arguments
 let port = DEFAULT_PORT;
 let host = DEFAULT_HOST;
@@ -166,6 +161,29 @@ function compareVersions(a, b) {
 // adoption or an explicit DATA_DIR, leaving a privileged MITM process alive on
 // port 443. pinDataDir() ran at startup, so this is the resolved value.
 const getAppDataDir = getDataDir;
+const getProcessStateFile = () => path.join(getAppDataDir(), "runtime", "owned-processes.json");
+
+function readOwnedProcessState() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(getProcessStateFile(), "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch { return {}; }
+}
+
+function writeOwnedProcessState(serverPid) {
+  try {
+    const file = getProcessStateFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ cliPid: process.pid, serverPid, serverPath, writtenAt: Date.now() }), { mode: 0o600 });
+  } catch { /* best effort */ }
+}
+
+function clearOwnedProcessState() {
+  try {
+    const state = readOwnedProcessState();
+    if (Number(state.cliPid) === process.pid) fs.unlinkSync(getProcessStateFile());
+  } catch { /* best effort */ }
+}
 
 // Kill PID from file (best-effort, removes file after)
 function killByPidFile(pidFile) {
@@ -221,7 +239,7 @@ function killCloudflaredByAppPort(appPort) {
   return pids;
 }
 
-// Kill all switchboard processes
+// Kill only processes previously recorded by this launcher.
 function killAllAppProcesses(appPort) {
   return new Promise((resolve) => {
     try {
@@ -231,83 +249,42 @@ function killAllAppProcesses(appPort) {
       killTunnelByPidFile();
 
       const platform = process.platform;
-      let pids = [];
+      const owned = readOwnedProcessState();
+      const pids = [owned.serverPid, owned.cliPid]
+        .map(Number)
+        .filter((pid) => Number.isInteger(pid) && pid > 1 && pid !== process.pid);
 
       // Catch stale PID files: kill cloudflared bound to this app's port
       pids.push(...killCloudflaredByAppPort(appPort));
 
-      if (platform === "win32") {
-        // Windows: use WMI to get full CommandLine (tasklist /V doesn't include it)
-        try {
-          const psCmd = `powershell -NonInteractive -WindowStyle Hidden -Command "Get-WmiObject Win32_Process -Filter 'Name=\\"node.exe\\"' | Select-Object ProcessId,CommandLine | ConvertTo-Csv -NoTypeInformation"`;
-          const output = execSync(psCmd, {
-            encoding: "utf8",
-            windowsHide: true,
-            timeout: 5000
-          });
-          const lines = output.split("\n").slice(1).filter(l => l.trim());
-          lines.forEach(line => {
-            // Whitelist: real node process running switchboard/cli.js, or next-server.
-            // Avoids killing editors/grep/strace/cursor that just have "switchboard" in cmdline.
-            const cmd = line.toLowerCase();
-            const isAppProcess =
-              (cmd.includes("node") && cmd.includes("switchboard") && (cmd.includes("cli.js") || cmd.includes("\\switchboard") || cmd.includes("/switchboard")))
-              || cmd.includes("next-server");
-            if (isAppProcess) {
-              const match = line.match(/^"(\d+)"/);
-              if (match && match[1] && match[1] !== process.pid.toString()) {
-                pids.push(match[1]);
-              }
-            }
-          });
-        } catch (e) {
-          // No processes found or error - continue
-        }
-      } else {
-        // macOS/Linux: use ps to find all matching processes
-        try {
-          const output = execSync('ps aux 2>/dev/null', {
-            encoding: 'utf8',
-            timeout: 5000
-          });
-          const lines = output.split('\n');
-
-          lines.forEach(line => {
-            // Whitelist: real node process running switchboard/cli.js, or next-server.
-            // Avoids killing grep/strace/editors/cursor that incidentally match "switchboard".
-            const cmd = line.toLowerCase();
-            const isAppProcess =
-              (cmd.includes("node") && cmd.includes("switchboard") && (cmd.includes("cli.js") || cmd.includes("/switchboard")))
-              || cmd.includes("next-server");
-            if (isAppProcess) {
-              const parts = line.trim().split(/\s+/);
-              const pid = parts[1];
-              if (pid && !isNaN(pid) && pid !== process.pid.toString()) {
-                pids.push(pid);
-              }
-            }
-          });
-        } catch (e) {
-          // No processes found or error - continue
-        }
-      }
-
-      // Kill all found processes
+      // Gracefully stop owned processes, then force only survivors.
       if (pids.length > 0) {
-        pids.forEach(pid => {
+        const uniquePids = [...new Set(pids.map(Number))];
+        uniquePids.forEach(pid => {
           try {
             if (platform === "win32") {
-              execSync(`taskkill /F /PID ${pid} 2>nul`, { stdio: 'ignore', shell: true, windowsHide: true, timeout: 3000 });
+              execSync(`taskkill /T /PID ${pid} 2>nul`, { stdio: 'ignore', shell: true, windowsHide: true, timeout: 3000 });
             } else {
-              execSync(`kill -9 ${pid} 2>/dev/null`, { stdio: 'ignore', timeout: 3000 });
+              process.kill(pid, "SIGTERM");
             }
           } catch (err) {
             // Process already dead or can't kill - continue
           }
         });
-
-        // Wait for processes to fully terminate
-        setTimeout(() => resolve(), 1000);
+        setTimeout(() => {
+          uniquePids.forEach((pid) => {
+            try {
+              process.kill(pid, 0);
+              if (platform === "win32") {
+                execSync(`taskkill /F /T /PID ${pid} 2>nul`, { stdio: "ignore", shell: true, windowsHide: true, timeout: 3000 });
+              } else {
+                process.kill(pid, "SIGKILL");
+              }
+            } catch { /* already stopped */ }
+          });
+          try { fs.unlinkSync(getProcessStateFile()); } catch { }
+          resolve();
+        }, 2000);
       } else {
         resolve();
       }
@@ -494,21 +471,10 @@ function checkForUpdate() {
 
 // Open browser
 function openBrowser(url) {
-  const platform = process.platform;
-  let cmd;
-
-  if (platform === "darwin") {
-    cmd = `open "${url}"`;
-  } else if (platform === "win32") {
-    cmd = `start "" "${url}"`;
-  } else {
-    cmd = `xdg-open "${url}"`;
-  }
-
-  exec(cmd, { windowsHide: true }, (err) => {
-    if (err) {
+  openBrowserWithoutShell(url, {
+    onError: () => {
       console.log(`Open browser manually: ${url}`);
-    }
+    },
   });
 }
 
@@ -612,6 +578,7 @@ function startServer(latestVersion) {
         HOSTNAME: host
       }
     });
+    if (child.pid) writeOwnedProcessState(child.pid);
     if (!showLog && child.stderr) {
       child.stderr.on("data", (data) => {
         const lines = data.toString().split("\n").filter(Boolean);
@@ -624,7 +591,7 @@ function startServer(latestVersion) {
 
   let server = spawnServer();
 
-  // Cleanup function - force kill server process
+  // Cleanup function - graceful SIGTERM → wait → SIGKILL
   let isCleaningUp = false;
   function cleanup() {
     if (isCleaningUp) return;
@@ -639,12 +606,16 @@ function startServer(latestVersion) {
       killProxyByPidFile();
       // Kill cloudflared/tailscale via PID file (only this app's tunnel)
       killTunnelByPidFile();
-      // Kill server process directly
+      // Graceful shutdown: SIGTERM first so server can flush DB, then SIGKILL
       if (server.pid) {
-        process.kill(server.pid, "SIGKILL");
+        try { process.kill(server.pid, "SIGTERM"); } catch { }
+        if (!waitForExit(server.pid, 2000)) {
+          try { process.kill(server.pid, "SIGKILL"); } catch { }
+        }
+        // Also try to kill process group
+        try { process.kill(-server.pid, "SIGKILL"); } catch { }
       }
-      // Also try to kill process group
-      process.kill(-server.pid, "SIGKILL");
+      clearOwnedProcessState();
     } catch (e) { }
   }
 
@@ -817,21 +788,33 @@ function startServer(latestVersion) {
     });
   }
 
+  let mitmResetDone = false;
+
   function tryRestart(code) {
     const aliveMs = Date.now() - serverStartTime;
     // Reset counter if last run was stable
     if (aliveMs >= RESTART_RESET_MS) restartCount = 0;
 
     if (restartCount >= MAX_RESTARTS) {
+      // Already tried MITM reset and still crashing — exit non-zero
+      if (mitmResetDone) {
+        console.error(`\n❌ Server still crashing after MITM reset. Giving up.`);
+        console.error(`   Data directory: ${getAppDataDir()}`);
+        if (crashLog.length) {
+          console.error("\n--- Server crash log ---");
+          crashLog.forEach(l => console.error(l));
+          console.error("--- End crash log ---\n");
+        }
+        cleanup();
+        process.exit(1);
+      }
       console.error(`\n⚠️  Server crashed ${MAX_RESTARTS} times. Disabling MIT and restarting...`);
-      // Only reset the counter once MITM is actually off on disk. Restarting after
-      // a failed write repeats the same crash forever, and the old code could not
-      // tell the difference because it wrote a store the server no longer reads.
       if (!disableMitm()) {
         console.error("❌ Could not disable MIT in the database — refusing to restart into the same crash.");
         console.error(`   Data directory: ${getAppDataDir()}`);
         process.exit(1);
       }
+      mitmResetDone = true;
       restartCount = 0;
       server = spawnServer();
       attachServerEvents();

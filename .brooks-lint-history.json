@@ -1,0 +1,13 @@
+[
+  {
+    "date": "2026-07-10T14:18:37Z",
+    "mode": "Full Sweep",
+    "score": 84,
+    "findings": {
+      "critical": 0,
+      "warning": 3,
+      "suggestion": 1
+    },
+    "scope": "/Users/vijay/IdeaProjects/switchboard"
+  }
+]

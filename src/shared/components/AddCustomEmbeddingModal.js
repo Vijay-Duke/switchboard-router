@@ -131,6 +131,7 @@ export default function AddCustomEmbeddingModal({ isOpen, onClose, onCreated, on
         <Input
           label="API Key (for Check)"
           type="password"
+          autoComplete="off"
           value={checkKey}
           onChange={(e) => setCheckKey(e.target.value)}
         />

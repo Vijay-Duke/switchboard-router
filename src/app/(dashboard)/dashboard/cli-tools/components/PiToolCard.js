@@ -10,11 +10,12 @@ export default function PiToolCard(props) {
       {...props}
       endpoint={ENDPOINT}
       multipleModels
-      hasDefaultModel={false}
+      hasDefaultModel
+      requiresModelScope
       installHint={`npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 # or: curl -fsSL https://pi.dev/install.sh | sh`}
-      runHint="After Apply: pi → /model → switchboard/<model>"
-      buildManualConfigs={({ baseUrl, apiKey, models }) => [
+      runHint="After Apply: pi starts with the selected default and /model only cycles through these Switchboard models"
+      buildManualConfigs={({ baseUrl, apiKey, models, defaultModel }) => [
         {
           filename: "~/.pi/agent/models.json",
           content: JSON.stringify(
@@ -40,6 +41,18 @@ export default function PiToolCard(props) {
                   )),
                 },
               },
+            },
+            null,
+            2
+          ),
+        },
+        {
+          filename: "~/.pi/agent/settings.json",
+          content: JSON.stringify(
+            {
+              defaultProvider: "switchboard",
+              defaultModel: defaultModel || models[0],
+              enabledModels: models.map((model) => `switchboard/${model}`),
             },
             null,
             2

@@ -38,7 +38,7 @@ function sanitizeHeaders(headers) {
 function jsonResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+    headers: { "Content-Type": "application/json" }
   });
 }
 

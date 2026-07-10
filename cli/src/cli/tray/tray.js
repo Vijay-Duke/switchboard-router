@@ -1,6 +1,6 @@
-const { exec } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const { openBrowser } = require("../../shared/openBrowser");
 
 let trayInstance = null;
 let isWinTray = false;
@@ -96,16 +96,23 @@ function handleClick(index, options, onAutostartToggle) {
     const enabled = getAutostartEnabled();
     try {
       const { enableAutoStart, disableAutoStart } = require("./autostart");
-      if (enabled) disableAutoStart();
-      else enableAutoStart();
-      onAutostartToggle(!enabled);
+      const changed = enabled ? disableAutoStart() : enableAutoStart();
+      if (changed) onAutostartToggle(!enabled);
     } catch (e) {}
   } else if (index === MENU_INDEX.QUIT) {
     console.log("\n👋 Shutting down...");
-    if (onQuit) onQuit();
-    killTray();
-    setTimeout(() => process.exit(0), 500);
+    void handleQuit(onQuit);
   }
+}
+
+async function handleQuit(onQuit, killTrayImpl = killTray, exitImpl = process.exit) {
+  try {
+    await killTrayImpl();
+  } catch (error) {
+    process.stderr.write(`[switchboard] tray cleanup error: ${error?.message || error}\n`);
+  }
+  if (onQuit) onQuit();
+  else exitImpl(0);
 }
 
 /**
@@ -298,25 +305,10 @@ function killTray() {
   });
 }
 
-/**
- * Open browser
- */
-function openBrowser(url) {
-  const platform = process.platform;
-  let cmd;
-
-  if (platform === "darwin") {
-    cmd = `open "${url}"`;
-  } else if (platform === "win32") {
-    cmd = `start "" "${url}"`;
-  } else {
-    cmd = `xdg-open "${url}"`;
-  }
-
-  exec(cmd);
-}
-
 module.exports = {
   initTray,
-  killTray
+  killTray,
+  handleClick,
+  handleQuit,
+  MENU_INDEX,
 };

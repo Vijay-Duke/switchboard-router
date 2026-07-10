@@ -65,7 +65,6 @@ export async function handleResponsesCore({ body, modelInfo, credentials, log, o
           headers: {
             "Content-Type": "application/json",
             "Cache-Control": "no-cache",
-            "Access-Control-Allow-Origin": "*"
           }
         })
       };
@@ -96,4 +95,3 @@ export async function handleResponsesCore({ body, modelInfo, credentials, log, o
   // Case 3: Non-SSE response (error or non-streaming from provider) - return as-is
   return result;
 }
-

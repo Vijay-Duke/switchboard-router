@@ -65,26 +65,14 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
       - name: Lint
         run: npm run lint
+      - name: Check advertised locale parity
+        run: npm run check:i18n
+      - name: Check generated provider registry
+        run: npm run check:providers
+      - name: Verify immutable tag matches committed package versions
+        run: node scripts/assert-release-version.mjs "${{ needs.resolve-version.outputs.version }}"
       - working-directory: tests
-        run: |
-          npx vitest run \
-            unit/dashboard-guard.test.js \
-            unit/require-api-key-gate.test.js \
-            unit/combo-fusion.test.js \
-            unit/switchboard-auto.test.js \
-            unit/base-executor-retry.test.js \
-            unit/data-dir.test.js \
-            unit/standalone-start.test.js \
-            unit/launch.test.js \
-            unit/responses-non-stream.test.js \
-            unit/cli-disable-mitm.test.js \
-            unit/cli-model-catalogs.test.js \
-            unit/cli-model-route-writes.test.js \
-            unit/cli-tool-guides.test.js \
-            unit/pi-multi-model-ui.test.js \
-            unit/droid-managed-models.test.js \
-            unit/ci-gate.test.js \
-            unit/oauth-cursor-auto-import.test.js
+        run: npx vitest run --reporter=default
 
   publish-npm:
     name: Publish switchboard-router to npm
@@ -126,14 +114,8 @@ jobs:
         working-directory: cli
         run: npm ci --no-audit --no-fund
 
-      # AFTER npm ci: it aborts when package.json and package-lock.json disagree
-      # on version, so the bump has to follow the install. `npm version` updates
-      # both files, keeping them in sync for the publish.
-      - name: Align package version to tag
-        working-directory: cli
-        run: npm version "$VER" --no-git-tag-version --allow-same-version
-        env:
-          VER: ${{ needs.resolve-version.outputs.version }}
+      - name: Verify immutable tag matches committed package versions
+        run: node scripts/assert-release-version.mjs "${{ needs.resolve-version.outputs.version }}"
 
       - name: Build CLI
         working-directory: cli

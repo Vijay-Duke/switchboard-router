@@ -111,6 +111,17 @@ const nextConfig = {
         destination: "/api/v1"
       }
     ];
+  },
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+        ],
+      },
+    ];
   }
 };
 

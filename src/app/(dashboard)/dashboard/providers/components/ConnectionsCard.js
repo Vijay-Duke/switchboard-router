@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { getStatusVariant as getConnectionStatusVariant } from "@/shared/utils/connectionStatus";
 import PropTypes from "prop-types";
 import { Card, Badge, Button, Modal, Toggle, EditConnectionModal, ConfirmModal } from "@/shared/components";
+import { useNotificationStore } from "@/store/notificationStore";
 
 // ── CooldownTimer ──────────────────────────────────────────────
 function CooldownTimer({ until }) {
@@ -202,7 +203,7 @@ function AddApiKeyModal({ isOpen, provider, providerName, onSave, onClose }) {
         <div className="flex gap-2">
           <div className="flex-1">
             <label className="text-xs text-text-muted mb-1 block">API Key</label>
-            <input type="password" className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary" value={formData.apiKey} onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })} />
+            <input type="password" autoComplete="off" className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary" value={formData.apiKey} onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })} />
           </div>
           <div className="pt-6">
             <Button onClick={handleValidate} disabled={!formData.apiKey || validating || saving} variant="secondary">
@@ -249,6 +250,7 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
   const [providerStrategy, setProviderStrategy] = useState(null);
   const [providerStickyLimit, setProviderStickyLimit] = useState("1");
   const [confirmState, setConfirmState] = useState(null);
+  const notify = useNotificationStore((s) => s.error);
 
   const fetch_ = useCallback(async () => {
     try {
@@ -256,22 +258,24 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
         fetch("/api/providers", { cache: "no-store" }),
         fetch("/api/settings", { cache: "no-store" }),
       ]);
+      if (!connRes.ok || !settingsRes.ok) throw new Error("Failed to load connections");
       const connData = await connRes.json();
-      const settingsData = settingsRes.ok ? await settingsRes.json() : {};
-      if (connRes.ok) setConnections((connData.connections || []).filter((c) => c.provider === providerId));
+      const settingsData = await settingsRes.json();
+      setConnections((connData.connections || []).filter((c) => c.provider === providerId));
       const override = (settingsData.providerStrategies || {})[providerId] || {};
       setProviderStrategy(override.fallbackStrategy || null);
       setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
-    } catch (e) { console.log("ConnectionsCard fetch error:", e); }
+    } catch (e) { notify(e?.message || "Failed to load connections"); }
     finally { setLoading(false); }
-  }, [providerId]);
+  }, [notify, providerId]);
 
   useEffect(() => { fetch_(); }, [fetch_]);
 
   const saveStrategy = async (strategy, stickyLimit) => {
     try {
       const res = await fetch("/api/settings", { cache: "no-store" });
-      const data = res.ok ? await res.json() : {};
+      if (!res.ok) throw new Error(`Failed to load settings (${res.status})`);
+      const data = await res.json();
       const current = data.providerStrategies || {};
       const override = {};
       if (strategy) override.fallbackStrategy = strategy;
@@ -279,8 +283,9 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
       const updated = { ...current };
       if (Object.keys(override).length === 0) delete updated[providerId];
       else updated[providerId] = override;
-      await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ providerStrategies: updated }) });
-    } catch (e) { console.log("saveStrategy error:", e); }
+      const updateRes = await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ providerStrategies: updated }) });
+      if (!updateRes.ok) throw new Error(`Failed to save strategy (${updateRes.status})`);
+    } catch (e) { notify(e?.message || "Failed to save provider strategy"); }
   };
 
   const handleSwapPriority = async (i1, i2) => {
@@ -288,23 +293,26 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
     [next[i1], next[i2]] = [next[i2], next[i1]];
     setConnections(next);
     try {
-      await Promise.all([
+      const responses = await Promise.all([
         fetch(`/api/providers/${next[i1].id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ priority: i1 }) }),
         fetch(`/api/providers/${next[i2].id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ priority: i2 }) }),
       ]);
-    } catch { await fetch_(); }
+      if (responses.some((res) => !res.ok)) throw new Error("Failed to reorder connections");
+    } catch (e) { notify(e?.message || "Failed to reorder connections"); await fetch_(); }
   };
 
   const handleDelete = async (id) => {
+    const connection = connections.find((item) => item.id === id);
     setConfirmState({
       title: "Delete Connection",
-      message: "Delete this connection?",
+      message: `Delete connection “${connection?.name || connection?.email || id}”?`,
       onConfirm: async () => {
         setConfirmState(null);
         try {
           const res = await fetch(`/api/providers/${id}`, { method: "DELETE" });
-          if (res.ok) setConnections((prev) => prev.filter((c) => c.id !== id));
-        } catch (e) { console.log("delete error:", e); }
+          if (!res.ok) throw new Error(`Failed to delete connection (${res.status})`);
+          setConnections((prev) => prev.filter((c) => c.id !== id));
+        } catch (e) { notify("Failed to delete connection"); }
       }
     });
   };
@@ -312,22 +320,25 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
   const handleToggleActive = async (id, isActive) => {
     try {
       const res = await fetch(`/api/providers/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive }) });
-      if (res.ok) setConnections((prev) => prev.map((c) => c.id === id ? { ...c, isActive } : c));
-    } catch (e) { console.log("toggle error:", e); }
+      if (!res.ok) throw new Error(`Failed to toggle connection (${res.status})`);
+      setConnections((prev) => prev.map((c) => c.id === id ? { ...c, isActive } : c));
+    } catch (e) { notify("Failed to toggle connection"); }
   };
 
   const handleSaveApiKey = async (formData) => {
     try {
       const res = await fetch("/api/providers", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: providerId, ...formData }) });
-      if (res.ok) { await fetch_(); setShowAddModal(false); }
-    } catch (e) { console.log("save apikey error:", e); }
+      if (!res.ok) throw new Error(`Failed to save API key (${res.status})`);
+      await fetch_(); setShowAddModal(false);
+    } catch (e) { notify("Failed to save API key"); }
   };
 
   const handleUpdateConnection = async (formData) => {
     try {
       const res = await fetch(`/api/providers/${selectedConnection.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(formData) });
-      if (res.ok) { await fetch_(); setShowEditModal(false); }
-    } catch (e) { console.log("update connection error:", e); }
+      if (!res.ok) throw new Error(`Failed to update connection (${res.status})`);
+      await fetch_(); setShowEditModal(false);
+    } catch (e) { notify("Failed to update connection"); }
   };
 
   if (loading) return <Card><div className="h-20 animate-pulse bg-black/5 rounded-lg" /></Card>;

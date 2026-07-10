@@ -39,6 +39,9 @@ async function resolveMitmRouterBaseUrl() {
 }
 
 const MITM_PORT = 443;
+// Per-attempt socket timeout for the health probe; the caller's own deadline
+// still bounds the total number of retries.
+const HEALTH_SOCKET_TIMEOUT_MS = 2000;
 const MITM_WIN_NODE_PORT = 8443;
 const PID_FILE = path.join(MITM_DIR, ".mitm.pid");
 const LOCK_FILE = path.join(MITM_DIR, ".mitm.lock");
@@ -330,12 +333,15 @@ async function killLeftoverMitm(sudoPassword) {
   } catch { /* ignore */ }
   if (!IS_WIN && SERVER_PATH) {
     try {
-      const escaped = SERVER_PATH.replace(/'/g, "'\\''");
+      // Single-quote the path. The old code escaped `'` but then interpolated
+      // into a double-quoted string, leaving `"`, `$` and backticks live in a
+      // command that runs under sudo.
+      const quoted = shellQuoteSingle(SERVER_PATH);
       if (sudoPassword || isSudoAvailable()) {
         const { execWithPassword } = require("./dns/dnsConfig");
-        await execWithPassword(`pkill -SIGKILL -f "${escaped}" 2>/dev/null || true`, sudoPassword || "").catch(() => { });
+        await execWithPassword(`pkill -SIGKILL -f ${quoted} 2>/dev/null || true`, sudoPassword || "").catch(() => { });
       } else {
-        exec(`pkill -SIGKILL -f "${escaped}" 2>/dev/null || true`, { windowsHide: true }, () => { });
+        exec(`pkill -SIGKILL -f ${quoted} 2>/dev/null || true`, { windowsHide: true }, () => { });
       }
       await new Promise(r => setTimeout(r, 500));
     } catch { /* ignore */ }
@@ -347,7 +353,13 @@ function pollMitmHealth(timeoutMs, port = MITM_PORT) {
     const deadline = Date.now() + timeoutMs;
     const check = () => {
       const req = https.request(
-        { hostname: "127.0.0.1", port, path: "/_mitm_health", method: "GET", rejectUnauthorized: false },
+        {
+          hostname: "127.0.0.1", port, path: "/_mitm_health", method: "GET", rejectUnauthorized: false,
+          // A server that accepts the socket but never answers fires neither
+          // `response` nor `error`, so without this the promise never settles
+          // and startup hangs instead of timing out.
+          timeout: HEALTH_SOCKET_TIMEOUT_MS,
+        },
         (res) => {
           let body = "";
           res.on("data", (d) => { body += d; });
@@ -359,6 +371,8 @@ function pollMitmHealth(timeoutMs, port = MITM_PORT) {
           });
         }
       );
+      // destroy() surfaces as an 'error', which retries until the deadline.
+      req.on("timeout", () => req.destroy(new Error("health check timed out")));
       req.on("error", () => {
         if (Date.now() < deadline) setTimeout(check, 500);
         else resolve(null);
@@ -633,7 +647,9 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
       "sudo", ["-S", "-E", "sh", "-c", inlineCmd],
       { detached: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
     );
-    serverProcess.stdin.write(`${sudoPassword}\n`);
+    // Without a password this branch is NOPASSWD sudo, which ignores stdin.
+    // Interpolating a missing value would feed sudo the literal "undefined".
+    if (sudoPassword) serverProcess.stdin.write(`${sudoPassword}\n`);
     serverProcess.stdin.end();
   } else {
     // Docker/minimal images: no sudo — same as Windows-style direct spawn
@@ -862,6 +878,7 @@ const startMitm = startServer;
 const stopMitm = stopServer;
 
 module.exports = {
+  pollMitmHealth, // exported for tests
   getMitmStatus,
   startServer,
   stopServer,

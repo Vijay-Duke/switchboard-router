@@ -6,6 +6,7 @@ import { getDefaultModel } from "open-sse/config/providerModels.js";
 import { resolveOllamaLocalHost, resolveXiaomiTokenplanBaseUrl, PROVIDERS } from "open-sse/config/providers.js";
 import { openaiToCommandCodeRequest } from "open-sse/translator/request/openai-to-commandcode.js";
 import { normalizeProviderId } from "@/lib/providerNormalization";
+import { assertPublicUrlResolved } from "@/shared/utils/ssrfGuard.js";
 
 // Probe a webSearch/webFetch provider using its searchConfig/fetchConfig.
 // Returns true if API key is accepted (status !== 401 && !== 403).
@@ -103,7 +104,9 @@ export async function POST(request) {
         if (!node) {
           return NextResponse.json({ error: "OpenAI Compatible node not found" }, { status: 404 });
         }
-        const modelsUrl = `${node.baseUrl?.replace(/\/$/, "")}/models`;
+        const baseUrl = node.baseUrl?.replace(/\/$/, "");
+        await assertPublicUrlResolved(baseUrl);
+        const modelsUrl = `${baseUrl}/models`;
         const res = await fetch(modelsUrl, {
           headers: { "Authorization": `Bearer ${apiKey}` },
         });
@@ -121,6 +124,7 @@ export async function POST(request) {
           return NextResponse.json({ error: "Custom Embedding node not found" }, { status: 404 });
         }
         const baseUrl = node.baseUrl?.replace(/\/$/, "");
+        await assertPublicUrlResolved(baseUrl);
         const modelsRes = await fetch(`${baseUrl}/models`, {
           headers: { "Authorization": `Bearer ${apiKey}` },
         });
@@ -152,6 +156,7 @@ export async function POST(request) {
         }
 
         let normalizedBase = node.baseUrl?.trim().replace(/\/$/, "") || "";
+        await assertPublicUrlResolved(normalizedBase);
         if (normalizedBase.endsWith("/messages")) {
           normalizedBase = normalizedBase.slice(0, -"/messages".length);
         }

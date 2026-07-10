@@ -5,6 +5,10 @@ import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import { Button, Badge, Input, Modal, Select } from "@/shared/components";
 
+function isValidHttpUrl(value) {
+  try { return ["http:", "https:"].includes(new URL(value).protocol); } catch { return false; }
+}
+
 export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose, isAnthropic }) {
   const [formData, setFormData] = useState({
     name: "",
@@ -16,6 +20,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
   const [checkModelId, setCheckModelId] = useState("");
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
+  const baseUrlValid = isValidHttpUrl(formData.baseUrl.trim());
 
   useEffect(() => {
     if (node) {
@@ -36,7 +41,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
   ];
 
   const handleSubmit = async () => {
-    if (!formData.name.trim() || !formData.baseUrl.trim()) return;
+    if (!formData.name.trim() || !baseUrlValid) return;
     setSaving(true);
     try {
       const payload = {
@@ -111,12 +116,13 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
           <Input
             label="API Key (for Check)"
             type="password"
+            autoComplete="off"
             value={checkKey}
             onChange={(e) => setCheckKey(e.target.value)}
             className="flex-1"
           />
           <div className="pt-6">
-            <Button onClick={handleValidate} disabled={!checkKey || validating || !formData.baseUrl.trim()} variant="secondary">
+            <Button onClick={handleValidate} disabled={!checkKey || validating || !baseUrlValid} variant="secondary">
               {validating ? "Checking..." : "Check"}
             </Button>
           </div>
@@ -137,7 +143,7 @@ export default function EditCompatibleNodeModal({ isOpen, node, onSave, onClose,
           <Button
             onClick={handleSubmit}
             fullWidth
-            disabled={!formData.name.trim() || !formData.baseUrl.trim() || saving}
+            disabled={!formData.name.trim() || !baseUrlValid || saving}
           >
             {saving ? "Saving..." : "Save"}
           </Button>

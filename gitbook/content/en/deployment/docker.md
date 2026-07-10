@@ -10,7 +10,7 @@ docker run -d \
   -p 127.0.0.1:20128:20128 \
   -v "$HOME/.switchboard:/app/data" \
   -e DATA_DIR=/app/data \
-  -e SWITCHBOARD_LOCAL_PEERS=172.16.0.0/12 \
+  -e SWITCHBOARD_LOCAL_PEERS=172.30.0.1 \
   ghcr.io/vijay-duke/switchboard-router:latest
 ```
 
@@ -33,7 +33,7 @@ calls returns `403 Local only`.
 
 The two flags fix that together, and only work as a pair:
 
-- `-e SWITCHBOARD_LOCAL_PEERS=172.16.0.0/12` tells Switchboard to treat the
+- `-e SWITCHBOARD_LOCAL_PEERS=172.30.0.1` tells Switchboard to trust only the
   Docker bridge range as local. It is applied only to the socket-derived peer
   address, never to a header.
 - `-p 127.0.0.1:20128:20128` publishes the port on the host's loopback

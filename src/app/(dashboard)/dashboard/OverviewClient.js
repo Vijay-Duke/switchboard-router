@@ -19,6 +19,8 @@ export default function OverviewClient({ initialData }) {
   const [stats, setStats] = useState(null);
 
   const providerCount = initialData?.providerCount ?? 0;
+  const readyProviderCount = initialData?.readyProviderCount ?? 0;
+  const endpointReady = readyProviderCount > 0;
   const keyCount = initialData?.keyCount ?? 0;
   const comboCount = initialData?.comboCount ?? 0;
   const defaultCombo = initialData?.defaultCombo || null;
@@ -116,6 +118,41 @@ export default function OverviewClient({ initialData }) {
         </span>
       </div>
 
+      {providerCount === 0 && (
+        <div
+          style={{
+            background: "#1E1A13",
+            border: "1px solid #E5B454",
+            borderRadius: 12,
+            padding: 18,
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#E5B454", marginBottom: 8 }}>
+            Connect your first provider to get started
+          </div>
+          <div style={{ fontSize: 12, color: "#8A7F66", marginBottom: 12 }}>
+            Add an API key for any provider to start routing requests through Switchboard.
+          </div>
+          <Link
+            href="/dashboard/providers"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "6px 14px",
+              borderRadius: 8,
+              background: "#E5B454",
+              color: "#1E1A13",
+              fontSize: 12,
+              fontWeight: 600,
+              textDecoration: "none",
+            }}
+          >
+            Connect Provider
+          </Link>
+        </div>
+      )}
+
       <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
         {/* Endpoint */}
         <div
@@ -144,12 +181,15 @@ export default function OverviewClient({ initialData }) {
                 className="flex items-center gap-[7px]"
                 style={{
                   fontSize: 11.5,
-                  color: "#74C08A",
+                  color: endpointReady ? "#74C08A" : "#8A7F66",
                   fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
                 }}
               >
-                <span className="console-online-dot" />
-                online
+                <span
+                  className="console-online-dot"
+                  style={endpointReady ? undefined : { background: "#6F6653", boxShadow: "none" }}
+                />
+                {endpointReady ? "online" : providerCount > 0 ? "providers unavailable" : "no providers"}
               </span>
             </div>
             <div

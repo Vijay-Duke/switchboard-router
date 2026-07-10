@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import initSqlJs from "sql.js";
 import { PRAGMA_SQL } from "../schema.js";
 
@@ -23,7 +24,26 @@ export async function createSqlJsAdapter(filePath) {
 
   function persist() {
     const data = db.export();
-    fs.writeFileSync(filePath, Buffer.from(data));
+    const tmp = filePath + ".tmp";
+    fs.writeFileSync(tmp, Buffer.from(data));
+    const fileFd = fs.openSync(tmp, "r");
+    try {
+      fs.fsyncSync(fileFd);
+    } finally {
+      fs.closeSync(fileFd);
+    }
+    fs.renameSync(tmp, filePath);
+    // Persist the directory entry as well. This is required for the rename to
+    // survive a power loss on filesystems that journal file data separately.
+    let dirFd;
+    try {
+      dirFd = fs.openSync(path.dirname(filePath), "r");
+      fs.fsyncSync(dirFd);
+    } catch {
+      // Some platforms (notably Windows) do not allow opening directories.
+    } finally {
+      if (dirFd !== undefined) fs.closeSync(dirFd);
+    }
     dirty = false;
   }
 
@@ -105,11 +125,10 @@ export async function createSqlJsAdapter(filePath) {
     db.close();
   }
 
-  // Flush on shutdown
+  // Flush on shutdown — beforeExit only. SIGINT/SIGTERM handled by CLI parent
+  // which now sends SIGTERM → 2s wait → SIGKILL (gives persist time to run).
   const flush = () => { if (dirty) try { persist(); } catch {} };
   process.on("beforeExit", flush);
-  process.on("SIGINT", flush);
-  process.on("SIGTERM", flush);
 
   return { driver: "sql.js", run, get, all, exec, transaction, close, raw: db };
 }
