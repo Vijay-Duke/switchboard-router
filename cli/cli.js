@@ -45,7 +45,14 @@ function createSpinner(text) {
 const pkg = require("./package.json");
 const { ensureSqliteRuntime, buildEnvWithRuntime } = require("./hooks/sqliteRuntime");
 const { ensureTrayRuntime } = require("./hooks/trayRuntime");
+const { pinDataDir, getDataDir } = require("./src/shared/dataDir");
+const { disableMitm } = require("./src/shared/disableMitm");
 const args = process.argv.slice(2);
+
+// Resolve the data directory ONCE, before anything can create cache dirs inside
+// a candidate, and export it so the spawned server and the CLI's token client
+// cannot disagree about where the database and cli-secret live.
+pinDataDir();
 
 // Self-heal SQLite runtime deps (sql.js + better-sqlite3) into ~/.switchboard/runtime
 // so the server can resolve them via NODE_PATH. Best-effort — sql.js is required,
@@ -154,12 +161,11 @@ function compareVersions(a, b) {
   return 0;
 }
 
-// Get app data dir (matches app/src/lib/dataDir.js convention)
-function getAppDataDir() {
-  return process.platform === "win32"
-    ? path.join(process.env.APPDATA || "", "switchboard")
-    : path.join(os.homedir(), ".switchboard");
-}
+// PID/runtime state lives in the SAME directory the server writes to. Hardcoding
+// `.switchboard` here would look for `.mitm.pid` in the wrong place under legacy
+// adoption or an explicit DATA_DIR, leaving a privileged MITM process alive on
+// port 443. pinDataDir() ran at startup, so this is the resolved value.
+const getAppDataDir = getDataDir;
 
 // Kill PID from file (best-effort, removes file after)
 function killByPidFile(pidFile) {
@@ -469,7 +475,7 @@ function checkForUpdate() {
           const ver = latest.version;
           // Reject name collisions: require a router/gateway-looking description
           const desc = String(latest.description || "").toLowerCase();
-          const looksOurs = /switchboard|9router|routing|router|gateway|model/.test(desc);
+          const looksOurs = /switchboard|routing|router|gateway|model/.test(desc);
           if (ver && looksOurs && compareVersions(ver, pkg.version) > 0) {
             done(ver);
           } else {
@@ -818,14 +824,14 @@ function startServer(latestVersion) {
 
     if (restartCount >= MAX_RESTARTS) {
       console.error(`\n⚠️  Server crashed ${MAX_RESTARTS} times. Disabling MIT and restarting...`);
-      try {
-        const dbPath = path.join(os.homedir(), process.platform === "win32" ? path.join("AppData", "Roaming", "switchboard", "db.json") : path.join(".switchboard", "db.json"));
-        if (fs.existsSync(dbPath)) {
-          const db = JSON.parse(fs.readFileSync(dbPath, "utf-8"));
-          if (db.settings) db.settings.mitmEnabled = false;
-          fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-        }
-      } catch { /* best effort */ }
+      // Only reset the counter once MITM is actually off on disk. Restarting after
+      // a failed write repeats the same crash forever, and the old code could not
+      // tell the difference because it wrote a store the server no longer reads.
+      if (!disableMitm()) {
+        console.error("❌ Could not disable MIT in the database — refusing to restart into the same crash.");
+        console.error(`   Data directory: ${getAppDataDir()}`);
+        process.exit(1);
+      }
       restartCount = 0;
       server = spawnServer();
       attachServerEvents();

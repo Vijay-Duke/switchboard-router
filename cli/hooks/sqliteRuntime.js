@@ -3,18 +3,12 @@
 // sql.js is bundled in bin/app already; node:sqlite / bun:sqlite are built-in.
 const { execSync, spawnSync } = require("child_process");
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 
 const BETTER_SQLITE3_VERSION = "12.6.2";
 const SQL_JS_VERSION = "1.14.1";
 
-function getDataDir() {
-  if (process.env.DATA_DIR) return process.env.DATA_DIR;
-  return process.platform === "win32"
-    ? path.join(process.env.APPDATA || os.homedir(), "switchboard")
-    : path.join(os.homedir(), ".switchboard");
-}
+const { getDataDir } = require("../src/shared/dataDir");
 
 function getRuntimeDir() {
   return path.join(getDataDir(), "runtime");

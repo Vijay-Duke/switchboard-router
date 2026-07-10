@@ -3,7 +3,6 @@ const https = require("https");
 const crypto = require("crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const os = require("node:os");
 const { machineIdSync } = require("node-machine-id");
 
 // Default configuration
@@ -13,17 +12,10 @@ const DEFAULT_CONFIG = {
   protocol: "http:",
 };
 
-const CLI_TOKEN_HEADER = "x-9r-cli-token";
-const CLI_TOKEN_SALT = "9r-cli-auth";
-const APP_NAME = "switchboard";
+const CLI_TOKEN_HEADER = "x-switchboard-cli-token";
+const CLI_TOKEN_SALT = "switchboard-cli-auth";
 
-function getDataDir() {
-  if (process.env.DATA_DIR) return process.env.DATA_DIR;
-  if (process.platform === "win32") {
-    return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), APP_NAME);
-  }
-  return path.join(os.homedir(), `.${APP_NAME}`);
-}
+const { getDataDir } = require("../../shared/dataDir");
 
 const MACHINE_ID_FILE = path.join(getDataDir(), "machine-id");
 const AUTH_DIR = path.join(getDataDir(), "auth");
@@ -410,14 +402,6 @@ async function updateSettings(data) {
   return makeRequest("PATCH", "/api/settings", data);
 }
 
-/**
- * Reset dashboard password to default (clears stored hash server-side)
- * @returns {Promise<Object>} { success }
- */
-async function resetPassword() {
-  return makeRequest("POST", "/api/auth/reset-password");
-}
-
 // ============================================================================
 // MODELS API
 // ============================================================================
@@ -537,7 +521,6 @@ module.exports = {
   // Settings
   getSettings,
   updateSettings,
-  resetPassword,
   
   // Tunnel
   getTunnelStatus,

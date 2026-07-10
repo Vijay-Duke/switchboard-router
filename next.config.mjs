@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { readdirSync } from "node:fs";
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 // CLI bundling needs workspace root so tracing includes hoisted node_modules (slim ~50MB).
@@ -7,11 +8,18 @@ const projectRoot = dirname(fileURLToPath(import.meta.url));
 const tracingRoot = process.env.NEXT_TRACING_ROOT_MODE === "workspace"
   ? join(projectRoot, "..")
   : projectRoot;
+const distDir = process.env.NEXT_DIST_DIR || ".next";
+// Workspace tracing can see build trees left by other commands. Exclude only
+// stale dist directories: excluding the active one removes its server chunks
+// and creates a server that boots but responds with empty 200s.
+const staleDistExcludes = readdirSync(projectRoot, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && entry.name.startsWith(".next") && entry.name !== distDir)
+  .map((entry) => `./${entry.name}/**/*`);
 const proxyClientMaxBodySize = process.env.SWITCHBOARD_PROXY_CLIENT_MAX_BODY_SIZE || "128mb";
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  distDir: process.env.NEXT_DIST_DIR || ".next",
+  distDir,
   output: "standalone",
   serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite"],
   // Next.js 16 blocks /_next/* cross-origin in dev by default. Without this,
@@ -28,7 +36,13 @@ const nextConfig = {
   },
   outputFileTracingRoot: tracingRoot,
   outputFileTracingExcludes: {
-    "*": ["./gitbook/**/*"]
+    "*": [
+      "./gitbook/**/*",
+      "./tests/**/*",
+      "./cli/app/**/*",
+      "./cli/.build-home/**/*",
+      ...staleDistExcludes,
+    ]
   },
   // Ship skills/*.md with standalone so /api/skills/[id] can serve them
   outputFileTracingIncludes: {

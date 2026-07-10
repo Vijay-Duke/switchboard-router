@@ -83,12 +83,20 @@ function copyRecursive(src, dest) {
 
 console.log("📦 Building Switchboard CLI package with Next.js...\n");
 
+// Workspace tracing sees everything under the repository root. Remove previous
+// CLI output before Next computes its file graph or an old package is recursively
+// copied into the next one (including stale test/build data).
+console.log("0️⃣  Cleaning generated CLI build state...");
+for (const generated of [cliAppDir, buildHomeDir, buildDistDir]) {
+  if (fs.existsSync(generated)) fs.rmSync(generated, { recursive: true, force: true });
+}
 fs.mkdirSync(buildHomeDir, { recursive: true });
 fs.mkdirSync(path.join(buildHomeDir, "AppData", "Roaming"), { recursive: true });
 fs.mkdirSync(path.join(buildHomeDir, "AppData", "Local"), { recursive: true });
+console.log("✅ Cleaned\n");
 
-// Step 0: Sync version from app/cli/package.json to app/package.json
-console.log("0️⃣  Syncing version to app/package.json...");
+// Step 1: Sync version from app/cli/package.json to app/package.json
+console.log("1️⃣  Syncing version to app/package.json...");
 const cliPkg = JSON.parse(fs.readFileSync(path.join(cliDir, "package.json"), "utf8"));
 const appPkgPath = path.join(appDir, "package.json");
 const appPkg = JSON.parse(fs.readFileSync(appPkgPath, "utf8"));
@@ -100,8 +108,8 @@ if (appPkg.version !== cliPkg.version) {
   console.log(`✅ Version already synced: ${cliPkg.version}\n`);
 }
 
-// Step 1: Build app with Next.js (workspace tracing root → traced node_modules in standalone).
-console.log("1️⃣  Building Next.js app...");
+// Step 2: Build app with Next.js (workspace tracing root → traced node_modules in standalone).
+console.log("2️⃣  Building Next.js app...");
 try {
   execSync("npm run build", {
     stdio: "inherit",
@@ -121,13 +129,6 @@ try {
   console.error("❌ Next.js build failed");
   process.exit(1);
 }
-
-// Step 2: Clean old app/cli/app if exists
-console.log("2️⃣  Cleaning old app/cli/app...");
-if (fs.existsSync(cliAppDir)) {
-  fs.rmSync(cliAppDir, { recursive: true, force: true });
-}
-console.log("✅ Cleaned\n");
 
 // Step 3: Copy Next.js standalone build to app/cli/app.
 // Newer Next.js standalone output writes server.js/package.json plus .next/, src/, and
@@ -153,6 +154,20 @@ if (!fs.existsSync(standaloneApp)) {
   process.exit(1);
 }
 copyRecursive(standaloneApp, cliAppDir);
+
+// A clean release bundle contains exactly one active Next dist tree. Fail the
+// pack rather than silently shipping recursively traced builds, tests, or CLI
+// build homes when someone runs `npm run cli:pack` from a used checkout.
+const forbiddenTopLevel = fs.readdirSync(cliAppDir).filter((name) =>
+  name === "tests" ||
+  name === "cli" ||
+  name === ".next" ||
+  (name.startsWith(".next-") && name !== buildDistDirName)
+);
+if (forbiddenTopLevel.length) {
+  console.error(`❌ Contaminated standalone bundle: ${forbiddenTopLevel.join(", ")}`);
+  process.exit(1);
+}
 
 // Older nested-app layout stores traced node_modules at standalone root.
 const standaloneNodeModules = path.join(standaloneRootToUse, "node_modules");

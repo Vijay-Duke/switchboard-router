@@ -10,6 +10,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated build trees — linting them buries real source failures.
+    ".next-cli-build/**",
+    "gitbook/.next/**",
+    "gitbook/out/**",
+    "cli/app/**",
   ]),
 ]);
 
