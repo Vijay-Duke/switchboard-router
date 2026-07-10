@@ -7,6 +7,7 @@ import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 const CLOUD_URL = process.env.NEXT_PUBLIC_CLOUD_URL;
 
@@ -66,7 +67,7 @@ export default function DroidToolCard({
       fetchModelAliases();
     }
     if (isExpanded) fetchModelAliases();
-  }, [isExpanded]);
+  }, [isExpanded, droidStatus]);
 
   const fetchModelAliases = async () => {
     try {
@@ -74,7 +75,7 @@ export default function DroidToolCard({
       const data = await res.json();
       if (res.ok) setModelAliases(data.aliases || {});
     } catch (error) {
-      console.log("Error fetching model aliases:", error);
+      reportClientError("Error fetching model aliases:", error);
     }
   };
 

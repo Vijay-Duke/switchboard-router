@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Card, Button, Badge } from "@/shared/components";
+import { requestConfirmation } from "@/store/confirmationStore";
 
 /**
  * Agent Library — single dashboard control plane for skills + MCP
@@ -185,7 +186,7 @@ export default function AgentLibraryPage() {
   }
 
   async function deleteMcp(id) {
-    if (!confirm(`Remove MCP ${id} from library? (targets updated on next Apply)`)) return;
+    if (!await requestConfirmation({ message: `Remove MCP ${id} from library? (targets updated on next Apply)`, confirmText: "Continue" })) return;
     setBusy("mcp-del");
     try {
       const r = await fetch(`/api/agent-library/mcp?id=${encodeURIComponent(id)}`, {
@@ -203,7 +204,7 @@ export default function AgentLibraryPage() {
   }
 
   async function deleteSkill(id) {
-    if (!confirm(`Remove skill ${id} from library?`)) return;
+    if (!await requestConfirmation({ message: `Remove skill ${id} from library?`, confirmText: "Continue" })) return;
     setBusy("skill-del");
     try {
       const r = await fetch(`/api/agent-library/skills?id=${encodeURIComponent(id)}`, {
@@ -538,11 +539,9 @@ export default function AgentLibraryPage() {
                   className="mt-0.5"
                   checked={settings.neverOverwriteUser !== false}
                   disabled={!!busy}
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     if (!e.target.checked) {
-                      const ok = confirm(
-                        "Allow overwriting paths that are NOT Switchboard-managed? This can replace your personal skills/MCP. Continue?"
-                      );
+                      const ok = await requestConfirmation({ message: "Allow overwriting paths that are NOT Switchboard-managed? This can replace your personal skills/MCP. Continue?", confirmText: "Continue" });
                       if (!ok) return;
                       patchSettings({
                         neverOverwriteUser: false,
@@ -934,8 +933,8 @@ export default function AgentLibraryPage() {
               variant="outline"
               disabled={!!busy}
               loading={busy === "clean"}
-              onClick={() => {
-                if (confirm("Remove all Switchboard-managed skill/MCP projections from targets?")) {
+              onClick={async () => {
+                if (await requestConfirmation({ message: "Remove all Switchboard-managed skill/MCP projections from targets?", confirmText: "Continue" })) {
                   runSync("clean");
                 }
               }}

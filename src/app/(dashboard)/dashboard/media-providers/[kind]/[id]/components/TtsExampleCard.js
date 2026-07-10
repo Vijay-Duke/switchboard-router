@@ -96,7 +96,15 @@ export function TtsExampleCard({ providerId }) {
     // api-language (edge-tts, local-device, elevenlabs): NO default load, wait for user to pick language
     // config (nvidia, hyperbolic, deepgram, huggingface, cartesia, playht, coqui, tortoise, inworld, qwen):
     // use ttsConfig.models for model selector; voice is empty by default (backend uses provider default)
-  }, [providerId]);
+  }, [
+    config.hasBrowseButton,
+    config.hasModelSelector,
+    config.modelKey,
+    config.voiceKey,
+    config.voiceSource,
+    config.voicesPerModel,
+    providerId,
+  ]);
 
   // Update voices when model changes (voicesPerModel providers)
   useEffect(() => {
@@ -107,7 +115,7 @@ export function TtsExampleCard({ providerId }) {
       setSelectedVoice(voices[0].id);
       setSelectedVoiceName(voices[0].name || voices[0].id);
     }
-  }, [selectedModel]);
+  }, [config.voicesPerModel, providerId, selectedModel]);
 
   // Open modal — load language list
   const openModal = async () => {

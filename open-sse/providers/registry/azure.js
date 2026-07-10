@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "azure",
   priority: 40,
   alias: "azure",
@@ -19,3 +19,5 @@ export default {
     headers: {},
   },
 };
+
+export default moduleDefault;

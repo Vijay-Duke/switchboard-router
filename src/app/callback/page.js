@@ -3,6 +3,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 /**
  * OAuth Callback Page Content
@@ -50,7 +51,7 @@ function CallbackContent() {
           window.opener.postMessage({ type: "oauth_callback", data: callbackData }, origin);
           relayed = true;
         } catch (e) {
-          console.log("postMessage failed:", e);
+          reportClientError("postMessage failed:", e);
         }
       }
     }
@@ -62,7 +63,7 @@ function CallbackContent() {
       channel.close();
       relayed = true;
     } catch (e) {
-      console.log("BroadcastChannel failed:", e);
+      reportClientError("BroadcastChannel failed:", e);
     }
 
     // Method 3: localStorage event (fallback)
@@ -70,7 +71,7 @@ function CallbackContent() {
       localStorage.setItem("oauth_callback", JSON.stringify({ ...callbackData, timestamp: Date.now() }));
       relayed = true;
     } catch (e) {
-      console.log("localStorage failed:", e);
+      reportClientError("localStorage failed:", e);
     }
 
     if (!(code || token || error)) {

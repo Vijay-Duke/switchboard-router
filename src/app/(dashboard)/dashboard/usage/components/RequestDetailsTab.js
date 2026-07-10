@@ -8,6 +8,7 @@ import Drawer from "@/shared/components/Drawer";
 import Pagination from "@/shared/components/Pagination";
 import { cn } from "@/shared/utils/cn";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 let providerNameCache = null;
 let providerNodesCache = null;
@@ -128,7 +129,7 @@ export default function RequestDetailsTab() {
       const cache = await fetchProviderNames();
       setProviderNameCache(cache.providerNameCache);
     } catch (error) {
-      console.error("Failed to fetch providers:", error);
+      reportClientError("Failed to fetch providers:", error);
     }
   }, []);
 
@@ -149,7 +150,7 @@ export default function RequestDetailsTab() {
       setDetails(data.details || []);
       setPagination(prev => ({ ...prev, ...data.pagination }));
     } catch (error) {
-      console.error("Failed to fetch request details:", error);
+      reportClientError("Failed to fetch request details:", error);
     } finally {
       setLoading(false);
     }

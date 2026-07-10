@@ -1,6 +1,7 @@
 "use client";
 
 import { DEFAULT_LOCALE, LOCALE_COOKIE, normalizeLocale } from "./config";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 let translationMap = {};
 let currentLocale = DEFAULT_LOCALE;
@@ -27,7 +28,7 @@ async function loadTranslations(locale) {
     const response = await fetch(`/i18n/literals/${locale}.json`);
     translationMap = await response.json();
   } catch (err) {
-    console.error("Failed to load translations:", err);
+    reportClientError("Failed to load translations:", err);
     translationMap = {};
   }
 }

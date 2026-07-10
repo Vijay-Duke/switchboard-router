@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "vertex-partner",
   priority: 260,
   alias: "vertex-partner",
@@ -27,3 +27,5 @@ export default {
     { id: "zai-org/glm-5-maas", name: "GLM-5 (Vertex)" },
   ],
 };
+
+export default moduleDefault;

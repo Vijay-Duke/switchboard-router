@@ -7,6 +7,7 @@ import { Card, Button, Modal } from "@/shared/components";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { getProviderAlias } from "@/shared/constants/providers";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 // ── ModelRow ───────────────────────────────────────────────────
 export function ModelRow({ model, fullModel, copied, onCopy, testStatus, isCustom, isFree, onDeleteAlias, onTest, isTesting }) {
@@ -135,7 +136,7 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
       if (aliasRes.ok) setModelAliases(aliasData.aliases || {});
       if (connRes.ok) setConnections((connData.connections || []).filter((c) => c.provider === providerId));
       if (customRes.ok) setCustomModels(customData.models || []);
-    } catch (e) { console.log("ModelsCard fetch error:", e); }
+    } catch (e) { reportClientError("ModelsCard fetch error:", e); }
   }, [providerId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -149,14 +150,14 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
         body: JSON.stringify({ model: fullModel, alias }),
       });
       if (res.ok) await fetchData();
-    } catch (e) { console.log("set alias error:", e); }
+    } catch (e) { reportClientError("set alias error:", e); }
   };
 
   const handleDeleteAlias = async (alias) => {
     try {
       const res = await fetch(`/api/models/alias?alias=${encodeURIComponent(alias)}`, { method: "DELETE" });
       if (res.ok) await fetchData();
-    } catch (e) { console.log("delete alias error:", e); }
+    } catch (e) { reportClientError("delete alias error:", e); }
   };
 
   const handleAddCustomModel = async (modelId) => {
@@ -170,7 +171,7 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
         await fetchData();
         window.dispatchEvent(new CustomEvent("customModelChanged"));
       }
-    } catch (e) { console.log("add custom model error:", e); }
+    } catch (e) { reportClientError("add custom model error:", e); }
   };
 
   const handleDeleteCustomModel = async (modelId) => {
@@ -181,7 +182,7 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
         await fetchData();
         window.dispatchEvent(new CustomEvent("customModelChanged"));
       }
-    } catch (e) { console.log("delete custom model error:", e); }
+    } catch (e) { reportClientError("delete custom model error:", e); }
   };
 
   const handleTestModel = async (modelId) => {

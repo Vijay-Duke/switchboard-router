@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useNotificationStore } from "@/store/notificationStore";
 import Sidebar from "../Sidebar";
 import Header from "../Header";
+import GlobalConfirmModal from "../GlobalConfirmModal";
 
 function getToastStyle(type) {
   if (type === "success") {
@@ -74,6 +75,8 @@ export default function DashboardLayout({ children }) {
           );
         })}
       </div>
+
+      <GlobalConfirmModal />
 
       {sidebarOpen && (
         <div

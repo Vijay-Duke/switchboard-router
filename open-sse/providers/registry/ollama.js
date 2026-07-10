@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "ollama",
   priority: 30,
   hasFree: true,
@@ -34,3 +34,5 @@ export default {
     usage: true,
   },
 };
+
+export default moduleDefault;

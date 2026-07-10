@@ -141,9 +141,11 @@ export function buildCursorHeaders(accessToken, machineId = null, ghostMode = tr
   };
 }
 
-export default {
+const moduleDefault = {
   generateCursorChecksum,
   buildCursorHeaders,
   generateHashed64Hex,
   generateSessionId
 };
+
+export default moduleDefault;

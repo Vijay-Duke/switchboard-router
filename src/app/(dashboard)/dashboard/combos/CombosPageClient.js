@@ -9,6 +9,7 @@ import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModa
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { useNotificationStore } from "@/store/notificationStore";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -28,7 +29,7 @@ export default function CombosPageClient({ initialData }) {
   const [confirmState, setConfirmState] = useState(null);
   const { copied, copy } = useCopyToClipboard();
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [combosRes, providersRes, settingsRes, modelsRes] = await Promise.all([
         fetch("/api/combos"),
@@ -60,7 +61,7 @@ export default function CombosPageClient({ initialData }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [notify]);
 
   useEffect(() => {
     if (initialData?.combos) {
@@ -68,7 +69,7 @@ export default function CombosPageClient({ initialData }) {
       return;
     }
     fetchData();
-  }, [initialData]);
+  }, [initialData, fetchData]);
 
   const handleCreate = async (data) => {
     try {
@@ -858,7 +859,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
       const aliasesData = await aliasesRes.json();
       setModelAliases(aliasesData.aliases || {});
     } catch (error) {
-      console.error("Error fetching modal data:", error);
+      reportClientError("Error fetching modal data:", error);
     }
   };
 
@@ -927,11 +928,11 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   const handleSave = async () => {
     if (!validateName(name)) return;
     if (models.length === 0) {
-      alert("Add at least one model to the combo");
+      reportClientError("Add at least one model to the combo");
       return;
     }
     if (strategy === "auto" && models.length < 2) {
-      alert("Auto strategy needs at least 2 models in the worker pool (plus a connected router account)");
+      reportClientError("Auto strategy needs at least 2 models in the worker pool (plus a connected router account)");
       return;
     }
     setSaving(true);

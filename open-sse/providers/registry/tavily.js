@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "tavily",
   alias: "tavily",
   display: {
@@ -48,3 +48,5 @@ export default {
     timeoutMs: 15000
   }
 };
+
+export default moduleDefault;

@@ -8,6 +8,7 @@ import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import ModelCatalogInput from "./ModelCatalogInput";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 export default function OpenClawToolCard({
   tool,
@@ -74,7 +75,7 @@ export default function OpenClawToolCard({
       const data = await res.json();
       if (res.ok) setModelAliases(data.aliases || {});
     } catch (error) {
-      console.log("Error fetching model aliases:", error);
+      reportClientError("Error fetching model aliases:", error);
     }
   };
 

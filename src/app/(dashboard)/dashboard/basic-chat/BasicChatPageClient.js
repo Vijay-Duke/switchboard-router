@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button } from "@/shared/components";
 import { getModelsByProviderId } from "@/shared/constants/models";
 import { isAnthropicCompatibleProvider, isOpenAICompatibleProvider } from "@/shared/constants/providers";
+import Image from "next/image";
 
 const STORAGE_KEYS = {
   sessions: "basic-chat.sessions",
@@ -892,7 +893,7 @@ export default function BasicChatPageClient() {
                         <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 mt-2">
                           {message.attachments.map((attachment) => (
                             <a key={attachment.id} href={attachment.dataUrl} target="_blank" rel="noreferrer" className="overflow-hidden rounded-[18px] border border-white/10 bg-black/20">
-                              <img src={attachment.dataUrl} alt={attachment.name} className="h-28 w-full object-cover" />
+                              <Image src={attachment.dataUrl} alt={attachment.name} width={320} height={112} unoptimized className="h-28 w-full object-cover" />
                             </a>
                           ))}
                         </div>

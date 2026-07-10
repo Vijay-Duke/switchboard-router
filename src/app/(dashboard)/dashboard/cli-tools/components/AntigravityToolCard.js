@@ -4,6 +4,7 @@
 import { useState, useEffect } from "react";
 import { Card, Button, Badge, Modal, Input, ModelSelectModal } from "@/shared/components";
 import Image from "next/image";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 export default function AntigravityToolCard({
   tool,
@@ -48,7 +49,7 @@ export default function AntigravityToolCard({
       loadSavedMappings();
       fetchModelAliases();
     }
-  }, [isExpanded]);
+  }, [isExpanded, status]);
 
   const loadSavedMappings = async () => {
     try {
@@ -62,7 +63,7 @@ export default function AntigravityToolCard({
         }
       }
     } catch (error) {
-      console.log("Error loading saved mappings:", error);
+      reportClientError("Error loading saved mappings:", error);
     }
   };
 
@@ -72,7 +73,7 @@ export default function AntigravityToolCard({
       const data = await res.json();
       if (res.ok) setModelAliases(data.aliases || {});
     } catch (error) {
-      console.log("Error fetching model aliases:", error);
+      reportClientError("Error fetching model aliases:", error);
     }
   };
 
@@ -84,7 +85,7 @@ export default function AntigravityToolCard({
         setStatus(data);
       }
     } catch (error) {
-      console.log("Error fetching status:", error);
+      reportClientError("Error fetching status:", error);
       setStatus({ running: false });
     }
   };

@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
 import PropTypes from "prop-types";
 import Card from "@/shared/components/Card";
 import Badge from "@/shared/components/Badge";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 const fmt = (n) => new Intl.NumberFormat().format(n || 0);
 const fmtCost = (n) => `$${(n || 0).toFixed(2)}`;
@@ -115,7 +116,7 @@ export default function UsageTable({
       const saved = localStorage.getItem(storageKey);
       if (saved) setExpanded(new Set(JSON.parse(saved)));
     } catch (e) {
-      console.error(`Failed to load ${storageKey}:`, e);
+      reportClientError(`Failed to load ${storageKey}:`, e);
     }
   }, [storageKey]);
 
@@ -124,7 +125,7 @@ export default function UsageTable({
     try {
       localStorage.setItem(storageKey, JSON.stringify([...expanded]));
     } catch (e) {
-      console.error(`Failed to save ${storageKey}:`, e);
+      reportClientError(`Failed to save ${storageKey}:`, e);
     }
   }, [expanded, storageKey]);
 

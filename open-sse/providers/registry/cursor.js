@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "cursor",
   priority: 50,
   alias: "cu",
@@ -58,3 +58,5 @@ export default {
     },
   },
 };
+
+export default moduleDefault;

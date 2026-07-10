@@ -63,7 +63,7 @@ export default function CoworkToolCard({
 
   useEffect(() => {
     if (isExpanded && !status) checkStatus();
-  }, [isExpanded]);
+  }, [isExpanded, status]);
 
   useEffect(() => {
     if (!isExpanded) return;
@@ -94,7 +94,7 @@ export default function CoworkToolCard({
     if (Array.isArray(status?.cowork?.customPlugins) && status.cowork.customPlugins.length > 0) {
       setCustomPlugins(status.cowork.customPlugins);
     }
-  }, [status]);
+  }, [status, customBaseUrl, plugins.length]);
 
   const checkStatus = async () => {
     setChecking(true);

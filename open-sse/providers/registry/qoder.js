@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "qoder",
   priority: 30,
   alias: "qd",
@@ -52,3 +52,5 @@ export default {
     usage: true,
   },
 };
+
+export default moduleDefault;

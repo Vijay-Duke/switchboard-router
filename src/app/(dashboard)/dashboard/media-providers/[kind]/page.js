@@ -8,6 +8,7 @@ import { Card, Badge, Button, Toggle, AddCustomEmbeddingModal } from "@/shared/c
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS, getProvidersByKind } from "@/shared/constants/providers";
 import MediaKindTabs from "../MediaKindTabs";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 // Kinds that support combos (currently disabled for image/tts — temporarily hidden).
 // webSearch/webFetch handled by /web page.
@@ -225,7 +226,7 @@ export default function MediaProviderKindPage() {
       router.push(`/dashboard/media-providers/combo/${created.id}`);
     } else {
       const err = await res.json();
-      alert(err.error || "Failed to create combo");
+      reportClientError(err.error || "Failed to create combo");
     }
   };
 

@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "clinepass",
   priority: 85,
   alias: "clinepass",
@@ -56,3 +56,5 @@ export default {
     defaultMode: "auto",
   },
 };
+
+export default moduleDefault;

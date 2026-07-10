@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
 import { GITHUB_CONFIG } from "@/shared/constants/config";
+import Image from "next/image";
 
 export default function DonateModal({ isOpen, onClose }) {
   const [data, setData] = useState(null);
@@ -107,9 +108,12 @@ function DonateChannelCard({ channel }) {
         <div className="text-xs text-text-muted mb-3 text-center">{description}</div>
       )}
       {qr && (
-        <img
+        <Image
           src={qr}
           alt={`${label} QR`}
+          width={180}
+          height={180}
+          unoptimized
           className="w-full max-w-[180px] aspect-square object-contain rounded-lg bg-white p-1"
         />
       )}

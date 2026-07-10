@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "topaz",
   alias: "topaz",
   display: {
@@ -17,3 +17,5 @@ export default {
     "image"
   ]
 };
+
+export default moduleDefault;

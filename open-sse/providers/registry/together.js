@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "together",
   priority: 60,
   alias: "together",
@@ -29,3 +29,5 @@ export default {
   serviceKinds: ["llm", "embedding"],
   embeddingConfig: { baseUrl: "https://api.together.xyz/v1/embeddings" },
 };
+
+export default moduleDefault;

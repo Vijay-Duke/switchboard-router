@@ -4,7 +4,7 @@ import { PROVIDER_MEDIA } from "../../providers/index.js";
 
 const BASE_URL = PROVIDER_MEDIA["black-forest-labs"]?.imageConfig?.baseUrl;
 
-export default {
+const moduleDefault = {
   async: true,
   buildUrl: (model) => `${BASE_URL}/${model}`,
   buildHeaders: (creds) => {
@@ -42,3 +42,5 @@ export default {
     return { created: nowSec(), data: [] };
   },
 };
+
+export default moduleDefault;

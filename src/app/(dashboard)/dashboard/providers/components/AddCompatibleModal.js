@@ -4,6 +4,7 @@
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import { Badge, Button, Input, Modal, Select } from "@/shared/components";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 const VARIANT_CONFIG = {
   openai: {
@@ -99,7 +100,7 @@ function AddCompatibleModal({ variant, isOpen, onClose, onCreated }) {
         setError(data.error || "Failed to create provider");
       }
     } catch (err) {
-      console.log(`Error creating ${config.errorLabel} node:`, err);
+      reportClientError(`Error creating ${config.errorLabel} node:`, err);
       setError("Network error");
     } finally {
       setSubmitting(false);

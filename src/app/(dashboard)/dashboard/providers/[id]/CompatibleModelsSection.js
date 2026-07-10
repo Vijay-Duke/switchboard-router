@@ -5,6 +5,7 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import { Button } from "@/shared/components";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias, onTest, testStatus, isTesting }) {
   const borderColor = testStatus === "ok"
     ? "border-green-500/40"
@@ -122,7 +123,7 @@ export default function CompatibleModelsSection({
     if (!newModel.trim() || adding) return;
     const modelId = newModel.trim();
     if (allModels.some((model) => model.id === modelId)) {
-      alert("Model already exists for this provider.");
+      reportClientError("Model already exists for this provider.");
       return;
     }
 
@@ -131,7 +132,7 @@ export default function CompatibleModelsSection({
       await onAddCustomModel(modelId);
       setNewModel("");
     } catch (error) {
-      console.log("Error adding model:", error);
+      reportClientError("Error adding model:", error);
     } finally {
       setAdding(false);
     }
@@ -148,12 +149,12 @@ export default function CompatibleModelsSection({
       const res = await fetch(`/api/providers/${activeConnection.id}/models`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert(data.error || "Failed to import models");
+        reportClientError(data.error || "Failed to import models");
         return;
       }
       const models = data.models || [];
       if (models.length === 0) {
-        alert("No models returned from /models.");
+        reportClientError("No models returned from /models.");
         return;
       }
 
@@ -200,8 +201,8 @@ export default function CompatibleModelsSection({
         window.dispatchEvent(new CustomEvent("customModelChanged"));
       }
     } catch (error) {
-      console.log("Error importing models:", error);
-      alert(error?.message || "Import failed");
+      reportClientError("Error importing models:", error);
+      reportClientError(error?.message || "Import failed");
     } finally {
       setImporting(false);
     }

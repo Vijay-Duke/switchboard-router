@@ -1,6 +1,6 @@
 import { CLAUDE_API_HEADERS } from "../shared.js";
 
-export default {
+const moduleDefault = {
   id: "deepseek",
   priority: 110,
   alias: "deepseek",
@@ -49,3 +49,5 @@ export default {
     { id: "deepseek-reasoner", name: "DeepSeek V3.2 Reasoner" },
   ],
 };
+
+export default moduleDefault;

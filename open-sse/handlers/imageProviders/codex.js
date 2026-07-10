@@ -143,7 +143,7 @@ function buildSseResponse(providerResponse, log, onSuccess) {
   });
 }
 
-export default {
+const moduleDefault = {
   stream: true,
   buildUrl: () => CODEX_RESPONSES_URL,
   buildHeaders: (creds) => {
@@ -196,3 +196,5 @@ export default {
   },
   normalize: (responseBody) => responseBody,
 };
+
+export default moduleDefault;

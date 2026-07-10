@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "searxng",
   alias: "searxng",
   display: {
@@ -31,3 +31,5 @@ export default {
     cacheTTLMs: 180000
   }
 };
+
+export default moduleDefault;

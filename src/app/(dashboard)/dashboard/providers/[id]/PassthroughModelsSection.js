@@ -5,6 +5,7 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import { Button } from "@/shared/components";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 function PassthroughModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias, onTest, testStatus, isTesting }) {
   const borderColor = testStatus === "ok"
@@ -104,7 +105,7 @@ export default function PassthroughModelsSection({ providerAlias, modelAliases, 
     const modelId = newModel.trim();
 
     if (allModels.some((model) => model.id === modelId)) {
-      alert("Model already exists for this provider.");
+      reportClientError("Model already exists for this provider.");
       return;
     }
 
@@ -113,7 +114,7 @@ export default function PassthroughModelsSection({ providerAlias, modelAliases, 
       await onAddCustomModel(modelId);
       setNewModel("");
     } catch (error) {
-      console.log("Error adding model:", error);
+      reportClientError("Error adding model:", error);
     } finally {
       setAdding(false);
     }

@@ -1,6 +1,6 @@
 import { GOOGLE_OAUTH_CLIENT } from "../shared.js";
 
-export default {
+const moduleDefault = {
   id: "gemini",
   priority: 50,
   hasFree: true,
@@ -79,3 +79,5 @@ export default {
     freeTier: "Free tier: 15 RPM, 1M tokens/day on gemini-2.5-flash via AI Studio.",
   },
 };
+
+export default moduleDefault;

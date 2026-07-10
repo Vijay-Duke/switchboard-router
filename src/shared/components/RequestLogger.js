@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Card from "./Card";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 export default function RequestLogger() {
   const [logs, setLogs] = useState([]);
@@ -31,7 +32,7 @@ export default function RequestLogger() {
         setLogs(data);
       }
     } catch (error) {
-      console.error("Failed to fetch logs:", error);
+      reportClientError("Failed to fetch logs:", error);
     } finally {
       if (showLoading) setLoading(false);
     }

@@ -78,10 +78,12 @@ async function synthesizeMacOrWin(text, voiceId) {
   }
 }
 
-export default {
+const moduleDefault = {
   noAuth: true,
   async synthesize(text, model) {
     const base64 = await synthesizeMacOrWin(text, model);
     return { base64, format: "mp3" };
   },
 };
+
+export default moduleDefault;

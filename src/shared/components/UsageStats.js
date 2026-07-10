@@ -16,6 +16,7 @@ import OverviewCards from "@/app/(dashboard)/dashboard/usage/components/Overview
 import UsageTable, { fmt, fmtTime } from "@/app/(dashboard)/dashboard/usage/components/UsageTable";
 import ProviderTopology from "@/app/(dashboard)/dashboard/usage/components/ProviderTopology";
 import UsageChart from "@/app/(dashboard)/dashboard/usage/components/UsageChart";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 function timeAgo(timestamp) {
   const diff = Math.floor((Date.now() - new Date(timestamp)) / 1000);
@@ -294,7 +295,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         });
         if (hasLoadedStats.current) setLoading(false);
       } catch (err) {
-        console.error("[SSE CLIENT] parse error:", err);
+        reportClientError("[SSE CLIENT] parse error:", err);
       }
     };
 

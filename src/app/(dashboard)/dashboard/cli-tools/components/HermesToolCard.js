@@ -8,6 +8,7 @@ import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import ModelCatalogInput from "./ModelCatalogInput";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 const ENDPOINT = "/api/cli-tools/hermes-settings";
 
@@ -75,7 +76,7 @@ export default function HermesToolCard({
       const data = await res.json();
       if (res.ok) setModelAliases(data.aliases || {});
     } catch (error) {
-      console.log("Error fetching model aliases:", error);
+      reportClientError("Error fetching model aliases:", error);
     }
   };
 

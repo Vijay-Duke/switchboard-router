@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "firecrawl",
   alias: "firecrawl",
   display: {
@@ -32,3 +32,5 @@ export default {
     timeoutMs: 30000
   }
 };
+
+export default moduleDefault;

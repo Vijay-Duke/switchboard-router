@@ -97,7 +97,7 @@ import p94 from "./xiaomi-mimo.js";
 import p95 from "./xiaomi-tokenplan.js";
 import p96 from "./youcom.js";
 
-export default [
+const providerRegistry = [
   p0,
   p1,
   p2,
@@ -196,3 +196,5 @@ export default [
   p95,
   p96
 ];
+
+export default providerRegistry;

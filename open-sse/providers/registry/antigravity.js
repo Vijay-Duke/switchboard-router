@@ -1,7 +1,7 @@
 import { platform, arch } from "os";
 import { ANTIGRAVITY_OAUTH_CLIENT } from "../shared.js";
 
-export default {
+const moduleDefault = {
   id: "antigravity",
   priority: 20,
   alias: "ag",
@@ -85,3 +85,5 @@ export default {
     usage: true,
   },
 };
+
+export default moduleDefault;

@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { getDefaultPricing, formatCost } from "open-sse/providers/pricing.js";
+import { reportClientError } from "@/shared/utils/clientFeedback";
+import { requestConfirmation } from "@/store/confirmationStore";
 
 export default function PricingModal({ isOpen, onClose, onSave }) {
   const [pricingData, setPricingData] = useState({});
@@ -27,7 +29,7 @@ export default function PricingModal({ isOpen, onClose, onSave }) {
         setPricingData(defaults);
       }
     } catch (error) {
-      console.error("Failed to load pricing:", error);
+      reportClientError("Failed to load pricing:", error);
       const defaults = getDefaultPricing();
       setPricingData(defaults);
     } finally {
@@ -62,18 +64,18 @@ export default function PricingModal({ isOpen, onClose, onSave }) {
         onClose();
       } else {
         const error = await response.json();
-        alert(`Failed to save pricing: ${error.error}`);
+        reportClientError(`Failed to save pricing: ${error.error}`);
       }
     } catch (error) {
-      console.error("Failed to save pricing:", error);
-      alert("Failed to save pricing");
+      reportClientError("Failed to save pricing:", error);
+      reportClientError("Failed to save pricing");
     } finally {
       setSaving(false);
     }
   };
 
   const handleReset = async () => {
-    if (!confirm("Reset all pricing to defaults? This cannot be undone.")) return;
+    if (!await requestConfirmation({ message: "Reset all pricing to defaults? This cannot be undone.", confirmText: "Continue" })) return;
 
     try {
       const response = await fetch("/api/pricing", { method: "DELETE" });
@@ -82,8 +84,8 @@ export default function PricingModal({ isOpen, onClose, onSave }) {
         setPricingData(defaults);
       }
     } catch (error) {
-      console.error("Failed to reset pricing:", error);
-      alert("Failed to reset pricing");
+      reportClientError("Failed to reset pricing:", error);
+      reportClientError("Failed to reset pricing");
     }
   };
 

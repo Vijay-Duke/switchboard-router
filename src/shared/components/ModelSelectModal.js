@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import PropTypes from "prop-types";
 import Modal from "./Modal";
 import ProviderIcon from "./ProviderIcon";
@@ -8,6 +8,7 @@ import CapacityBadges from "./CapacityBadges";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, AI_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 // Provider order: OAuth first, then Free Tier, then API Key (matches dashboard/providers)
 const PROVIDER_ORDER = [
@@ -57,7 +58,7 @@ export default function ModelSelectModal({
       const data = await res.json();
       setCombos(data.combos || []);
     } catch (error) {
-      console.error("Error fetching combos:", error);
+      reportClientError("Error fetching combos:", error);
       setCombos([]);
     }
   };
@@ -73,7 +74,7 @@ export default function ModelSelectModal({
       const data = await res.json();
       setProviderNodes(data.nodes || []);
     } catch (error) {
-      console.error("Error fetching provider nodes:", error);
+      reportClientError("Error fetching provider nodes:", error);
       setProviderNodes([]);
     }
   };
@@ -89,7 +90,7 @@ export default function ModelSelectModal({
       const data = await res.json();
       setCustomModels(data.models || []);
     } catch (error) {
-      console.error("Error fetching custom models:", error);
+      reportClientError("Error fetching custom models:", error);
       setCustomModels([]);
     }
   };
@@ -105,7 +106,7 @@ export default function ModelSelectModal({
       const data = await res.json();
       setDisabledModels(data.disabled || {});
     } catch (error) {
-      console.error("Error fetching disabled models:", error);
+      reportClientError("Error fetching disabled models:", error);
       setDisabledModels({});
     }
   };
@@ -361,11 +362,11 @@ export default function ModelSelectModal({
   }, [combos, searchQuery, kindFilter]);
 
   // Sort models alphabetically, with added models floated to top
-  const sortModels = (models) => {
+  const sortModels = useCallback((models) => {
     const added = models.filter(m => addedModelValues.includes(m.value)).sort((a, b) => a.name.localeCompare(b.name));
     const rest = models.filter(m => !addedModelValues.includes(m.value)).sort((a, b) => a.name.localeCompare(b.name));
     return [...added, ...rest];
-  };
+  }, [addedModelValues]);
 
   // Filter models by search query
   const filteredGroups = useMemo(() => {
@@ -390,7 +391,7 @@ export default function ModelSelectModal({
     });
 
     return filtered;
-  }, [groupedModels, searchQuery, addedModelValues]);
+  }, [groupedModels, searchQuery, sortModels]);
 
   const handleSelect = (model) => {
     const value = model?.value || model?.name || model;

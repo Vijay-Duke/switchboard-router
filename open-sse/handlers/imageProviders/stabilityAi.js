@@ -11,7 +11,7 @@ function modelToEndpoint(model) {
   return "core";
 }
 
-export default {
+const moduleDefault = {
   buildUrl: (model) => `${BASE_URL}/${modelToEndpoint(model)}`,
   buildHeaders: (creds) => {
     const key = creds?.apiKey || creds?.accessToken;
@@ -33,3 +33,5 @@ export default {
     return { created: nowSec(), data: [] };
   },
 };
+
+export default moduleDefault;

@@ -58,7 +58,7 @@ function buildPrompt(text, language) {
   return language ? `Say in ${language}: ${text}` : `Say: ${text}`;
 }
 
-export default {
+const moduleDefault = {
   async synthesize(text, model, credentials, _responseFormat, opts = {}) {
     if (!credentials?.apiKey) throw new Error("No Gemini API key configured");
     const { modelId, voiceId } = parseGeminiModelVoice(model);
@@ -88,6 +88,8 @@ export default {
     return { base64: wav.toString("base64"), format: "wav" };
   },
 };
+
+export default moduleDefault;
 
 // Voice fetcher — return prebuilt voices (Gemini has no list API)
 const PREBUILT_VOICES = [

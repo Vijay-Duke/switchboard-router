@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "fireworks",
   priority: 50,
   alias: "fireworks",
@@ -27,3 +27,5 @@ export default {
   serviceKinds: ["llm", "embedding"],
   embeddingConfig: { baseUrl: "https://api.fireworks.ai/inference/v1/embeddings" },
 };
+
+export default moduleDefault;

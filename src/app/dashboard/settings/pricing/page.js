@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Card from "@/shared/components/Card";
 import PricingModal from "@/shared/components/PricingModal";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 export default function PricingSettingsPage() {
   const router = useRouter();
@@ -25,7 +26,7 @@ export default function PricingSettingsPage() {
         setCurrentPricing(data);
       }
     } catch (error) {
-      console.error("Failed to load pricing:", error);
+      reportClientError("Failed to load pricing:", error);
     } finally {
       setLoading(false);
     }

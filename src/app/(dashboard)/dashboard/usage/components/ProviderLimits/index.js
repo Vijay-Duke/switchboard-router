@@ -40,6 +40,8 @@ import Card from "@/shared/components/Card";
 import { ConfirmModal, EditConnectionModal } from "@/shared/components";
 import { USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { reportClientError } from "@/shared/utils/clientFeedback";
+import { requestConfirmation } from "@/store/confirmationStore";
 
 // Maps the stored providerSpecificData.authMethod to a human label for Kiro.
 // Values come from the Kiro connect flows: builder-id/idc (device code),
@@ -200,7 +202,7 @@ export default function ProviderLimits() {
         setPage(getPaginationPageValue(data.pagination, targetPage));
         return connectionList;
       } catch (error) {
-        console.error("Error fetching connections:", error);
+        reportClientError("Error fetching connections:", error);
         setConnections([]);
         setProviderOptions([]);
         setPagination({ page: 1, pageSize, total: 0, totalPages: 1 });
@@ -208,7 +210,7 @@ export default function ProviderLimits() {
         return [];
       }
     },
-    [accountFilter, expiringFirst, page, pageSize, providerFilter],
+    [accountFilter, page, pageSize, providerFilter],
   );
 
   // Fetch quota for a specific connection
@@ -217,9 +219,6 @@ export default function ProviderLimits() {
     setErrors((prev) => ({ ...prev, [connectionId]: null }));
 
     try {
-      console.log(
-        `[ProviderLimits] Fetching quota for ${provider} (${connectionId})`,
-      );
       const response = await fetch(`/api/usage/${connectionId}`);
 
       if (!response.ok) {
@@ -229,7 +228,7 @@ export default function ProviderLimits() {
         // Handle different error types gracefully
         if (response.status === 404) {
           // Connection not found - skip silently
-          console.warn(
+          reportClientError(
             `[ProviderLimits] Connection not found for ${provider}, skipping`,
           );
           return;
@@ -237,7 +236,7 @@ export default function ProviderLimits() {
 
         if (response.status === 401) {
           // Auth error - show message instead of throwing
-          console.warn(
+          reportClientError(
             `[ProviderLimits] Auth error for ${provider}:`,
             errorMsg,
           );
@@ -257,7 +256,6 @@ export default function ProviderLimits() {
       }
 
       const data = await response.json();
-      console.log(`[ProviderLimits] Got quota for ${provider}:`, data);
 
       // Parse quota data using provider-specific parser
       const parsedQuotas = parseQuotaData(provider, data);
@@ -275,7 +273,7 @@ export default function ProviderLimits() {
       }));
       setQuotaCache(connectionId, quotaEntry);
     } catch (error) {
-      console.error(
+      reportClientError(
         `[ProviderLimits] Error fetching quota for ${provider} (${connectionId}):`,
         error,
       );
@@ -345,7 +343,7 @@ export default function ProviderLimits() {
 
   const handleDeleteConnection = useCallback(
     async (id) => {
-      if (!confirm("Delete this connection?")) return;
+      if (!await requestConfirmation({ message: "Delete this connection?", confirmText: "Continue" })) return;
       setDeletingId(id);
       try {
         const res = await fetch(`/api/providers/${id}`, { method: "DELETE" });
@@ -377,14 +375,14 @@ export default function ProviderLimits() {
                 );
               }
             } catch (e) {
-              console.error("Error deleting cache entry:", e);
+              reportClientError("Error deleting cache entry:", e);
             }
           }
 
           await reconcileConnectionsPage(fetchConnections, page);
         }
       } catch (error) {
-        console.error("Error deleting connection:", error);
+        reportClientError("Error deleting connection:", error);
       } finally {
         setDeletingId(null);
       }
@@ -409,7 +407,7 @@ export default function ProviderLimits() {
           await reconcileConnectionsPage(fetchConnections, page);
         }
       } catch (error) {
-        console.error("Error updating connection status:", error);
+        reportClientError("Error updating connection status:", error);
       } finally {
         setTogglingId(null);
       }
@@ -437,7 +435,7 @@ export default function ProviderLimits() {
           }
         }
       } catch (error) {
-        console.error("Error saving connection:", error);
+        reportClientError("Error saving connection:", error);
       }
     },
     [selectedConnection, fetchConnections, fetchQuota],
@@ -474,7 +472,7 @@ export default function ProviderLimits() {
 
       setLastUpdated(new Date());
     } catch (error) {
-      console.error("Error refreshing all providers:", error);
+      reportClientError("Error refreshing all providers:", error);
     } finally {
       setRefreshingAll(false);
     }
@@ -648,7 +646,7 @@ export default function ProviderLimits() {
         );
         await reconcileConnectionsPage(fetchConnections, page);
       } catch (error) {
-        console.error("Error bulk toggling connections:", error);
+        reportClientError("Error bulk toggling connections:", error);
       } finally {
         setBulkToggling(false);
       }

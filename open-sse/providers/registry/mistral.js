@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "mistral",
   priority: 80,
   alias: "mistral",
@@ -29,3 +29,5 @@ export default {
   serviceKinds: ["llm","imageToText","embedding"],
   embeddingConfig: { baseUrl: "https://api.mistral.ai/v1/embeddings", authType: "apikey", authHeader: "bearer" },
 };
+
+export default moduleDefault;

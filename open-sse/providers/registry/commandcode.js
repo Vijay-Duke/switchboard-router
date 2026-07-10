@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "commandcode",
   priority: 100,
   alias: "commandcode",
@@ -62,3 +62,5 @@ export default {
     { id: "nvidia/nemotron-3-ultra-550b-a55b", name: "Nemotron 3 Ultra" },
   ],
 };
+
+export default moduleDefault;

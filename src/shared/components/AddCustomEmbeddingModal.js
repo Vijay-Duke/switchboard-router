@@ -4,6 +4,7 @@
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import { Modal, Input, Button, Badge } from "@/shared/components";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 
@@ -58,7 +59,7 @@ export default function AddCustomEmbeddingModal({ isOpen, onClose, onCreated, on
         else onCreated?.(data.node);
       }
     } catch (error) {
-      console.log("Error saving custom embedding node:", error);
+      reportClientError("Error saving custom embedding node:", error);
     } finally {
       setSubmitting(false);
     }

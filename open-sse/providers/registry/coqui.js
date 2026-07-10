@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "coqui",
   alias: "coqui",
   display: {
@@ -28,3 +28,5 @@ export default {
   },
   hidden: true
 };
+
+export default moduleDefault;

@@ -8,7 +8,7 @@ function hasColumn(db, table, column) {
   return rows.some((r) => r.name === column);
 }
 
-export default {
+const moduleDefault = {
   version: 5,
   name: "usage-request-id",
   up(db) {
@@ -22,3 +22,5 @@ export default {
     );
   },
 };
+
+export default moduleDefault;

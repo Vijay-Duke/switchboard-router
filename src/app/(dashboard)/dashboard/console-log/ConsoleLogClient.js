@@ -4,6 +4,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Card, Button } from "@/shared/components";
 import { CONSOLE_LOG_CONFIG } from "@/shared/constants/config";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 const LOG_LEVEL_COLORS = {
   LOG: "text-green-400",
@@ -30,7 +31,7 @@ export default function ConsoleLogClient() {
       await fetch("/api/translator/console-logs", { method: "DELETE" });
       // UI cleared via SSE "clear" event
     } catch (err) {
-      console.error("Failed to clear console logs:", err);
+      reportClientError("Failed to clear console logs:", err);
     }
   };
 

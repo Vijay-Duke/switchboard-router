@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "groq",
   priority: 60,
   hasFree: true,
@@ -35,3 +35,5 @@ export default {
     format: "openai",
   },
 };
+
+export default moduleDefault;

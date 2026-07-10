@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import PropTypes from "prop-types";
+import Image from "next/image";
 
 export default function ProviderIcon({
   src,
@@ -30,11 +31,12 @@ export default function ProviderIcon({
   }
 
   return (
-    <img
+    <Image
       src={src}
       alt={alt}
       width={size}
       height={size}
+      unoptimized
       className={className}
       onError={() => setErrored(true)}
     />

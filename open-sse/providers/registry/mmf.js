@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "mmf",
   hidden: true,
   priority: 200,
@@ -17,3 +17,5 @@ export default {
     { id: "mimo-auto", name: "MiMo Auto" },
   ],
 };
+
+export default moduleDefault;

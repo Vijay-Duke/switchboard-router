@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "aws-polly",
   alias: "polly",
   display: {
@@ -43,3 +43,5 @@ export default {
   },
   hasProviderSpecificData: true
 };
+
+export default moduleDefault;

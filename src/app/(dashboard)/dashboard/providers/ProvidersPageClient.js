@@ -1,6 +1,6 @@
 "use client";
 // @ts-check
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import PropTypes from "prop-types";
 import {
   Card,
@@ -148,7 +148,7 @@ export default function ProvidersPageClient({ initialData }) {
       return (a.name || "").localeCompare(b.name || "");
     });
 
-  const refreshData = async () => {
+  const refreshData = useCallback(async () => {
     try {
       const [connectionsRes, nodesRes] = await Promise.all([
         fetch("/api/providers"),
@@ -166,7 +166,7 @@ export default function ProvidersPageClient({ initialData }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [notify]);
 
   useEffect(() => {
     if (initialData?.connections) {
@@ -174,7 +174,7 @@ export default function ProvidersPageClient({ initialData }) {
       return;
     }
     refreshData();
-  }, [initialData]);
+  }, [initialData, refreshData]);
 
   const getProviderStats = (providerId, authType) => {
     const authTypes = Array.isArray(authType) ? authType : [authType];

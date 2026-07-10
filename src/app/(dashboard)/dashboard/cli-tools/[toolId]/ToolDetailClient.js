@@ -13,6 +13,7 @@ import {
   ClineToolCard, KiloToolCard, DeepSeekTuiToolCard,
   JcodeToolCard, GrokToolCard, PiToolCard, AiderToolCard, GeminiCliToolCard,
 } from "../components";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 export default function ToolDetailClient({ toolId, machineId }) {
   const tool = CLI_TOOLS[toolId];
@@ -39,7 +40,7 @@ export default function ToolDetailClient({ toolId, machineId }) {
           setApiKeys(data.keys || []);
         }
       } catch (error) {
-        console.log("Error loading tool data:", error);
+        reportClientError("Error loading tool data:", error);
       } finally {
         if (mounted) setLoading(false);
       }

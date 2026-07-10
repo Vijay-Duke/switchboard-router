@@ -7,6 +7,7 @@ import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders, cloudEnabled, initialStatus, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl }) {
   const [status, setStatus] = useState(initialStatus || null);
@@ -47,7 +48,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
       fetchModelAliases();
     }
     if (isExpanded) fetchModelAliases();
-  }, [isExpanded]);
+  }, [isExpanded, status]);
 
   // Sync models from existing config
   useEffect(() => {
@@ -70,7 +71,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
       const data = await res.json();
       if (res.ok) setModelAliases(data.aliases || {});
     } catch (error) {
-      console.log("Error fetching model aliases:", error);
+      reportClientError("Error fetching model aliases:", error);
     }
   };
 
@@ -92,7 +93,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
         }),
       });
     } catch (error) {
-      console.log("Error saving models:", error);
+      reportClientError("Error saving models:", error);
     }
   };
 
@@ -345,7 +346,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                                     checkStatus();
                                   }
                                 } catch (error) {
-                                  console.log("Error clearing active model:", error);
+                                  reportClientError("Error clearing active model:", error);
                                 }
                               } else {
                                 setActiveModel(model);
@@ -374,7 +375,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                                     checkStatus();
                                   }
                                 } catch (error) {
-                                  console.log("Error removing model:", error);
+                                  reportClientError("Error removing model:", error);
                                 }
                               }}
                               className="ml-0.5 hover:text-red-500"

@@ -1,6 +1,6 @@
 import { CLAUDE_API_HEADERS, KIMI_CODING_BASE_URL } from "../shared.js";
 
-export default {
+const moduleDefault = {
   id: "kimi-coding",
   hidden: true,
   priority: 120,
@@ -63,3 +63,5 @@ export default {
     usage: true,
   },
 };
+
+export default moduleDefault;

@@ -1,6 +1,6 @@
 // Cache model probe outcomes per provider connection scope.
 
-export default {
+const moduleDefault = {
   version: 4,
   name: "provider-model-probe",
   up(db) {
@@ -22,3 +22,5 @@ export default {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_pmp_status ON provider_model_probe(provider_id, scope_key, status)`);
   },
 };
+
+export default moduleDefault;

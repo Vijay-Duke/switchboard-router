@@ -7,6 +7,7 @@ import { MEDIA_PROVIDER_KINDS, getProviderAlias, resolveProviderId } from "@/sha
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { Row, KIND_EXAMPLE_CONFIG } from "./exampleShared";
+import Image from "next/image";
 
 const CLOUDFLARE_TEST_IMAGE_URL = "https://pub-1fb693cb11cc46b2b2f656f51e015a2c.r2.dev/dog.png";
 const CLOUDFLARE_TEST_MASK_URL = "https://pub-1fb693cb11cc46b2b2f656f51e015a2c.r2.dev/dog-mask.png";
@@ -327,9 +328,12 @@ export function GenericExampleCard({ providerId, kind }) {
                 )}
               </div>
               {refImagePreviewSrc && (
-                <img
+                <Image
                   src={refImagePreviewSrc}
                   alt="Reference"
+                  width={640}
+                  height={320}
+                  unoptimized
                   className="max-h-40 rounded-lg border border-border object-contain bg-sidebar"
                   onError={(e) => { e.currentTarget.style.display = "none"; }}
                   onLoad={(e) => { e.currentTarget.style.display = "block"; }}
@@ -360,9 +364,12 @@ export function GenericExampleCard({ providerId, kind }) {
                 )}
               </div>
               {maskImagePreviewSrc && (
-                <img
+                <Image
                   src={maskImagePreviewSrc}
                   alt="Mask"
+                  width={640}
+                  height={320}
+                  unoptimized
                   className="max-h-40 rounded-lg border border-border object-contain bg-sidebar"
                   onError={(e) => { e.currentTarget.style.display = "none"; }}
                   onLoad={(e) => { e.currentTarget.style.display = "block"; }}
@@ -466,9 +473,12 @@ export function GenericExampleCard({ providerId, kind }) {
         {partialImage?.b64_json && !result && (
           <div>
             <span className="text-xs font-semibold text-text-muted uppercase tracking-wider">Partial preview</span>
-            <img
+            <Image
               src={`data:image/png;base64,${partialImage.b64_json}`}
               alt="Partial"
+              width={1024}
+              height={1024}
+              unoptimized
               className="max-w-full rounded-lg border border-border mt-1.5 opacity-80"
             />
           </div>
@@ -508,9 +518,12 @@ export function GenericExampleCard({ providerId, kind }) {
                   Download
                 </a>
               </div>
-              <img
+              <Image
                 src={binaryImageUrl || (result?.data?.data?.[0]?.b64_json ? `data:image/png;base64,${result.data.data[0].b64_json}` : result?.data?.data?.[0]?.url)}
                 alt="Generated"
+                width={1024}
+                height={1024}
+                unoptimized
                 className="max-w-full rounded-lg border border-border"
               />
             </div>

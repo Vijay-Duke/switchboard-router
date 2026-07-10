@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "cloudflare-ai",
   priority: 60,
   hasFree: true,
@@ -53,3 +53,5 @@ export default {
   serviceKinds: ["llm","image"],
   imageConfig: { baseUrl: "https://api.cloudflare.com/client/v4/accounts" },
 };
+
+export default moduleDefault;

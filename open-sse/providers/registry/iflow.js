@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "iflow",
   hidden: true,
   priority: 110,
@@ -50,3 +50,5 @@ export default {
     refreshLeadMs: 86400000,
   },
 };
+
+export default moduleDefault;

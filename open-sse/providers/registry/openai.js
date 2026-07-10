@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "openai",
   priority: 30,
   alias: "openai",
@@ -79,3 +79,5 @@ export default {
   imageConfig: { baseUrl: "https://api.openai.com/v1/images/generations" },
   searchViaChat: { defaultModel: "gpt-4o-mini", pricingUrl: "https://openai.com/api/pricing" },
 };
+
+export default moduleDefault;

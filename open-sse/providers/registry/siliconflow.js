@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "siliconflow",
   priority: 250,
   alias: "siliconflow",
@@ -37,3 +37,5 @@ export default {
     { id: "inclusionAI/Ling-flash-2.0", name: "Ling Flash 2.0" },
   ],
 };
+
+export default moduleDefault;

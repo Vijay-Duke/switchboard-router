@@ -1,6 +1,6 @@
 import { CLAUDE_API_HEADERS } from "../shared.js";
 
-export default {
+const moduleDefault = {
   id: "xiaomi-mimo",
   priority: 290,
   alias: "xiaomi-mimo",
@@ -44,3 +44,5 @@ export default {
     { id: "mimo-v2-flash", name: "MiMo V2 Flash" },
   ],
 };
+
+export default moduleDefault;

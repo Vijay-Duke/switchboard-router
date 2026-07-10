@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "kimchi",
   priority: 95,
   alias: "kimchi",
@@ -47,3 +47,5 @@ export default {
   },
   passthroughModels: true,
 };
+
+export default moduleDefault;

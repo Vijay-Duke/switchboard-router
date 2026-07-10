@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "ollama-local",
   priority: 50,
   hasFree: true,
@@ -17,3 +17,5 @@ export default {
   },
   serviceKinds: ["llm"],
 };
+
+export default moduleDefault;

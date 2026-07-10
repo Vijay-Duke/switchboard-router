@@ -1,7 +1,7 @@
 // Per-request id on routing_events so COUNT(DISTINCT requestId) is request-level,
 // not attempt-level (fallback chains write multiple rows per chat).
 
-export default {
+const moduleDefault = {
   version: 3,
   name: "routing-request-id",
   up(db) {
@@ -16,3 +16,5 @@ export default {
     );
   },
 };
+
+export default moduleDefault;

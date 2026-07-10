@@ -1,6 +1,6 @@
 import { CLAUDE_CLI_SPOOF_HEADERS } from "../shared.js";
 
-export default {
+const moduleDefault = {
   id: "claude",
   priority: 10,
   alias: "cc",
@@ -85,3 +85,5 @@ export default {
     usage: true,
   },
 };
+
+export default moduleDefault;

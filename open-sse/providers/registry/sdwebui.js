@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "sdwebui",
   priority: 110,
   alias: "sdwebui",
@@ -18,3 +18,5 @@ export default {
   serviceKinds: ["image"],
   imageConfig: { baseUrl: "http://localhost:7860/sdapi/v1/txt2img" },
 };
+
+export default moduleDefault;

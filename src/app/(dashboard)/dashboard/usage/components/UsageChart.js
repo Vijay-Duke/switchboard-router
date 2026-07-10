@@ -14,6 +14,7 @@ import {
   Legend,
 } from "recharts";
 import Card from "@/shared/components/Card";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 const fmtTokens = (n) => {
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
@@ -37,7 +38,7 @@ export default function UsageChart({ period = "7d" }) {
         setData(json);
       }
     } catch (e) {
-      console.error("Failed to fetch chart data:", e);
+      reportClientError("Failed to fetch chart data:", e);
     } finally {
       setLoading(false);
     }

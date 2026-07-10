@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "assemblyai",
   priority: 30,
   alias: "assemblyai",
@@ -36,3 +36,5 @@ export default {
     format: "assemblyai",
   },
 };
+
+export default moduleDefault;

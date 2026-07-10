@@ -61,7 +61,7 @@ docker run -d --name switchboard -p 127.0.0.1:20128:20128 \
 ```
 
 > The dashboard only answers *local* callers, and a Docker bridge peer is not
-> loopback. `SWITCHBOARD_LOCAL_PEERS` trusts the bridge range; the loopback-only
+> loopback. `SWITCHBOARD_LOCAL_PEERS` trusts only the fixed Compose gateway; the loopback-only
 > publish keeps that trust off your LAN. Keep the two together — see [DOCKER.md](DOCKER.md).
 
 > Package name is **`switchboard-router`**. The bare npm name `switchboard` is a different project.
@@ -101,7 +101,7 @@ export OPENAI_API_KEY="sk-…"   # from the dashboard
 
 ## Docs
 
-[User guide](https://vijay-duke.github.io/switchboard-router/) · [Releases](https://github.com/Vijay-Duke/switchboard-router/releases)
+[User guide](https://vijay-duke.github.io/switchboard-router/) · [Architecture](docs/ARCHITECTURE.md) · [Environment reference](docs/ENVIRONMENT.md) · [Releases](https://github.com/Vijay-Duke/switchboard-router/releases)
 
 ---
 

@@ -1,6 +1,6 @@
 import { GOOGLE_OAUTH_CLIENT } from "../shared.js";
 
-export default {
+const moduleDefault = {
   id: "gemini-cli",
   priority: 20,
   hasFree: true,
@@ -56,3 +56,5 @@ export default {
     usage: true,
   },
 };
+
+export default moduleDefault;

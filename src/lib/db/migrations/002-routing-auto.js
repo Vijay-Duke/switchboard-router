@@ -1,6 +1,6 @@
 // Auto-route events + learning versions (docs/switchboard/DATABASE.md)
 
-export default {
+const moduleDefault = {
   version: 2,
   name: "routing-auto",
   up(db) {
@@ -52,3 +52,5 @@ export default {
     `);
   },
 };
+
+export default moduleDefault;

@@ -10,6 +10,7 @@ import {
   CAVEMAN_LEVELS,
   PONYTAIL_LEVELS,
 } from "../endpoint/endpointConstants";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 export default function TokenSaverClient() {
   const [rtkEnabled, setRtkEnabledState] = useState(true);
@@ -59,7 +60,7 @@ export default function TokenSaverClient() {
         body: JSON.stringify(patch),
       });
     } catch (error) {
-      console.log("Error updating setting:", error);
+      reportClientError("Error updating setting:", error);
     }
   };
 
@@ -72,7 +73,7 @@ export default function TokenSaverClient() {
       });
       if (res.ok) setRtkEnabledState(value);
     } catch (error) {
-      console.log("Error updating rtkEnabled:", error);
+      reportClientError("Error updating rtkEnabled:", error);
     }
   };
 

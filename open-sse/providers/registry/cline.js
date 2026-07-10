@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "cline",
   priority: 80,
   alias: "cl",
@@ -49,3 +49,5 @@ export default {
     refreshUrl: "https://api.cline.bot/api/v1/auth/refresh",
   },
 };
+
+export default moduleDefault;

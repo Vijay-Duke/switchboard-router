@@ -1,4 +1,4 @@
-export default {
+const moduleDefault = {
   id: "grok-web",
   priority: 150,
   alias: "grok-web",
@@ -37,3 +37,5 @@ export default {
   ],
   passthroughModels: true,
 };
+
+export default moduleDefault;

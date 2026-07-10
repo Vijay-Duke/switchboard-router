@@ -8,6 +8,7 @@ import { Card, Badge, Button } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS, getProvidersByKind } from "@/shared/constants/providers";
 import MediaKindTabs from "../MediaKindTabs";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 function getEffectiveStatus(conn) {
   const isCooldown = Object.entries(conn).some(
@@ -185,7 +186,7 @@ export default function WebProvidersPage() {
       router.push(`/dashboard/media-providers/combo/${created.id}`);
     } else {
       const err = await res.json();
-      alert(err.error || "Failed to create combo");
+      reportClientError(err.error || "Failed to create combo");
     }
   };
 

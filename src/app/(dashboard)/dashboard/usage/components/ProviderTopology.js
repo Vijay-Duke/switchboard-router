@@ -11,10 +11,12 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
+import Image from "next/image";
 
 // Force-stop FE animation if a provider stays active longer than this
 const FE_ACTIVE_TIMEOUT_MS = 60000;
 const FE_ACTIVE_TICK_MS = 1000;
+const FIT_VIEW_OPTIONS = { padding: 0.2, duration: 200 };
 
 function getProviderConfig(providerId) {
   return AI_PROVIDERS[providerId] || { color: "#6b7280", name: providerId };
@@ -49,7 +51,7 @@ function ProviderNode({ data }) {
         style={{ backgroundColor: `${color}15` }}
       >
         {!imgError ? (
-          <img src={imageUrl} alt={label} className="w-6 h-6 rounded-sm object-contain" onError={() => setImgError(true)} />
+          <Image src={imageUrl} alt={label} width={24} height={24} className="w-6 h-6 rounded-sm object-contain" onError={() => setImgError(true)} />
         ) : (
           <span className="text-sm font-bold" style={{ color }}>{textIcon}</span>
         )}
@@ -87,7 +89,7 @@ function RouterNode({ data }) {
       <Handle type="source" position={Position.Left} id="left" className="!bg-transparent !border-0 !w-0 !h-0" />
       <Handle type="source" position={Position.Right} id="right" className="!bg-transparent !border-0 !w-0 !h-0" />
 
-      <img src="/favicon.svg" alt="Switchboard" className="w-6 h-6 mr-2" />
+      <Image src="/favicon.svg" alt="Switchboard" width={24} height={24} className="w-6 h-6 mr-2" />
       <span className="text-sm font-bold text-primary">Switchboard</span>
       {data.activeCount > 0 && (
         <span className="ml-2 px-1.5 py-0.5 rounded-full bg-primary text-on-primary text-xs font-bold">
@@ -211,7 +213,7 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
 
   // Track firstSeen per active provider; drop provider if running too long (BE stuck)
   const firstSeenRef = useRef({});
-  const [tick, setTick] = useState(0);
+  const [, setTick] = useState(0);
 
   useEffect(() => {
     const seen = firstSeenRef.current;
@@ -230,7 +232,7 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
     return () => clearInterval(id);
   }, [rawActiveSet]);
 
-  const activeSet = useMemo(() => {
+  const activeSet = (() => {
     const now = Date.now();
     const filtered = new Set();
     for (const p of rawActiveSet) {
@@ -238,12 +240,9 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
       if (!ts || now - ts < FE_ACTIVE_TIMEOUT_MS) filtered.add(p);
     }
     return filtered;
-  }, [rawActiveSet, tick]);
+  })();
 
-  const { nodes, edges } = useMemo(
-    () => buildLayout(providers, activeSet, lastSet, errorSet),
-    [providers, activeSet, lastKey, errorKey]
-  );
+  const { nodes, edges } = buildLayout(providers, activeSet, lastSet, errorSet);
 
   // Stable key — only remount when provider list changes
   const providersKey = useMemo(
@@ -253,10 +252,9 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
 
   const rfInstance = useRef(null);
   const containerRef = useRef(null);
-  const fitOpts = { padding: 0.2, duration: 200 };
   const onInit = useCallback((instance) => {
     rfInstance.current = instance;
-    setTimeout(() => instance.fitView(fitOpts), 50);
+    setTimeout(() => instance.fitView(FIT_VIEW_OPTIONS), 50);
   }, []);
 
   // Re-fit on container resize
@@ -264,7 +262,7 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
     const el = containerRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
-      if (rfInstance.current) rfInstance.current.fitView(fitOpts);
+      if (rfInstance.current) rfInstance.current.fitView(FIT_VIEW_OPTIONS);
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -273,7 +271,7 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
   // Re-fit when node count/layout changes
   useEffect(() => {
     if (rfInstance.current) {
-      const id = setTimeout(() => rfInstance.current.fitView(fitOpts), 50);
+      const id = setTimeout(() => rfInstance.current.fitView(FIT_VIEW_OPTIONS), 50);
       return () => clearTimeout(id);
     }
   }, [nodes.length]);
