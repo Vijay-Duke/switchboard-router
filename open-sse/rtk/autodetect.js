@@ -14,6 +14,9 @@ import { tree } from "./filters/tree.js";
 import { smartTruncate } from "./filters/smartTruncate.js";
 import { readNumbered, READ_NUMBERED_LINE_RE } from "./filters/readNumbered.js";
 import { searchList, SEARCH_LIST_HEADER_RE } from "./filters/searchList.js";
+import { parseGrepLine } from "./parseGrepLine.js";
+
+export { parseGrepLine } from "./parseGrepLine.js";
 
 const RE_GIT_DIFF = /^diff --git /m;
 const RE_GIT_DIFF_HUNK = /^@@ /m;
@@ -70,26 +73,6 @@ export function autoDetectFilter(text) {
   if (text.split("\n").length >= SMART_TRUNCATE_MIN_LINES) return smartTruncate;
 
   return null;
-}
-
-/**
- * Parse a ripgrep-style "file:lineno:content" line, aware of Windows drive letters.
- * "C:\foo\bar.js:10:x" must not treat the drive colon as the field separator.
- * @returns {{ file: string, lineNum: string, content: string } | null}
- */
-export function parseGrepLine(line) {
-  if (!line) return null;
-  // Windows absolute: C:\path or C:/path — skip the drive colon
-  let start = 0;
-  if (/^[A-Za-z]:[\\/]/.test(line)) start = 2;
-  const first = line.indexOf(":", start);
-  if (first === -1) return null;
-  const second = line.indexOf(":", first + 1);
-  if (second === -1) return null;
-  const file = line.slice(0, first);
-  const lineNum = line.slice(first + 1, second);
-  if (!/^\d+$/.test(lineNum)) return null;
-  return { file, lineNum, content: line.slice(second + 1) };
 }
 
 function isGrepLine(line) {

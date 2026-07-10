@@ -1,7 +1,7 @@
 // Port of grep_wrapper (rtk/src/cmds/system/pipe_cmd.rs:50-86)
 // Input format: "file:lineno:content" — Windows-drive-aware (see parseGrepLine)
 import { GREP_PER_FILE_MAX } from "../constants.js";
-import { parseGrepLine } from "../autodetect.js";
+import { parseGrepLine } from "../parseGrepLine.js";
 
 export function grep(input) {
   const byFile = new Map();
