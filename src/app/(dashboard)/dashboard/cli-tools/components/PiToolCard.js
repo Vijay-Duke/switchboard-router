@@ -9,10 +9,12 @@ export default function PiToolCard(props) {
     <OpenAiCompatToolCard
       {...props}
       endpoint={ENDPOINT}
+      multipleModels
+      hasDefaultModel={false}
       installHint={`npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 # or: curl -fsSL https://pi.dev/install.sh | sh`}
       runHint="After Apply: pi → /model → switchboard/<model>"
-      buildManualConfigs={({ baseUrl, apiKey, model }) => [
+      buildManualConfigs={({ baseUrl, apiKey, models }) => [
         {
           filename: "~/.pi/agent/models.json",
           content: JSON.stringify(
@@ -27,15 +29,15 @@ export default function PiToolCard(props) {
                     supportsDeveloperRole: false,
                     supportsReasoningEffort: true,
                   },
-                  models: [
+                  models: models.map((model) => (
                     {
                       id: model,
-                      name: model,
+                      name: model.split("/").pop() || model,
                       input: ["text", "image"],
                       contextWindow: 200000,
                       maxTokens: 16384,
-                    },
-                  ],
+                    }
+                  )),
                 },
               },
             },

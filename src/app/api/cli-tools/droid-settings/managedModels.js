@@ -18,3 +18,23 @@ export function normalizeManagedModelNames(value) {
       .filter(Boolean)
   )];
 }
+
+/**
+ * @param {string[]} models
+ * @param {{ startIndex: number, baseUrl: string, apiKey: string }} options
+ */
+export function createSwitchboardManagedModels(models, { startIndex, baseUrl, apiKey }) {
+  return models.map((model, offset) => {
+    const displayName = `Switchboard ${model}`;
+    return {
+      model,
+      id: `custom:${displayName.replace(/\s+/g, "-")}-${startIndex + offset}`,
+      baseUrl,
+      apiKey,
+      displayName,
+      maxOutputTokens: 131072,
+      noImageSupport: false,
+      provider: "openai",
+    };
+  });
+}

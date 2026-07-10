@@ -12,6 +12,8 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { buildPiModelEntries, isNonEmptyString, isOptionalString, normalizeModelIds } from "@/lib/cli/modelCatalog.js";
+import { writeCliFile } from "@/lib/cli/fileIo.js";
 
 const execAsync = promisify(exec);
 
@@ -54,7 +56,7 @@ const readModels = async () => {
 
 const writeModels = async (data) => {
   await fs.mkdir(getAgentDir(), { recursive: true });
-  await fs.writeFile(getModelsPath(), JSON.stringify(data, null, 2));
+  await writeCliFile(getModelsPath(), JSON.stringify(data, null, 2), { secret: true });
 };
 
 export async function GET() {
@@ -70,7 +72,10 @@ export async function GET() {
 
     const data = await readModels();
     const provider = data?.providers?.[PROVIDER_ID] || null;
-    const model = provider?.models?.[0]?.id || null;
+    const models = Array.isArray(provider?.models)
+      ? provider.models.map((entry) => entry?.id).filter(Boolean)
+      : [];
+    const model = models[0] || null;
     const baseUrl = provider?.baseUrl || null;
     const hasSwitchboard = !!(provider && isLocalBase(baseUrl));
 
@@ -80,6 +85,7 @@ export async function GET() {
       settings: {
         baseUrl,
         model,
+        models,
         apiKeySet: !!provider?.apiKey,
         provider: PROVIDER_ID,
       },
@@ -93,28 +99,20 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, model } = await request.json();
-    if (!baseUrl || !model) {
-      return NextResponse.json({ error: "baseUrl and model are required" }, { status: 400 });
+    const { baseUrl, apiKey, model, models: requestedModels } = await request.json();
+    const data = await readModels();
+    const previousModels = data?.providers?.[PROVIDER_ID]?.models || [];
+    const legacyModels = requestedModels === undefined
+      ? [model, ...previousModels.map((entry) => entry?.id)]
+      : requestedModels;
+    const models = normalizeModelIds(legacyModels);
+    if (!isNonEmptyString(baseUrl) || !isOptionalString(apiKey) || models.length === 0) {
+      return NextResponse.json({ error: "baseUrl and at least one model are required" }, { status: 400 });
     }
 
     const normalized = normalizeBaseUrl(baseUrl);
     const key = apiKey || "sk_switchboard";
-    const data = await readModels();
     if (!data.providers || typeof data.providers !== "object") data.providers = {};
-
-    // Keep other custom providers; replace switchboard entry
-    const prevModels = data.providers[PROVIDER_ID]?.models || [];
-    const modelEntry = {
-      id: model,
-      name: model.includes("/") ? model.split("/").slice(1).join("/") || model : model,
-      reasoning: false,
-      input: ["text", "image"],
-      contextWindow: 200000,
-      maxTokens: 16384,
-    };
-    // Upsert selected model first; keep previous switchboard models (by id) as extras
-    const extras = prevModels.filter((m) => m?.id && m.id !== model).slice(0, 12);
 
     data.providers[PROVIDER_ID] = {
       baseUrl: normalized,
@@ -126,14 +124,14 @@ export async function POST(request) {
         supportsReasoningEffort: true,
         supportsUsageInStreaming: true,
       },
-      models: [modelEntry, ...extras],
+      models: buildPiModelEntries(models, previousModels),
     };
 
     await writeModels(data);
 
     return NextResponse.json({
       success: true,
-      message: `Pi configured. In pi use /model → ${PROVIDER_ID}/${model}`,
+      message: `Pi configured with ${models.length} model${models.length === 1 ? "" : "s"}. Use /model to switch.`,
       configPath: getModelsPath(),
     });
   } catch (error) {

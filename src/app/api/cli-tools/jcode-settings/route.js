@@ -9,6 +9,8 @@ import os from "os";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { parseTOML, stringifyTOML } from "confbox";
+import { buildJcodeProvider, isNonEmptyString, normalizeModelIds } from "@/lib/cli/modelCatalog.js";
+import { writeCliFile } from "@/lib/cli/fileIo.js";
 
 const execAsync = promisify(exec);
 
@@ -42,7 +44,8 @@ const readConfig = async () => {
     const content = await fs.readFile(configPath, "utf-8");
     return parseTOML(content);
   } catch (error) {
-    return { providers: {} };
+    if (error.code === "ENOENT") return { providers: {} };
+    throw error;
   }
 };
 
@@ -65,7 +68,7 @@ const hasSwitchboardConfig = (config) => {
 const writeConfig = async (config) => {
   const configPath = getConfigPath();
   const content = stringifyTOML(config);
-  await fs.writeFile(configPath, content, "utf-8");
+  await writeCliFile(configPath, content);
 };
 
 const readProviderEnv = async () => {
@@ -83,8 +86,9 @@ const readProviderEnv = async () => {
         const key = trimmed.slice(0, eqIndex).trim();
         let value = trimmed.slice(eqIndex + 1).trim();
 
-        if ((value.startsWith('"') && value.endsWith('"')) ||
-            (value.startsWith("'") && value.endsWith("'"))) {
+        if (value.startsWith('"') && value.endsWith('"')) {
+          try { value = JSON.parse(value); } catch { value = value.slice(1, -1); }
+        } else if (value.startsWith("'") && value.endsWith("'")) {
           value = value.slice(1, -1);
         }
 
@@ -103,10 +107,10 @@ const writeProviderEnv = async (env) => {
   let content = "# jcode provider environment variables\n";
 
   for (const [key, value] of Object.entries(env)) {
-    content += `${key}="${value}"\n`;
+    content += `${key}=${JSON.stringify(String(value))}\n`;
   }
 
-  await fs.writeFile(envPath, content, "utf-8");
+  await writeCliFile(envPath, content, { secret: true });
 };
 
 export async function GET() {
@@ -121,22 +125,25 @@ export async function GET() {
 
   const config = await readConfig();
   const hasSwitchboard = hasSwitchboardConfig(config);
+  const env = await readProviderEnv();
 
   return NextResponse.json({
     installed: true,
     config,
     hasSwitchboard,
     configPath: getConfigPath(),
+    envApiKey: env.JCODE_SWITCHBOARD_API_KEY || null,
   });
 }
 
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, models } = await request.json();
+    const { baseUrl, apiKey, model, models: requestedModels, defaultModel } = await request.json();
+    const models = normalizeModelIds(requestedModels ?? model);
 
-    if (!baseUrl || !apiKey) {
+    if (!isNonEmptyString(baseUrl) || !isNonEmptyString(apiKey) || models.length === 0) {
       return NextResponse.json(
-        { error: "baseUrl and apiKey are required" },
+        { error: "baseUrl, apiKey, and at least one model are required" },
         { status: 400 }
       );
     }
@@ -151,15 +158,11 @@ export async function POST(request) {
       config.providers = {};
     }
 
-    config.providers["switchboard"] = {
-      type: "openai-compatible",
-      base_url: normalizedBaseUrl,
-      auth: "bearer",
-      api_key_env: "JCODE_SWITCHBOARD_API_KEY",
-      env_file: "provider-switchboard.env",
-      default_model: models && models.length > 0 ? models[0] : "cc/claude-opus-4-7",
-      requires_api_key: true,
-    };
+    config.providers["switchboard"] = buildJcodeProvider({
+      baseUrl: normalizedBaseUrl,
+      models,
+      defaultModel: defaultModel || model,
+    });
 
     const configDir = getJcodeConfigDir();
     await fs.mkdir(configDir, { recursive: true });

@@ -7,69 +7,69 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { buildClineSettings, isNonEmptyString, normalizeModelIds } from "@/lib/cli/modelCatalog.js";
+import { restoreObjectKeys, snapshotObjectKeys, writeCliFile } from "@/lib/cli/fileIo.js";
 
 const execAsync = promisify(exec);
-
 const getDataDir = () => path.join(os.homedir(), ".cline", "data");
-const getGlobalStatePath = () => path.join(getDataDir(), "globalState.json");
-const getSecretsPath = () => path.join(getDataDir(), "secrets.json");
+const getSettingsDir = () => path.join(getDataDir(), "settings");
+const getProvidersPath = () => path.join(getSettingsDir(), "providers.json");
+const getModelsPath = () => path.join(getSettingsDir(), "models.json");
+const getLegacyStatePath = () => path.join(getDataDir(), "globalState.json");
+const getLegacySecretsPath = () => path.join(getDataDir(), "secrets.json");
+const getBackupPath = () => path.join(getDataDir(), "switchboard-backup.json");
+const LEGACY_STATE_KEYS = [
+  "actModeApiProvider",
+  "planModeApiProvider",
+  "openAiBaseUrl",
+  "actModeOpenAiModelId",
+  "planModeOpenAiModelId",
+];
 
 const checkInstalled = async () => {
   try {
-    const isWindows = os.platform() === "win32";
-    const command = isWindows ? "where cline" : "which cline";
-    const env = isWindows
-      ? { ...process.env, PATH: `${process.env.APPDATA}\\npm;${process.env.PATH}` }
-      : process.env;
-    await execAsync(command, { windowsHide: true, env });
+    await execAsync(os.platform() === "win32" ? "where cline" : "which cline", { windowsHide: true });
     return true;
   } catch {
-    try {
-      await fs.access(getGlobalStatePath());
-      return true;
-    } catch {
-      return false;
+    for (const file of [getProvidersPath(), getLegacyStatePath()]) {
+      try { await fs.access(file); return true; } catch { /* try next */ }
     }
+    return false;
   }
 };
 
 const readJson = async (filePath) => {
-  try {
-    const content = await fs.readFile(filePath, "utf-8");
-    // Tolerate JSONC (trailing commas) and treat unparseable files as "no config"
-    // rather than throwing a 500 that the UI misreads as "tool not installed".
-    const stripped = content.replace(/,(\s*[}\]])/g, "$1");
-    return JSON.parse(stripped);
-  } catch (error) {
-    return null;
-  }
-};
-
-const hasSwitchboardConfig = (globalState) => {
-  if (!globalState) return false;
-  const isOpenAi =
-    globalState.actModeApiProvider === "openai" || globalState.planModeApiProvider === "openai";
-  const baseUrl = globalState.openAiBaseUrl || "";
-  return isOpenAi && (baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1") || baseUrl.includes("switchboard"));
+  try { return JSON.parse(await fs.readFile(filePath, "utf-8")); }
+  catch (error) { if (error.code === "ENOENT") return {}; throw error; }
 };
 
 export async function GET() {
   try {
     const installed = await checkInstalled();
-    if (!installed) {
-      return NextResponse.json({ installed: false, settings: null, message: "Cline CLI is not installed" });
-    }
-    const globalState = await readJson(getGlobalStatePath());
+    if (!installed) return NextResponse.json({ installed: false, settings: null, message: "Cline CLI is not installed" });
+    const [providersFile, modelsFile, legacy] = await Promise.all([
+      readJson(getProvidersPath()),
+      readJson(getModelsPath()),
+      readJson(getLegacyStatePath()),
+    ]);
+    const provider = providersFile?.providers?.switchboard;
+    const registry = modelsFile?.providers?.switchboard;
+    const models = registry?.models && typeof registry.models === "object" ? Object.keys(registry.models) : [];
+    const defaultModel = provider?.defaultModelId || registry?.provider?.defaultModelId || null;
+    const legacyBase = legacy?.openAiBaseUrl || null;
     return NextResponse.json({
       installed: true,
+      hasSwitchboard: Boolean(provider || registry),
       settings: {
-        actModeApiProvider: globalState?.actModeApiProvider,
-        planModeApiProvider: globalState?.planModeApiProvider,
-        openAiBaseUrl: globalState?.openAiBaseUrl,
-        openAiModelId: globalState?.openAiModelId,
+        baseUrl: provider?.baseUrl || registry?.provider?.baseUrl || legacyBase,
+        models: models.length ? models : (defaultModel ? [defaultModel] : []),
+        model: defaultModel,
+        defaultModel,
+        actModel: legacy?.actModeOpenAiModelId || defaultModel,
+        planModel: legacy?.planModeOpenAiModelId || defaultModel,
       },
-      hasSwitchboard: hasSwitchboardConfig(globalState),
-      globalStatePath: getGlobalStatePath(),
+      providersPath: getProvidersPath(),
+      modelsPath: getModelsPath(),
     });
   } catch (error) {
     console.log("Error checking cline settings:", error);
@@ -79,29 +79,51 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, model } = await request.json();
-    if (!baseUrl || !apiKey || !model) {
-      return NextResponse.json({ error: "baseUrl, apiKey and model are required" }, { status: 400 });
+    const { baseUrl, apiKey, model, models: requestedModels, defaultModel, actModel, planModel } = await request.json();
+    const models = normalizeModelIds(requestedModels ?? model);
+    if (!isNonEmptyString(baseUrl) || !isNonEmptyString(apiKey) || models.length === 0) {
+      return NextResponse.json({ error: "baseUrl, apiKey, and at least one model are required" }, { status: 400 });
     }
-
+    const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+    const [providersFile, modelsFile, legacy, secrets, existingBackup] = await Promise.all([
+      readJson(getProvidersPath()),
+      readJson(getModelsPath()),
+      readJson(getLegacyStatePath()),
+      readJson(getLegacySecretsPath()),
+      readJson(getBackupPath()),
+    ]);
+    const next = buildClineSettings({ providers: providersFile, models: modelsFile }, {
+      baseUrl: normalizedBaseUrl,
+      apiKey,
+      models,
+      defaultModel: defaultModel || model,
+    });
+    await fs.mkdir(getSettingsDir(), { recursive: true });
+    const backup = existingBackup?.version === 1 ? existingBackup : {
+      version: 1,
+      state: snapshotObjectKeys(legacy, LEGACY_STATE_KEYS),
+      secret: snapshotObjectKeys(secrets, ["openAiApiKey"]),
+    };
+    backup.managed = { baseUrl: normalizedBaseUrl, apiKey };
     await fs.mkdir(getDataDir(), { recursive: true });
+    await writeCliFile(getBackupPath(), JSON.stringify(backup, null, 2), { secret: true });
+    await Promise.all([
+      writeCliFile(getProvidersPath(), JSON.stringify(next.providers, null, 2), { secret: true }),
+      writeCliFile(getModelsPath(), JSON.stringify(next.models, null, 2)),
+    ]);
 
-    // Cline expects base WITHOUT /v1
-    const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl.slice(0, -3) : baseUrl;
-
-    const globalState = (await readJson(getGlobalStatePath())) || {};
-    globalState.actModeApiProvider = "openai";
-    globalState.planModeApiProvider = "openai";
-    globalState.openAiBaseUrl = normalizedBaseUrl;
-    globalState.openAiModelId = model;
-    globalState.planModeOpenAiModelId = model;
-    await fs.writeFile(getGlobalStatePath(), JSON.stringify(globalState, null, 2));
-
-    const secrets = (await readJson(getSecretsPath())) || {};
+    // Keep the VS Code extension's Plan/Act settings in sync while current CLI
+    // installations read the registry above.
+    legacy.actModeApiProvider = "openai";
+    legacy.planModeApiProvider = "openai";
+    legacy.openAiBaseUrl = normalizedBaseUrl;
+    legacy.actModeOpenAiModelId = models.includes(actModel) ? actModel : (defaultModel || model || models[0]);
+    legacy.planModeOpenAiModelId = models.includes(planModel) ? planModel : (defaultModel || model || models[0]);
+    await writeCliFile(getLegacyStatePath(), JSON.stringify(legacy, null, 2));
     secrets.openAiApiKey = apiKey;
-    await fs.writeFile(getSecretsPath(), JSON.stringify(secrets, null, 2));
+    await writeCliFile(getLegacySecretsPath(), JSON.stringify(secrets, null, 2), { secret: true });
 
-    return NextResponse.json({ success: true, message: "Cline settings applied successfully!", globalStatePath: getGlobalStatePath() });
+    return NextResponse.json({ success: true, message: `Cline configured with ${models.length} model${models.length === 1 ? "" : "s"}.` });
   } catch (error) {
     console.log("Error updating cline settings:", error);
     return NextResponse.json({ error: "Failed to update cline settings" }, { status: 500 });
@@ -110,25 +132,35 @@ export async function POST(request) {
 
 export async function DELETE() {
   try {
-    const globalState = await readJson(getGlobalStatePath());
-    if (!globalState) {
-      return NextResponse.json({ success: true, message: "No settings file to reset" });
+    const [providersFile, modelsFile] = await Promise.all([readJson(getProvidersPath()), readJson(getModelsPath())]);
+    if (providersFile.providers) delete providersFile.providers.switchboard;
+    if (modelsFile.providers) delete modelsFile.providers.switchboard;
+    await fs.mkdir(getSettingsDir(), { recursive: true });
+    await Promise.all([
+      writeCliFile(getProvidersPath(), JSON.stringify(providersFile, null, 2), { secret: true }),
+      writeCliFile(getModelsPath(), JSON.stringify(modelsFile, null, 2)),
+    ]);
+    const [legacy, secrets, backup] = await Promise.all([
+      readJson(getLegacyStatePath()),
+      readJson(getLegacySecretsPath()),
+      readJson(getBackupPath()),
+    ]);
+    if (backup?.version === 1) {
+      if (
+        legacy.actModeApiProvider === "openai"
+        && legacy.planModeApiProvider === "openai"
+        && legacy.openAiBaseUrl === backup.managed?.baseUrl
+      ) {
+        restoreObjectKeys(legacy, backup.state);
+        await writeCliFile(getLegacyStatePath(), JSON.stringify(legacy, null, 2));
+      }
+      if (secrets.openAiApiKey === backup.managed?.apiKey) {
+        restoreObjectKeys(secrets, backup.secret);
+        await writeCliFile(getLegacySecretsPath(), JSON.stringify(secrets, null, 2), { secret: true });
+      }
+      try { await fs.unlink(getBackupPath()); } catch (error) { if (error?.code !== "ENOENT") throw error; }
     }
-
-    if (globalState.actModeApiProvider === "openai") {
-      delete globalState.openAiBaseUrl;
-      delete globalState.openAiModelId;
-      delete globalState.planModeOpenAiModelId;
-      globalState.actModeApiProvider = "cline";
-      globalState.planModeApiProvider = "cline";
-    }
-    await fs.writeFile(getGlobalStatePath(), JSON.stringify(globalState, null, 2));
-
-    const secrets = (await readJson(getSecretsPath())) || {};
-    delete secrets.openAiApiKey;
-    await fs.writeFile(getSecretsPath(), JSON.stringify(secrets, null, 2));
-
-    return NextResponse.json({ success: true, message: "Switchboard settings removed from Cline" });
+    return NextResponse.json({ success: true, message: "Switchboard removed from Cline" });
   } catch (error) {
     console.log("Error resetting cline settings:", error);
     return NextResponse.json({ error: "Failed to reset cline settings" }, { status: 500 });

@@ -54,6 +54,10 @@ jobs:
             unit/launch.test.js \
             unit/responses-non-stream.test.js \
             unit/cli-disable-mitm.test.js \
+            unit/cli-model-catalogs.test.js \
+            unit/cli-model-route-writes.test.js \
+            unit/cli-tool-guides.test.js \
+            unit/droid-managed-models.test.js \
             unit/ci-gate.test.js \
             unit/oauth-cursor-auto-import.test.js \
             --reporter=default

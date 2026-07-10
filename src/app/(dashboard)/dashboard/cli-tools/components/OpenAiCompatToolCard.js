@@ -14,6 +14,7 @@ import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import ModelCatalogInput from "./ModelCatalogInput";
 
 /**
  * @param {object} props
@@ -21,7 +22,9 @@ import { matchKnownEndpoint } from "./cliEndpointMatch";
  * @param {string} props.endpoint - e.g. /api/cli-tools/grok-settings
  * @param {string} [props.installHint]
  * @param {string} [props.runHint]
- * @param {(ctx: { baseUrl: string, apiKey: string, model: string }) => Array<{filename: string, content: string}>} [props.buildManualConfigs]
+ * @param {(ctx: { baseUrl: string, apiKey: string, model: string, models: string[] }) => Array<{filename: string, content: string}>} [props.buildManualConfigs]
+ * @param {boolean} [props.multipleModels]
+ * @param {boolean} [props.hasDefaultModel]
  * @param {boolean} props.isExpanded
  * @param {Function} props.onToggle
  * @param {boolean} [props.hasActiveProviders]
@@ -40,6 +43,8 @@ export default function OpenAiCompatToolCard({
   installHint,
   runHint,
   buildManualConfigs,
+  multipleModels = false,
+  hasDefaultModel = true,
   isExpanded,
   onToggle,
   hasActiveProviders,
@@ -59,6 +64,8 @@ export default function OpenAiCompatToolCard({
   const [message, setMessage] = useState(null);
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
+  const [selectedModels, setSelectedModels] = useState([]);
+  const [modelDraft, setModelDraft] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [modelAliases, setModelAliases] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
@@ -139,7 +146,17 @@ export default function OpenAiCompatToolCard({
   useEffect(() => {
     if (status?.installed && !hasInitializedModel.current) {
       hasInitializedModel.current = true;
-      if (status.settings?.model) setSelectedModel(status.settings.model);
+      const configuredModels = Array.isArray(status.settings?.models)
+        ? status.settings.models.filter((model) => typeof model === "string" && model.trim())
+        : status.settings?.model
+          ? [status.settings.model]
+          : [];
+      setSelectedModels([...new Set(configuredModels)]);
+      if (status.settings?.defaultModel || status.settings?.model) {
+        setSelectedModel(status.settings.defaultModel || status.settings.model);
+      } else if (configuredModels[0]) {
+        setSelectedModel(configuredModels[0]);
+      }
     }
   }, [status]);
 
@@ -175,6 +192,22 @@ export default function OpenAiCompatToolCard({
     || (apiKeys?.length > 0 ? apiKeys[0].key : null)
     || (!cloudEnabled ? "sk_switchboard" : null);
 
+  const addModel = (value = modelDraft) => {
+    const model = value.trim();
+    if (!model) return;
+    setSelectedModels((current) => current.includes(model) ? current : [...current, model]);
+    if (hasDefaultModel && !selectedModel) setSelectedModel(model);
+    setModelDraft("");
+  };
+
+  const removeModel = (model) => {
+    setSelectedModels((current) => {
+      const next = current.filter((entry) => entry !== model);
+      if (selectedModel === model) setSelectedModel(next[0] || "");
+      return next;
+    });
+  };
+
   const handleApply = async () => {
     setApplying(true);
     setMessage(null);
@@ -185,7 +218,9 @@ export default function OpenAiCompatToolCard({
         body: JSON.stringify({
           baseUrl: getEffectiveBaseUrl(),
           apiKey: resolveApiKey(),
-          model: selectedModel,
+          model: multipleModels ? (selectedModel || selectedModels[0]) : selectedModel,
+          models: multipleModels ? selectedModels : undefined,
+          defaultModel: multipleModels && hasDefaultModel ? (selectedModel || selectedModels[0]) : undefined,
         }),
       });
       const data = await res.json();
@@ -211,6 +246,7 @@ export default function OpenAiCompatToolCard({
       if (res.ok) {
         setMessage({ type: "success", text: data.message || "Settings reset successfully!" });
         setSelectedModel("");
+        setSelectedModels([]);
         checkStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
@@ -223,16 +259,23 @@ export default function OpenAiCompatToolCard({
   };
 
   const handleModelSelect = (model) => {
-    setSelectedModel(model.value);
-    setModalOpen(false);
+    if (multipleModels) {
+      addModel(model.value);
+    } else {
+      setSelectedModel(model.value);
+      setModalOpen(false);
+    }
   };
 
   const getManualConfigs = () => {
     const keyToUse = resolveApiKey() || "<API_KEY_FROM_DASHBOARD>";
     const base = getEffectiveBaseUrl();
-    const model = selectedModel || "provider/model-id";
+    const models = multipleModels
+      ? (selectedModels.length > 0 ? selectedModels : ["provider/model-id"])
+      : [selectedModel || "provider/model-id"];
+    const model = selectedModel || models[0];
     if (typeof buildManualConfigs === "function") {
-      return buildManualConfigs({ baseUrl: base, apiKey: keyToUse, model });
+      return buildManualConfigs({ baseUrl: base, apiKey: keyToUse, model, models });
     }
     return [
       {
@@ -443,7 +486,9 @@ export default function OpenAiCompatToolCard({
                     </span>
                     <span className="min-w-0 truncate rounded bg-surface/40 px-2 py-2 text-xs text-text-muted sm:py-1.5">
                       {status.settings.baseUrl}
-                      {status.settings.model ? ` · ${status.settings.model}` : ""}
+                      {status.settings.models?.length
+                        ? ` · ${status.settings.models.length} models`
+                        : status.settings.model ? ` · ${status.settings.model}` : ""}
                     </span>
                   </div>
                 )}
@@ -461,6 +506,20 @@ export default function OpenAiCompatToolCard({
                   />
                 </div>
 
+                {multipleModels ? (
+                  <ModelCatalogInput
+                    models={selectedModels}
+                    draft={modelDraft}
+                    onDraftChange={setModelDraft}
+                    onAdd={() => addModel()}
+                    onRemove={removeModel}
+                    onOpenPicker={() => setModalOpen(true)}
+                    canOpenPicker={Boolean(hasActiveProviders)}
+                    defaultModel={hasDefaultModel ? selectedModel : undefined}
+                    onDefaultChange={hasDefaultModel ? setSelectedModel : undefined}
+                    label={hasDefaultModel ? "Models" : "Available Models"}
+                  />
+                ) : (
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
                   <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">
                     Default Model
@@ -498,6 +557,7 @@ export default function OpenAiCompatToolCard({
                     Select
                   </button>
                 </div>
+                )}
 
                 {runHint && configStatus !== "configured" ? (
                   <p className="text-[11px] text-text-subtle font-mono mt-1">{runHint}</p>
@@ -524,7 +584,7 @@ export default function OpenAiCompatToolCard({
                   variant="primary"
                   size="sm"
                   onClick={handleApply}
-                  disabled={!selectedModel}
+                  disabled={multipleModels ? selectedModels.length === 0 : !selectedModel}
                   loading={applying}
                 >
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>
@@ -554,10 +614,13 @@ export default function OpenAiCompatToolCard({
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         onSelect={handleModelSelect}
-        selectedModel={selectedModel}
+        onDeselect={multipleModels ? (model) => removeModel(model.value) : undefined}
+        selectedModel={multipleModels ? null : selectedModel}
         activeProviders={activeProviders}
         modelAliases={modelAliases}
-        title={`Select Model for ${tool.name}`}
+        addedModelValues={multipleModels ? selectedModels : []}
+        closeOnSelect={!multipleModels}
+        title={`${multipleModels ? "Add Models" : "Select Model"} for ${tool.name}`}
       />
 
       <ManualConfigModal

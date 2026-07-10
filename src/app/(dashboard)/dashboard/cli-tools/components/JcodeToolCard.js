@@ -7,6 +7,7 @@ import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import ModelCatalogInput from "./ModelCatalogInput";
 
 export default function JcodeToolCard({
   tool,
@@ -30,6 +31,8 @@ export default function JcodeToolCard({
   const [message, setMessage] = useState(null);
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
+  const [selectedModels, setSelectedModels] = useState([]);
+  const [modelDraft, setModelDraft] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [modelAliases, setModelAliases] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
@@ -62,7 +65,7 @@ export default function JcodeToolCard({
       fetchModelAliases();
     }
     if (isExpanded) fetchModelAliases();
-  }, [isExpanded]);
+  }, [isExpanded, jcodeStatus]);
 
   const fetchModelAliases = async () => {
     try {
@@ -79,6 +82,11 @@ export default function JcodeToolCard({
       hasInitializedModel.current = true;
       const provider = jcodeStatus.config?.providers?.["switchboard"];
       if (provider) {
+        const models = Array.isArray(provider.models)
+          ? provider.models.map((entry) => entry?.id).filter(Boolean)
+          : [];
+        const configuredModels = models.length ? models : (provider.default_model ? [provider.default_model] : []);
+        setSelectedModels([...new Set(configuredModels)]);
         if (provider.default_model) {
           setSelectedModel(provider.default_model);
         }
@@ -123,6 +131,22 @@ export default function JcodeToolCard({
     return url.endsWith("/v1") ? url : `${url}/v1`;
   };
 
+  const addModel = (value = modelDraft) => {
+    const model = value.trim();
+    if (!model) return;
+    setSelectedModels((current) => current.includes(model) ? current : [...current, model]);
+    if (!selectedModel) setSelectedModel(model);
+    setModelDraft("");
+  };
+
+  const removeModel = (model) => {
+    setSelectedModels((current) => {
+      const next = current.filter((entry) => entry !== model);
+      if (selectedModel === model) setSelectedModel(next[0] || "");
+      return next;
+    });
+  };
+
   const handleApplySettings = async () => {
     setApplying(true);
     setMessage(null);
@@ -137,7 +161,8 @@ export default function JcodeToolCard({
         body: JSON.stringify({
           baseUrl: getEffectiveBaseUrl(),
           apiKey: keyToUse,
-          models: selectedModel ? [selectedModel] : [],
+          models: selectedModels,
+          defaultModel: selectedModel || selectedModels[0],
         }),
       });
       const data = await res.json();
@@ -163,6 +188,7 @@ export default function JcodeToolCard({
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
         setSelectedModel("");
+        setSelectedModels([]);
         setSelectedApiKey("");
         checkJcodeStatus();
       } else {
@@ -176,8 +202,7 @@ export default function JcodeToolCard({
   };
 
   const handleModelSelect = (model) => {
-    setSelectedModel(model.value);
-    setModalOpen(false);
+    addModel(model.value);
   };
 
   const getManualConfigs = () => {
@@ -185,17 +210,20 @@ export default function JcodeToolCard({
       ? selectedApiKey
       : (!cloudEnabled ? "sk_switchboard" : "<API_KEY_FROM_DASHBOARD>");
 
+    const models = selectedModels.length ? selectedModels : ["cc/claude-opus-4-7"];
+    const activeModel = selectedModel || models[0];
+    const modelBlocks = models.map((model) => `[[providers.switchboard.models]]\nid = "${model}"`).join("\n\n");
     const configToml = `[providers.switchboard]
 type = "openai-compatible"
 base_url = "${getEffectiveBaseUrl()}"
 auth = "bearer"
 api_key_env = "JCODE_SWITCHBOARD_API_KEY"
 env_file = "provider-switchboard.env"
-default_model = "${selectedModel || "cc/claude-opus-4-7"}"
+default_model = "${activeModel}"
+model_catalog = true
 requires_api_key = true
 
-[[providers.switchboard.models]]
-id = "${selectedModel || "cc/claude-opus-4-7"}"`;
+${modelBlocks}`;
 
     const envContent = `JCODE_SWITCHBOARD_API_KEY="${keyToUse}"`;
 
@@ -318,16 +346,17 @@ id = "${selectedModel || "cc/claude-opus-4-7"}"`;
                   <ApiKeySelect value={selectedApiKey} onChange={setSelectedApiKey} apiKeys={apiKeys} cloudEnabled={cloudEnabled} />
                 </div>
 
-                {/* Default Model */}
-                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
-                  <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Default Model</span>
-                  <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
-                  <div className="relative w-full min-w-0">
-                    <input type="text" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} placeholder="cc/claude-opus-4-7" className="w-full min-w-0 pl-2 pr-7 py-2 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5" />
-                    {selectedModel && <button onClick={() => setSelectedModel("")} className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-red-500 rounded transition-colors" title="Clear"><span className="material-symbols-outlined text-[14px]">close</span></button>}
-                  </div>
-                  <button onClick={() => setModalOpen(true)} disabled={!hasActiveProviders} className={`w-full sm:w-auto rounded border px-2 py-2 text-xs transition-colors sm:py-1.5 whitespace-nowrap sm:shrink-0 ${hasActiveProviders ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Select</button>
-                </div>
+                <ModelCatalogInput
+                  models={selectedModels}
+                  draft={modelDraft}
+                  onDraftChange={setModelDraft}
+                  onAdd={() => addModel()}
+                  onRemove={removeModel}
+                  onOpenPicker={() => setModalOpen(true)}
+                  canOpenPicker={Boolean(hasActiveProviders)}
+                  defaultModel={selectedModel}
+                  onDefaultChange={setSelectedModel}
+                />
 
                 {/* Usage hint */}
                 <div className="flex flex-col gap-1 p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg">
@@ -345,7 +374,7 @@ id = "${selectedModel || "cc/claude-opus-4-7"}"`;
               )}
 
               <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center">
-                <Button variant="primary" size="sm" onClick={handleApplySettings} disabled={!selectedModel} loading={applying}>
+                <Button variant="primary" size="sm" onClick={handleApplySettings} disabled={selectedModels.length === 0} loading={applying}>
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>Apply
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleResetSettings} disabled={!jcodeStatus?.hasSwitchboard} loading={restoring}>
@@ -364,10 +393,13 @@ id = "${selectedModel || "cc/claude-opus-4-7"}"`;
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         onSelect={handleModelSelect}
-        selectedModel={selectedModel}
+        onDeselect={(model) => removeModel(model.value)}
+        selectedModel={null}
         activeProviders={activeProviders}
         modelAliases={modelAliases}
-        title="Select Model for jcode"
+        addedModelValues={selectedModels}
+        closeOnSelect={false}
+        title="Add Models for jcode"
       />
 
       <ManualConfigModal

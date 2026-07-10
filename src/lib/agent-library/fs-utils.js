@@ -16,44 +16,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { getLibraryRoot } from "./paths.js";
-
-/**
- * Write file atomically: write to sibling tmp, fsync, rename over target.
- * Prevents partial JSON/state after crash mid-write.
- * @param {string} filePath
- * @param {string|Buffer} content
- * @param {string} [encoding]
- */
-export async function atomicWriteFile(filePath, content, encoding = "utf-8") {
-  const dir = path.dirname(filePath);
-  await fs.mkdir(dir, { recursive: true });
-  const tmp = path.join(
-    dir,
-    `.${path.basename(filePath)}.sb-tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  );
-  try {
-    await fs.writeFile(tmp, content, encoding);
-    // Best-effort fsync so rename commits durable content
-    try {
-      const fh = await fs.open(tmp, "r+");
-      try {
-        await fh.sync();
-      } finally {
-        await fh.close();
-      }
-    } catch {
-      /* ignore platforms without sync */
-    }
-    await fs.rename(tmp, filePath);
-  } catch (e) {
-    try {
-      await fs.unlink(tmp);
-    } catch {
-      /* ignore */
-    }
-    throw e;
-  }
-}
+export { atomicWriteFile } from "@/lib/atomicWriteFile.js";
 
 const LOCK_STALE_MS = 5 * 60 * 1000;
 const LOCK_POLL_MS = 50;

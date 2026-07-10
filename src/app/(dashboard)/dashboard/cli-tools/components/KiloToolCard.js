@@ -1,12 +1,13 @@
 "use client";
 // @ts-check
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import ModelCatalogInput from "./ModelCatalogInput";
 
 export default function KiloToolCard({ tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders, cloudEnabled, initialStatus, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl }) {
   const [status, setStatus] = useState(initialStatus || null);
@@ -17,10 +18,13 @@ export default function KiloToolCard({ tool, isExpanded, onToggle, baseUrl, apiK
   const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
+  const [selectedModels, setSelectedModels] = useState([]);
+  const [modelDraft, setModelDraft] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [modelAliases, setModelAliases] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
+  const initialized = useRef(false);
 
   useEffect(() => {
     if (apiKeys?.length > 0 && !selectedApiKey) setSelectedApiKey(apiKeys[0].key);
@@ -36,7 +40,15 @@ export default function KiloToolCard({ tool, isExpanded, onToggle, baseUrl, apiK
       fetchModelAliases();
     }
     if (isExpanded) fetchModelAliases();
-  }, [isExpanded]);
+  }, [isExpanded, status]);
+
+  useEffect(() => {
+    if (!status?.installed || initialized.current) return;
+    initialized.current = true;
+    const models = Array.isArray(status.settings?.models) ? status.settings.models : [];
+    setSelectedModels(models);
+    setSelectedModel(status.settings?.defaultModel || models[0] || "");
+  }, [status]);
 
   const fetchModelAliases = async () => {
     try {
@@ -62,6 +74,22 @@ export default function KiloToolCard({ tool, isExpanded, onToggle, baseUrl, apiK
 
   const getDisplayUrl = () => customBaseUrl || `${baseUrl}/v1`;
 
+  const addModel = (value = modelDraft) => {
+    const model = value.trim();
+    if (!model) return;
+    setSelectedModels((current) => current.includes(model) ? current : [...current, model]);
+    if (!selectedModel) setSelectedModel(model);
+    setModelDraft("");
+  };
+
+  const removeModel = (model) => {
+    setSelectedModels((current) => {
+      const next = current.filter((entry) => entry !== model);
+      if (selectedModel === model) setSelectedModel(next[0] || "");
+      return next;
+    });
+  };
+
   const checkStatus = async () => {
     setChecking(true);
     try {
@@ -86,7 +114,13 @@ export default function KiloToolCard({ tool, isExpanded, onToggle, baseUrl, apiK
       const res = await fetch("/api/cli-tools/kilo-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, model: selectedModel }),
+        body: JSON.stringify({
+          baseUrl: getEffectiveBaseUrl(),
+          apiKey: keyToUse,
+          model: selectedModel || selectedModels[0],
+          models: selectedModels,
+          defaultModel: selectedModel || selectedModels[0],
+        }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -111,6 +145,7 @@ export default function KiloToolCard({ tool, isExpanded, onToggle, baseUrl, apiK
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
         setSelectedModel("");
+        setSelectedModels([]);
         checkStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
@@ -127,14 +162,19 @@ export default function KiloToolCard({ tool, isExpanded, onToggle, baseUrl, apiK
       ? selectedApiKey
       : (!cloudEnabled ? "sk_switchboard" : "<API_KEY_FROM_DASHBOARD>");
 
+    const models = selectedModels.length ? selectedModels : ["provider/model-id"];
+    const activeModel = selectedModel || models[0];
     return [{
-      filename: "~/.local/share/kilo/auth.json",
+      filename: "~/.config/kilo/kilo.json",
       content: JSON.stringify({
-        "openai-compatible": {
-          type: "api-key",
-          apiKey: keyToUse,
-          baseUrl: getEffectiveBaseUrl(),
-          model: selectedModel || "provider/model-id",
+        model: `switchboard/${activeModel}`,
+        provider: {
+          switchboard: {
+            npm: "@ai-sdk/openai-compatible",
+            name: "Switchboard",
+            options: { apiKey: keyToUse, baseURL: getEffectiveBaseUrl() },
+            models: Object.fromEntries(models.map((id) => [id, { name: id.split("/").pop() || id }])),
+          },
         },
       }, null, 2),
     }];
@@ -221,15 +261,17 @@ export default function KiloToolCard({ tool, isExpanded, onToggle, baseUrl, apiK
                   <ApiKeySelect value={selectedApiKey} onChange={setSelectedApiKey} apiKeys={apiKeys} cloudEnabled={cloudEnabled} />
                 </div>
 
-                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
-                  <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Model</span>
-                  <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
-                  <div className="relative w-full min-w-0">
-                    <input type="text" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} placeholder="provider/model-id" className="w-full min-w-0 pl-2 pr-7 py-2 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5" />
-                    {selectedModel && <button onClick={() => setSelectedModel("")} className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-red-500 rounded transition-colors" title="Clear"><span className="material-symbols-outlined text-[14px]">close</span></button>}
-                  </div>
-                  <button onClick={() => setModalOpen(true)} disabled={!activeProviders?.length} className={`w-full sm:w-auto rounded border px-2 py-2 text-xs transition-colors sm:py-1.5 whitespace-nowrap sm:shrink-0 ${activeProviders?.length ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Select Model</button>
-                </div>
+                <ModelCatalogInput
+                  models={selectedModels}
+                  draft={modelDraft}
+                  onDraftChange={setModelDraft}
+                  onAdd={() => addModel()}
+                  onRemove={removeModel}
+                  onOpenPicker={() => setModalOpen(true)}
+                  canOpenPicker={Boolean(activeProviders?.length)}
+                  defaultModel={selectedModel}
+                  onDefaultChange={setSelectedModel}
+                />
               </div>
 
               {message && (
@@ -240,7 +282,7 @@ export default function KiloToolCard({ tool, isExpanded, onToggle, baseUrl, apiK
               )}
 
               <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center">
-                <Button variant="primary" size="sm" onClick={handleApply} disabled={(!selectedApiKey && (cloudEnabled && apiKeys.length > 0)) || !selectedModel} loading={applying}>
+                <Button variant="primary" size="sm" onClick={handleApply} disabled={(!selectedApiKey && (cloudEnabled && apiKeys.length > 0)) || selectedModels.length === 0} loading={applying}>
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>Apply
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleReset} disabled={restoring} loading={restoring}>
@@ -258,11 +300,14 @@ export default function KiloToolCard({ tool, isExpanded, onToggle, baseUrl, apiK
       <ModelSelectModal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
-        onSelect={(model) => { setSelectedModel(model.value); setModalOpen(false); }}
-        selectedModel={selectedModel}
+        onSelect={(model) => addModel(model.value)}
+        onDeselect={(model) => removeModel(model.value)}
+        selectedModel={null}
         activeProviders={activeProviders}
         modelAliases={modelAliases}
-        title="Select Model for Kilo Code"
+        addedModelValues={selectedModels}
+        closeOnSelect={false}
+        title="Add Models for Kilo Code"
       />
 
       <ManualConfigModal

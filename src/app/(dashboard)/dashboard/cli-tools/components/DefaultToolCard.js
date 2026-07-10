@@ -6,11 +6,15 @@ import { Card, ModelSelectModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import Image from "next/image";
 import ApiKeySelect from "./ApiKeySelect";
+import ModelCatalogInput from "./ModelCatalogInput";
 
 export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders = [], cloudEnabled = false, tunnelEnabled = false }) {
   const [copiedField, setCopiedField] = useState(null);
   const [showModelModal, setShowModelModal] = useState(false);
   const [modelValue, setModelValue] = useState("");
+  const [modelValues, setModelValues] = useState([]);
+  const [modelDraft, setModelDraft] = useState("");
+  const supportsMultipleModels = tool.modelSelection === "multiple";
   
   // Initialize state directly with computed value - no need for useEffect
   const [selectedApiKey, setSelectedApiKey] = useState(() => 
@@ -31,7 +35,17 @@ export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, ba
     return text
       .replace(/\{\{baseUrl\}\}/g, baseUrlWithV1)
       .replace(/\{\{apiKey\}\}/g, keyToUse)
-      .replace(/\{\{model\}\}/g, modelValue || "provider/model-id");
+      .replace(/\{\{model\}\}/g, (supportsMultipleModels ? modelValues[0] : modelValue) || "provider/model-id");
+  };
+
+  const getTemplateContext = () => {
+    const keyToUse = selectedApiKey?.trim() || (!cloudEnabled ? "sk_switchboard" : "your-api-key");
+    const normalizedBaseUrl = baseUrl || "http://localhost:20128";
+    const effectiveBaseUrl = normalizedBaseUrl.endsWith("/v1") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`;
+    const models = supportsMultipleModels
+      ? (modelValues.length ? modelValues : ["provider/model-id"])
+      : [modelValue || "provider/model-id"];
+    return { baseUrl: effectiveBaseUrl, apiKey: keyToUse, model: models[0], models };
   };
 
   const { copy: copyToClipboard } = useCopyToClipboard();
@@ -43,7 +57,19 @@ export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, ba
   };
 
   const handleSelectModel = (model) => {
-    setModelValue(model.value);
+    if (supportsMultipleModels) {
+      setModelValues((current) => current.includes(model.value) ? current : [...current, model.value]);
+    } else {
+      setModelValue(model.value);
+      setShowModelModal(false);
+    }
+  };
+
+  const addModel = () => {
+    const model = modelDraft.trim();
+    if (!model) return;
+    setModelValues((current) => current.includes(model) ? current : [...current, model]);
+    setModelDraft("");
   };
 
   const hasActiveProviders = activeProviders.length > 0;
@@ -55,6 +81,22 @@ export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, ba
   );
 
   const renderModelSelector = () => {
+    if (supportsMultipleModels) {
+      return (
+        <div className="mt-2">
+          <ModelCatalogInput
+            models={modelValues}
+            draft={modelDraft}
+            onDraftChange={setModelDraft}
+            onAdd={addModel}
+            onRemove={(model) => setModelValues((current) => current.filter((entry) => entry !== model))}
+            onOpenPicker={() => setShowModelModal(true)}
+            canOpenPicker={hasActiveProviders}
+            label="Models"
+          />
+        </div>
+      );
+    }
     return (
       <div className="mt-2 flex flex-col sm:flex-row sm:items-center gap-2">
         <input
@@ -97,6 +139,10 @@ export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, ba
       </div>
     );
   };
+
+  const getCodeBlockContent = () => typeof tool.codeBlock?.code === "function"
+    ? tool.codeBlock.code(getTemplateContext())
+    : tool.codeBlock?.code || "";
 
   const renderNotes = () => {
     if (!tool.notes || tool.notes.length === 0) return null;
@@ -189,7 +235,7 @@ export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, ba
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs text-text-muted uppercase tracking-wide">{tool.codeBlock.language}</span>
               <button
-                onClick={() => handleCopy(tool.codeBlock.code, "codeblock")}
+                onClick={() => handleCopy(getCodeBlockContent(), "codeblock")}
                 className="flex items-center gap-1 px-2 py-1 text-xs bg-bg-secondary hover:bg-bg-tertiary rounded border border-border transition-colors"
               >
                 <span className="material-symbols-outlined text-sm">
@@ -199,7 +245,7 @@ export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, ba
               </button>
             </div>
             <pre className="p-4 bg-bg-secondary rounded-lg border border-border overflow-x-auto">
-              <code className="text-sm font-mono whitespace-pre">{replaceVars(tool.codeBlock.code)}</code>
+              <code className="text-sm font-mono whitespace-pre">{replaceVars(getCodeBlockContent())}</code>
             </pre>
           </div>
         )}
@@ -262,11 +308,13 @@ export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, ba
         isOpen={showModelModal}
         onClose={() => setShowModelModal(false)}
         onSelect={handleSelectModel}
-        selectedModel={modelValue}
+        onDeselect={supportsMultipleModels ? (model) => setModelValues((current) => current.filter((entry) => entry !== model.value)) : undefined}
+        selectedModel={supportsMultipleModels ? null : modelValue}
         activeProviders={activeProviders}
+        addedModelValues={supportsMultipleModels ? modelValues : []}
+        closeOnSelect={!supportsMultipleModels}
         title="Select Model"
       />
     </Card>
   );
 }
-

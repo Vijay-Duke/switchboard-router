@@ -162,6 +162,7 @@ export const CLI_TOOLS = {
     color: "#000000",
     description: "Cursor AI Code Editor",
     configType: "guide",
+    modelSelection: "multiple",
     requiresExternalUrl: true,
     notes: [
       { type: "warning", text: "Requires Cursor Pro account to use this feature." },
@@ -172,8 +173,8 @@ export const CLI_TOOLS = {
       { step: 2, title: "Enable OpenAI API", desc: "Enable \"OpenAI API key\" option" },
       { step: 3, title: "Base URL", value: "{{baseUrl}}", copyable: true },
       { step: 4, title: "API Key", type: "apiKeySelector" },
-      { step: 5, title: "Add Custom Model", desc: "Click \"View All Model\" → \"Add Custom Model\"" },
-      { step: 6, title: "Select Model", type: "modelSelector" },
+      { step: 5, title: "Select Models", type: "modelSelector" },
+      { step: 6, title: "Add Custom Models", desc: "Click “View All Models” → “Add Custom Model” once for each selected model. The endpoint and API key are shared." },
     ],
   },
   cline: {
@@ -199,12 +200,14 @@ export const CLI_TOOLS = {
     color: "#FF6B6B",
     description: "Roo AI Assistant",
     configType: "guide",
+    modelSelection: "multiple",
     guideSteps: [
       { step: 1, title: "Open Settings", desc: "Go to Roo Settings panel" },
-      { step: 2, title: "Select Provider", desc: "Choose API Provider → Ollama" },
+      { step: 2, title: "Select Provider", desc: "Choose API Provider → OpenAI Compatible" },
       { step: 3, title: "Base URL", value: "{{baseUrl}}", copyable: true },
       { step: 4, title: "API Key", type: "apiKeySelector" },
-      { step: 5, title: "Select Model", type: "modelSelector" },
+      { step: 5, title: "Select Models", type: "modelSelector" },
+      { step: 6, title: "Create Profiles", desc: "Create one named Switchboard API Configuration Profile per selected model; Roo stores one model per profile." },
     ],
   },
   continue: {
@@ -214,52 +217,16 @@ export const CLI_TOOLS = {
     color: "#7C3AED",
     description: "Continue AI Assistant",
     configType: "guide",
+    modelSelection: "multiple",
     guideSteps: [
       { step: 1, title: "Open Config", desc: "Open Continue configuration file" },
       { step: 2, title: "API Key", type: "apiKeySelector" },
-      { step: 3, title: "Select Model", type: "modelSelector" },
-      { step: 4, title: "Add Model Config", desc: "Add the following configuration to your models array:" },
+      { step: 3, title: "Select Models", type: "modelSelector" },
+      { step: 4, title: "Add Model Config", desc: "Merge the generated entries into ~/.continue/config.yaml." },
     ],
     codeBlock: {
-      language: "json",
-      code: `{
-  "apiBase": "{{baseUrl}}",
-  "title": "{{model}}",
-  "model": "{{model}}",
-  "provider": "openai",
-  "apiKey": "{{apiKey}}"
-}`,
-    },
-  },
-  amp: {
-    id: "amp",
-    name: "Amp CLI",
-    image: "/providers/amp.png",
-    color: "#F97316",
-    description: "Sourcegraph Amp coding assistant CLI",
-    docsUrl: "/docs?section=cli-tools&tool=amp",
-    configType: "guide",
-    defaultCommand: "amp",
-    modelAliases: ["g25p", "g25f", "cs45", "g54"],
-    notes: [
-      { type: "info", text: "Use Switchboard model aliases to keep Amp shorthand mappings stable across provider updates." },
-      { type: "warning", text: "Suggested shorthand examples: g25p → gemini/gemini-2.5-pro, g25f → gemini/gemini-2.5-flash, cs45 → cc/claude-sonnet-4-5-20250929." },
-    ],
-    guideSteps: [
-      { step: 1, title: "Install Amp", desc: "Install the Amp CLI using the package manager supported by your environment." },
-      { step: 2, title: "API Key", type: "apiKeySelector" },
-      { step: 3, title: "Base URL", value: "{{baseUrl}}", copyable: true },
-      { step: 4, title: "Select Model", type: "modelSelector" },
-      { step: 5, title: "Add Shorthands", desc: "Map Amp shorthand names such as g25p or cs45 to Switchboard aliases in your local config." },
-    ],
-    codeBlock: {
-      language: "bash",
-      code: `export OPENAI_API_KEY="{{apiKey}}"
-export OPENAI_BASE_URL="{{baseUrl}}"
-amp --model "{{model}}"
-# Example shorthand aliases you can map locally:
-# g25p -> gemini/gemini-2.5-pro
-# cs45 -> cc/claude-sonnet-4-5-20250929`,
+      language: "yaml",
+      code: ({ baseUrl, apiKey, models }) => `name: Switchboard\nversion: 1.0.0\nschema: v1\nmodels:\n${models.map((model) => `  - name: "Switchboard · ${model}"\n    provider: openai\n    model: "${model}"\n    apiBase: "${baseUrl}"\n    apiKey: "${apiKey}"\n    roles: [chat, edit, apply]`).join("\n")}`,
     },
   },
   qwen: {
@@ -270,6 +237,7 @@ amp --model "{{model}}"
     description: "Alibaba Qwen Code CLI — supports OpenAI, Anthropic & Gemini providers via Switchboard",
     docsUrl: "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/model-providers/",
     configType: "guide",
+    modelSelection: "multiple",
     defaultCommand: "qwen",
     notes: [
       { type: "info", text: "Qwen Code supports multiple provider types (openai, anthropic, gemini) via modelProviders in settings.json. Switchboard works as an OpenAI-compatible endpoint." },
@@ -292,23 +260,24 @@ amp --model "{{model}}"
       { step: 1, title: "Install Qwen Code", desc: "npm install -g @qwen-code/qwen-code" },
       { step: 2, title: "API Key", type: "apiKeySelector" },
       { step: 3, title: "Base URL", value: "{{baseUrl}}", copyable: true },
-      { step: 4, title: "Select Model", type: "modelSelector" },
-      { step: 5, title: "Save Config", desc: "Copy the JSON below to your ~/.qwen/settings.json file." },
+      { step: 4, title: "Select Models", type: "modelSelector" },
+      { step: 5, title: "Save Config", desc: "Copy the JSON below to ~/.qwen/settings.json and export SWITCHBOARD_API_KEY in your shell." },
     ],
     codeBlock: {
       language: "json",
-      code: `{
-  "security": {
-    "auth": {
-      "selectedType": "openai",
-      "apiKey": "{{apiKey}}",
-      "baseUrl": "{{baseUrl}}"
-    }
-  },
-  "model": {
-    "name": "{{model}}"
-  }
-}`,
+      code: ({ baseUrl, models }) => JSON.stringify({
+        modelProviders: {
+          openai: {
+            protocol: "openai",
+            models: models.map((id) => ({
+              id,
+              name: `Switchboard · ${id}`,
+              baseUrl,
+              envKey: "SWITCHBOARD_API_KEY",
+            })),
+          },
+        },
+      }, null, 2),
     },
   },
   "deepseek-tui": {
@@ -317,7 +286,7 @@ amp --model "{{model}}"
     image: "/providers/deepseek-tui.png",
     color: "#4D6BFE",
     description: "DeepSeek Terminal Coding Agent (Rust TUI)",
-    docsUrl: "https://github.com/DeepSeek-TUI/DeepSeek-TUI",
+    docsUrl: "https://github.com/Hmbown/DeepSeek-TUI",
     configType: "custom",
     defaultCommand: "deepseek",
     modelAliases: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"],
