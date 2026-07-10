@@ -14,6 +14,7 @@ const GATED = [
   "unit/data-dir.test.js", // CLI/server secret-path parity
   "unit/standalone-start.test.js", // the only wildcard-bind-safe entrypoint
   "unit/launch.test.js", // argument forwarding, no shell
+  "unit/responses-non-stream.test.js", // Responses client over Chat Completions upstream
   "unit/cli-disable-mitm.test.js", // crash-loop recovery writes the live store
   "unit/oauth-cursor-auto-import.test.js", // optional-dependency fallback
   "unit/ci-gate.test.js", // this list itself
@@ -63,5 +64,23 @@ describe("release trigger invariants", () => {
     expect(docker).toContain("ref: ${{ inputs.release_tag }}");
     expect(docker).toContain("Expected an immutable v* release tag");
     expect(docker).not.toContain("${{ inputs.tag }}");
+  });
+});
+
+describe("GitHub Actions runtime support", () => {
+  const workflows = [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/docker-publish.yml",
+    ".github/workflows/gitbook-pages.yml",
+  ].map((workflow) => fs.readFileSync(path.join(repoRoot, workflow), "utf8")).join("\n");
+
+  it("does not use deprecated Node 20 action majors", () => {
+    expect(workflows).not.toContain("actions/checkout@v4");
+    expect(workflows).not.toContain("actions/setup-node@v4");
+    expect(workflows).not.toContain("actions/upload-artifact@v4");
+    expect(workflows).not.toContain("actions/download-artifact@v4");
+    expect(workflows).not.toContain("actions/upload-pages-artifact@v3");
+    expect(workflows).not.toContain("actions/deploy-pages@v4");
   });
 });

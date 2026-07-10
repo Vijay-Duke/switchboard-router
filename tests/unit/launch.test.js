@@ -3,12 +3,13 @@
 // and propagate the child's exit code — without a shell on any platform.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveCommand, withBindHostname } from "../../scripts/launch.mjs";
+import { forwardOutput, resolveCommand, withBindHostname } from "../../scripts/launch.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 let probe;
@@ -113,5 +114,25 @@ describe("withBindHostname", () => {
   it("leaves unrelated commands untouched", () => {
     const args = ["probe.cjs", "value"];
     expect(withBindHostname("node", args, "127.0.0.1")).toEqual(args);
+  });
+});
+
+describe("forwardOutput", () => {
+  it("keeps draining child output after the terminal pipe breaks", () => {
+    const source = new EventEmitter();
+    const destination = new EventEmitter();
+    const writes = [];
+    destination.destroyed = false;
+    destination.write = (chunk) => {
+      writes.push(String(chunk));
+      return true;
+    };
+
+    forwardOutput(source, destination);
+    source.emit("data", "before");
+    destination.emit("error", Object.assign(new Error("broken pipe"), { code: "EPIPE" }));
+    source.emit("data", "after");
+
+    expect(writes).toEqual(["before"]);
   });
 });

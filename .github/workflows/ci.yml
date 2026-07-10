@@ -15,9 +15,9 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -52,6 +52,7 @@ jobs:
             unit/data-dir.test.js \
             unit/standalone-start.test.js \
             unit/launch.test.js \
+            unit/responses-non-stream.test.js \
             unit/cli-disable-mitm.test.js \
             unit/ci-gate.test.js \
             unit/oauth-cursor-auto-import.test.js \
@@ -61,8 +62,8 @@ jobs:
     name: Windows launcher and recovery
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -85,8 +86,8 @@ jobs:
       run:
         working-directory: gitbook
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -102,8 +103,8 @@ jobs:
     name: CLI pack (dry run)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
