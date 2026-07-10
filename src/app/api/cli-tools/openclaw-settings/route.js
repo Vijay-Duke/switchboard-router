@@ -7,6 +7,8 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { isNonEmptyString, isOptionalString, normalizeModelIds } from "@/lib/cli/modelCatalog.js";
+import { restoreObjectKeys, snapshotObjectKeys, writeCliFile } from "@/lib/cli/fileIo.js";
 
 const execAsync = promisify(exec);
 
@@ -21,6 +23,7 @@ const resolveAgentModel = (m) => {
 
 const getOpenClawDir = () => path.join(os.homedir(), ".openclaw");
 const getOpenClawSettingsPath = () => path.join(getOpenClawDir(), "openclaw.json");
+const getBackupPath = () => path.join(getOpenClawDir(), "switchboard-backup.json");
 
 // Check if openclaw CLI is installed (via which/where or config file exists)
 const checkOpenClawInstalled = async () => {
@@ -116,33 +119,37 @@ export async function GET() {
 }
 
 // Write per-agent models.json
-const writeAgentModels = async (agentDir, model, baseUrl, apiKey) => {
+const readAgentModels = async (agentDir) => {
+  const modelsPath = path.join(agentDir, "models.json");
+  try { return JSON.parse(await fs.readFile(modelsPath, "utf-8")); }
+  catch (error) { if (error?.code === "ENOENT") return {}; throw error; }
+};
+
+const writeAgentModels = async (agentDir, models, baseUrl, apiKey) => {
   await fs.mkdir(agentDir, { recursive: true });
   const modelsPath = path.join(agentDir, "models.json");
-  let existing = {};
-  try {
-    const content = await fs.readFile(modelsPath, "utf-8");
-    existing = JSON.parse(content);
-  } catch { /* No existing */ }
+  const existing = await readAgentModels(agentDir);
 
   if (!existing.providers) existing.providers = {};
   existing.providers["switchboard"] = {
     baseUrl,
     apiKey: apiKey || "your_api_key",
     api: "openai-completions",
-    models: [{ id: model, name: model.split("/").pop() || model }],
+    models: normalizeModelIds(models).map((model) => ({ id: model, name: model.split("/").pop() || model })),
   };
-  await fs.writeFile(modelsPath, JSON.stringify(existing, null, 2));
+  await writeCliFile(modelsPath, JSON.stringify(existing, null, 2), { secret: true });
 };
 
 // POST - Update Switchboard settings (merge with existing settings)
 export async function POST(request) {
   try {
     // agentModels: { [agentId]: modelId } for per-agent override
-    const { baseUrl, apiKey, model, agentModels = {} } = await request.json();
+    const { baseUrl, apiKey, model, models: requestedModels, defaultModel, agentModels = {} } = await request.json();
+    const models = normalizeModelIds(requestedModels ?? model);
+    const activeModel = models.includes(defaultModel || model) ? (defaultModel || model) : models[0];
     
-    if (!baseUrl || !model) {
-      return NextResponse.json({ error: "baseUrl and model are required" }, { status: 400 });
+    if (!isNonEmptyString(baseUrl) || !isOptionalString(apiKey) || models.length === 0) {
+      return NextResponse.json({ error: "baseUrl and at least one model are required" }, { status: 400 });
     }
 
     const openclawDir = getOpenClawDir();
@@ -154,7 +161,26 @@ export async function POST(request) {
     try {
       const existingSettings = await fs.readFile(settingsPath, "utf-8");
       settings = JSON.parse(existingSettings);
-    } catch { /* No existing settings */ }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+
+    const backup = await (async () => {
+      try { return JSON.parse(await fs.readFile(getBackupPath(), "utf-8")); }
+      catch (error) { if (error?.code === "ENOENT") return {}; throw error; }
+    })();
+    if (backup.version !== 1) {
+      backup.version = 1;
+      backup.mainProvider = snapshotObjectKeys(settings.models?.providers || {}, ["switchboard"]);
+      backup.defaultPrimary = snapshotObjectKeys(settings.agents?.defaults?.model || {}, ["primary"]);
+      backup.defaultModels = Object.fromEntries(
+        Object.entries(settings.agents?.defaults?.models || {}).filter(([key]) => key.startsWith("switchboard/")),
+      );
+      backup.agents = {};
+      backup.agentProviders = {};
+    }
+    backup.agents ||= {};
+    backup.agentProviders ||= {};
 
     if (!settings.agents) settings.agents = {};
     if (!settings.agents.defaults) settings.agents.defaults = {};
@@ -164,7 +190,7 @@ export async function POST(request) {
     if (!settings.models.providers) settings.models.providers = {};
 
     const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
-    const fullModelId = `switchboard/${model}`;
+    const fullModelId = `switchboard/${activeModel}`;
 
     // Remove all old switchboard/* entries from agents.defaults.models
     Object.keys(settings.agents.defaults.models)
@@ -175,8 +201,14 @@ export async function POST(request) {
     settings.agents.defaults.model.primary = fullModelId;
 
     // Collect all unique models (default + per-agent)
-    const allModelIds = new Set([model]);
-    Object.values(agentModels).forEach((m) => { if (m) allModelIds.add(m); });
+    const allModelIds = new Set(models);
+    const normalizedAgentModels = Object.fromEntries(
+      Object.entries(agentModels).flatMap(([agentId, value]) => {
+        const [normalized] = normalizeModelIds(value);
+        return normalized ? [[agentId, normalized]] : [];
+      }),
+    );
+    Object.values(normalizedAgentModels).forEach((modelId) => allModelIds.add(modelId));
 
     // Add fresh switchboard models to allowlist
     allModelIds.forEach((m) => {
@@ -185,7 +217,16 @@ export async function POST(request) {
 
     // Remove old switchboard model from each agent in agents.list. The
     // model field may be a plain string or `{ primary, fallbacks }`.
-    if (settings.agents.list) {
+    if (Array.isArray(settings.agents.list)) {
+      for (const agent of settings.agents.list) {
+        if (!Object.hasOwn(backup.agents, agent.id)) {
+          backup.agents[agent.id] = snapshotObjectKeys(agent, ["model"]).model;
+        }
+        if (agent.agentDir && !Object.hasOwn(backup.agentProviders, agent.agentDir)) {
+          const agentFile = await readAgentModels(agent.agentDir);
+          backup.agentProviders[agent.agentDir] = snapshotObjectKeys(agentFile.providers || {}, ["switchboard"]).switchboard;
+        }
+      }
       settings.agents.list = settings.agents.list.map((agent) => {
         if (resolveAgentModel(agent.model).startsWith("switchboard/")) {
           const { model: _, ...rest } = agent;
@@ -194,6 +235,7 @@ export async function POST(request) {
         return agent;
       });
     }
+    await writeCliFile(getBackupPath(), JSON.stringify(backup, null, 2), { secret: true });
 
     // Update models.providers.switchboard with all models
     settings.models.providers["switchboard"] = {
@@ -204,9 +246,9 @@ export async function POST(request) {
     };
 
     // Set per-agent model in agents.list and write models.json
-    if (settings.agents.list) {
+    if (Array.isArray(settings.agents.list)) {
       settings.agents.list = settings.agents.list.map((agent) => {
-        const agentModel = agentModels[agent.id];
+        const agentModel = normalizedAgentModels[agent.id];
         if (agentModel) return { ...agent, model: `switchboard/${agentModel}` };
         return agent;
       });
@@ -215,14 +257,18 @@ export async function POST(request) {
       await Promise.all(
         settings.agents.list.map(async (agent) => {
           if (!agent.agentDir) return;
-          const agentModel = agentModels[agent.id];
-          const modelToWrite = agentModel || model; // fallback to default
-          await writeAgentModels(agent.agentDir, modelToWrite, normalizedBaseUrl, apiKey);
+          const agentModel = normalizedAgentModels[agent.id] || activeModel;
+          await writeAgentModels(
+            agent.agentDir,
+            [agentModel, ...allModelIds],
+            normalizedBaseUrl,
+            apiKey,
+          );
         })
       );
     }
 
-    await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2));
+    await writeCliFile(settingsPath, JSON.stringify(settings, null, 2), { secret: true });
 
     return NextResponse.json({
       success: true,
@@ -255,9 +301,14 @@ export async function DELETE() {
       throw error;
     }
 
+    let backup = {};
+    try { backup = JSON.parse(await fs.readFile(getBackupPath(), "utf-8")); }
+    catch (error) { if (error?.code !== "ENOENT") throw error; }
+
     // Remove Switchboard from models.providers
     if (settings.models && settings.models.providers) {
-      delete settings.models.providers["switchboard"];
+      if (backup.version === 1) restoreObjectKeys(settings.models.providers, backup.mainProvider);
+      else delete settings.models.providers["switchboard"];
       
       // Remove providers object if empty
       if (Object.keys(settings.models.providers).length === 0) {
@@ -271,6 +322,7 @@ export async function DELETE() {
       for (const key of keysToRemove) {
         delete settings.agents.defaults.models[key];
       }
+      if (backup.version === 1) Object.assign(settings.agents.defaults.models, backup.defaultModels || {});
       if (Object.keys(settings.agents.defaults.models).length === 0) {
         delete settings.agents.defaults.models;
       }
@@ -278,11 +330,38 @@ export async function DELETE() {
 
     // Reset agents.defaults.model.primary if it uses switchboard
     if (settings.agents?.defaults?.model?.primary?.startsWith("switchboard/")) {
-      delete settings.agents.defaults.model.primary;
+      if (backup.version === 1) restoreObjectKeys(settings.agents.defaults.model, backup.defaultPrimary);
+      else delete settings.agents.defaults.model.primary;
     }
 
+    if (Array.isArray(settings.agents?.list)) {
+      settings.agents.list = settings.agents.list.map((agent) => {
+        if (!resolveAgentModel(agent.model).startsWith("switchboard/")) return agent;
+        const snapshot = backup.version === 1 ? backup.agents?.[agent.id] : null;
+        if (snapshot?.exists) return { ...agent, model: snapshot.value };
+        const { model: _, ...rest } = agent;
+        return rest;
+      });
+    }
+    const agentDirs = new Set([
+      ...(settings.agents?.list || []).map((agent) => agent.agentDir).filter(Boolean),
+      ...Object.keys(backup.agentProviders || {}),
+    ]);
+    await Promise.all([...agentDirs].map(async (agentDir) => {
+      const agentFile = await readAgentModels(agentDir);
+      if (!agentFile.providers?.switchboard) return;
+      if (backup.version === 1) {
+        restoreObjectKeys(agentFile.providers, { switchboard: backup.agentProviders?.[agentDir] });
+      } else {
+        delete agentFile.providers.switchboard;
+      }
+      if (Object.keys(agentFile.providers || {}).length === 0) delete agentFile.providers;
+      await writeCliFile(path.join(agentDir, "models.json"), JSON.stringify(agentFile, null, 2), { secret: true });
+    }));
+
     // Write updated settings
-    await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2));
+    await writeCliFile(settingsPath, JSON.stringify(settings, null, 2), { secret: true });
+    try { await fs.unlink(getBackupPath()); } catch (error) { if (error?.code !== "ENOENT") throw error; }
 
     return NextResponse.json({
       success: true,

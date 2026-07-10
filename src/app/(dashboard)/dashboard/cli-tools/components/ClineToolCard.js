@@ -7,6 +7,7 @@ import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import ModelCatalogInput from "./ModelCatalogInput";
 
 export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders, cloudEnabled, initialStatus, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl }) {
   const [status, setStatus] = useState(initialStatus || null);
@@ -17,6 +18,10 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
   const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
+  const [selectedModels, setSelectedModels] = useState([]);
+  const [modelDraft, setModelDraft] = useState("");
+  const [actModel, setActModel] = useState("");
+  const [planModel, setPlanModel] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [modelAliases, setModelAliases] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
@@ -36,10 +41,15 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
       fetchModelAliases();
     }
     if (isExpanded) fetchModelAliases();
-  }, [isExpanded]);
+  }, [isExpanded, status]);
 
   useEffect(() => {
-    if (status?.settings?.openAiModelId) setSelectedModel(status.settings.openAiModelId);
+    if (!status?.settings) return;
+    const models = Array.isArray(status.settings.models) ? status.settings.models : [];
+    setSelectedModels(models);
+    setSelectedModel(status.settings.defaultModel || models[0] || "");
+    setActModel(status.settings.actModel || status.settings.defaultModel || models[0] || "");
+    setPlanModel(status.settings.planModel || status.settings.defaultModel || models[0] || "");
   }, [status]);
 
   const fetchModelAliases = async () => {
@@ -55,7 +65,7 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
   const getConfigStatus = () => {
     if (!status?.installed) return null;
     if (!status.hasSwitchboard) return "not_configured";
-    const url = status.settings?.openAiBaseUrl || "";
+    const url = status.settings?.baseUrl || "";
     return matchKnownEndpoint(url, { tunnelPublicUrl, tailscaleUrl }) ? "configured" : "other";
   };
 
@@ -67,6 +77,27 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
   };
 
   const getDisplayUrl = () => customBaseUrl || `${baseUrl}/v1`;
+
+  const addModel = (value = modelDraft) => {
+    const model = value.trim();
+    if (!model) return;
+    setSelectedModels((current) => current.includes(model) ? current : [...current, model]);
+    if (!selectedModel) setSelectedModel(model);
+    if (!actModel) setActModel(model);
+    if (!planModel) setPlanModel(model);
+    setModelDraft("");
+  };
+
+  const removeModel = (model) => {
+    setSelectedModels((current) => {
+      const next = current.filter((entry) => entry !== model);
+      const fallback = next[0] || "";
+      if (selectedModel === model) setSelectedModel(fallback);
+      if (actModel === model) setActModel(fallback);
+      if (planModel === model) setPlanModel(fallback);
+      return next;
+    });
+  };
 
   const checkStatus = async () => {
     setChecking(true);
@@ -92,7 +123,15 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
       const res = await fetch("/api/cli-tools/cline-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: getEffectiveBaseUrl(), apiKey: keyToUse, model: selectedModel }),
+        body: JSON.stringify({
+          baseUrl: getEffectiveBaseUrl(),
+          apiKey: keyToUse,
+          model: selectedModel || selectedModels[0],
+          models: selectedModels,
+          defaultModel: selectedModel || selectedModels[0],
+          actModel,
+          planModel,
+        }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -117,6 +156,9 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
         setSelectedModel("");
+        setSelectedModels([]);
+        setActModel("");
+        setPlanModel("");
         checkStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
@@ -133,22 +175,34 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
       ? selectedApiKey
       : (!cloudEnabled ? "sk_switchboard" : "<API_KEY_FROM_DASHBOARD>");
     const effectiveUrl = getEffectiveBaseUrl();
-    const baseWithoutV1 = effectiveUrl.endsWith("/v1") ? effectiveUrl.slice(0, -3) : effectiveUrl;
+    const models = selectedModels.length ? selectedModels : ["provider/model-id"];
+    const activeModel = selectedModel || models[0];
 
     return [
       {
-        filename: "~/.cline/data/globalState.json",
+        filename: "~/.cline/data/settings/providers.json",
         content: JSON.stringify({
-          actModeApiProvider: "openai",
-          planModeApiProvider: "openai",
-          openAiBaseUrl: baseWithoutV1,
-          openAiModelId: selectedModel || "provider/model-id",
-          planModeOpenAiModelId: selectedModel || "provider/model-id",
+          providers: {
+            switchboard: {
+              type: "openai-compatible",
+              name: "Switchboard",
+              baseUrl: effectiveUrl,
+              apiKey: keyToUse,
+              defaultModelId: activeModel,
+            },
+          },
         }, null, 2),
       },
       {
-        filename: "~/.cline/data/secrets.json",
-        content: JSON.stringify({ openAiApiKey: keyToUse }, null, 2),
+        filename: "~/.cline/data/settings/models.json",
+        content: JSON.stringify({
+          providers: {
+            switchboard: {
+              provider: { name: "Switchboard", baseUrl: effectiveUrl, defaultModelId: activeModel },
+              models: Object.fromEntries(models.map((id) => [id, { id, name: id.split("/").pop() || id }])),
+            },
+          },
+        }, null, 2),
       },
     ];
   };
@@ -231,12 +285,12 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
                   />
                 </div>
 
-                {status?.settings?.openAiBaseUrl && (
+                {status?.settings?.baseUrl && (
                   <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
                     <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Current</span>
                     <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
                     <span className="min-w-0 truncate rounded bg-surface/40 px-2 py-2 text-xs text-text-muted sm:py-1.5">
-                      {status.settings.openAiBaseUrl}
+                      {status.settings.baseUrl}
                     </span>
                   </div>
                 )}
@@ -247,15 +301,31 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
                   <ApiKeySelect value={selectedApiKey} onChange={setSelectedApiKey} apiKeys={apiKeys} cloudEnabled={cloudEnabled} />
                 </div>
 
-                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
-                  <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Model</span>
-                  <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
-                  <div className="relative w-full min-w-0">
-                    <input type="text" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} placeholder="provider/model-id" className="w-full min-w-0 pl-2 pr-7 py-2 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5" />
-                    {selectedModel && <button onClick={() => setSelectedModel("")} className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-red-500 rounded transition-colors" title="Clear"><span className="material-symbols-outlined text-[14px]">close</span></button>}
+                <ModelCatalogInput
+                  models={selectedModels}
+                  draft={modelDraft}
+                  onDraftChange={setModelDraft}
+                  onAdd={() => addModel()}
+                  onRemove={removeModel}
+                  onOpenPicker={() => setModalOpen(true)}
+                  canOpenPicker={Boolean(activeProviders?.length)}
+                  defaultModel={selectedModel}
+                  onDefaultChange={setSelectedModel}
+                />
+                {selectedModels.length > 0 ? (
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-[8rem_auto_1fr] sm:items-center">
+                    <span className="text-xs font-semibold text-text-main sm:text-right">Plan / Act</span>
+                    <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <select value={planModel} onChange={(event) => setPlanModel(event.target.value)} className="rounded border border-border bg-surface px-2 py-1.5 text-xs">
+                        {selectedModels.map((model) => <option key={model} value={model}>Plan: {model}</option>)}
+                      </select>
+                      <select value={actModel} onChange={(event) => setActModel(event.target.value)} className="rounded border border-border bg-surface px-2 py-1.5 text-xs">
+                        {selectedModels.map((model) => <option key={model} value={model}>Act: {model}</option>)}
+                      </select>
+                    </div>
                   </div>
-                  <button onClick={() => setModalOpen(true)} disabled={!activeProviders?.length} className={`w-full sm:w-auto rounded border px-2 py-2 text-xs transition-colors sm:py-1.5 whitespace-nowrap sm:shrink-0 ${activeProviders?.length ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Select Model</button>
-                </div>
+                ) : null}
               </div>
 
               {message && (
@@ -266,7 +336,7 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
               )}
 
               <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center">
-                <Button variant="primary" size="sm" onClick={handleApply} disabled={(!selectedApiKey && (cloudEnabled && apiKeys.length > 0)) || !selectedModel} loading={applying}>
+                <Button variant="primary" size="sm" onClick={handleApply} disabled={(!selectedApiKey && (cloudEnabled && apiKeys.length > 0)) || selectedModels.length === 0} loading={applying}>
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>Apply
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleReset} disabled={restoring} loading={restoring}>
@@ -284,11 +354,14 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
       <ModelSelectModal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
-        onSelect={(model) => { setSelectedModel(model.value); setModalOpen(false); }}
-        selectedModel={selectedModel}
+        onSelect={(model) => addModel(model.value)}
+        onDeselect={(model) => removeModel(model.value)}
+        selectedModel={null}
         activeProviders={activeProviders}
         modelAliases={modelAliases}
-        title="Select Model for Cline"
+        addedModelValues={selectedModels}
+        closeOnSelect={false}
+        title="Add Models for Cline"
       />
 
       <ManualConfigModal

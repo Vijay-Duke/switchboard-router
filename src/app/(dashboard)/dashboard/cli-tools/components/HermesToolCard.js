@@ -7,6 +7,7 @@ import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import ModelCatalogInput from "./ModelCatalogInput";
 
 const ENDPOINT = "/api/cli-tools/hermes-settings";
 
@@ -32,6 +33,8 @@ export default function HermesToolCard({
   const [message, setMessage] = useState(null);
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
+  const [selectedModels, setSelectedModels] = useState([]);
+  const [modelDraft, setModelDraft] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [modelAliases, setModelAliases] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
@@ -64,7 +67,7 @@ export default function HermesToolCard({
       fetchModelAliases();
     }
     if (isExpanded) fetchModelAliases();
-  }, [isExpanded]);
+  }, [isExpanded, hermesStatus]);
 
   const fetchModelAliases = async () => {
     try {
@@ -80,6 +83,8 @@ export default function HermesToolCard({
     if (hermesStatus?.installed && !hasInitializedModel.current) {
       hasInitializedModel.current = true;
       const cfg = hermesStatus.settings?.model;
+      const models = Array.isArray(hermesStatus.settings?.models) ? hermesStatus.settings.models : [];
+      setSelectedModels(models.length ? models : (cfg?.default ? [cfg.default] : []));
       if (cfg?.default) setSelectedModel(cfg.default);
     }
   }, [hermesStatus]);
@@ -111,6 +116,22 @@ export default function HermesToolCard({
     return url.endsWith("/v1") ? url : `${url}/v1`;
   };
 
+  const addModel = (value = modelDraft) => {
+    const model = value.trim();
+    if (!model) return;
+    setSelectedModels((current) => current.includes(model) ? current : [...current, model]);
+    if (!selectedModel) setSelectedModel(model);
+    setModelDraft("");
+  };
+
+  const removeModel = (model) => {
+    setSelectedModels((current) => {
+      const next = current.filter((entry) => entry !== model);
+      if (selectedModel === model) setSelectedModel(next[0] || "");
+      return next;
+    });
+  };
+
   const handleApply = async () => {
     setApplying(true);
     setMessage(null);
@@ -125,7 +146,9 @@ export default function HermesToolCard({
         body: JSON.stringify({
           baseUrl: getEffectiveBaseUrl(),
           apiKey: keyToUse,
-          model: selectedModel,
+          model: selectedModel || selectedModels[0],
+          models: selectedModels,
+          defaultModel: selectedModel || selectedModels[0],
         }),
       });
       const data = await res.json();
@@ -151,6 +174,7 @@ export default function HermesToolCard({
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
         setSelectedModel("");
+        setSelectedModels([]);
         checkStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
@@ -163,8 +187,7 @@ export default function HermesToolCard({
   };
 
   const handleModelSelect = (model) => {
-    setSelectedModel(model.value);
-    setModalOpen(false);
+    addModel(model.value);
   };
 
   const getManualConfigs = () => {
@@ -172,8 +195,21 @@ export default function HermesToolCard({
       ? selectedApiKey
       : (!cloudEnabled ? "sk_switchboard" : "<API_KEY_FROM_DASHBOARD>");
 
-    const yamlContent = `model:\n  default: "${selectedModel || "provider/model-id"}"\n  provider: "custom"\n  base_url: "${getEffectiveBaseUrl()}"\n`;
-    const envContent = `OPENAI_API_KEY=${keyToUse}\n`;
+    const models = selectedModels.length ? selectedModels : ["provider/model-id"];
+    const activeModel = selectedModel || models[0];
+    const modelMap = models.map((model) => `      "${model}": {}`).join("\n");
+    const yamlContent = `custom_providers:
+  - name: switchboard
+    base_url: "${getEffectiveBaseUrl()}"
+    key_env: SWITCHBOARD_API_KEY
+    api_mode: chat_completions
+    models:
+${modelMap}
+model:
+  default: "${activeModel}"
+  provider: "custom:switchboard"
+`;
+    const envContent = `SWITCHBOARD_API_KEY=${keyToUse}\n`;
 
     return [
       { filename: "~/.hermes/config.yaml", content: yamlContent },
@@ -263,15 +299,17 @@ export default function HermesToolCard({
                   <ApiKeySelect value={selectedApiKey} onChange={setSelectedApiKey} apiKeys={apiKeys} cloudEnabled={cloudEnabled} />
                 </div>
 
-                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
-                  <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Default Model</span>
-                  <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
-                  <div className="relative w-full min-w-0">
-                    <input type="text" value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} placeholder="provider/model-id" className="w-full min-w-0 pl-2 pr-7 py-2 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5" />
-                    {selectedModel && <button onClick={() => setSelectedModel("")} className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-red-500 rounded transition-colors" title="Clear"><span className="material-symbols-outlined text-[14px]">close</span></button>}
-                  </div>
-                  <button onClick={() => setModalOpen(true)} disabled={!hasActiveProviders} className={`w-full sm:w-auto rounded border px-2 py-2 text-xs transition-colors sm:py-1.5 whitespace-nowrap sm:shrink-0 ${hasActiveProviders ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Select</button>
-                </div>
+                <ModelCatalogInput
+                  models={selectedModels}
+                  draft={modelDraft}
+                  onDraftChange={setModelDraft}
+                  onAdd={() => addModel()}
+                  onRemove={removeModel}
+                  onOpenPicker={() => setModalOpen(true)}
+                  canOpenPicker={Boolean(hasActiveProviders)}
+                  defaultModel={selectedModel}
+                  onDefaultChange={setSelectedModel}
+                />
               </div>
 
               {message && (
@@ -282,7 +320,7 @@ export default function HermesToolCard({
               )}
 
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                <Button variant="primary" size="sm" onClick={handleApply} disabled={!selectedModel} loading={applying} className="w-full sm:w-auto">
+                <Button variant="primary" size="sm" onClick={handleApply} disabled={selectedModels.length === 0} loading={applying} className="w-full sm:w-auto">
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>Apply
                 </Button>
                 <Button variant="outline" size="sm" onClick={handleReset} disabled={!hermesStatus?.hasSwitchboard} loading={restoring} className="w-full sm:w-auto">
@@ -301,10 +339,13 @@ export default function HermesToolCard({
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         onSelect={handleModelSelect}
-        selectedModel={selectedModel}
+        onDeselect={(model) => removeModel(model.value)}
+        selectedModel={null}
         activeProviders={activeProviders}
         modelAliases={modelAliases}
-        title="Select Model for Hermes Agent"
+        addedModelValues={selectedModels}
+        closeOnSelect={false}
+        title="Add Models for Hermes Agent"
       />
 
       <ManualConfigModal

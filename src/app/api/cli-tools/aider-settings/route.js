@@ -10,6 +10,9 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { buildAiderYaml, isNonEmptyString, isOptionalString, normalizeModelIds, removeAiderYaml } from "@/lib/cli/modelCatalog.js";
+import { parse as parseYaml } from "yaml";
+import { writeCliFile } from "@/lib/cli/fileIo.js";
 
 const execAsync = promisify(exec);
 
@@ -54,8 +57,6 @@ const parseFlatYaml = (text) => {
   return out;
 };
 
-const SWITCHBOARD_MARKER = "# switchboard-managed";
-
 export async function GET() {
   try {
     const installed = await checkInstalled();
@@ -73,10 +74,16 @@ export async function GET() {
     } catch (e) {
       if (e.code !== "ENOENT") throw e;
     }
-    const flat = parseFlatYaml(raw);
+    let parsed = {};
+    try { parsed = parseYaml(raw) || {}; } catch { parsed = parseFlatYaml(raw); }
+    const flat = parsed && typeof parsed === "object" ? parsed : {};
     const baseUrl = flat["openai-api-base"] || flat["openai_api_base"] || null;
-    const model = flat.model || null;
-    const managed = raw.includes(SWITCHBOARD_MARKER);
+    const model = flat.model?.replace(/^openai\//, "") || null;
+    const aliases = Array.isArray(flat.alias) ? flat.alias : [];
+    const models = aliases
+      .map((entry) => String(entry).split(":").slice(1).join(":").replace(/^openai\//, ""))
+      .filter(Boolean);
+    const managed = raw.includes("# switchboard-managed-aider:");
     const hasSwitchboard = !!(managed && baseUrl && isLocalBase(baseUrl));
 
     return NextResponse.json({
@@ -85,6 +92,7 @@ export async function GET() {
       settings: {
         baseUrl,
         model,
+        models: models.length ? models : (model ? [model] : []),
         apiKeySet: !!(flat["openai-api-key"] || flat["openai_api_key"]),
       },
       configPath: getConfigPath(),
@@ -97,42 +105,27 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, model } = await request.json();
-    if (!baseUrl || !model) {
-      return NextResponse.json({ error: "baseUrl and model are required" }, { status: 400 });
+    const { baseUrl, apiKey, model, models: requestedModels, defaultModel } = await request.json();
+    const models = normalizeModelIds(requestedModels ?? model);
+    if (!isNonEmptyString(baseUrl) || !isOptionalString(apiKey) || models.length === 0) {
+      return NextResponse.json({ error: "baseUrl and at least one model are required" }, { status: 400 });
     }
 
     const normalized = normalizeBaseUrl(baseUrl);
     const key = apiKey || "sk_switchboard";
-    // Aider expects openai/<name> for OpenAI-compatible providers
-    const aiderModel = model.startsWith("openai/") ? model : `openai/${model}`;
-
-    // Preserve non-managed keys from existing file when possible
-    let existing = {};
+    let existing = "";
     try {
-      const raw = await fs.readFile(getConfigPath(), "utf-8");
-      existing = parseFlatYaml(raw);
+      existing = await fs.readFile(getConfigPath(), "utf-8");
     } catch {
       /* new file */
     }
-
-    const body = `${SWITCHBOARD_MARKER}
-# Point Aider at Switchboard (OpenAI-compatible)
-openai-api-base: ${normalized}
-openai-api-key: ${key}
-model: ${aiderModel}
-`;
-
-    // Keep a few safe unrelated settings if present
-    const keepKeys = ["dark-mode", "auto-commits", "git", "map-tokens", "user-prompts"];
-    let extras = "";
-    for (const k of keepKeys) {
-      if (existing[k] != null && existing[k] !== "") {
-        extras += `${k}: ${existing[k]}\n`;
-      }
-    }
-
-    await fs.writeFile(getConfigPath(), body + (extras ? `\n# preserved\n${extras}` : ""));
+    const body = buildAiderYaml(existing, {
+      baseUrl: normalized,
+      apiKey: key,
+      models,
+      defaultModel: defaultModel || model,
+    });
+    await writeCliFile(getConfigPath(), body, { secret: true });
 
     return NextResponse.json({
       success: true,
@@ -158,15 +151,14 @@ export async function DELETE() {
       throw e;
     }
 
-    if (!raw.includes(SWITCHBOARD_MARKER)) {
+    if (!raw.includes("# switchboard-managed-aider:")) {
       return NextResponse.json({
         success: true,
         message: "Config was not switchboard-managed; left unchanged",
       });
     }
 
-    // Remove managed file content — leave empty stub
-    await fs.writeFile(configPath, `# aider config (switchboard settings removed)\n`);
+    await writeCliFile(configPath, removeAiderYaml(raw), { secret: true });
     return NextResponse.json({ success: true, message: "Switchboard Aider settings removed" });
   } catch (error) {
     console.log("Error resetting aider settings:", error);

@@ -7,6 +7,9 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { parseTOML, stringifyTOML } from "confbox";
+import { writeCliFile } from "@/lib/cli/fileIo.js";
+import { isNonEmptyString, isOptionalString } from "@/lib/cli/modelCatalog.js";
 
 const execAsync = promisify(exec);
 
@@ -14,59 +17,7 @@ const PROVIDER_NAME = "switchboard";
 
 const getDeepSeekDir = () => path.join(os.homedir(), ".deepseek");
 const getDeepSeekConfigPath = () => path.join(getDeepSeekDir(), "config.toml");
-
-// Simple TOML parser for key = "value" and [section] patterns
-const parseToml = (content) => {
-    const result = {};
-    let currentSection = result;
-
-    const lines = content.split(/\r?\n/);
-    for (const line of lines) {
-        const trimmed = line.trim();
-        // Skip empty lines and comments
-        if (!trimmed || trimmed.startsWith("#")) continue;
-
-        // Section header: [section] or [section.subsection]
-        const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
-        if (sectionMatch) {
-            const sectionName = sectionMatch[1];
-            if (!result[sectionName]) result[sectionName] = {};
-            currentSection = result[sectionName];
-            continue;
-        }
-
-        // Key = "value" or key = value
-        const keyValueMatch = trimmed.match(/^(\w+)\s*=\s*"([^"]*)"$/);
-        if (keyValueMatch) {
-            currentSection[keyValueMatch[1]] = keyValueMatch[2];
-            continue;
-        }
-
-        // Key = value (unquoted)
-        const unquotedMatch = trimmed.match(/^(\w+)\s*=\s*(.+)$/);
-        if (unquotedMatch) {
-            currentSection[unquotedMatch[1]] = unquotedMatch[2].trim();
-        }
-    }
-
-    return result;
-};
-
-// Build TOML config for Switchboard (openai provider mode)
-const buildSwitchboardConfig = (baseUrl, apiKey, model) => {
-    const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
-    return `provider = "openai"
-
-[providers.openai]
-base_url = "${normalizedBaseUrl}"
-api_key = "${apiKey}"
-model = "${model}"
-`;
-};
-
-// Default DeepSeek config (reset state)
-const DEFAULT_CONFIG = `provider = "deepseek"
-`;
+const getBackupPath = () => path.join(getDeepSeekDir(), "switchboard-backup.json");
 
 const checkDeepSeekInstalled = async () => {
     try {
@@ -98,7 +49,7 @@ const hasSwitchboardConfig = (config) => {
     if (!config) return false;
     const provider = config.provider;
     if (provider !== "openai") return false;
-    const openaiSection = config["providers.openai"];
+    const openaiSection = config.providers?.openai;
     if (!openaiSection?.base_url) return false;
     return /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(openaiSection.base_url);
 };
@@ -110,7 +61,7 @@ export async function GET() {
             return NextResponse.json({ installed: false, settings: null, message: "DeepSeek TUI is not installed" });
         }
         const toml = await readConfigToml();
-        const config = parseToml(toml);
+        const config = toml ? parseTOML(toml) : {};
         return NextResponse.json({
             installed: true,
             settings: config,
@@ -126,15 +77,36 @@ export async function GET() {
 export async function POST(request) {
     try {
         const { baseUrl, apiKey, model } = await request.json();
-        if (!baseUrl || !model) {
+        if (!isNonEmptyString(baseUrl) || !isNonEmptyString(model) || !isOptionalString(apiKey)) {
             return NextResponse.json({ error: "baseUrl and model are required" }, { status: 400 });
         }
 
         const dir = getDeepSeekDir();
         await fs.mkdir(dir, { recursive: true });
 
-        const newConfig = buildSwitchboardConfig(baseUrl, apiKey || "sk_switchboard", model);
-        await fs.writeFile(getDeepSeekConfigPath(), newConfig);
+        const existing = await readConfigToml();
+        const config = existing ? parseTOML(existing) : {};
+        let backup;
+        try {
+            backup = JSON.parse(await fs.readFile(getBackupPath(), "utf-8"));
+        } catch (error) {
+            if (error?.code !== "ENOENT") throw error;
+            backup = {
+                provider: config.provider,
+                openai: config.providers?.openai,
+            };
+        }
+        const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+        backup.managedBaseUrl = normalizedBaseUrl;
+        await writeCliFile(getBackupPath(), JSON.stringify(backup, null, 2), { secret: true });
+        config.provider = "openai";
+        config.providers = { ...(config.providers || {}), openai: {
+            ...(config.providers?.openai || {}),
+            base_url: normalizedBaseUrl,
+            api_key: apiKey || "sk_switchboard",
+            model,
+        } };
+        await writeCliFile(getDeepSeekConfigPath(), stringifyTOML(config), { secret: true });
 
         return NextResponse.json({
             success: true,
@@ -156,8 +128,26 @@ export async function DELETE() {
             return NextResponse.json({ success: true, message: "No config file to reset" });
         }
 
-        await fs.writeFile(configPath, DEFAULT_CONFIG);
-        return NextResponse.json({ success: true, message: `${PROVIDER_NAME} config reset to DeepSeek defaults` });
+        const current = parseTOML(await fs.readFile(configPath, "utf-8"));
+        let backup = null;
+        try { backup = JSON.parse(await fs.readFile(getBackupPath(), "utf-8")); } catch { /* legacy */ }
+        const managed = current.provider === "openai"
+            && current.providers?.openai?.base_url === backup?.managedBaseUrl;
+        if (managed) {
+            if (backup?.provider) current.provider = backup.provider;
+            else delete current.provider;
+            if (current.providers?.openai) {
+                if (backup?.openai) current.providers.openai = backup.openai;
+                else delete current.providers.openai;
+                if (Object.keys(current.providers).length === 0) delete current.providers;
+            }
+            await writeCliFile(configPath, stringifyTOML(current), { secret: true });
+        }
+        try { await fs.unlink(getBackupPath()); } catch { /* optional */ }
+        return NextResponse.json({
+            success: true,
+            message: managed ? `${PROVIDER_NAME} config restored` : "Config no longer points to Switchboard; left unchanged",
+        });
     } catch (error) {
         console.log("Error resetting deepseek-tui settings:", error);
         return NextResponse.json({ error: "Failed to reset deepseek-tui settings" }, { status: 500 });

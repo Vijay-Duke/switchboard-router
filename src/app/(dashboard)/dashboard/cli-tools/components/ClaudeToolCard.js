@@ -68,7 +68,7 @@ export default function ClaudeToolCard({
       fetchModelAliases();
     }
     if (isExpanded) fetchModelAliases();
-  }, [isExpanded]);
+  }, [isExpanded, claudeStatus]);
 
   useEffect(() => {
     fetch("/api/settings").then(r => r.json()).then(data => {
@@ -145,7 +145,10 @@ export default function ClaudeToolCard({
     setApplying(true);
     setMessage(null);
     try {
-      const env = { ANTHROPIC_BASE_URL: getEffectiveBaseUrl() };
+      const env = {
+        ANTHROPIC_BASE_URL: getEffectiveBaseUrl(),
+        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+      };
 
       // Get key from dropdown, fallback to first key or sk_switchboard for localhost
       const keyToUse = selectedApiKey?.trim()
@@ -213,7 +216,11 @@ export default function ClaudeToolCard({
     const keyToUse = (selectedApiKey && selectedApiKey.trim())
       ? selectedApiKey
       : (!cloudEnabled ? "sk_switchboard" : "<API_KEY_FROM_DASHBOARD>");
-    const env = { ANTHROPIC_BASE_URL: getEffectiveBaseUrl(), ANTHROPIC_AUTH_TOKEN: keyToUse };
+    const env = {
+      ANTHROPIC_BASE_URL: getEffectiveBaseUrl(),
+      ANTHROPIC_AUTH_TOKEN: keyToUse,
+      CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+    };
     tool.defaultModels.forEach((model) => {
       const targetModel = modelMappings[model.alias];
       if (targetModel && model.envKey) env[model.envKey] = targetModel;

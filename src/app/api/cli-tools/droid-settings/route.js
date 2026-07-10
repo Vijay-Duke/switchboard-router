@@ -10,7 +10,10 @@ import os from "os";
 import {
   isSwitchboardManagedModel,
   normalizeManagedModelNames,
+  createSwitchboardManagedModels,
 } from "./managedModels.js";
+import { writeCliFile } from "@/lib/cli/fileIo.js";
+import { isNonEmptyString, isOptionalString } from "@/lib/cli/modelCatalog.js";
 
 const execAsync = promisify(exec);
 
@@ -20,10 +23,7 @@ const getDroidSettingsPath = () => path.join(getDroidDir(), "settings.json");
 const parseSettings = (content) => JSON.parse(content.replace(/,(\s*[}\]])/g, "$1"));
 
 const writeSettings = async (settingsPath, settings) => {
-  await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2), { mode: 0o600 });
-  try {
-    await fs.chmod(settingsPath, 0o600);
-  } catch { /* best-effort hardening on filesystems without chmod */ }
+  await writeCliFile(settingsPath, JSON.stringify(settings, null, 2), { secret: true });
 };
 
 // Check if droid CLI is installed (via which/where or config file exists)
@@ -104,7 +104,7 @@ export async function POST(request) {
       Array.isArray(models) ? models : (typeof model === "string" ? [model] : [])
     );
     
-    if (!baseUrl || modelsArray.length === 0) {
+    if (!isNonEmptyString(baseUrl) || !isOptionalString(apiKey) || modelsArray.length === 0) {
       return NextResponse.json({ error: "baseUrl and at least one model are required" }, { status: 400 });
     }
 
@@ -148,33 +148,14 @@ export async function POST(request) {
       }
     }
 
-    // Add entries for all requested models
-    // The first one (index 0) will be the default if defaultIndex >= 0
-    for (let i = 0; i < modelsArray.length; i++) {
-      const m = modelsArray[i];
-      if (!m || typeof m !== "string") continue;
-      settings.customModels.push({
-        model: m,
-        id: `custom:Switchboard-${i}`,
-        index: i,
-        baseUrl: normalizedBaseUrl,
-        apiKey: keyToUse,
-        displayName: m,
-        maxOutputTokens: 131072,
-        noImageSupport: false,
-        provider: "openai",
-      });
-    }
+    const managedEntries = createSwitchboardManagedModels(modelsArray, {
+      startIndex: managedStartIndex,
+      baseUrl: normalizedBaseUrl,
+      apiKey: keyToUse,
+    });
 
-    // Set default model if applicable
-    const absoluteDefaultIndex = managedStartIndex + defaultIndex;
-    if (defaultIndex >= 0 && settings.customModels[absoluteDefaultIndex]) {
-      // Reorder so the default comes first
-      const [defaultEntry] = settings.customModels.splice(absoluteDefaultIndex, 1);
-      settings.customModels.unshift({ ...defaultEntry, index: 0 });
-      // Re-index the rest
-      settings.customModels.forEach((m, i) => { m.index = i; });
-    }
+    settings.customModels.push(...managedEntries);
+    if (defaultIndex >= 0 && managedEntries[defaultIndex]) settings.model = managedEntries[defaultIndex].id;
 
     // Write settings
     await writeSettings(settingsPath, settings);
@@ -212,7 +193,9 @@ export async function DELETE() {
 
     // Remove Switchboard customModels
     if (settings.customModels) {
+      const managedIds = new Set(settings.customModels.filter(isSwitchboardManagedModel).map((entry) => entry.id));
       settings.customModels = settings.customModels.filter((entry) => !isSwitchboardManagedModel(entry));
+      if (managedIds.has(settings.model)) delete settings.model;
       
       // Remove customModels array if empty
       if (settings.customModels.length === 0) {
