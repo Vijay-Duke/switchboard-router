@@ -1,4 +1,6 @@
 // @ts-check
+import { isLocalRequest } from "@/dashboardGuard";
+
 /**
  * L3: shared requireApiKey check for SSE public endpoints.
  * Valid machine CLI token (dashboard probes / CLI) bypasses the dashboard API-key gate.
@@ -19,6 +21,12 @@ export async function gateRequireApiKey(settings, apiKey, deps) {
   if (!settings?.requireApiKey) return null;
 
   const { isValidApiKey, log, errorResponse, HTTP_STATUS, request, hasValidCliToken } = deps;
+
+  // Keep this handler-level gate aligned with dashboardGuard: verified loopback
+  // clients are local single-user traffic and do not need a persisted gateway
+  // key. isLocalRequest fails closed unless locality is proven by the loopback
+  // bind or by socket-derived headers from custom-server.js.
+  if (request && isLocalRequest(request)) return null;
 
   // Internal model probes and CLI use x-switchboard-cli-token; they must not require a
   // user-created Switchboard API key (OAuth-only setups have empty apiKeys).
