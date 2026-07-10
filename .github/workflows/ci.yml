@@ -29,14 +29,23 @@ jobs:
         working-directory: tests
         run: npm install --no-audit --no-fund
 
+      # Security-boundary and packaging regressions must never ship green.
+      # Keep this list in sync with tests that guard an invariant, not a feature.
       - name: Run unit tests (known-pass subset)
         working-directory: tests
         run: |
           npx vitest run \
             unit/dashboard-guard.test.js \
+            unit/require-api-key-gate.test.js \
             unit/combo-fusion.test.js \
             unit/switchboard-auto.test.js \
             unit/base-executor-retry.test.js \
+            unit/data-dir.test.js \
+            unit/standalone-start.test.js \
+            unit/launch.test.js \
+            unit/cli-disable-mitm.test.js \
+            unit/ci-gate.test.js \
+            unit/oauth-cursor-auto-import.test.js \
             --reporter=default
 
   gitbook-build:

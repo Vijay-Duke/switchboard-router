@@ -1,29 +1,23 @@
 # Full release pipeline — no local npm publish needed.
 #
-# Trigger: push a version tag, e.g.
-#   git tag v0.5.21 && git push origin v0.5.21
+# Trigger: push a new, immutable version tag, e.g.
+#   git tag -a v0.5.22 -m "Release v0.5.22"
+#   git push origin v0.5.22
 #
-# Or: Actions → Release → Run workflow (enter tag without "v", e.g. 0.5.21)
+# The repository's "Immutable release tags" ruleset prevents updates and
+# deletions of v* tags. If a published release needs a correction, increment
+# the patch version and create a new tag instead of moving the existing tag.
 #
 # npm publishing uses Trusted Publishing (OIDC) — no NPM_TOKEN secret.
 # The trusted publisher on npmjs.com must name THIS repo and THIS workflow
 # filename (release.yml); npm only validates that at publish time.
 #
-# Optional (Docker Hub; GHCR uses GITHUB_TOKEN):
-#   DOCKERHUB_USERNAME
-#   DOCKERHUB_TOKEN
 name: Release
 
 on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Semver without v prefix (e.g. 0.5.21). Creates tag vX.Y.Z if missing."
-        required: true
-        type: string
 
 permissions:
   contents: write
@@ -43,13 +37,8 @@ jobs:
     steps:
       - id: v
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VER="${{ inputs.version }}"
-            VER="${VER#v}"
-          else
-            REF="${GITHUB_REF_NAME}"
-            VER="${REF#v}"
-          fi
+          REF="${GITHUB_REF_NAME}"
+          VER="${REF#v}"
           if ! echo "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
             echo "Invalid version: $VER"
             exit 1
@@ -76,9 +65,16 @@ jobs:
         run: |
           npx vitest run \
             unit/dashboard-guard.test.js \
+            unit/require-api-key-gate.test.js \
             unit/combo-fusion.test.js \
             unit/switchboard-auto.test.js \
-            unit/base-executor-retry.test.js
+            unit/base-executor-retry.test.js \
+            unit/data-dir.test.js \
+            unit/standalone-start.test.js \
+            unit/launch.test.js \
+            unit/cli-disable-mitm.test.js \
+            unit/ci-gate.test.js \
+            unit/oauth-cursor-auto-import.test.js
 
   publish-npm:
     name: Publish switchboard-router to npm
@@ -160,17 +156,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Ensure tag exists (workflow_dispatch)
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          TAG="${{ needs.resolve-version.outputs.tag }}"
-          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag -a "$TAG" -m "Release $TAG"
-            git push origin "$TAG"
-          fi
-
       # Reuse the tarball publish-npm already built — rebuilding the Next app
       # here cost ~2 minutes and could drift from what was actually published.
       - uses: actions/download-artifact@v4
@@ -179,7 +164,7 @@ jobs:
 
       - name: Name release assets
         run: |
-          TGZ=$(ls -1 switchboard-router-*.tgz 2>/dev/null | head -1)
+          TGZ=$(find . -maxdepth 1 -type f -name 'switchboard-router-*.tgz' -print -quit)
           if [ -z "$TGZ" ]; then
             echo "No tarball in the cli-tarball artifact"
             exit 1
@@ -331,10 +316,20 @@ jobs:
 
       - name: Create and push manifest list
         working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE: ${{ steps.img.outputs.image }}
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ steps.img.outputs.image }}@sha256:%s ' *)
+          mapfile -t TAG_ARGS < <(jq -r '.tags[] | "-t", .' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          DIGEST_ARGS=()
+          for digest in *; do
+            [ -f "$digest" ] || continue
+            DIGEST_ARGS+=("${IMAGE}@sha256:${digest}")
+          done
+          if [ "${#DIGEST_ARGS[@]}" -eq 0 ]; then
+            echo "No image digests were downloaded"
+            exit 1
+          fi
+          docker buildx imagetools create "${TAG_ARGS[@]}" "${DIGEST_ARGS[@]}"
 
       - name: Inspect
         run: docker buildx imagetools inspect "${{ steps.img.outputs.image }}:${{ needs.resolve-version.outputs.version }}"

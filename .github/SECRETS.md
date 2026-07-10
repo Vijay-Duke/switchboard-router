@@ -4,24 +4,22 @@ Repo: `Vijay-Duke/switchboard-router`
 
 ## Required for npm publish (`Release` workflow)
 
-| Secret | Purpose |
-|--------|---------|
-| `NPM_TOKEN` | npm **automation** token with publish access for the `switchboard-router` package (or the npm org that owns it). |
+No repository secret is required. npm publishing uses Trusted Publishing (OIDC),
+and the workflow requests a short-lived credential with `id-token: write`.
 
-Create at https://www.npmjs.com/settings/~/tokens → Automation → copy into  
-GitHub → Settings → Secrets and variables → Actions → New repository secret.
+The trusted publisher on npmjs.com must be configured with:
 
-First-time package name: ensure you can `npm publish` as that user for `switchboard-router`.
+- Repository: `Vijay-Duke/switchboard-router`
+- Workflow: `release.yml`
+- Package: `switchboard-router`
 
-## Optional Docker Hub
+Do not add an `NPM_TOKEN`; the release workflow intentionally has no token-based
+fallback.
 
-| Secret | Purpose |
-|--------|---------|
-| `DOCKERHUB_USERNAME` | Docker Hub user |
-| `DOCKERHUB_TOKEN` | Access token |
+## Container registry
 
-If unset, release still publishes to **GHCR**:  
-`ghcr.io/vijay-duke/switchboard-router`
+No registry secret is required. GitHub provides `GITHUB_TOKEN` automatically for
+publishing `ghcr.io/vijay-duke/switchboard-router`.
 
 ## Docs (GitHub Pages)
 
