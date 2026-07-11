@@ -80,6 +80,26 @@ describe("Antigravity → Claude", () => {
 });
 
 describe("Antigravity executor", () => {
+  it("keeps streaming in the URL but strips the generic stream field from agent JSON", () => {
+    const executor = new AntigravityExecutor();
+    const out = executor.transformRequest("gemini-pro-agent", {
+      stream: true,
+      request: {
+        stream: true,
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      },
+    }, true, { projectId: "project-1", connectionId: "conn-1" });
+
+    expect(out.stream).toBeUndefined();
+    expect(out.request.stream).toBeUndefined();
+    expect(executor.buildUrl("gemini-pro-agent", true)).toContain(
+      "streamGenerateContent?alt=sse"
+    );
+    expect(executor.buildHeaders({ accessToken: "token" }, true).Accept).toBe(
+      "text/event-stream"
+    );
+  });
+
   it("strips optional from nested tool schemas", () => {
     const out = new AntigravityExecutor().transformRequest("gemini-2.5-pro", {
       request: {

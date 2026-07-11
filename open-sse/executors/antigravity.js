@@ -39,6 +39,9 @@ const ANTIGRAVITY_TRANSIENT_STATUSES = new Set([
 
 // Fields Google generateContent rejects (Claude/OpenAI/Qwen thinking fields set at body root by thinkingUnified.js)
 const ANTIGRAVITY_REQUEST_BLACKLIST = [
+  // Streaming is selected by the v1internal URL, not the agent JSON schema.
+  // A generic OpenAI-style `stream` field causes `Unknown name "stream"`.
+  "stream",
   "output_config",
   "thinking",
   "reasoning_effort",
