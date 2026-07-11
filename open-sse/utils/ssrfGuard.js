@@ -45,10 +45,31 @@ function isBlockedIpv4(host) {
   return isBlockedIpv4Int(ip);
 }
 
+function mappedIpv4FromIpv6(host) {
+  const parts = host.split("::");
+  if (parts.length > 2) return null;
+
+  const left = parts[0] ? parts[0].split(":").filter(Boolean) : [];
+  const right = parts.length === 2 && parts[1] ? parts[1].split(":").filter(Boolean) : [];
+  const missing = 8 - left.length - right.length;
+  if (missing < 0 || (parts.length === 1 && missing !== 0)) return null;
+
+  const hextets = [...left, ...Array(missing).fill("0"), ...right];
+  if (hextets.length !== 8 || hextets.slice(0, 5).some((part) => part !== "0") || hextets[5] !== "ffff") {
+    return null;
+  }
+
+  const high = Number.parseInt(hextets[6], 16);
+  const low = Number.parseInt(hextets[7], 16);
+  if (![high, low].every((part) => Number.isInteger(part) && part >= 0 && part <= 0xffff)) return null;
+  return `${high >>> 8}.${high & 0xff}.${low >>> 8}.${low & 0xff}`;
+}
+
 function isBlockedIpv6(host) {
   const h = host.replace(/^\[|\]$/g, "").toLowerCase();
   const v4Mapped = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (v4Mapped) return isBlockedIpv4(v4Mapped[1]);
+  const mappedIpv4 = v4Mapped?.[1] || mappedIpv4FromIpv6(h);
+  if (mappedIpv4) return isBlockedIpv4(mappedIpv4);
   if (h === "::1" || h === "::") return true;
   return h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd");
 }

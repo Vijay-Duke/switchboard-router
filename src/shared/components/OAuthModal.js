@@ -226,7 +226,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       const authorizeUrl = new URL(`/api/oauth/${provider}/authorize`, window.location.origin);
       authorizeUrl.searchParams.set("redirect_uri", redirectUri);
       if (oauthMeta) {
-        Object.entries(oauthMeta).forEach(([k, v]) => { if (v) authorizeUrl.searchParams.set(k, v); });
+        Object.entries(oauthMeta).forEach(([k, v]) => {
+          if (v && k !== "clientSecret") authorizeUrl.searchParams.set(k, v);
+        });
       }
       const res = await fetch(authorizeUrl.toString());
       const data = await res.json();

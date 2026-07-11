@@ -83,6 +83,13 @@ export async function POST(request) {
     });
   }
 
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json", ...CORS_HEADERS }
+    });
+  }
+
   const inputTokens = estimateAnthropicInputTokens(body);
 
   return new Response(JSON.stringify({

@@ -102,6 +102,9 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
       result.messages.push(msg);
     }
     else if (itemType === RESPONSES_ITEM.FUNCTION_CALL) {
+      // Skip items with empty/missing name — Codex/OpenAI reject nameless tool calls (#444)
+      if (!item.name || typeof item.name !== "string" || item.name.trim() === "") continue;
+
       // Start or append to assistant message with tool_calls
       if (!currentAssistantMsg) {
         currentAssistantMsg = {
@@ -114,14 +117,14 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
           pendingReasoning = "";
         }
       }
-      // Skip items with empty/missing name — Codex/OpenAI reject nameless tool calls (#444)
-      if (!item.name || typeof item.name !== "string" || item.name.trim() === "") continue;
       currentAssistantMsg.tool_calls.push({
         id: item.call_id,
         type: OPENAI_BLOCK.FUNCTION,
         function: {
           name: item.name,
-          arguments: item.arguments
+          arguments: typeof item.arguments === "string"
+            ? item.arguments
+            : JSON.stringify(item.arguments ?? {})
         }
       });
     }

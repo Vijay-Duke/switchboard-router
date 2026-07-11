@@ -265,6 +265,14 @@ describe("buildRequestSignals", () => {
     });
     expect(s2.tokenBand).toBe("500-2k");
   });
+
+  it("scans string Responses API input as user content", () => {
+    const s = buildRequestSignals({ input: "debug this request ".repeat(500) });
+
+    expect(s.tokenBand).toBe("8k+");
+    expect(s.userSummary).toContain("debug this request");
+    expect(s.keywordHints).toContain("debug");
+  });
 });
 
 describe("buildRouterPrompt", () => {

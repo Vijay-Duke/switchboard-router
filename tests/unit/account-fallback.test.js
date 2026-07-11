@@ -174,6 +174,13 @@ describe("model locks", () => {
     expect(isModelLockActive({ "modelLock_a": iso(NOW - 1) }, "a")).toBe(false);
   });
 
+  it("an active account-wide lock still blocks when the model lock is expired", () => {
+    expect(isModelLockActive({
+      "modelLock_a": iso(NOW - 1),
+      [MODEL_LOCK_ALL]: iso(NOW + 1000),
+    }, "a")).toBe(true);
+  });
+
   it("reports the earliest active lock and ignores expired ones", () => {
     const conn = {
       id: "c1",

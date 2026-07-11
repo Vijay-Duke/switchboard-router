@@ -122,6 +122,29 @@ describe("DB SQLite layer — public API parity", () => {
     expect(raw).not.toContain("cookie-two");
   });
 
+  it("importDb seals provider credentials and hashes imported API keys", async () => {
+    await sqliteDb.importDb({
+      providerConnections: [{
+        id: "imported-connection",
+        provider: "imported",
+        authType: "oauth",
+        accessToken: "import-access-token",
+        providerSpecificData: { clientSecret: "import-client-secret" },
+      }],
+      apiKeys: [{ id: "imported-key", key: "sk-imported-key", name: "Imported" }],
+    });
+
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const adapter = await getAdapter();
+    const connectionRaw = adapter.get("SELECT data FROM providerConnections WHERE id = ?", ["imported-connection"]).data;
+    const keyRaw = adapter.get("SELECT key FROM apiKeys WHERE id = ?", ["imported-key"]).key;
+
+    expect(connectionRaw).not.toContain("import-access-token");
+    expect(connectionRaw).not.toContain("import-client-secret");
+    expect(keyRaw).not.toBe("sk-imported-key");
+    expect(await sqliteDb.validateApiKey("sk-imported-key")).toBe(true);
+  });
+
   it("providerNodes: CRUD", async () => {
     const n = await sqliteDb.createProviderNode({ type: "openai", name: "Test", baseUrl: "https://api.test", apiType: "openai" });
     expect(n.id).toBeDefined();
