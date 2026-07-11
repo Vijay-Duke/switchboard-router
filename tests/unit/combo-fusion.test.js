@@ -138,6 +138,26 @@ describe("fusion combo", () => {
     expect(json.choices?.[0]?.message?.content).toBe("lone");
   });
 
+  it("preserves the survivor's client response format", async () => {
+    const claude = new Response(JSON.stringify({
+      id: "msg_1",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text: "bonjour" }],
+    }), { headers: { "Content-Type": "application/json" } });
+    const handleSingleModel = vi.fn(async (_body, model) => model === "p/claude" ? claude : errResponse(500));
+
+    const res = await handleFusionChat({
+      body: { messages: [{ role: "user", content: "hi" }] },
+      models: ["p/claude", "p/bad"],
+      handleSingleModel,
+      log,
+      tuning: { minPanel: 2, stragglerGraceMs: 10, panelHardTimeoutMs: 1000 },
+    });
+
+    await expect(res.json()).resolves.toMatchObject({ type: "message", content: [{ text: "bonjour" }] });
+  });
+
   it("returns 503 when the whole panel fails", async () => {
     const handleSingleModel = vi.fn(async () => errResponse(500));
     const res = await handleFusionChat({

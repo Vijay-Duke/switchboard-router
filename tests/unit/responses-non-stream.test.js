@@ -65,4 +65,30 @@ describe("Responses API client over a Chat Completions provider", () => {
       }),
     ]));
   });
+
+  it("does not turn a successful response callback failure into a provider error", async () => {
+    const result = await handleForcedSSEToJson({
+      providerResponse: new Response(chatCompletionStream(), {
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+      sourceFormat: FORMATS.OPENAI,
+      provider: "commandcode",
+      model: "deepseek/test",
+      body: { stream: false },
+      stream: false,
+      translatedBody: {},
+      finalBody: {},
+      requestStartTime: Date.now(),
+      connectionId: "test-connection",
+      apiKey: null,
+      requestId: "test-request-2",
+      clientRawRequest: { endpoint: "/v1/chat/completions" },
+      onRequestSuccess: vi.fn(async () => { throw new Error("database busy"); }),
+      trackDone: vi.fn(),
+      appendLog: vi.fn(),
+    });
+
+    expect(result.success).toBe(true);
+    await expect(result.response.json()).resolves.toMatchObject({ choices: [{ message: { content: "OK" } }] });
+  });
 });

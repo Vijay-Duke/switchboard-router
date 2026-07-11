@@ -8,6 +8,16 @@ import { buildRequestDetail, extractRequestConfig, saveUsageStats } from "./requ
 
 // Responses-API providers (e.g. codex) may emit SSE without content-type + use Responses output shape
 const isResponsesProvider = (p) => PROVIDERS[p]?.format === FORMATS.OPENAI_RESPONSES;
+
+async function markRequestSuccess(onRequestSuccess) {
+  if (!onRequestSuccess) return;
+  try {
+    await onRequestSuccess();
+  } catch (err) {
+    console.error("[ChatCore] onRequestSuccess failed:", err?.message || err);
+  }
+}
+
 import { saveRequestDetail, appendRequestLog } from "../../runtimeDeps.js";
 
 function textFromResponsesMessageItem(item) {
@@ -67,7 +77,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
   if (isResponsesProvider(provider)) {
     try {
       const jsonResponse = await convertResponsesStreamToJson(providerResponse.body);
-      if (onRequestSuccess) await onRequestSuccess();
+      await markRequestSuccess(onRequestSuccess);
 
       const usage = jsonResponse.usage || {};
       appendLog({ tokens: usage, status: "200 OK" });
@@ -135,7 +145,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
     const parsed = await convertChatCompletionsStreamToJson(providerResponse.body, model);
     if (!parsed) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Invalid SSE response for non-streaming request");
 
-    if (onRequestSuccess) await onRequestSuccess();
+    await markRequestSuccess(onRequestSuccess);
 
     const usage = parsed.usage || {};
     appendLog({ tokens: usage, status: "200 OK" });

@@ -26,9 +26,10 @@ export function parseRouterPick(text, pool) {
   const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) raw = fence[1].trim();
 
-  // First {...} object
-  const brace = raw.match(/\{[\s\S]*\}/);
-  if (brace) raw = brace[0];
+  // Extract the first complete object. Router output may contain trailing
+  // metadata or another JSON object; a greedy regex would join them together.
+  const brace = extractFirstJsonObject(raw);
+  if (brace) raw = brace;
 
   let parsed;
   try {
@@ -78,6 +79,28 @@ export function parseRouterPick(text, pool) {
     alternates: normalizeAlternates(parsed.alternates, pool, model),
   };
 }
+
+function extractFirstJsonObject(text) {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{") depth++;
+    else if (char === "}" && --depth === 0) return text.slice(start, i + 1);
+  }
+  return null;
+}
+
 
 /**
  * Resolve a short/partial model id against the pool.

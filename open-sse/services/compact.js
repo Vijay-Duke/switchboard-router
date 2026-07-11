@@ -47,8 +47,9 @@ export async function handleComboChat({ body, models, handleSingleModel, log }) 
       continue;
     }
 
-    // Success or client error - return response
-    if (result.ok || result.status < 500) {
+    // Successful and non-retryable client responses are final. Quota and
+    // timeout responses should continue through the fallback chain.
+    if (result.ok || (result.status < 500 && result.status !== 408 && result.status !== 429)) {
       return result;
     }
 
@@ -68,4 +69,3 @@ export async function handleComboChat({ body, models, handleSingleModel, log }) 
     }
   );
 }
-

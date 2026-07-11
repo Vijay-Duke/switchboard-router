@@ -155,7 +155,14 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   let responseBody;
 
   if (contentType.includes("text/event-stream")) {
-    const parsed = await convertChatCompletionsStreamToJson(providerResponse.body, model);
+    let parsed;
+    try {
+      parsed = await convertChatCompletionsStreamToJson(providerResponse.body, model);
+    } catch (err) {
+      appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
+      console.error(`[ChatCore] Failed to convert SSE response from ${provider}:`, err.message);
+      return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Failed to convert streaming response to JSON");
+    }
     if (!parsed) {
       appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
       return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Invalid SSE response for non-streaming request");

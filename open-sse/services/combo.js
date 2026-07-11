@@ -505,46 +505,6 @@ function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs, a
   });
 }
 
-/** Build a non-streaming OpenAI-shaped JSON Response from already-collected panel text (M3: no re-dispatch). */
-function responseFromPanelAnswer({ model, text }, originalBody) {
-  const wantStream = !!originalBody?.stream;
-  const created = Math.floor(Date.now() / 1000);
-  const id = `chatcmpl-fusion-${created}`;
-  if (!wantStream) {
-    const json = {
-      id,
-      object: "chat.completion",
-      created,
-      model: model || "fusion-survivor",
-      choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }],
-    };
-    return new Response(JSON.stringify(json), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-  // Minimal SSE for stream clients
-  const chunk = {
-    id,
-    object: "chat.completion.chunk",
-    created,
-    model: model || "fusion-survivor",
-    choices: [{ index: 0, delta: { role: "assistant", content: text }, finish_reason: null }],
-  };
-  const done = {
-    id,
-    object: "chat.completion.chunk",
-    created,
-    model: model || "fusion-survivor",
-    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-  };
-  const body = `data: ${JSON.stringify(chunk)}\n\ndata: ${JSON.stringify(done)}\n\ndata: [DONE]\n\n`;
-  return new Response(body, {
-    status: 200,
-    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
-  });
-}
-
 /**
  * Handle a fusion combo: fan the prompt out to every panel model in parallel,
  * then a judge model synthesizes one final answer from all panel responses.
@@ -625,7 +585,7 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
       const json = await res.clone().json();
       const text = extractPanelText(json);
       if (text) {
-        answers.push({ model, text, json });
+        answers.push({ model, text, json, response: res });
         log.info("FUSION", `Panel ${model} ok (${text.length} chars)`);
       } else {
         log.warn("FUSION", `Panel ${model} returned empty content`);
@@ -646,7 +606,7 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   if (answers.length === 1) {
     // M3: reuse buffered answer — do NOT re-dispatch (double bill / rate-limit risk)
     log.info("FUSION", `Only ${answers[0].model} succeeded — returning buffered answer (no re-dispatch)`);
-    return responseFromPanelAnswer(answers[0], body);
+    return answers[0].response;
   }
 
   // 4. Judge analyzes + writes one final answer (streams to client if requested).

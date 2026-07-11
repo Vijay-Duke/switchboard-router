@@ -241,7 +241,15 @@ export async function checkAndRefreshToken(provider, credentials) {
       lastRefreshAt: creds.lastRefreshAt || null,
     });
 
-    const newCreds = await _refreshProviderCredentials(provider, creds, log);
+    let newCreds = null;
+    try {
+      newCreds = await _refreshProviderCredentials(provider, creds, log);
+    } catch (error) {
+      log.warn("TOKEN_REFRESH", "Provider credential refresh failed; using existing credentials", {
+        provider,
+        error: error?.message || String(error),
+      });
+    }
     if (newCreds?.accessToken || newCreds?.apiKey || newCreds?.copilotToken) {
       const mergedCreds = {
         ...newCreds,

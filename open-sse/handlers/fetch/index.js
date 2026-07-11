@@ -114,7 +114,8 @@ export async function handleFetchCore({ url, format, maxCharacters, provider, pr
     }
     return { success: false, status: 400, error: `Unsupported provider: ${provider}` };
   } catch (err) {
-    log?.("fetch handler error:", err?.message || err);
+    if (typeof log === "function") log("fetch handler error:", err?.message || err);
+    else log?.error?.("FETCH", "fetch handler error", err?.message || err);
     return { success: false, status: 502, error: err?.message || "Internal fetch error" };
   }
 }

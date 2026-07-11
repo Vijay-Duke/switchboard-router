@@ -5,6 +5,7 @@ import {
   createProviderConnection,
   getProviderNodeById,
   getProviderNodes,
+  redactSecrets,
 } from "@/models";
 import { APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { AI_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider } from "@/shared/constants/providers";
@@ -53,14 +54,8 @@ export async function GET() {
       const name = isCompatible
         ? (c.name || nodeNameMap[c.provider] || c.providerSpecificData?.nodeName || c.provider)
         : c.name;
-      return {
-        ...c,
-        name,
-        apiKey: undefined,
-        accessToken: undefined,
-        refreshToken: undefined,
-        idToken: undefined,
-      };
+      // Redact all secrets, including nested providerSpecificData tokens.
+      return { ...redactSecrets(c), name };
     });
 
     return NextResponse.json({ connections: safeConnections });
@@ -172,9 +167,8 @@ export async function POST(request) {
       testStatus: testStatus || "unknown",
     });
 
-    // Hide sensitive fields
-    const result = { ...newConnection };
-    delete result.apiKey;
+    // Redact secrets, including those nested in providerSpecificData.
+    const result = redactSecrets(newConnection);
 
     return NextResponse.json({ connection: result }, { status: 201 });
   } catch (error) {

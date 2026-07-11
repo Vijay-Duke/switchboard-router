@@ -73,6 +73,15 @@ describe("parseRouterPick", () => {
     expect(p.model).toBe("openai/gpt-4o-mini");
   });
 
+  it("parses the first JSON object when the router appends another object", () => {
+    const p = parseRouterPick(
+      '{"model":"anthropic/claude-sonnet","cluster":"general","confidence":"high","reason":"best"}\nmetadata: {"latency":"low"}',
+      POOL,
+    );
+    expect(p.model).toBe("anthropic/claude-sonnet");
+    expect(p.parseError).toBeUndefined();
+  });
+
   it("falls back to pool[0] on invalid model and sanitizes cluster/reason", () => {
     const p = parseRouterPick(
       JSON.stringify({
@@ -839,6 +848,7 @@ describe("handleAutoChat", () => {
     const routerCall = calls.find((c) => c.b?.max_tokens === 256);
     expect(routerCall).toBeTruthy();
     expect(routerCall.opts?.sourceFormatOverride).toBe("openai");
+    expect(routerCall.opts?.bypassNativePassthrough).toBe(true);
     expect(routerCall.b.stream).toBe(false);
     expect(routerCall.b.messages?.[0]?.role).toBe("system");
   });

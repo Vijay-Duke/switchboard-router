@@ -297,6 +297,11 @@ describe("autoDetectFilter", () => {
     const txt = "line1\nline2\nline3\nline4\nline5\nline6\n";
     expect(autoDetectFilter(txt).filterName).toBe("dedup-log");
   });
+
+  it("detects line-numbered dumps even when the first detection window has fewer than 250 lines", () => {
+    const input = Array.from({ length: 400 }, (_, i) => `  ${i + 1}|content ${i + 1}`).join("\n");
+    expect(autoDetectFilter(input).filterName).toBe("read-numbered");
+  });
 });
 
 describe("RTK filters (extras)", () => {

@@ -5,9 +5,7 @@
 
 import { handleChatCore } from "./chatCore.js";
 import { convertResponsesApiFormat } from "../translator/formats/responsesApi.js";
-import { createResponsesApiTransformStream } from "../transformer/responsesTransformer.js";
 import { convertResponsesStreamToJson } from "../transformer/streamToJsonConverter.js";
-import { SSE_HEADERS_CORS } from "../utils/sseConstants.js";
 
 /**
  * Handle /v1/responses request
@@ -80,16 +78,9 @@ export async function handleResponsesCore({ body, modelInfo, credentials, log, o
 
   // Case 2: Client wants streaming, got SSE - transform it
   if (clientRequestedStreaming && contentType.includes("text/event-stream")) {
-    const transformStream = createResponsesApiTransformStream(null);
-    const transformedBody = response.body.pipeThrough(transformStream);
-
-    return {
-      success: true,
-      response: new Response(transformedBody, {
-        status: 200,
-        headers: { ...SSE_HEADERS_CORS }
-      })
-    };
+    // chatCore already translated the provider stream into the requested
+    // Responses wire format; applying the transformer again discards output.
+    return result;
   }
 
   // Case 3: Non-SSE response (error or non-streaming from provider) - return as-is

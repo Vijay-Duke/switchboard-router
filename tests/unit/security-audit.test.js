@@ -109,6 +109,20 @@ describe("AUDIT-003: Proxy URL validation", () => {
     expect(process.env.HTTP_PROXY).toContain("https://proxy.example.com");
   });
 
+  it("clears stale managed proxy variables when a replacement URL is invalid", async () => {
+    vi.resetModules();
+    const { applyOutboundProxyEnv } = await import("../../src/lib/network/outboundProxy.js");
+    applyOutboundProxyEnv({ outboundProxyEnabled: true, outboundProxyUrl: "http://old.example:8080" });
+    applyOutboundProxyEnv({ outboundProxyEnabled: true, outboundProxyUrl: "file:///etc/passwd" });
+
+    expect(process.env.HTTP_PROXY).toBeUndefined();
+    expect(process.env.HTTPS_PROXY).toBeUndefined();
+    expect(process.env.ALL_PROXY).toBeUndefined();
+    expect(process.env.SWITCHBOARD_PROXY_URL).toBeUndefined();
+    expect(process.env.SWITCHBOARD_PROXY_MANAGED).toBeUndefined();
+  });
+
+
   it("should accept valid socks5 proxy URLs", async () => {
     vi.resetModules();
     const { applyOutboundProxyEnv } = await import("../../src/lib/network/outboundProxy.js");

@@ -245,6 +245,7 @@ export async function handleAutoChat({
       (signal) =>
         handleSingleModel(routerBody, routerModel, {
           sourceFormatOverride: "openai",
+          bypassNativePassthrough: true,
           signal: mergeAbortSignals(signal, clientAbortSignal),
           autoDepth: childDepth,
           // Global caveman/ponytail/headroom must not rewrite router JSON prompt

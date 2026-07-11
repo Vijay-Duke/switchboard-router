@@ -62,4 +62,23 @@ describe("xai/token-refresh wrapper", () => {
 
     vi.resetModules();
   });
+
+  it("does not write raw refresh errors to the log", async () => {
+    vi.resetModules();
+    const { setOpenSseDeps } = await import("../../open-sse/runtimeDeps.js");
+    setOpenSseDeps({
+      createXaiService: async () => ({
+        async refreshAccessToken() {
+          throw new Error('400 {"error":"invalid_grant","refresh_token":"rt_secret"}');
+        },
+      }),
+    });
+    const mod = await import("../../open-sse/services/tokenRefresh.js");
+    const warn = vi.fn();
+    const out = await mod.refreshTokenByProvider("xai", { refreshToken: "rt_secret" }, { warn });
+
+    expect(out).toEqual({ error: "invalid_grant" });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("rt_secret");
+    vi.resetModules();
+  });
 });

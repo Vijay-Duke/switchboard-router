@@ -31,7 +31,10 @@ export async function handleSearch(request) {
     log.warn("SEARCH", "Invalid JSON body");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
   }
-
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    log.warn("SEARCH", "Invalid JSON body shape");
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid request body");
+  }
   const url = new URL(request.url);
   // Accept either `provider` or `model` (UI sends `model` since provider IS the model for webSearch)
   const providerInput = body.provider || body.model;

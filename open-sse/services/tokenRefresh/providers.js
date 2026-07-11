@@ -36,10 +36,13 @@ export async function refreshXaiToken(refreshToken, log) {
         idToken: tokens.id_token,
       };
     } catch (e) {
-      log?.warn?.("TOKEN_REFRESH", `xai refresh failed: ${e?.message || e}`);
       const msg = String(e?.message || "");
-      if (msg.includes("invalid_grant") || msg.includes("invalid_request")) {
-        return { error: "invalid_grant" };
+      const errorCode = msg.includes("invalid_grant")
+        ? "invalid_grant"
+        : (msg.includes("invalid_request") ? "invalid_request" : null);
+      log?.warn?.("TOKEN_REFRESH", "xai refresh failed", errorCode ? { errorCode } : undefined);
+      if (errorCode) {
+        return { error: errorCode };
       }
       return null;
     }

@@ -227,7 +227,8 @@ function getContentBlocksFromMessage(msg, toolNameMap = new Map()) {
             ...(part.is_error && { is_error: part.is_error })
           });
         } else if (part.type === OPENAI_BLOCK.IMAGE_URL) {
-          const url = part.image_url.url;
+          const url = part.image_url?.url;
+          if (typeof url !== "string") continue; // malformed image part -> skip, don't 500
           const parsed = parseDataUri(url);
           if (parsed) {
             blocks.push({
@@ -290,6 +291,7 @@ function getContentBlocksFromMessage(msg, toolNameMap = new Map()) {
     if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
       for (const tc of msg.tool_calls) {
         if (tc.type === OPENAI_BLOCK.FUNCTION) {
+          if (!tc.function || typeof tc.function.name !== "string") continue; // malformed tool_call -> skip, don't 500
           // Apply prefix to tool name
           const toolName = CLAUDE_OAUTH_TOOL_PREFIX + tc.function.name;
           blocks.push({

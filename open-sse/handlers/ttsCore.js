@@ -47,7 +47,7 @@ function createTtsResponse(base64Audio, format, responseFormat) {
  * @returns {Promise<{success, response, status?, error?}>}
  */
 export async function handleTtsCore({ provider, model, input, credentials, responseFormat = "mp3", language }) {
-  if (!input?.trim()) {
+  if (typeof input !== "string" || !input.trim()) {
     return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Missing required field: input");
   }
 

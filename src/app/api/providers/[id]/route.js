@@ -4,6 +4,7 @@ import {
   getProviderConnectionById,
   updateProviderConnection,
   deleteProviderConnection,
+  redactSecrets,
 } from "@/models";
 
 function normalizeProxyConfig(body = {}) {
@@ -55,12 +56,9 @@ export async function GET(request, { params }) {
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
     }
 
-    // Hide sensitive fields
-    const result = { ...connection };
-    delete result.apiKey;
-    delete result.accessToken;
-    delete result.refreshToken;
-    delete result.idToken;
+    // Redact secrets, including those nested in providerSpecificData
+    // (copilotToken, clientSecret, idToken, cookies, …).
+    const result = redactSecrets(connection);
 
     return NextResponse.json({ connection: result });
   } catch (error) {
@@ -143,12 +141,8 @@ export async function PUT(request, { params }) {
 
     const updated = await updateProviderConnection(id, updateData);
 
-    // Hide sensitive fields
-    const result = { ...updated };
-    delete result.apiKey;
-    delete result.accessToken;
-    delete result.refreshToken;
-    delete result.idToken;
+    // Redact secrets, including those nested in providerSpecificData.
+    const result = redactSecrets(updated);
 
     return NextResponse.json({ connection: result });
   } catch (error) {

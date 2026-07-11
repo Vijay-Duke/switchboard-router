@@ -12,15 +12,18 @@ const OPTIONAL_FIELDS = [
 ];
 
 // H2: encrypt these at rest inside the JSON `data` blob
+// (also drives API-response redaction via redactSecrets). Existing plaintext
+// rows stay readable: decryptSecret(stored) ?? stored falls back on decrypt miss.
 const SECRET_FIELDS = new Set([
   "accessToken", "refreshToken", "idToken", "apiKey",
-  "copilotToken", "cookies",
+  "copilotToken", "cookies", "clientSecret", "secretAccessKey",
 ]);
 
 function mapSecrets(value, transform, secretContext = false) {
   if (typeof value === "string") {
     return secretContext && value ? transform(value) : value;
   }
+  if (secretContext && value !== null && typeof value !== "object") return undefined;
   if (Array.isArray(value)) {
     return value.map((item) => mapSecrets(item, transform, secretContext));
   }
@@ -35,6 +38,17 @@ function mapSecrets(value, transform, secretContext = false) {
 
 function encryptSecrets(obj) {
   return mapSecrets(obj, encryptSecret);
+}
+
+/**
+ * Deep-strip every secret-typed value (top-level AND nested, e.g. inside
+ * providerSpecificData) so a connection can be returned over the API.
+ * Keyed off the same SECRET_FIELDS list as encryption, so a newly-encrypted
+ * field is automatically redacted too. Secret strings become undefined, which
+ * JSON serialization drops.
+ */
+export function redactSecrets(obj) {
+  return mapSecrets(obj, () => undefined);
 }
 
 function decryptSecrets(obj) {

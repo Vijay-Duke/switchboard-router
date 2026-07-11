@@ -30,7 +30,10 @@ export async function handleEmbeddings(request) {
     log.warn("EMBEDDINGS", "Invalid JSON body");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
   }
-
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    log.warn("EMBEDDINGS", "Invalid JSON body shape");
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
+  }
   const url = new URL(request.url);
   const modelStr = body.model;
 

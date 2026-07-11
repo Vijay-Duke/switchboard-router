@@ -32,6 +32,7 @@ const RE_LS_TOTAL = /^total \d+$/m;
 export function autoDetectFilter(text) {
   // Rust: floor_char_boundary to avoid UTF-8 split — JS .slice() by char is safe
   const head = text.length > DETECT_WINDOW ? text.slice(0, DETECT_WINDOW) : text;
+  const fullLines = text.split("\n");
 
   if (RE_GIT_LOG.test(head)) return gitLog;
   if (RE_GIT_DIFF.test(head) || RE_GIT_DIFF_HUNK.test(head)) return gitDiff;
@@ -62,7 +63,7 @@ export function autoDetectFilter(text) {
   if (SEARCH_LIST_HEADER_RE.test(head)) return searchList;
 
   // Line-numbered file dump ("  N|content") — fire only if many lines match
-  if (lines.length >= SMART_TRUNCATE_MIN_LINES && isLineNumbered(lines)) {
+  if (fullLines.length >= SMART_TRUNCATE_MIN_LINES && isLineNumbered(fullLines)) {
     return readNumbered;
   }
 

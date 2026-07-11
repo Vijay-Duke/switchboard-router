@@ -80,7 +80,10 @@ export async function handleChat(request, clientRawRequest = null) {
     log.warn("CHAT", "Invalid JSON body");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
   }
-
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    log.warn("CHAT", "Invalid JSON body shape");
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");
+  }
   // Build clientRawRequest for logging (if not provided)
   if (!clientRawRequest) {
     const url = new URL(request.url);
@@ -227,6 +230,7 @@ export async function handleChat(request, clientRawRequest = null) {
  * @param {object} [callOpts]
  * @param {string} [callOpts.sourceFormatOverride] - Force request format (e.g. router uses "openai")
  * @param {boolean} [callOpts.bypassPromptFilters] - Disable caveman/ponytail/headroom/rtk (router calls)
+ * @param {boolean} [callOpts.bypassNativePassthrough] - Force internal router bodies through translation
  * @param {AbortSignal} [callOpts.signal] - Abort upstream on timeout
  * @param {number} [callOpts.autoDepth] - Auto-combo recursion depth
  */
@@ -427,6 +431,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       ponytailLevel: chatSettings.ponytailLevel || "full",
       providerThinking,
       sourceFormatOverride,
+      bypassNativePassthrough: !!callOpts?.bypassNativePassthrough,
       abortSignal: callOpts?.signal || null,
       onCredentialsRefreshed: async (newCreds) => {
         await updateProviderCredentials(credentials.connectionId, {

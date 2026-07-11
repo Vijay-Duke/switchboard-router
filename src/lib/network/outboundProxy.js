@@ -44,10 +44,11 @@ export function applyOutboundProxyEnv(
   // - If values are empty, do not touch externally-provided env,
   //   but do clear values we previously managed.
   const wasManaged = process.env.SWITCHBOARD_PROXY_MANAGED === "1";
+  const validatedProxyUrl = proxyUrl ? validateProxyUrl(proxyUrl) : null;
   let managed = false;
 
   if (wasManaged) {
-    if (!proxyUrl) {
+    if (!validatedProxyUrl) {
       delete process.env.HTTP_PROXY;
       delete process.env.HTTPS_PROXY;
       delete process.env.ALL_PROXY;
@@ -59,16 +60,13 @@ export function applyOutboundProxyEnv(
     }
   }
 
-  if (proxyUrl) {
-    const validated = validateProxyUrl(proxyUrl);
-    if (validated) {
-      process.env.HTTP_PROXY = validated;
-      process.env.HTTPS_PROXY = validated;
-      process.env.ALL_PROXY = validated;
-      process.env.SWITCHBOARD_PROXY_URL = validated;
+  if (validatedProxyUrl) {
+      process.env.HTTP_PROXY = validatedProxyUrl;
+      process.env.HTTPS_PROXY = validatedProxyUrl;
+      process.env.ALL_PROXY = validatedProxyUrl;
+      process.env.SWITCHBOARD_PROXY_URL = validatedProxyUrl;
       managed = true;
     }
-  }
 
   if (noProxy) {
     process.env.NO_PROXY = noProxy;
