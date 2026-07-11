@@ -1,9 +1,15 @@
 /**
  * Outcome score 0–100 (docs/switchboard/SPEC.md §8, LEARNING.md).
  *
+ * Confidence-neutral: the score is a function of the worker's actual
+ * performance only (success, latency, completion, fallback, user rating).
+ * Router confidence is NOT a term — it is forced to "low" on exploration
+ * picks, so scoring it would structurally bias bandit avgScore comparisons
+ * against exploration and prevent the bandit from ever discovering a better
+ * arm. Confidence still lives in event meta/telemetry for observability.
+ *
  * Spec pseudocode (authoritative):
  *   +40  worker 2xx AND no fallback
- *   +20  high confidence + success (score already > 0 from base)
  *   +15  latency below cluster p50
  *   -30  fallback/retry used
  *   -20  worker 4xx/5xx
@@ -12,7 +18,6 @@
  *
  * @param {{
  *   workerOk: boolean,
- *   confidence?: string,
  *   workerLatencyMs?: number|null,
  *   clusterP50LatencyMs?: number|null,
  *   fallbackUsed?: boolean,
@@ -24,7 +29,6 @@
  */
 export function computeOutcomeScore({
   workerOk,
-  confidence = "low",
   workerLatencyMs = null,
   clusterP50LatencyMs = null,
   fallbackUsed = false,
@@ -40,9 +44,6 @@ export function computeOutcomeScore({
   if (workerOk && !usedFallback) score += 40;
   // -20 on worker failure
   if (!workerOk) score -= 20;
-
-  // +20 high confidence only when we already have positive base (success path)
-  if (workerOk && confidence === "high" && score > 0) score += 20;
 
   // +15 latency below cluster p50
   if (

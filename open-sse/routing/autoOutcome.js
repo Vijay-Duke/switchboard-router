@@ -262,9 +262,10 @@ export function fireRecordEvent(recordEvent, log, args) {
   } = args;
 
   // Score uses per-attempt fallbackUsed/retries (rescuer scored clean).
+  // Confidence-neutral by design (see computeOutcomeScore) — confidence stays in
+  // event meta below for telemetry, never in the stored outcome score.
   const outcomeScore = computeOutcomeScore({
     workerOk,
-    confidence: pick.confidence,
     workerLatencyMs,
     clusterP50LatencyMs: clusterP50LatencyMs ?? null,
     fallbackUsed,

@@ -67,7 +67,7 @@ export default async function DashboardPage() {
         name: first.name || first.id || "—",
         strategy,
         isAuto: strategy === "auto",
-        routerModel: strategy === "auto" ? (strat.routerModel || "claude/claude-opus-4-8") : null,
+        routerModel: strategy === "auto" ? (strat.routerModel || null) : null,
         workerCount: Array.isArray(models) ? models.length : 0,
         objective: strategy === "auto" ? (strat.objective || "balanced") : null,
         exploration:

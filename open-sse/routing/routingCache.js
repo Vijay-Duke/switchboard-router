@@ -23,6 +23,29 @@ export async function cached(key, loader, ttlMs = DEFAULT_TTL_MS) {
   return value;
 }
 
+/**
+ * Read a cached value without populating on miss (unlike `cached`, which stores
+ * the loader result). Returns undefined on miss or expiry.
+ * @param {string} key
+ * @returns {any}
+ */
+export function readRoutingCache(key) {
+  const hit = store.get(key);
+  if (hit && hit.expiresAt > Date.now()) return hit.value;
+  if (hit) store.delete(key);
+  return undefined;
+}
+
+/**
+ * Store a value directly (used by the cached-route fast path).
+ * @param {string} key
+ * @param {any} value
+ * @param {number} [ttlMs]
+ */
+export function writeRoutingCache(key, value, ttlMs = DEFAULT_TTL_MS) {
+  store.set(key, { value, expiresAt: Date.now() + ttlMs });
+}
+
 /** @param {string} [prefix] */
 export function invalidateRoutingCache(prefix) {
   if (!prefix) {

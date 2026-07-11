@@ -32,7 +32,11 @@ function settingsFor(strategy) {
   return { comboStrategies: { alpha: strategy } };
 }
 
-const AUTO_HOURLY = { fallbackStrategy: "auto", autoLearnIntervalHours: 1 };
+const AUTO_HOURLY = {
+  fallbackStrategy: "auto",
+  autoLearnIntervalHours: 1,
+  routerModel: "r/one",
+};
 
 describe("auto-learn scheduler tick", () => {
   beforeEach(() => {
@@ -72,9 +76,10 @@ describe("auto-learn scheduler tick", () => {
     ["non-auto strategy", { fallbackStrategy: "fallback", autoLearnIntervalHours: 1 }],
     ["learning disabled", { ...AUTO_HOURLY, learningEnabled: false }],
     ["learning frozen", { ...AUTO_HOURLY, freezeLearning: true }],
-    ["interval unset (manual only)", { fallbackStrategy: "auto" }],
-    ["interval zero", { fallbackStrategy: "auto", autoLearnIntervalHours: 0 }],
-    ["interval not a number", { fallbackStrategy: "auto", autoLearnIntervalHours: "soon" }],
+    ["no routerModel configured", { fallbackStrategy: "auto", autoLearnIntervalHours: 1 }],
+    ["interval unset (manual only)", { fallbackStrategy: "auto", routerModel: "r/one" }],
+    ["interval zero", { fallbackStrategy: "auto", autoLearnIntervalHours: 0, routerModel: "r/one" }],
+    ["interval not a number", { fallbackStrategy: "auto", autoLearnIntervalHours: "soon", routerModel: "r/one" }],
   ])("skips the optimizer when %s", async (_label, strategy) => {
     mocks.getSettings.mockResolvedValue(settingsFor(strategy));
 

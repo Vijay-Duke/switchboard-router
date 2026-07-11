@@ -72,7 +72,7 @@ export default function OverviewClient({ initialData }) {
     }
     if (isAuto) {
       return [
-        ["Router", defaultCombo.routerModel || "claude/claude-opus-4-8"],
+        ["Router", defaultCombo.routerModel || "not configured"],
         ["Worker pool", `${defaultCombo.workerCount || 0} workers`],
         ["Objective", defaultCombo.objective || "balanced"],
         ["Exploration", defaultCombo.exploration || "5%"],

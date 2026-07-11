@@ -35,7 +35,7 @@ export async function POST(request) {
     try {
       const { getComboModels } = await import("@/sse/services/model.js");
       const models = await getComboModels(comboName);
-      const router = strat.routerModel || "claude/claude-opus-4-8";
+      const router = strat.routerModel;
       pool = (models || []).filter((m) => m && m !== router);
     } catch {
       pool = null;

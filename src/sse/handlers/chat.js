@@ -15,7 +15,7 @@ import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { handleComboChat, handleFusionChat } from "open-sse/services/combo.js";
-import { handleAutoChat } from "open-sse/routing/handleAutoChat.js";
+import { handleAutoChat, invalidateCachedRoutes } from "open-sse/routing/handleAutoChat.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
@@ -44,6 +44,9 @@ setRoutingWriteHook((comboName) => {
   if (comboName) {
     invalidateRoutingCache(`stats:${comboName}:`);
     invalidateRoutingCache(`learning:${comboName}`);
+    // Learning promotion / rollback changes the bandit — drop cached router picks
+    // for this combo so the next request re-routes against the new policy.
+    invalidateCachedRoutes(comboName);
   } else {
     invalidateRoutingCache();
   }
@@ -166,9 +169,10 @@ export async function handleChat(request, clientRawRequest = null) {
 
     if (comboStrategy === "auto") {
       const strat = comboStrategies[modelStr] || {};
-      // SPEC §2 non-goal: nested combos as router targets
-      const routerId = strat.routerModel || "claude/claude-opus-4-8";
-      if (await getComboModels(routerId)) {
+      // routerModel is mandatory for Auto combos (no default). handleAutoChat is
+      // the authoritative guard; here we only avoid a nested-combo router target.
+      const routerId = strat.routerModel;
+      if (routerId && (await getComboModels(routerId))) {
         log.warn("CHAT", `Auto routerModel is a combo (${routerId}) — rejected`);
         return errorResponse(
           HTTP_STATUS.BAD_REQUEST,
@@ -284,8 +288,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           );
         }
         const strat = comboStrategies[modelStr] || {};
-        const routerId = strat.routerModel || "claude/claude-opus-4-8";
-        if (await getComboModels(routerId)) {
+        // routerModel is mandatory (no default); handleAutoChat rejects if absent.
+        const routerId = strat.routerModel;
+        if (routerId && (await getComboModels(routerId))) {
           return errorResponse(
             HTTP_STATUS.BAD_REQUEST,
             `routerModel cannot be a combo ("${routerId}")`

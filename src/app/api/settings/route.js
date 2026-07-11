@@ -9,6 +9,22 @@ import { runQuotaAutoPingTick } from "@/shared/services/quotaAutoPing";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
+/**
+ * Return the name of the first Auto combo strategy missing a routerModel, or null.
+ * routerModel is mandatory for Auto combos — there is no default router.
+ * @param {Record<string, any>|undefined|null} comboStrategies
+ * @returns {string|null}
+ */
+function findAutoComboMissingRouter(comboStrategies) {
+  if (!comboStrategies || typeof comboStrategies !== "object") return null;
+  for (const [name, strat] of Object.entries(comboStrategies)) {
+    if (!strat || strat.fallbackStrategy !== "auto") continue;
+    const router = strat.routerModel;
+    if (!router || typeof router !== "string" || !router.trim()) return name;
+  }
+  return null;
+}
+
 const SETTINGS_RESPONSE_HEADERS = {
   "Cache-Control": "no-store",
 };
@@ -77,6 +93,19 @@ export async function PATCH(request) {
 
     for (const key of PROTECTED_SETTING_KEYS) delete body[key];
     for (const key of IGNORED_SETTING_KEYS) delete body[key];
+
+    // Auto combos require an explicit routerModel — there is no default.
+    if (Object.prototype.hasOwnProperty.call(body, "comboStrategies")) {
+      const invalidAuto = findAutoComboMissingRouter(body.comboStrategies);
+      if (invalidAuto) {
+        return NextResponse.json(
+          {
+            error: `Auto combo "${invalidAuto}" requires a router model — select one in the combo's Auto settings (a cheap, fast model such as Haiku works well).`,
+          },
+          { status: 400, headers: SETTINGS_RESPONSE_HEADERS }
+        );
+      }
+    }
 
     const settings = await updateSettings(body);
 

@@ -95,6 +95,11 @@ export async function runAutoLearnTick(log = console) {
       if (strat.fallbackStrategy !== "auto") continue;
       if (strat.learningEnabled === false) continue;
       if (strat.freezeLearning) continue;
+      // routerModel is mandatory for Auto combos — nothing to learn without one.
+      if (!strat.routerModel) {
+        log.info?.("[ROUTING_LEARN]", `skip ${comboName}: no routerModel configured`);
+        continue;
+      }
 
       const hours = Number(strat.autoLearnIntervalHours);
       // 0 / missing / NaN = manual only
@@ -114,7 +119,7 @@ export async function runAutoLearnTick(log = console) {
         let pool = null;
         try {
           const models = await getComboModels(comboName);
-          const router = strat.routerModel || "claude/claude-opus-4-8";
+          const router = strat.routerModel;
           pool = (models || []).filter((m) => m && m !== router);
         } catch {
           pool = null;

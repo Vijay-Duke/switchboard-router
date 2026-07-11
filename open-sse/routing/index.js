@@ -1,5 +1,6 @@
 export {
   handleAutoChat,
+  invalidateCachedRoutes,
   extractAssistantText,
   clampExploration,
   EXPLORATION_RATE_CAP,

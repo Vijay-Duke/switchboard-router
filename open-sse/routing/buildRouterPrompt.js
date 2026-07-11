@@ -13,6 +13,7 @@ import { costTier, objectivePromptText } from "./objective.js";
  *   learning?: { learnedRules?: string[], fewShots?: any[], banditTable?: object }|null,
  *   healthByModel?: Record<string, { winRate?: number, avgLatencyMs?: number, health?: string }>,
  *   maxFewShots?: number,
+ *   signals?: object,
  * }} args
  */
 export function buildRouterPrompt({
@@ -23,8 +24,10 @@ export function buildRouterPrompt({
   learning = null,
   healthByModel = {},
   maxFewShots = 5,
+  signals: precomputedSignals = null,
 }) {
-  const signals = buildRequestSignals(body);
+  // Reuse caller-computed signals (cached-route fast path) to avoid double work.
+  const signals = precomputedSignals || buildRequestSignals(body);
   const poolCatalog = pool
     .map((id) => {
       const [provider, ...rest] = id.split("/");

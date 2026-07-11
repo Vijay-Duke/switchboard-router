@@ -477,7 +477,7 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
                   >
                     <span className="material-symbols-outlined text-[13px]">alt_route</span>
                     <span className="truncate">
-                      {routerModel || "claude/claude-opus-4-8 (default)"}
+                      {routerModel || "Select a router model (required)"}
                     </span>
                   </button>
                   {routerModel && (
@@ -634,7 +634,7 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
                 ) : (
                   <p className="text-[10px] text-text-subtle">
                     Worker pool = models list (router model excluded if listed). Every request re-routes.
-                    Router must be a connected account (default claude/claude-opus-4-8).
+                    Router model is required — pick a connected account (a cheap, fast model such as Haiku works well).
                   </p>
                 )}
               </div>

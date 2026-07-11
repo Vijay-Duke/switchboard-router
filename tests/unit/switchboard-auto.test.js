@@ -11,6 +11,7 @@ import {
 } from "../../open-sse/routing/buildRouterPrompt.js";
 import {
   handleAutoChat,
+  invalidateCachedRoutes,
   extractAssistantText,
   clampExploration,
   EXPLORATION_RATE_CAP,
@@ -133,13 +134,13 @@ describe("resolvePoolModel", () => {
 });
 
 describe("computeOutcomeScore", () => {
-  it("scores successful high-confidence completed route", () => {
+  it("scores successful completed route (confidence-neutral)", () => {
     const s = computeOutcomeScore({
       workerOk: true,
       confidence: "high",
       hasCompletion: true,
     });
-    expect(s).toBe(70); // 40+20+10
+    expect(s).toBe(50); // 40+10 (no confidence bonus)
   });
 
   it("scores low-confidence success with completion at 50", () => {
@@ -151,13 +152,29 @@ describe("computeOutcomeScore", () => {
     expect(s).toBe(50); // 40+10
   });
 
+  it("is confidence-neutral: high vs low score identically for same behavior", () => {
+    // Exploration picks are forced confidence:"low"; scoring must not penalize them
+    // vs router picks with identical worker performance, or the bandit can never
+    // discover a better arm.
+    const args = {
+      workerOk: true,
+      hasCompletion: true,
+      workerLatencyMs: 100,
+      clusterP50LatencyMs: 500,
+    };
+    const high = computeOutcomeScore({ ...args, confidence: "high" });
+    const low = computeOutcomeScore({ ...args, confidence: "low" });
+    expect(high).toBe(low);
+    expect(high).toBe(65); // 40+15+10
+  });
+
   it("does not grant completion points from workerOk alone", () => {
     const s = computeOutcomeScore({
       workerOk: true,
       confidence: "high",
       hasCompletion: false,
     });
-    expect(s).toBe(60); // 40+20, no +10
+    expect(s).toBe(40); // 40 only, no +10, no confidence bonus
   });
 
   it("applies latency bonus when below cluster ref", () => {
@@ -172,7 +189,7 @@ describe("computeOutcomeScore", () => {
   });
 
   it("SPEC: 2xx with fallback does not get +40 (clamps near 0)", () => {
-    // Spec: no +40, -30 fallback, +10 completion → 0; high conf needs score>0 so no +20
+    // Spec: no +40, -30 fallback, +10 completion → -20 → clamps to 0
     const s = computeOutcomeScore({
       workerOk: true,
       confidence: "high",
@@ -701,7 +718,7 @@ describe("probeStreamForContent / restreamFromProbe", () => {
         }),
       log: { info: () => {}, warn: () => {} },
       comboName: "solo",
-      strategy: {},
+      strategy: { routerModel: "router/x" },
       recordEvent: (e) => events.push(e),
     });
     await new Promise((r) => setTimeout(r, 20));
@@ -769,6 +786,41 @@ describe("handleAutoChat pool / abort", () => {
     const text = await res.text();
     expect(text).toMatch(/empty worker pool/i);
   });
+
+  it("returns 400 when no routerModel is configured (mandatory, no default)", async () => {
+    let routerCalled = false;
+    const res = await handleAutoChat({
+      body: { messages: [{ role: "user", content: "hi" }] },
+      models: POOL,
+      handleSingleModel: async () => {
+        routerCalled = true;
+        return openaiChatText("x");
+      },
+      log: { info: () => {}, warn: () => {} },
+      comboName: "no-router",
+      strategy: {},
+      recordEvent: () => {},
+    });
+    expect(res.status).toBe(400);
+    const text = await res.text();
+    expect(text).toMatch(/no routerModel configured/i);
+    // Fail fast — nothing dispatched
+    expect(routerCalled).toBe(false);
+  });
+
+  it("returns 400 when routerModel is an empty string", async () => {
+    const res = await handleAutoChat({
+      body: { messages: [{ role: "user", content: "hi" }] },
+      models: POOL,
+      handleSingleModel: async () => openaiChatText("x"),
+      log: { info: () => {}, warn: () => {} },
+      comboName: "blank-router",
+      strategy: { routerModel: "" },
+      recordEvent: () => {},
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toMatch(/no routerModel configured/i);
+  });
 });
 
 describe("extractAssistantText", () => {
@@ -795,6 +847,9 @@ describe("handleAutoChat", () => {
 
   beforeEach(() => {
     events = [];
+    // Route cache is a process singleton — clear it so tests that expect the
+    // router LLM to run are not short-circuited by a prior test's cached pick.
+    invalidateCachedRoutes();
   });
 
   function recordEvent(ev) {
@@ -982,7 +1037,7 @@ describe("handleAutoChat", () => {
       handleSingleModel: async () => openaiChatText("ok"),
       log: { info: () => {}, warn: () => {} },
       comboName: "auto",
-      strategy: {},
+      strategy: { routerModel: "router/x" },
       recordEvent,
     });
     await new Promise((r) => setTimeout(r, 20));
@@ -1189,5 +1244,179 @@ describe("handleAutoChat", () => {
     expect(res.status).toBe(400);
     expect(await res.text()).toMatch(/client disconnected/i);
     expect(calls).toBe(0);
+  });
+});
+
+describe("handleAutoChat cached-route fast path (Fix 3)", () => {
+  const cbody = { messages: [{ role: "user", content: "cache me please" }] };
+
+  function routerPickResponse(model, conf = "high") {
+    return openaiChatText(
+      JSON.stringify({
+        model,
+        cluster: "general",
+        confidence: conf,
+        reason: "ok",
+        alternates: [],
+      })
+    );
+  }
+
+  it("serves the second identical request from cache without a router LLM call", async () => {
+    const combo = "auto-cache-hit";
+    invalidateCachedRoutes(combo);
+    let routerCalls = 0;
+    const handler = async (b) => {
+      if (b?.max_tokens === 256) {
+        routerCalls++;
+        return routerPickResponse(POOL[0]);
+      }
+      return openaiChatText("worker ok");
+    };
+    const common = {
+      body: cbody,
+      models: POOL,
+      handleSingleModel: handler,
+      log: { info: () => {}, warn: () => {} },
+      comboName: combo,
+      strategy: { routerModel: "router/x", explorationRate: 0 },
+      loadLearning: async () => null,
+      loadStats: async () => [],
+      recordEvent: () => {},
+    };
+
+    const r1 = await handleAutoChat({ ...common });
+    expect(r1.ok).toBe(true);
+    expect(routerCalls).toBe(1);
+
+    const r2 = await handleAutoChat({ ...common });
+    expect(r2.ok).toBe(true);
+    // Router LLM not called again — pick served from cache
+    expect(routerCalls).toBe(1);
+    expect(r2.headers.get("X-Auto-Router-Worker")).toBe(POOL[0]);
+  });
+
+  it("cache hit still records a bandit event (skippedRouter false, routerLatency 0)", async () => {
+    const combo = "auto-cache-record";
+    invalidateCachedRoutes(combo);
+    const events = [];
+    const handler = async (b) => {
+      if (b?.max_tokens === 256) return routerPickResponse(POOL[0]);
+      return openaiChatText("worker ok");
+    };
+    const common = {
+      body: cbody,
+      models: POOL,
+      handleSingleModel: handler,
+      log: { info: () => {}, warn: () => {} },
+      comboName: combo,
+      strategy: { routerModel: "router/x", explorationRate: 0 },
+      loadLearning: async () => null,
+      loadStats: async () => [],
+      recordEvent: (ev) => events.push(ev),
+    };
+
+    await handleAutoChat({ ...common });
+    await handleAutoChat({ ...common });
+    await new Promise((r) => setTimeout(r, 20));
+
+    const cachedEv = events.find((e) => e.routerReason === "cached_route");
+    expect(cachedEv).toBeTruthy();
+    expect(cachedEv.meta?.skippedRouter).toBe(false);
+    expect(cachedEv.routerLatencyMs).toBe(0);
+    expect(cachedEv.pickedWorker).toBe(POOL[0]);
+  });
+
+  it("re-routes via router when the cached worker left the pool", async () => {
+    const combo = "auto-cache-stale";
+    invalidateCachedRoutes(combo);
+    let routerCalls = 0;
+    const handler = async (b) => {
+      if (b?.max_tokens === 256) {
+        routerCalls++;
+        return routerPickResponse(POOL[0]);
+      }
+      return openaiChatText("worker ok");
+    };
+    const base = {
+      body: cbody,
+      handleSingleModel: handler,
+      log: { info: () => {}, warn: () => {} },
+      comboName: combo,
+      strategy: { routerModel: "router/x", explorationRate: 0 },
+      loadLearning: async () => null,
+      loadStats: async () => [],
+      recordEvent: () => {},
+    };
+
+    await handleAutoChat({ ...base, models: POOL });
+    expect(routerCalls).toBe(1);
+
+    // Same fingerprint, but POOL[0] no longer in the pool → cache entry invalid.
+    const r2 = await handleAutoChat({ ...base, models: [POOL[1], POOL[2]] });
+    expect(r2.ok).toBe(true);
+    expect(routerCalls).toBe(2);
+  });
+
+  it("does not use the fast path when autoTuning.cachedRoutes is false", async () => {
+    const combo = "auto-cache-off";
+    invalidateCachedRoutes(combo);
+    let routerCalls = 0;
+    const handler = async (b) => {
+      if (b?.max_tokens === 256) {
+        routerCalls++;
+        return routerPickResponse(POOL[0]);
+      }
+      return openaiChatText("worker ok");
+    };
+    const common = {
+      body: cbody,
+      models: POOL,
+      handleSingleModel: handler,
+      log: { info: () => {}, warn: () => {} },
+      comboName: combo,
+      strategy: {
+        routerModel: "router/x",
+        explorationRate: 0,
+        autoTuning: { cachedRoutes: false },
+      },
+      loadLearning: async () => null,
+      loadStats: async () => [],
+      recordEvent: () => {},
+    };
+
+    await handleAutoChat({ ...common });
+    await handleAutoChat({ ...common });
+    // Router invoked on both requests — no caching
+    expect(routerCalls).toBe(2);
+  });
+
+  it("does not cache low-confidence router picks", async () => {
+    const combo = "auto-cache-lowconf";
+    invalidateCachedRoutes(combo);
+    let routerCalls = 0;
+    const handler = async (b) => {
+      if (b?.max_tokens === 256) {
+        routerCalls++;
+        return routerPickResponse(POOL[0], "low");
+      }
+      return openaiChatText("worker ok");
+    };
+    const common = {
+      body: cbody,
+      models: POOL,
+      handleSingleModel: handler,
+      log: { info: () => {}, warn: () => {} },
+      comboName: combo,
+      strategy: { routerModel: "router/x", explorationRate: 0 },
+      loadLearning: async () => null,
+      loadStats: async () => [],
+      recordEvent: () => {},
+    };
+
+    await handleAutoChat({ ...common });
+    await handleAutoChat({ ...common });
+    // Low confidence must not be cached → router runs both times
+    expect(routerCalls).toBe(2);
   });
 });

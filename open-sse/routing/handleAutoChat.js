@@ -21,6 +21,12 @@ import {
   observeStreamAndRecord,
   withAutoRouterHeaders,
 } from "./autoOutcome.js";
+import { buildRequestSignals } from "./fingerprint.js";
+import {
+  readRoutingCache,
+  writeRoutingCache,
+  invalidateRoutingCache,
+} from "./routingCache.js";
 
 export {
   STREAM_PROBE_IDLE_MS,
@@ -36,11 +42,26 @@ export {
   restreamFromProbe,
 } from "./autoResponse.js";
 
-const DEFAULT_ROUTER = "claude/claude-opus-4-8";
 const DEFAULT_TIMEOUT_MS = 15000;
 const MAX_AUTO_DEPTH = 2;
 /** Hard cap on explorationRate (dashboard + strategy); name documents [0, 0.2]. */
 export const EXPLORATION_RATE_CAP = 0.2;
+/** TTL for high-confidence cached routes; the bound forces periodic re-routing. */
+export const CACHED_ROUTE_TTL_MS = 10 * 60 * 1000;
+/** Prefix used by cached routes so settings changes can invalidate them. */
+export const CACHED_ROUTE_PREFIX = "route:";
+
+/** @param {string} comboName @param {string} fingerprint */
+function cachedRouteKey(comboName, fingerprint) {
+  return `${CACHED_ROUTE_PREFIX}${comboName}:${fingerprint}`;
+}
+
+/** Drop cached routes for one combo, or all combos when omitted. */
+export function invalidateCachedRoutes(comboName) {
+  invalidateRoutingCache(
+    comboName ? `${CACHED_ROUTE_PREFIX}${comboName}:` : CACHED_ROUTE_PREFIX
+  );
+}
 
 /**
  * @param {object} opts
@@ -78,6 +99,15 @@ export async function handleAutoChat({
     );
   }
 
+  // Auto combos require an explicit router selection. A hidden default can
+  // silently turn an invalid combo into an unexpected billable router call.
+  if (!strategy.routerModel || typeof strategy.routerModel !== "string") {
+    return errorResponse(
+      HTTP_STATUS.BAD_REQUEST,
+      `Auto combo "${comboName}" has no routerModel configured — select a router model in the combo's Auto settings`
+    );
+  }
+
   const {
     routerModel,
     objective,
@@ -85,6 +115,7 @@ export async function handleAutoChat({
     routerTimeoutMs,
     heuristicFirst,
     childDepth,
+    tuning,
   } = resolveAutoSettings({ strategy, autoDepth });
 
   // SPEC §6: exclude router from pool; empty pool → 400 (do not re-add router as worker)
@@ -153,6 +184,7 @@ export async function handleAutoChat({
     routerModel,
     routerTimeoutMs,
     childDepth,
+    tuning,
     handleSingleModel,
     log,
     clientAbortSignal,
@@ -186,7 +218,7 @@ export async function handleAutoChat({
 }
 
 function resolveAutoSettings({ strategy, autoDepth }) {
-  const routerModel = strategy.routerModel || DEFAULT_ROUTER;
+  const routerModel = strategy.routerModel;
   const objective = strategy.objective || "balanced";
   const explorationRate = clampExploration(strategy.explorationRate ?? 0.05);
   const tuning = strategy.autoTuning || {};
@@ -201,6 +233,7 @@ function resolveAutoSettings({ strategy, autoDepth }) {
     routerTimeoutMs,
     heuristicFirst,
     childDepth: autoDepth + 1,
+    tuning,
   };
 }
 
@@ -299,6 +332,7 @@ async function selectAutoWorker({
   routerModel,
   routerTimeoutMs,
   childDepth,
+  tuning,
   handleSingleModel,
   log,
   clientAbortSignal,
@@ -308,44 +342,71 @@ async function selectAutoWorker({
     log?.info?.("AUTO", `router ${routerModel} also listed in models — excluded from worker pool`);
   }
 
-  const healthByModel = healthFromStats(stats, candidates);
-  const maxFewShots = strategy.autoTuning?.maxFewShots ?? 5;
-  const { messages, signals } = buildRouterPrompt({
-    comboName,
-    pool: candidates,
-    body,
-    objective,
-    learning,
-    healthByModel,
-    maxFewShots,
-  });
-
-  // Always OpenAI wire shape for the router call so system prompt is not dropped
-  // on Claude/Gemini client endpoints (sourceFormatOverride forced in callOpts).
-  const routerBody = {
-    model: routerModel,
-    messages,
-    stream: false,
-    temperature: 0,
-    max_tokens: 256,
-  };
-
+  const signals = buildRequestSignals(body);
+  const cachedRoutesEnabled = tuning.cachedRoutes !== false;
+  const cacheKey = cachedRouteKey(comboName, signals.fingerprint);
   if (clientAbortSignal?.aborted) {
     return { response: errorResponse(HTTP_STATUS.BAD_REQUEST, "Client disconnected") };
   }
 
-  const routed = await callAutoRouter({
-    routerBody,
-    routerModel,
-    candidates,
-    routerTimeoutMs,
-    childDepth,
-    handleSingleModel,
-    log,
-    clientAbortSignal,
-  });
-  if (routed.response) return routed;
-  let { pick } = routed;
+  let pick = null;
+  let routerLatencyMs = 0;
+  let usedCachedRoute = false;
+  if (cachedRoutesEnabled && !clientAbortSignal?.aborted) {
+    const cachedPick = readRoutingCache(cacheKey);
+    if (cachedPick && candidates.includes(cachedPick.model)) {
+      log?.info?.("AUTO", `cached route → ${cachedPick.model} (fp ${signals.fingerprint})`);
+      pick = {
+        model: cachedPick.model,
+        cluster: cachedPick.cluster || "general",
+        confidence: cachedPick.confidence || "high",
+        reason: "cached_route",
+        alternates: candidates.filter((c) => c !== cachedPick.model).slice(0, 2),
+      };
+      usedCachedRoute = true;
+    } else if (cachedPick) {
+      invalidateRoutingCache(cacheKey);
+    }
+  }
+
+  if (!pick) {
+    const healthByModel = healthFromStats(stats, candidates);
+    const maxFewShots = tuning.maxFewShots ?? 5;
+    const { messages } = buildRouterPrompt({
+      comboName,
+      pool: candidates,
+      body,
+      objective,
+      learning,
+      healthByModel,
+      maxFewShots,
+      signals,
+    });
+
+    // Always OpenAI wire shape for the router call so system prompt is not dropped
+    // on Claude/Gemini client endpoints (sourceFormatOverride forced in callOpts).
+    const routerBody = {
+      model: routerModel,
+      messages,
+      stream: false,
+      temperature: 0,
+      max_tokens: 256,
+    };
+    const routed = await callAutoRouter({
+      routerBody,
+      routerModel,
+      candidates,
+      routerTimeoutMs,
+      childDepth,
+      handleSingleModel,
+      log,
+      clientAbortSignal,
+    });
+    if (routed.response) return routed;
+    pick = routed.pick;
+    routerLatencyMs = routed.routerLatencyMs;
+  }
+
   let exploration = false;
   if (Math.random() < explorationRate && candidates.length > 1) {
     const rnd = candidates[Math.floor(Math.random() * candidates.length)];
@@ -361,9 +422,23 @@ async function selectAutoWorker({
     }
   }
 
+  if (
+    cachedRoutesEnabled &&
+    !usedCachedRoute &&
+    !exploration &&
+    pick.confidence === "high" &&
+    !pick.parseError
+  ) {
+    writeRoutingCache(
+      cacheKey,
+      { model: pick.model, cluster: pick.cluster, confidence: pick.confidence },
+      CACHED_ROUTE_TTL_MS
+    );
+  }
+
   return {
     pick,
-    routerLatencyMs: routed.routerLatencyMs,
+    routerLatencyMs,
     exploration,
     signals,
     routerInPool,
