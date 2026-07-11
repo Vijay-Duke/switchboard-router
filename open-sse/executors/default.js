@@ -1,4 +1,4 @@
-import { BaseExecutor } from "./base.js";
+import { BaseExecutor, streamIsTransportControlled } from "./base.js";
 import { PROVIDERS, PROVIDER_OAUTH } from "../config/providers.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
@@ -101,7 +101,11 @@ export class DefaultExecutor extends BaseExecutor {
       if (stream && Array.isArray(transformed.messages) && !transformed.stream_options) {
         transformed.stream_options = { include_usage: true };
       }
-      if (stream && transformed.stream !== true) transformed.stream = true;
+      if (streamIsTransportControlled(this.config)) {
+        delete transformed.stream;
+      } else if (stream && transformed.stream !== true) {
+        transformed.stream = true;
+      }
     }
 
     return injectReasoningContent({ provider: this.provider, model, body: transformed });

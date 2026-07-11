@@ -31,6 +31,16 @@ import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { stripUnsupportedModalities } from "../translator/concerns/modality.js";
 import { prefetchRemoteImages } from "../translator/concerns/prefetch.js";
 
+// These Google transports select SSE with their request URL, rather than an
+// OpenAI-style JSON `stream` field.  Keeping the list here makes the boundary
+// explicit before requests reach their provider executors.
+const URL_CONTROLLED_STREAM_FORMATS = new Set([
+  FORMATS.GEMINI,
+  FORMATS.GEMINI_CLI,
+  FORMATS.ANTIGRAVITY,
+  FORMATS.VERTEX,
+]);
+
 /**
  * Core chat handler - shared between SSE and Worker
  * @param {object} options.body - Request body
@@ -220,10 +230,23 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     log?.debug?.("PONYTAIL", `${ponytailLevel} | ${finalFormat}`);
   }
 
-  // Ensure the body we send upstream has stream set to the effective decision
-  // (translators may leave it undefined when clients omit the field).
-  if (translatedBody && typeof translatedBody === "object" && translatedBody.stream !== stream) {
-    translatedBody = { ...translatedBody, stream };
+  // Google transport APIs select streaming through their URL, not request JSON.
+  // Keep the separate `stream` argument for the executor, while removing a
+  // generic OpenAI-style field that Gemini-family schemas reject as unknown.
+  if (translatedBody && typeof translatedBody === "object") {
+    if (URL_CONTROLLED_STREAM_FORMATS.has(finalFormat)) {
+      const { stream: _stream, request, ...withoutStream } = translatedBody;
+      if (request && typeof request === "object") {
+        const { stream: _requestStream, ...streamlessRequest } = request;
+        translatedBody = { ...withoutStream, request: streamlessRequest };
+      } else {
+        translatedBody = withoutStream;
+      }
+    } else if (translatedBody.stream !== stream) {
+      // Body-controlled transports (OpenAI, Claude, Responses, Ollama, etc.)
+      // still require this field to agree with their streaming response mode.
+      translatedBody = { ...translatedBody, stream };
+    }
   }
 
   const executor = getExecutor(provider);

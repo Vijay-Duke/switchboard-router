@@ -2,6 +2,14 @@ import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { OAUTH_ENDPOINTS, GEMINI_CLI_API_CLIENT, geminiCLIUserAgent } from "../config/appConstants.js";
 
+function withoutTransportStream(body) {
+  if (!body || typeof body !== "object") return body;
+  const { stream: _stream, ...envelope } = body;
+  if (!envelope.request || typeof envelope.request !== "object") return envelope;
+  const { stream: _requestStream, ...request } = envelope.request;
+  return { ...envelope, request };
+}
+
 export class GeminiCLIExecutor extends BaseExecutor {
   constructor() {
     super("gemini-cli", PROVIDERS["gemini-cli"]);
@@ -25,12 +33,13 @@ export class GeminiCLIExecutor extends BaseExecutor {
   transformRequest(model, body, stream, credentials) {
     // Store model for use in buildHeaders (called by base.execute after transformRequest)
     this._currentModel = model;
+    const streamlessBody = withoutTransportStream(body);
     // Cloud Code Assist wraps the Gemini payload: { project, model, request: <body> }
-    if (body && body.request && body.model) return body;
+    if (streamlessBody && streamlessBody.request && streamlessBody.model) return streamlessBody;
     return {
-      project: credentials?.projectId || body?.project,
+      project: credentials?.projectId || streamlessBody?.project,
       model,
-      request: body
+      request: streamlessBody
     };
   }
 

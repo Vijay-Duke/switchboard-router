@@ -5,6 +5,13 @@ import { dbg } from "../utils/debugLog.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { assertPublicUrlResolved } from "../utils/ssrfGuard.js";
 
+// Google Gemini and Vertex select SSE with their request URL, not a JSON field.
+// Sending the generic OpenAI-style `stream` property makes those APIs reject the
+// request as an unknown field.
+export function streamIsTransportControlled(config) {
+  return config?.format === "gemini" || config?.format === "vertex";
+}
+
 /**
  * Sleep that resolves early when the caller disconnects, and always clears its
  * timer — a plain setTimeout keeps a cancelled request's retry chain alive.
@@ -104,7 +111,9 @@ export class BaseExecutor {
     }
     // Keep body.stream in sync with the effective stream flag (Accept header
     // is set from `stream`; mismatch causes 406 on some gateways).
-    if (stream && body && typeof body === "object" && body.stream !== true) {
+    if (streamIsTransportControlled(this.config) && body && typeof body === "object") {
+      delete body.stream;
+    } else if (stream && body && typeof body === "object" && body.stream !== true) {
       body.stream = true;
     }
     return body;
