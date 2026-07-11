@@ -114,6 +114,34 @@ describe("wave9: antigravity tool name not doubled", () => {
   });
 });
 
+describe("H2: antigravity flushes truncated tool calls", () => {
+  it("emits buffered functionCall parts and a terminal STOP when finish_reason is missing", () => {
+    const state = { _toolCallAccum: {}, toolNameMap: null };
+    openaiToAntigravityResponse({
+      id: "chatcmpl-truncated-antigravity",
+      model: "gpt-test",
+      choices: [{
+        delta: {
+          tool_calls: [{
+            index: 0,
+            id: "call-truncated",
+            function: { name: "lookup", arguments: '{"q":"x"}' },
+          }],
+        },
+        finish_reason: null,
+      }],
+    }, state);
+
+    const flushed = openaiToAntigravityResponse(null, state);
+    const candidate = flushed.response.candidates[0];
+    expect(candidate.content.parts).toContainEqual({
+      functionCall: { name: "lookup", args: { q: "x" } },
+    });
+    expect(candidate.finishReason).toBe("STOP");
+    expect(openaiToAntigravityResponse(null, state)).toBeNull();
+  });
+});
+
 describe("wave9: kiro multi-tool index", () => {
   it("assigns distinct indices", () => {
     const state = { chunkIndex: 0 };

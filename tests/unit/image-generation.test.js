@@ -10,6 +10,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+// Hoisted mock for executor — must be at module top level to avoid vi.mock hoisting warning
+vi.mock("../../open-sse/executors/index.js", () => ({
+  getExecutor: vi.fn(),
+}));
+
 import { handleImageGenerationCore } from "../../open-sse/handlers/imageGenerationCore.js";
 
 const originalFetch = global.fetch;
@@ -542,5 +548,32 @@ describe("handleImageGenerationCore", () => {
 
     expect(result.success).toBe(true);
     expect(onRequestSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  describe("antigravity executor abort signal", () => {
+    it("forwards caller abort signal to executor.execute options", async () => {
+      const { getExecutor } = await import("../../open-sse/executors/index.js");
+      const mockExecute = vi.fn().mockResolvedValue({
+        response: new Response(JSON.stringify({
+          candidates: [{ content: { parts: [{ inlineData: { data: "abc" } }] } }],
+        }), { status: 200 }),
+      });
+      getExecutor.mockReturnValue({ execute: mockExecute });
+
+      const adapter = (await import("../../open-sse/handlers/imageProviders/antigravity.js")).default;
+
+      const abortCtrl = new AbortController();
+      await adapter.executeViaExecutor(
+        "gemini-flash",
+        { prompt: "draw a cat" },
+        { accessToken: "tok" },
+        { info: () => {}, debug: () => {} },
+        { signal: abortCtrl.signal },
+      );
+
+      expect(mockExecute).toHaveBeenCalledWith(
+        expect.objectContaining({ signal: abortCtrl.signal }),
+      );
+    });
   });
 });

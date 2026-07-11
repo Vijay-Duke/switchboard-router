@@ -43,6 +43,10 @@ function readJsonSafe(file) {
   try { return JSON.parse(fs.readFileSync(file, "utf-8")); } catch { return null; }
 }
 
+function checkpointBeforeBackup(adapter) {
+  try { adapter.checkpoint?.(); } catch {}
+}
+
 function isFreshDb(adapter) {
   // Table _meta may not exist yet on truly fresh DB
   try {
@@ -272,6 +276,7 @@ export async function runMigrationOnce(adapter) {
   const oldVer = getMetaSync(adapter, "appVersion", null);
   const newVer = getAppVersion();
   if (oldVer && oldVer !== newVer) {
+    checkpointBeforeBackup(adapter);
     const backupDir = makeBackupDir(`upgrade-${oldVer}-to-${newVer}`);
     try { backupFile(DATA_FILE, backupDir); } catch {}
     setMetaSync(adapter, "appVersion", newVer);
@@ -279,6 +284,7 @@ export async function runMigrationOnce(adapter) {
     console.log(`[DB][migrate] App ${oldVer} → ${newVer} | schema ${migInfo.from} → ${migInfo.to} | backup: ${backupDir}`);
   } else if (migInfo.applied > 0) {
     // Schema upgrade without app version bump — still backup
+    checkpointBeforeBackup(adapter);
     const backupDir = makeBackupDir(`schema-${migInfo.from}-to-${migInfo.to}`);
     try { backupFile(DATA_FILE, backupDir); } catch {}
     pruneOldBackups();

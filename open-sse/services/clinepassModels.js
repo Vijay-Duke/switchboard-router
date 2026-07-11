@@ -24,7 +24,7 @@ function buildModelListHeaders(token, isApiKey) {
  * @param {object} credentials - Connection credentials ({ accessToken, apiKey })
  * @returns {Promise<{ models: { id: string, name: string }[] } | null>}
  */
-export async function resolveClinepassModels(credentials) {
+export async function resolveClinepassModels(credentials, options = {}) {
   const isApiKey = Boolean(credentials?.apiKey);
   const token = isApiKey ? credentials.apiKey : credentials?.accessToken;
   if (!token) return null;
@@ -32,13 +32,23 @@ export async function resolveClinepassModels(credentials) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
+  // Forward caller signal into local controller when AbortSignal.any is unavailable.
+  // This ensures the local timeout stays effective even with an external signal.
+  if (options.signal && typeof AbortSignal.any !== "function") {
+    options.signal.addEventListener("abort", () => { clearTimeout(timer); controller.abort(options.signal.reason); }, { once: true });
+  }
+
+  const signal = options.signal && typeof AbortSignal.any === "function"
+    ? AbortSignal.any([options.signal, controller.signal])
+    : controller.signal;
+
   try {
     const headers = buildModelListHeaders(token, isApiKey);
 
     const response = await fetch(CLINEPASS_MODELS_ENDPOINT, {
       method: "GET",
       headers,
-      signal: controller.signal,
+      signal,
     });
 
     if (!response.ok) return null;

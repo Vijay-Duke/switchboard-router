@@ -167,7 +167,7 @@ export default function ComboDetailPage() {
   };
 
   const handleDelete = async () => {
-    if (!await requestConfirmation({ message: `Delete combo "${combo.name}"?`, confirmText: "Continue" })) return;
+    if (!await requestConfirmation({ message: `Delete combo "${combo.name?.trim() || id}"?`, confirmText: "Continue" })) return;
     const res = await fetch(`/api/combos/${id}`, { method: "DELETE" });
     if (res.ok) router.push(getListingHref(combo.kind));
   };

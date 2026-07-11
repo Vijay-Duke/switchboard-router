@@ -502,7 +502,7 @@ export function TtsExampleCard({ providerId }) {
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0 rounded-t-xl">
-              <h3 className="text-sm font-semibold">Select Language</h3>
+              <h3 className="text-sm font-semibold" data-i18n="Select Language">Select Language</h3>
               <button onClick={() => setModalOpen(false)} className="text-text-muted hover:text-primary transition-colors">
                 <span className="material-symbols-outlined text-[20px]">close</span>
               </button>
@@ -515,6 +515,7 @@ export function TtsExampleCard({ providerId }) {
                 value={modalSearch}
                 onChange={(e) => setModalSearch(e.target.value)}
                 placeholder="Search language..."
+                data-i18n-placeholder="Search language..."
                 className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
               />
             </div>

@@ -94,18 +94,19 @@ export async function handleFetch(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleProviderFetch(b, m, request, apiKey, settings),
+      handleSingleModel: (b, m, callOpts) => handleSingleProviderFetch(b, m, request, apiKey, settings, callOpts),
       log,
       comboName: providerInput,
       comboStrategy,
-      comboStickyLimit
+      comboStickyLimit,
+      abortSignal: request?.signal || null,
     });
   }
 
-  return handleSingleProviderFetch(body, providerInput, request, apiKey, settings);
+  return handleSingleProviderFetch(body, providerInput, request, apiKey, settings, { signal: request?.signal || null });
 }
 
-async function handleSingleProviderFetch(body, providerInput, request, apiKey, settings) {
+async function handleSingleProviderFetch(body, providerInput, request, apiKey, settings, callOpts = null) {
   const targetUrl = body.url;
   const format = body.format;
   const maxCharacters = body.max_characters;
@@ -139,11 +140,12 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
       provider: resolvedProvider.id,
       providerConfig,
       credentials: null,
-      log
+      log,
+      abortSignal: callOpts?.signal || request?.signal || null,
     });
     if (result.success) {
       return new Response(JSON.stringify(result.data), {
-        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        headers: { "Content-Type": "application/json" }
       });
     }
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Fetch failed");
@@ -184,6 +186,7 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
       providerConfig,
       credentials: refreshedCredentials,
       log,
+      abortSignal: callOpts?.signal || request?.signal || null,
       onCredentialsRefreshed: async (newCreds) => {
         await updateProviderCredentials(credentials.connectionId, {
           accessToken: newCreds.accessToken,
@@ -199,7 +202,7 @@ async function handleSingleProviderFetch(body, providerInput, request, apiKey, s
 
     if (result.success) {
       return new Response(JSON.stringify(result.data), {
-        headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        headers: { "Content-Type": "application/json" }
       });
     }
 

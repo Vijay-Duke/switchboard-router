@@ -14,8 +14,13 @@ export const COLORS = {
   cyan: "\x1b[36m"
 };
 
-// Buffer tokens to prevent context errors
-const BUFFER_TOKENS = 2000;
+// Optional compatibility buffer for clients that reserve context headroom.
+// Client-visible usage must be accurate by default; deployments that still
+// need the legacy headroom can opt in explicitly.
+const BUFFER_TOKENS = Math.max(
+  0,
+  Number.parseInt(process.env.CLIENT_USAGE_BUFFER_TOKENS || "0", 10) || 0
+);
 
 // Get HH:MM:SS timestamp
 function getTimeString() {

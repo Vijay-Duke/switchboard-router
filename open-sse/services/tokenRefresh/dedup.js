@@ -1,6 +1,29 @@
 const REFRESH_RESULT_TTL_MS = 10_000;
 const refreshDedupCache = new Map();
 
+function removeCacheEntry(key, entry) {
+  if (refreshDedupCache.get(key) !== entry) return;
+  refreshDedupCache.delete(key);
+  if (entry.cleanupTimer) clearTimeout(entry.cleanupTimer);
+}
+
+function cacheRefreshResult(key, result) {
+  const entry = {
+    result,
+    expiresAt: Date.now() + REFRESH_RESULT_TTL_MS,
+    cleanupTimer: null,
+  };
+  entry.cleanupTimer = setTimeout(() => {
+    if (refreshDedupCache.get(key) === entry) {
+      refreshDedupCache.delete(key);
+      entry.cleanupTimer = null;
+    }
+  }, REFRESH_RESULT_TTL_MS);
+  // A cache cleanup timer should never keep the gateway process alive.
+  entry.cleanupTimer.unref?.();
+  refreshDedupCache.set(key, entry);
+}
+
 export async function dedupRefresh(provider, oldToken, fn, log) {
   if (!oldToken) return fn();
   const key = `${provider}:${oldToken}`;
@@ -14,24 +37,26 @@ export async function dedupRefresh(provider, oldToken, fn, log) {
       log?.info?.("TOKEN_REFRESH", `Reusing recent refresh result for ${provider}`);
       return hit.result;
     }
-    refreshDedupCache.delete(key);
+    removeCacheEntry(key, hit);
   }
+  const inFlight = { promise: null };
   const promise = (async () => {
     try {
       const result = await fn();
       // Only cache successful non-null results. Caching null/failed tokens for
       // 10s sticky-locks dead credentials (wave12).
       if (result && (result.accessToken || result.copilotToken || result.refreshToken)) {
-        refreshDedupCache.set(key, { result, expiresAt: Date.now() + REFRESH_RESULT_TTL_MS });
+        cacheRefreshResult(key, result);
       } else {
-        refreshDedupCache.delete(key);
+        removeCacheEntry(key, inFlight);
       }
       return result;
     } catch (err) {
-      refreshDedupCache.delete(key);
+      removeCacheEntry(key, inFlight);
       throw err;
     }
   })();
-  refreshDedupCache.set(key, { promise });
+  inFlight.promise = promise;
+  refreshDedupCache.set(key, inFlight);
   return promise;
 }

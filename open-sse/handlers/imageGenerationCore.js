@@ -36,6 +36,7 @@ export async function handleImageGenerationCore({
   binaryOutput = false,
   onCredentialsRefreshed,
   onRequestSuccess,
+  abortSignal = null,
 }) {
   const { provider, model } = modelInfo;
 
@@ -55,7 +56,7 @@ export async function handleImageGenerationCore({
   if (adapter.useExecutor && adapter.executeViaExecutor) {
     try {
       log?.debug?.("IMAGE", `${provider.toUpperCase()} | ${model} | prompt="${body.prompt.slice(0, 50)}..." (executor)`);
-      const responseBody = await adapter.executeViaExecutor(model, body, credentials, log);
+      const responseBody = await adapter.executeViaExecutor(model, body, credentials, log, { signal: abortSignal });
       if (onRequestSuccess) await onRequestSuccess();
       const normalized = adapter.normalize(responseBody, body.prompt);
       const finalBody = (normalized.created && Array.isArray(normalized.data)) ? normalized : responseBody;
@@ -112,6 +113,7 @@ export async function handleImageGenerationCore({
       method: "POST",
       headers,
       body: serializeRequestBody(requestBody),
+      signal: abortSignal || undefined,
     });
   } catch (error) {
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
@@ -146,6 +148,7 @@ export async function handleImageGenerationCore({
           method: "POST",
           headers: retryHeaders,
           body: serializeRequestBody(retryBody),
+          signal: abortSignal || undefined,
         });
       } catch {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);

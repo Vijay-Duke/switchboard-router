@@ -72,7 +72,9 @@ export const ERROR_RULES = [
   { status: 401, cooldownMs: COOLDOWN.long },
   { status: 402, cooldownMs: COOLDOWN.long },
   { status: 403, cooldownMs: COOLDOWN.long },
-  { status: 404, cooldownMs: COOLDOWN.long },
+  // A missing model/route is request-specific; rotating accounts only benches
+  // every credential against the same unavailable resource.
+  { status: 404, cooldownMs: COOLDOWN.long, shouldFallback: false },
   { status: 429, backoff: true },
 ];
 

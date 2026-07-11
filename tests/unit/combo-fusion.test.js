@@ -1,20 +1,24 @@
 import { describe, it, expect, vi } from "vitest";
 
-import { handleFusionChat } from "../../open-sse/services/combo.js";
+import { handleComboChat, handleFusionChat } from "../../open-sse/services/combo.js";
 
 const log = { info: () => {}, warn: () => {}, debug: () => {} };
 
-// Minimal OpenAI-chat Response stub with the .ok + .clone().json() surface the engine uses.
+// Minimal OpenAI-chat JSON Response used by the combo service tests.
 function okResponse(content, { delayMs = 0 } = {}) {
   const json = { choices: [{ message: { role: "assistant", content } }] };
-  const make = () => ({ ok: true, status: 200, clone: make, json: async () => json });
-  const res = make();
+  const res = new Response(JSON.stringify(json), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
   return delayMs > 0 ? new Promise((r) => setTimeout(() => r(res), delayMs)) : res;
 }
 
 function errResponse(status = 500) {
-  const make = () => ({ ok: false, status, clone: make, json: async () => ({ error: { message: "boom" } }) });
-  return make();
+  return new Response(JSON.stringify({ error: { message: "boom" } }), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 describe("fusion combo", () => {
@@ -71,6 +75,7 @@ describe("fusion combo", () => {
     expect(judgeOpts === true || judgeOpts?.isPanel === true).toBe(false);
 
     expect(res.ok).toBe(true);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
   });
 
   it("defaults the judge to the first panel model when none is set", async () => {
@@ -158,6 +163,126 @@ describe("fusion combo", () => {
     await expect(res.json()).resolves.toMatchObject({ type: "message", content: [{ text: "bonjour" }] });
   });
 
+  it("wraps a lone survivor as client-format SSE when streaming was requested", async () => {
+    const handleSingleModel = vi.fn(async (_body, model) => model === "p/ok" ? okResponse("lone") : errResponse(500));
+    const res = await handleFusionChat({
+      body: { messages: [{ role: "user", content: "Q" }], stream: true },
+      models: ["p/ok", "p/bad"],
+      handleSingleModel,
+      log,
+      tuning: { minPanel: 2, stragglerGraceMs: 10, panelHardTimeoutMs: 1000 },
+    });
+
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const text = await res.text();
+    expect(text).toContain('"object":"chat.completion.chunk"');
+    expect(text).toContain('"content":"lone"');
+    expect(text).toContain("data: [DONE]");
+  });
+
+  it("infers and preserves a Claude survivor's SSE event format", async () => {
+    const claude = new Response(JSON.stringify({
+      id: "msg_1",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text: "bonjour" }],
+      stop_reason: "end_turn",
+      usage: { input_tokens: 2, output_tokens: 1 },
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    const handleSingleModel = vi.fn(async (_body, model) => model === "p/claude" ? claude : errResponse(500));
+
+    const res = await handleFusionChat({
+      body: { messages: [{ role: "user", content: "hi" }], stream: true },
+      models: ["p/claude", "p/bad"],
+      handleSingleModel,
+      log,
+      tuning: { stragglerGraceMs: 10, panelHardTimeoutMs: 1000 },
+    });
+
+    const text = await res.text();
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    expect(text).toContain("event: message_start");
+    expect(text).toContain("event: content_block_delta");
+    expect(text).toContain('"text":"bonjour"');
+    expect(text).toContain("event: message_stop");
+    expect(text).not.toContain("data: [DONE]");
+  });
+
+  it("passes the caller abort signal to fallback attempts and stops after abort", async () => {
+    const caller = new AbortController();
+    const handleSingleModel = vi.fn(async (_body, _model, opts) => {
+      expect(opts.signal).toBe(caller.signal);
+      caller.abort();
+      throw Object.assign(new Error("aborted"), { name: "AbortError" });
+    });
+
+    const res = await handleComboChat({
+      body: { messages: [{ role: "user", content: "Q" }] },
+      models: ["p/first", "p/second"],
+      handleSingleModel,
+      log,
+      abortSignal: caller.signal,
+    });
+
+    expect(handleSingleModel).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(499);
+  });
+
+  it("passes the caller abort signal to the fusion judge", async () => {
+    const caller = new AbortController();
+    const handleSingleModel = vi.fn(async (_body, model, opts) => {
+      if (model === "p/judge") return okResponse("FINAL");
+      return okResponse(`ans-${model}`);
+    });
+
+    await handleFusionChat({
+      body: { messages: [{ role: "user", content: "Q" }] },
+      models: ["p/a", "p/b"],
+      handleSingleModel,
+      log,
+      judgeModel: "p/judge",
+      abortSignal: caller.signal,
+    });
+
+    const judgeCall = handleSingleModel.mock.calls.find(([, model]) => model === "p/judge");
+    expect(judgeCall?.[2]?.signal).toBe(caller.signal);
+  });
+
+  it("aborts in-flight panel signals when the caller disconnects", async () => {
+    const caller = new AbortController();
+    const panelSignals = [];
+    const handleSingleModel = vi.fn(async (_body, model, opts) => {
+      if (model === "p/judge") return okResponse("FINAL");
+      panelSignals.push(opts.signal);
+      return new Promise((_resolve, reject) => {
+        opts.signal.addEventListener("abort", () => {
+          reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+        }, { once: true });
+      });
+    });
+
+    const fusion = handleFusionChat({
+      body: { messages: [{ role: "user", content: "Q" }] },
+      models: ["p/a", "p/b"],
+      handleSingleModel,
+      log,
+      judgeModel: "p/judge",
+      abortSignal: caller.signal,
+      tuning: { panelHardTimeoutMs: 1000 },
+    });
+    await Promise.resolve();
+    caller.abort();
+
+    const res = await fusion;
+    expect(res.status).toBe(499);
+    expect(panelSignals).toHaveLength(2);
+    expect(panelSignals.every((signal) => signal.aborted)).toBe(true);
+    expect(handleSingleModel.mock.calls.some(([, model]) => model === "p/judge")).toBe(false);
+  });
+
   it("returns 503 when the whole panel fails", async () => {
     const handleSingleModel = vi.fn(async () => errResponse(500));
     const res = await handleFusionChat({
@@ -240,5 +365,47 @@ describe("fusion combo", () => {
     
     // Flattened tool_result
     expect(panelBody.messages[2].content).toBe("[Tool result: done]");
+  });
+});
+
+describe("combo 404 fallback", () => {
+  it("404 on candidate A advances to candidate B and returns B's success", async () => {
+    const handleSingleModel = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "not found" } }), { status: 404, headers: { "Content-Type": "application/json" } })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "B response" } }] }), { status: 200, headers: { "Content-Type": "application/json" } })
+      );
+
+    const res = await handleComboChat({
+      body: { messages: [{ role: "user", content: "hi" }] },
+      models: ["p/model-a", "p/model-b"],
+      handleSingleModel,
+      log,
+    });
+
+    expect(handleSingleModel).toHaveBeenCalledTimes(2);
+    expect(res.ok).toBe(true);
+    const json = await res.json();
+    expect(json.choices[0].message.content).toBe("B response");
+  });
+
+  it("preserves account-level non-fallback errors (400) without advancing to next model", async () => {
+    const handleSingleModel = vi.fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "bad request" } }), { status: 400, headers: { "Content-Type": "application/json" } })
+      );
+
+    const res = await handleComboChat({
+      body: { messages: [{ role: "user", content: "hi" }] },
+      models: ["p/model-a", "p/model-b"],
+      handleSingleModel,
+      log,
+    });
+
+    // 400 from candidate A should NOT advance to B
+    expect(handleSingleModel).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(400);
   });
 });

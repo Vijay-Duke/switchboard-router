@@ -11,6 +11,7 @@ import {
   getProviderNodes,
   getCombos,
 } from "@/lib/db/index.js";
+import { redactSecrets } from "@/models";
 import { getMachineId } from "@/shared/utils/machine";
 
 /**
@@ -76,7 +77,7 @@ export async function loadProvidersPage() {
     getProviderNodes(),
   ]);
   return {
-    connections: connections || [],
+    connections: (connections || []).map(redactSecrets),
     nodes: nodes || [],
   };
 }
@@ -102,7 +103,7 @@ export async function loadCombosPage() {
   }
   return {
     combos: llmCombos,
-    connections: connections || [],
+    connections: (connections || []).map(redactSecrets),
     settings: sanitizeSettings(settings),
     modelCaps,
   };
@@ -119,5 +120,4 @@ export async function loadProfilePage() {
     machineId,
   };
 }
-
 

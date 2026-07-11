@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { canonicalizeUsage, extractUsage, mergeUsage } from "../../open-sse/utils/usageTracking.js";
+import { addBufferToUsage, canonicalizeUsage, extractUsage, mergeUsage } from "../../open-sse/utils/usageTracking.js";
 import { calculateCostFromTokens } from "../../open-sse/providers/pricing.js";
 import { toOpenAIUsage } from "../../open-sse/translator/concerns/usage.js";
+
+describe("client-visible usage buffer", () => {
+  it("does not inflate reported usage by default", () => {
+    expect(addBufferToUsage({ prompt_tokens: 100, completion_tokens: 25, total_tokens: 125 }))
+      .toEqual({ prompt_tokens: 100, completion_tokens: 25, total_tokens: 125 });
+  });
+});
 
 // Canonical convention (single source of truth for storage + cost):
 //   prompt_tokens             = total input INCLUDING cache read + cache creation

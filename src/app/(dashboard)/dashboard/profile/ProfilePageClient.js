@@ -642,9 +642,9 @@ export default function ProfilePageClient({ initialData }) {
         isOpen={shutdownOpen}
         onClose={() => setShutdownOpen(false)}
         onConfirm={handleShutdown}
-        title="Close Proxy"
+        title="Shutdown"
         message="Are you sure you want to close the proxy server?"
-        confirmText="Close"
+        confirmText="Shutdown"
         cancelText="Cancel"
         variant="danger"
         loading={isShuttingDown}

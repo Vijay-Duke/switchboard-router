@@ -39,27 +39,33 @@ const g = global.__appSingleton ??= {
   shuttingDown: false,
 };
 
+export function registerShutdownHandlers() {
+  if (g.signalHandlersRegistered) return;
+
+  const cleanup = async () => {
+    if (g.shuttingDown) return;
+    g.shuttingDown = true;
+    const forceExit = setTimeout(() => process.exit(1), 1800);
+    forceExit.unref?.();
+    try { await flushPendingRequestDetails(); } catch { /* best effort */ }
+    try { await closeAdapter(); } catch { /* best effort */ }
+    try { removeAllDNSEntriesSync(); } catch { /* best effort */ }
+    clearTimeout(forceExit);
+    process.exit(0);
+  };
+
+  process.on("SIGINT", cleanup);
+  process.on("SIGTERM", cleanup);
+  process.on("exit", () => { try { removeAllDNSEntriesSync(); } catch { /* ignore */ } });
+  g.signalHandlersRegistered = true;
+}
+
 export async function initializeApp() {
   try {
+    // Keep direct/non-Next bootstrap callers safe; instrumentation registers this
+    // before initialization, and the global guard makes the operation idempotent.
+    registerShutdownHandlers();
     await cleanupProviderConnections();
-
-    if (!g.signalHandlersRegistered) {
-      const cleanup = async () => {
-        if (g.shuttingDown) return;
-        g.shuttingDown = true;
-        const forceExit = setTimeout(() => process.exit(1), 1800);
-        forceExit.unref?.();
-        try { await flushPendingRequestDetails(); } catch { /* best effort */ }
-        try { await closeAdapter(); } catch { /* best effort */ }
-        try { removeAllDNSEntriesSync(); } catch { /* best effort */ }
-        clearTimeout(forceExit);
-        process.exit(0);
-      };
-      process.on("SIGINT", cleanup);
-      process.on("SIGTERM", cleanup);
-      process.on("exit", () => { try { removeAllDNSEntriesSync(); } catch { /* ignore */ } });
-      g.signalHandlersRegistered = true;
-    }
 
     // Sync mitmAlias DB → JSON cache so standalone MITM server can read it
     syncMitmAliasCache().catch(() => {});

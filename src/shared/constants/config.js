@@ -21,7 +21,10 @@ export const UPDATER_CONFIG = {
   installCmd: "npm i -g switchboard-router",
   installCmdLatest: "npm i -g switchboard-router@latest --prefer-online",
   shutdownCountdownSec: 3,
-  exitDelayMs: 500,
+  // The route starts the detached updater, then asks the launcher/server to
+  // shut down. Leave enough time for graceful DB/child-process cleanup before
+  // the current server exits and releases its runtime state.
+  exitDelayMs: 2200,
   statusPort: 20129,
   statusPollIntervalMs: 1000,
   statusLogTailLines: 8,
@@ -31,6 +34,7 @@ export const UPDATER_CONFIG = {
   waitForExitMinMs: 5000,
   waitForExitMaxMs: 20000,
   waitForExitCheckMs: 500,
+  statusStartupTimeoutMs: 2000,
   appPort: 20128,
 };
 

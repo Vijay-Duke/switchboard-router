@@ -5,7 +5,7 @@
  */
 
 /** @type {string[]} */
-export const WENYAN_LOCALES = ["zh-CN", "zh-TW"];
+export const WENYAN_LOCALES = ["zh-CN"];
 
 /** @type {{ id: string, label: string, desc: string, wenyan?: boolean }[]} */
 export const CAVEMAN_LEVELS = [

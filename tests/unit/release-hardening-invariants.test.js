@@ -33,6 +33,8 @@ describe("release hardening invariants", () => {
     const files = [
       ...jsFilesUnder("src/app/api/v1"),
       ...jsFilesUnder("src/app/api/v1beta"),
+      path.join(root, "src/sse/handlers/fetch.js"),
+      path.join(root, "src/lib/updater/updater.js"),
       path.join(root, "src/app/api/tags/route.js"),
       path.join(root, "src/app/api/health/route.js"),
       ...jsFilesUnder("open-sse"),

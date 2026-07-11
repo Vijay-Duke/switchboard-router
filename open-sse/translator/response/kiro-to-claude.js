@@ -47,6 +47,42 @@ function convertFinishReason(reason) {
  * Returns an array of Claude events, or null when the chunk yields nothing.
  */
 export function kiroToClaudeResponse(chunk, state) {
+  const results = [];
+
+  // Flush: Kiro can close without a finish_reason. Synthesize the same
+  // terminal Claude events as openai-to-claude so buffered tool calls and
+  // message_stop are not lost at EOF.
+  if (chunk === null && !state.claudeFinishHandled) {
+    state.claudeFinishHandled = true;
+    if (!state.messageStartSent) return null;
+    stopThinkingBlock(state, results);
+    stopTextBlock(state, results);
+
+    for (const [idx, toolInfo] of state.toolCalls || []) {
+      const buffered = state.toolArgBuffers?.get(idx);
+      if (buffered) {
+        results.push({
+          type: "content_block_delta",
+          index: toolInfo.blockIndex,
+          delta: { type: "input_json_delta", partial_json: buffered },
+        });
+      }
+      results.push({ type: "content_block_stop", index: toolInfo.blockIndex });
+    }
+
+    state.finishReason = "stop";
+    const finalUsage = state.usage || { input_tokens: 0, output_tokens: 0 };
+    results.push({
+      type: "message_delta",
+      delta: { stop_reason: "end_turn" },
+      usage: finalUsage,
+    });
+    results.push({ type: "message_stop" });
+    return results;
+  }
+
+  if (chunk === null) return null;
+
   // KiroExecutor emits chat.completion.chunk objects; tolerate string chunks
   // by attempting a parse (defensive — the direct path is always objects).
   let data = chunk;
@@ -62,7 +98,6 @@ export function kiroToClaudeResponse(chunk, state) {
 
   if (!data || !data.choices?.[0]) return null;
 
-  const results = [];
   const choice = data.choices[0];
   const delta = choice.delta || {};
 
@@ -184,7 +219,8 @@ export function kiroToClaudeResponse(chunk, state) {
   }
 
   // Finish.
-  if (choice.finish_reason) {
+  if (choice.finish_reason && !state.claudeFinishHandled) {
+    state.claudeFinishHandled = true;
     stopThinkingBlock(state, results);
     stopTextBlock(state, results);
 

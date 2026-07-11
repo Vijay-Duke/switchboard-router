@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { handleComboChat } from "../../open-sse/services/compact.js";
+import { handleComboChat } from "../../open-sse/services/combo.js";
 
 describe("compact combo fallback", () => {
   it("tries the next model after a retryable 429", async () => {

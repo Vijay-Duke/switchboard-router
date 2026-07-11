@@ -18,7 +18,13 @@ const lingerMs = parseInt(process.env.UPDATER_LINGER_MS || "30000", 10);
 const waitMinMs = parseInt(process.env.UPDATER_WAIT_MIN_MS || "3000", 10);
 const waitMaxMs = parseInt(process.env.UPDATER_WAIT_MAX_MS || "15000", 10);
 const waitCheckMs = parseInt(process.env.UPDATER_WAIT_CHECK_MS || "500", 10);
+const statusStartupTimeoutMs = parseInt(process.env.UPDATER_STARTUP_TIMEOUT_MS || "2000", 10);
 const appPort = parseInt(process.env.UPDATER_APP_PORT || "20128", 10);
+const allowedStatusOrigins = new Set([
+  `http://127.0.0.1:${appPort}`,
+  `http://localhost:${appPort}`,
+  `http://[::1]:${appPort}`,
+]);
 
 // Data directory (match mitm/paths.js logic)
 function getDataDir() {
@@ -66,7 +72,11 @@ function setPhase(phase) {
 
 // HTTP server exposing status (browser polls this while Next server is dead)
 const server = http.createServer((req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const origin = req.headers.origin;
+  if (origin && allowedStatusOrigins.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
   res.setHeader("Cache-Control", "no-store");
   if (req.url === "/update/status" || req.url === "/") {
     res.setHeader("Content-Type", "application/json");
@@ -77,15 +87,54 @@ const server = http.createServer((req, res) => {
   res.end("not found");
 });
 
+let statusServerReady = false;
+let statusServerFailed = false;
+let statusServerStartupTimer = null;
+
+function failStatusServer(error) {
+  if (statusServerReady || statusServerFailed) return;
+  statusServerFailed = true;
+  if (statusServerStartupTimer) clearTimeout(statusServerStartupTimer);
+
+  state.done = true;
+  state.success = false;
+  state.error = `status server error: ${error.message}`;
+  state.finishedAt = Date.now();
+  pushLog(`[updater] ${state.error}; exiting without running the installer`);
+  setPhase("error");
+
+  // Do not wait on a server that never bound. This is normally EADDRINUSE
+  // when another updater already owns the fixed status port.
+  try { server.close(); } catch { /* best effort */ }
+  setTimeout(() => process.exit(1), Math.min(Math.max(lingerMs, 0), 1000));
+}
+
 server.on("error", (e) => {
+  if (!statusServerReady) {
+    failStatusServer(e);
+    return;
+  }
   state.error = `status server error: ${e.message}`;
   persistStatus();
 });
 
-server.listen(port, "127.0.0.1", () => {
-  persistStatus();
-  waitForAppExit().then(runInstall);
-});
+statusServerStartupTimer = setTimeout(() => {
+  failStatusServer(new Error(`status server did not bind to 127.0.0.1:${port} within ${statusStartupTimeoutMs}ms`));
+}, Math.max(statusStartupTimeoutMs, 0));
+
+try {
+  server.listen(port, "127.0.0.1", () => {
+    statusServerReady = true;
+    if (statusServerStartupTimer) clearTimeout(statusServerStartupTimer);
+    persistStatus();
+    waitForAppExit().then(runInstall).catch((error) => {
+      pushLog(`[updater] wait failed: ${error.message}`);
+      finalize(false, null, error.message);
+    });
+  });
+} catch (error) {
+  failStatusServer(error);
+}
 
 // Check if app port is still being listened on (= app server still alive)
 function isAppPortBusy() {

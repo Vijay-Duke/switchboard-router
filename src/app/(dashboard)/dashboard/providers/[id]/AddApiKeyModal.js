@@ -43,6 +43,9 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState(null); // { success, failed }
 
+  const hasName = formData.name.trim().length > 0;
+  const hasApiKey = formData.apiKey.trim().length > 0;
+
   const buildProviderSpecificData = () => {
     if (isOllamaLocal && formData.ollamaHostUrl.trim()) {
       return { baseUrl: formData.ollamaHostUrl.trim() };
@@ -65,12 +68,14 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   };
 
   const handleValidate = async () => {
+    const apiKey = formData.apiKey.trim();
+    if (!apiKey) return;
     setValidating(true);
     try {
       const res = await fetch("/api/providers/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, apiKey: formData.apiKey, providerSpecificData: buildProviderSpecificData() }),
+        body: JSON.stringify({ provider, apiKey, providerSpecificData: buildProviderSpecificData() }),
       });
       const data = await res.json();
       setValidationResult(data.valid ? "success" : "failed");
@@ -83,10 +88,12 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
 
   const handleSubmit = async () => {
     if (!provider) return;
-    if (!isOllamaLocal && !formData.apiKey) return;
+    const name = formData.name.trim();
+    const apiKey = formData.apiKey.trim();
+    if (!isOllamaLocal && !apiKey) return;
     if (!isOllamaLocal) {
       // Non-ollama providers require a name
-      if (!formData.name) return;
+      if (!name) return;
     }
     if (isCompatible && !formData.defaultModel.trim()) return;
 
@@ -99,7 +106,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
         const res = await fetch("/api/providers/validate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, apiKey: formData.apiKey, providerSpecificData: buildProviderSpecificData() }),
+          body: JSON.stringify({ provider, apiKey, providerSpecificData: buildProviderSpecificData() }),
         });
         const data = await res.json();
         isValid = !!data.valid;
@@ -111,8 +118,8 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
       }
 
       await onSave({
-        name: formData.name || (isOllamaLocal ? "Ollama Local" : ""),
-        apiKey: formData.apiKey,
+        name: name || (isOllamaLocal ? "Ollama Local" : ""),
+        apiKey,
         defaultModel: isCompatible ? formData.defaultModel.trim() : undefined,
         priority: formData.priority,
         testStatus: isValid ? "active" : "unknown",
@@ -133,7 +140,11 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     for (let i = 0; i < lines.length; i++) {
       const parts = lines[i].split("|");
       const apiKey = parts.length >= 2 ? parts.slice(1).join("|").trim() : parts[0].trim();
-      const baseName = parts.length >= 2 ? parts[0].trim() : "Key";
+      if (!apiKey) {
+        failed++;
+        continue;
+      }
+      const baseName = parts.length >= 2 ? parts[0].trim() || "Key" : "Key";
       const name = `${baseName} ${i + 1}`;
       try {
         const res = await fetch("/api/providers", {
@@ -214,6 +225,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
             <Input
               label={credentialLabel}
               type={isCookie ? "text" : "password"}
+              autoComplete="off"
               value={formData.apiKey}
               onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
               placeholder={credentialPlaceholder}
@@ -327,12 +339,13 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
         <Input
           label="Priority"
           type="number"
+          min={1}
           value={formData.priority}
           onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value) || 1 })}
         />
 
         <div className="flex gap-2">
-          <Button onClick={handleSubmit} fullWidth disabled={saving || (!isOllamaLocal && (!formData.name || !formData.apiKey)) || (isCompatible && !formData.defaultModel.trim()) || (isAzure && (!azureData.azureEndpoint || !azureData.deployment || !azureData.organization)) || (isCloudflareAi && !cloudflareData.accountId)}>
+          <Button onClick={handleSubmit} fullWidth disabled={saving || (!isOllamaLocal && (!hasName || !hasApiKey)) || (isCompatible && !formData.defaultModel.trim()) || (isAzure && (!azureData.azureEndpoint || !azureData.deployment || !azureData.organization)) || (isCloudflareAi && !cloudflareData.accountId)}>
             {saving ? "Saving..." : "Save"}
           </Button>
           <Button onClick={onClose} variant="ghost" fullWidth>

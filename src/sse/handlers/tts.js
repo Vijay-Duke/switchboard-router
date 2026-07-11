@@ -53,18 +53,19 @@ export async function handleTts(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelTts(b, m, responseFormat, language),
+      handleSingleModel: (b, m, callOpts) => handleSingleModelTts(b, m, responseFormat, language, callOpts?.signal),
       log,
       comboName: modelStr,
       comboStrategy,
       comboStickyLimit,
+      abortSignal: request?.signal || null,
     });
   }
 
-  return handleSingleModelTts(body, modelStr, responseFormat, language);
+  return handleSingleModelTts(body, modelStr, responseFormat, language, request?.signal || null);
 }
 
-async function handleSingleModelTts(body, modelStr, responseFormat, language) {
+async function handleSingleModelTts(body, modelStr, responseFormat, language, abortSignal = null) {
   const modelInfo = await getModelInfo(modelStr);
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
@@ -73,7 +74,7 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language) {
 
   // noAuth providers — no credential needed
   if (!CREDENTIALED_PROVIDERS.has(provider)) {
-    const result = await handleTtsCore({ provider, model, input: body.input, responseFormat, language });
+    const result = await handleTtsCore({ provider, model, input: body.input, responseFormat, language, abortSignal });
     if (result.success) return result.response;
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "TTS failed");
   }
@@ -98,7 +99,7 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language) {
 
     log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
 
-    const result = await handleTtsCore({ provider, model, input: body.input, credentials, responseFormat, language });
+    const result = await handleTtsCore({ provider, model, input: body.input, credentials, responseFormat, language, abortSignal });
 
     if (result.success) return result.response;
 

@@ -19,39 +19,7 @@ function getLocaleFromCookie() {
 const getLocaleInfo = (locale) => {
   const locales = {
     "en": { name: "English", flag: "🇺🇸" },
-    "vi": { name: "Tiếng Việt", flag: "🇻🇳" },
     "zh-CN": { name: "简体中文", flag: "🇨🇳" },
-    "zh-TW": { name: "繁體中文", flag: "🇹🇼" },
-    "ja": { name: "日本語", flag: "🇯🇵" },
-    "pt-BR": { name: "Português (Brasil)", flag: "🇧🇷" },
-    "pt-PT": { name: "Português (Portugal)", flag: "🇵🇹" },
-    "ko": { name: "한국어", flag: "🇰🇷" },
-    "es": { name: "Español", flag: "🇪🇸" },
-    "de": { name: "Deutsch", flag: "🇩🇪" },
-    "fr": { name: "Français", flag: "🇫🇷" },
-    "he": { name: "עברית", flag: "🇮🇱" },
-    "ar": { name: "العربية", flag: "🇸🇦" },
-    "ru": { name: "Русский", flag: "🇷🇺" },
-    "pl": { name: "Polski", flag: "🇵🇱" },
-    "cs": { name: "Čeština", flag: "🇨🇿" },
-    "nl": { name: "Nederlands", flag: "🇳🇱" },
-    "tr": { name: "Türkçe", flag: "🇹🇷" },
-    "uk": { name: "Українська", flag: "🇺🇦" },
-    "tl": { name: "Tagalog", flag: "🇵🇭" },
-    "id": { name: "Indonesia", flag: "🇮🇩" },
-    "th": { name: "ไทย", flag: "🇹🇭" },
-    "hi": { name: "हिन्दी", flag: "🇮🇳" },
-    "bn": { name: "বাংলা", flag: "🇧🇩" },
-    "ur": { name: "اردو", flag: "🇵🇰" },
-    "ro": { name: "Română", flag: "🇷🇴" },
-    "sv": { name: "Svenska", flag: "🇸🇪" },
-    "it": { name: "Italiano", flag: "🇮🇹" },
-    "el": { name: "Ελληνικά", flag: "🇬🇷" },
-    "hu": { name: "Magyar", flag: "🇭🇺" },
-    "fi": { name: "Suomi", flag: "🇫🇮" },
-    "da": { name: "Dansk", flag: "🇩🇰" },
-    "no": { name: "Norsk", flag: "🇳🇴" },
-    "fa": { name: "فارسی", flag: "🇮🇷" }
   };
   return locales[locale] || { name: locale, flag: "🌐" };
 };
@@ -130,7 +98,7 @@ export default function LanguageSwitcher({ className = "", isOpen: controlledOpe
 
       {/* Portal modal - renders at document.body to avoid parent layout constraints */}
       {isOpen && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" data-i18n-skip="true">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           {/* Overlay */}
           <div
             className="absolute inset-0 bg-black/30 backdrop-blur-sm"
@@ -144,7 +112,7 @@ export default function LanguageSwitcher({ className = "", isOpen: controlledOpe
           >
             {/* Modal header */}
             <div className="flex items-center justify-between p-3 border-b border-black/5 dark:border-white/5">
-              <h2 className="text-lg font-semibold text-text-main">Select Language</h2>
+              <h2 className="text-lg font-semibold text-text-main" data-i18n="Select Language">Select Language</h2>
               <button
                 onClick={() => setIsOpen(false)}
                 className="p-1.5 rounded-lg text-text-muted hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
@@ -156,7 +124,7 @@ export default function LanguageSwitcher({ className = "", isOpen: controlledOpe
 
             {/* Modal body - fixed grid columns, equal sizing */}
             <div className="p-6 overflow-y-auto flex-1">
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(100px,1fr))] gap-2">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(100px,1fr))] gap-2" data-i18n-skip="true">
                 {LOCALES.map((item) => {
                   const active = locale === item;
                   const info = getLocaleInfo(item);

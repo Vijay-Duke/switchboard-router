@@ -21,42 +21,43 @@ import { capabilitiesFromServiceKind } from "open-sse/providers/capabilities.js"
 // returns { models: [{ id, name? }, ...] } | null on failure.
 // Adding a provider here makes /v1/models prefer the live catalog for it.
 const LIVE_MODEL_RESOLVERS = {
-  kiro: async (conn) => {
+  kiro: async (conn, options = {}) => {
     const result = await resolveKiroModels({
       accessToken: conn.accessToken,
       refreshToken: conn.refreshToken,
       providerSpecificData: conn.providerSpecificData || {}
-    }, { log: console });
+    }, { log: console, signal: options.signal });
     return result?.models?.length ? { models: result.models } : null;
   },
-  qoder: async (conn) => {
+  qoder: async (conn, options = {}) => {
     const result = await resolveQoderModels({
       accessToken: conn.accessToken,
       refreshToken: conn.refreshToken,
       email: conn.email,
       displayName: conn.displayName,
       providerSpecificData: conn.providerSpecificData || {}
-    });
+    }, { signal: options.signal });
     if (!result?.models?.length) return null;
     return {
       models: result.models.map((m) => ({ id: m.id, name: m.name })),
     };
   },
-  kimchi: async (conn) => {
+  kimchi: async (conn, options = {}) => {
     const result = await resolveKimchiModels({
       accessToken: conn.accessToken,
       apiKey: conn.apiKey,
       providerSpecificData: conn.providerSpecificData || {}
-    }, { log: console });
+    }, { log: console, signal: options.signal });
     return result?.models?.length ? { models: result.models } : null;
   },
-  github: async (conn) => {
+  github: async (conn, options = {}) => {
     const result = await resolveCopilotModels({
       accessToken: conn.accessToken,
       refreshToken: conn.refreshToken,
       providerSpecificData: conn.providerSpecificData || {}
     }, {
       log: console,
+      signal: options.signal,
       onCredentialsRefreshed: async (refreshed) => {
         await updateProviderCredentials(conn.id, {
           copilotToken: refreshed.copilotToken,
@@ -67,11 +68,11 @@ const LIVE_MODEL_RESOLVERS = {
     });
     return result?.models?.length ? { models: result.models } : null;
   },
-  clinepass: async (conn) => {
+  clinepass: async (conn, options = {}) => {
     const result = await resolveClinepassModels({
       accessToken: conn.accessToken,
       apiKey: conn.apiKey,
-    });
+    }, { signal: options.signal });
     return result?.models?.length ? { models: result.models } : null;
   }
 };
@@ -113,7 +114,7 @@ function inferKindFromUnknownModelId(modelId) {
   return LLM_KIND;
 }
 
-async function fetchCompatibleModelIds(connection) {
+async function fetchCompatibleModelIds(connection, externalSignal = null) {
   if (!connection?.apiKey) return [];
 
   const baseUrl = typeof connection?.providerSpecificData?.baseUrl === "string"
@@ -145,26 +146,39 @@ async function fetchCompatibleModelIds(connection) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
-    const response = await fetch(url, {
-      method: "GET",
-      headers,
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
 
-    if (!response.ok) return [];
+    // Forward caller signal into local controller when AbortSignal.any is unavailable.
+    // This ensures the local timeout stays effective even with an external signal.
+    if (externalSignal && typeof AbortSignal.any !== "function") {
+      externalSignal.addEventListener("abort", () => { clearTimeout(timeoutId); controller.abort(externalSignal.reason); }, { once: true });
+    }
 
-    const data = await response.json();
-    const rawModels = parseOpenAIStyleModels(data);
+    const signal = externalSignal && typeof AbortSignal.any === "function"
+      ? AbortSignal.any([externalSignal, controller.signal])
+      : controller.signal;
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers,
+        cache: "no-store",
+        signal,
+      });
 
-    return Array.from(
-      new Set(
-        rawModels
-          .map((model) => model?.id || model?.name || model?.model)
-          .filter((modelId) => typeof modelId === "string" && modelId.trim() !== "")
-      )
-    );
+      if (!response.ok) return [];
+
+      const data = await response.json();
+      const rawModels = parseOpenAIStyleModels(data);
+
+      return Array.from(
+        new Set(
+          rawModels
+            .map((model) => model?.id || model?.name || model?.model)
+            .filter((modelId) => typeof modelId === "string" && modelId.trim() !== "")
+        )
+      );
+    } finally {
+      clearTimeout(timeoutId);
+    }
   } catch {
     return [];
   }
@@ -191,7 +205,7 @@ function comboMatchesKinds(combo, kindFilter) {
  * Build OpenAI-format models list filtered by service kinds.
  * @param {string[]} kindFilter - List of service kinds to include (e.g. ["llm"], ["webSearch","webFetch"]).
  */
-export async function buildModelsList(kindFilter) {
+export async function buildModelsList(kindFilter, { signal = null } = {}) {
   let connections = [];
   try {
     connections = await getProviderConnections();
@@ -231,6 +245,7 @@ export async function buildModelsList(kindFilter) {
 
   const activeConnectionByProvider = new Map();
   for (const conn of connections) {
+    if (signal?.aborted) break;
     if (!activeConnectionByProvider.has(conn.provider)) {
       activeConnectionByProvider.set(conn.provider, conn);
     }
@@ -289,6 +304,7 @@ export async function buildModelsList(kindFilter) {
     }
   } else {
     for (const [providerId, conn] of activeConnectionByProvider.entries()) {
+      if (signal?.aborted) break;
       if (!providerMatchesKinds(providerId, kindFilter)) continue;
 
       const staticAlias = PROVIDER_ID_TO_ALIAS[providerId] || providerId;
@@ -322,7 +338,7 @@ export async function buildModelsList(kindFilter) {
         : providerModels.map((model) => model.id);
 
       if (isCompatibleProvider && rawModelIds.length === 0 && !UPSTREAM_CONNECTION_RE.test(providerId)) {
-        rawModelIds = await fetchCompatibleModelIds(conn);
+        rawModelIds = await fetchCompatibleModelIds(conn, signal);
       }
 
       // Config-driven live catalog override (e.g. Kiro returns dynamic
@@ -331,7 +347,7 @@ export async function buildModelsList(kindFilter) {
       const liveResolver = LIVE_MODEL_RESOLVERS[providerId];
       if (liveResolver && !hasExplicitEnabledModels) {
         try {
-          const live = await liveResolver(conn);
+          const live = await liveResolver(conn, { signal });
           if (live?.models?.length) {
             rawModelIds = live.models.map((m) => m.id);
             liveModelKindById = new Map(
@@ -357,7 +373,7 @@ export async function buildModelsList(kindFilter) {
       // remain in rawModelIds when discovery is unavailable.
       if (!liveResolver && !hasExplicitEnabledModels) {
         try {
-          const live = await resolveProviderModels(conn);
+          const live = await resolveProviderModels(conn, { signal });
           if (live?.models?.length) {
             rawModelIds = live.models.map((m) => m.id);
             liveModelKindById = new Map(
@@ -502,9 +518,9 @@ export async function OPTIONS() {
  * GET /v1/models - OpenAI compatible models list (LLM/chat models only by default).
  * For other capabilities use /v1/models/{kind} (image, tts, stt, embedding, image-to-text, web).
  */
-export async function GET() {
+export async function GET(request) {
   try {
-    const data = await buildModelsList([LLM_KIND]);
+    const data = await buildModelsList([LLM_KIND], { signal: request?.signal });
     return Response.json({ object: "list", data }, {
     });
   } catch (error) {

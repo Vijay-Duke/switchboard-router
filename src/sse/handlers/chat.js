@@ -160,6 +160,7 @@ export async function handleChat(request, clientRawRequest = null) {
         comboName: modelStr,
         judgeModel: comboStrategies[modelStr]?.judgeModel,
         tuning: comboStrategies[modelStr]?.fusionTuning,
+        abortSignal: request?.signal || null,
       });
     }
 
@@ -218,6 +219,7 @@ export async function handleChat(request, clientRawRequest = null) {
       comboStrategy,
       comboStickyLimit,
       autoSwitch: capacityAutoSwitch,
+      abortSignal: request?.signal || null,
     });
   }
 
@@ -269,6 +271,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           comboName: modelStr,
           judgeModel: comboStrategies[modelStr]?.judgeModel,
           tuning: comboStrategies[modelStr]?.fusionTuning,
+          abortSignal: request?.signal || callOpts?.signal || null,
         });
       }
 
@@ -337,6 +340,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         comboStrategy,
         comboStickyLimit,
         autoSwitch: capacityAutoSwitch,
+        abortSignal: request?.signal || callOpts?.signal || null,
       });
     }
     log.warn("CHAT", "Invalid model format", { model: modelStr });

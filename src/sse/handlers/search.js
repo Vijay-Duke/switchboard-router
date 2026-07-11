@@ -78,18 +78,19 @@ export async function handleSearch(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleProviderSearch(b, m, request, apiKey, settings),
+      handleSingleModel: (b, m, callOpts) => handleSingleProviderSearch(b, m, request, apiKey, settings, callOpts),
       log,
       comboName: providerInput,
       comboStrategy,
-      comboStickyLimit
+      comboStickyLimit,
+      abortSignal: request?.signal || null,
     });
   }
 
-  return handleSingleProviderSearch(body, providerInput, request, apiKey, settings);
+  return handleSingleProviderSearch(body, providerInput, request, apiKey, settings, { signal: request?.signal || null });
 }
 
-async function handleSingleProviderSearch(body, providerInput, request, apiKey, settings) {
+async function handleSingleProviderSearch(body, providerInput, request, apiKey, settings, callOpts = null) {
   const query = body.query;
   const providerId = resolveProviderId(providerInput);
   const resolvedProvider = AI_PROVIDERS[providerId];
@@ -136,7 +137,8 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
       provider: resolvedProvider,
       providerConfig,
       credentials: null,
-      log
+      log,
+      abortSignal: callOpts?.signal || request?.signal || null,
     });
     if (result.success) return result.response;
     return result.response;
@@ -175,6 +177,7 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
       providerConfig,
       credentials: refreshedCredentials,
       log,
+      abortSignal: callOpts?.signal || request?.signal || null,
       onCredentialsRefreshed: async (newCreds) => {
         await updateProviderCredentials(credentials.connectionId, {
           accessToken: newCreds.accessToken,

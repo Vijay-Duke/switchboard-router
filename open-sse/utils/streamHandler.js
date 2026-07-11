@@ -266,7 +266,23 @@ export function pipeWithDisconnect(
     flush() { dbg(tag, `upstream EOF | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearAllTimers(); }
   });
 
-  const transformedBody = providerResponse.body
+  // A streaming response without a body is an upstream protocol failure, not
+  // a successful empty completion. Surface it through the stream so callers
+  // can record the failure and apply their normal retry/fallback policy.
+  if (!providerResponse?.body) {
+    const providerBody = new ReadableStream({
+      start(controller) {
+        controller.error(new Error("upstream response missing body"));
+      },
+    });
+    return createDisconnectAwareStream(
+      { readable: providerBody, writable: { getWriter: () => ({ abort: () => Promise.resolve() }) } },
+      wrappedController,
+      onAbortTerminal
+    );
+  }
+  const providerBody = providerResponse.body;
+  const transformedBody = providerBody
     .pipeThrough(upstreamTap)
     .pipeThrough(transformStream);
 
@@ -276,4 +292,3 @@ export function pipeWithDisconnect(
     onAbortTerminal
   );
 }
-

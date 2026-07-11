@@ -757,9 +757,11 @@ export default function ProviderDetailPage() {
   };
 
   const handleDelete = async (id) => {
+    const connection = connections.find((item) => item.id === id);
+    const connectionLabel = connection?.name?.trim() || connection?.email?.trim() || id;
     setConfirmState({
       title: "Delete Connection",
-      message: "Delete this connection?",
+      message: `Delete connection “${connectionLabel}”?`,
       onConfirm: async () => {
         setConfirmState(null);
         try {

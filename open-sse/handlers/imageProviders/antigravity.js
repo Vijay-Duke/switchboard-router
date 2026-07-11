@@ -27,9 +27,11 @@ const moduleDefault = {
   buildHeaders: () => ({}),
   buildBody: () => ({}),
 
-  async executeViaExecutor(model, body, credentials, log) {
+  async executeViaExecutor(model, body, credentials, log, opts = {}) {
     const executor = getExecutor("antigravity");
     if (!executor) throw new Error("Antigravity executor not found");
+
+    const { signal } = opts;
 
     // Build parts: text prompt + optional input image for editing
     const parts = [{ text: body.prompt }];
@@ -46,6 +48,7 @@ const moduleDefault = {
     const result = await executor.execute({
       model,
       body: chatBody,
+      signal,
       stream: false,
       credentials,
       log,

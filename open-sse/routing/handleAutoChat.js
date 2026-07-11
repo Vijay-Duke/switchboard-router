@@ -78,22 +78,17 @@ export async function handleAutoChat({
     );
   }
 
-  const routerModel = strategy.routerModel || DEFAULT_ROUTER;
-  const objective = strategy.objective || "balanced";
-  const explorationRate = clampExploration(strategy.explorationRate ?? 0.05);
-  const tuning = strategy.autoTuning || {};
-  const routerTimeoutMs = resolveRouterTimeoutMs(tuning.routerTimeoutMs);
-  // capacityAutoSwitch (combo setting) gates heuristic pre-filter; autoTuning.heuristicFirst is finer knob
-  const capacityAutoSwitch = strategy.capacityAutoSwitch !== false;
-  const heuristicFirst = capacityAutoSwitch && tuning.heuristicFirst !== false;
-  const childDepth = autoDepth + 1;
+  const {
+    routerModel,
+    objective,
+    explorationRate,
+    routerTimeoutMs,
+    heuristicFirst,
+    childDepth,
+  } = resolveAutoSettings({ strategy, autoDepth });
 
   // SPEC §6: exclude router from pool; empty pool → 400 (do not re-add router as worker)
-  let pool = (models || []).filter((m) => m && m !== routerModel);
-  // Nested combos as workers are an explicit non-goal (SPEC §2) — drop them if still listed
-  if (typeof strategy.filterWorker === "function") {
-    pool = pool.filter((m) => strategy.filterWorker(m));
-  }
+  const pool = buildWorkerPool({ models, routerModel, strategy });
 
   if (!pool.length) {
     return errorResponse(
@@ -104,26 +99,25 @@ export async function handleAutoChat({
 
   const emitHeaders = strategy.emitAutoRouterHeaders !== false;
   const windowDays = strategy.learningWindowDays ?? 14;
+  const { candidates, shortcut } = prepareAutoCandidates({
+    body,
+    pool,
+    heuristicFirst,
+    log,
+  });
 
   // Single-worker / heuristic shortcuts: execute without poisoning the bandit table
-  if (pool.length === 1) {
-    log?.info?.("AUTO", `pool size 1 → direct ${pool[0]}`);
+  if (shortcut) {
     return executeAndRecord({
       body,
-      worker: pool[0],
+      worker: shortcut.worker,
       pool,
       handleSingleModel,
       log,
       comboName,
       routerModel,
       objective,
-      pick: {
-        model: pool[0],
-        cluster: "general",
-        confidence: "high",
-        reason: "single_worker",
-        alternates: [],
-      },
+      pick: shortcut.pick,
       routerLatencyMs: 0,
       learningVersionId: null,
       exploration: false,
@@ -139,56 +133,140 @@ export async function handleAutoChat({
     });
   }
 
-  let candidates = pool;
-  if (heuristicFirst) {
-    const required = detectRequiredCapabilities(body);
-    if (required.size > 0) {
-      const needed = [...required];
-      const able = pool.filter((id) => modelHasCaps(id, needed));
-      if (able.length === 1) {
-        log?.info?.("AUTO", `only one model capable of [${needed}] → ${able[0]}`);
-        return executeAndRecord({
-          body,
-          worker: able[0],
-          pool,
-          handleSingleModel,
-          log,
-          comboName,
-          routerModel,
-          objective,
-          pick: {
-            model: able[0],
-            cluster: needed.includes("vision")
-              ? "vision"
-              : needed.includes("pdf")
-                ? "document"
-                : "general",
-            confidence: "high",
-            reason: "heuristic_only_capable",
-            alternates: [],
-          },
-          routerLatencyMs: 0,
-          learningVersionId: null,
-          exploration: false,
-          signals: null,
-          recordEvent,
-          skippedRouter: true,
-          stats: [],
-          autoDepth: childDepth,
-          emitHeaders,
-          loadClusterP50,
-          windowDays,
-          clientAbortSignal,
-        });
-      }
-      if (able.length > 1) {
-        candidates = reorderByCapabilities(able, required);
-      } else {
-        candidates = reorderByCapabilities(pool, required);
-      }
-    }
+  const { learning, stats } = await loadAutoRoutingData({
+    comboName,
+    strategy,
+    loadLearning,
+    loadStats,
+    log,
+  });
+  const route = await selectAutoWorker({
+    body,
+    models,
+    candidates,
+    comboName,
+    strategy,
+    learning,
+    stats,
+    objective,
+    explorationRate,
+    routerModel,
+    routerTimeoutMs,
+    childDepth,
+    handleSingleModel,
+    log,
+    clientAbortSignal,
+  });
+  if (route.response) return route.response;
+
+  return executeAndRecord({
+    body,
+    worker: route.pick.model,
+    pool: candidates,
+    handleSingleModel,
+    log,
+    comboName,
+    routerModel,
+    objective,
+    pick: route.pick,
+    routerLatencyMs: route.routerLatencyMs,
+    learningVersionId: learning?.id || strategy.activeLearningVersionId || null,
+    exploration: route.exploration,
+    signals: route.signals,
+    recordEvent,
+    alternates: route.pick.alternates,
+    stats,
+    autoDepth: childDepth,
+    routerInPool: route.routerInPool,
+    emitHeaders,
+    loadClusterP50,
+    windowDays,
+    clientAbortSignal,
+  });
+}
+
+function resolveAutoSettings({ strategy, autoDepth }) {
+  const routerModel = strategy.routerModel || DEFAULT_ROUTER;
+  const objective = strategy.objective || "balanced";
+  const explorationRate = clampExploration(strategy.explorationRate ?? 0.05);
+  const tuning = strategy.autoTuning || {};
+  const routerTimeoutMs = resolveRouterTimeoutMs(tuning.routerTimeoutMs);
+  // capacityAutoSwitch (combo setting) gates heuristic pre-filter; autoTuning.heuristicFirst is finer knob
+  const capacityAutoSwitch = strategy.capacityAutoSwitch !== false;
+  const heuristicFirst = capacityAutoSwitch && tuning.heuristicFirst !== false;
+  return {
+    routerModel,
+    objective,
+    explorationRate,
+    routerTimeoutMs,
+    heuristicFirst,
+    childDepth: autoDepth + 1,
+  };
+}
+
+function buildWorkerPool({ models, routerModel, strategy }) {
+  // Nested combos as workers are an explicit non-goal (SPEC §2) — drop them if still listed
+  let pool = (models || []).filter((m) => m && m !== routerModel);
+  if (typeof strategy.filterWorker === "function") {
+    pool = pool.filter((m) => strategy.filterWorker(m));
+  }
+  return pool;
+}
+
+function prepareAutoCandidates({ body, pool, heuristicFirst, log }) {
+  if (pool.length === 1) {
+    log?.info?.("AUTO", `pool size 1 → direct ${pool[0]}`);
+    return {
+      candidates: pool,
+      shortcut: {
+        worker: pool[0],
+        pick: {
+          model: pool[0],
+          cluster: "general",
+          confidence: "high",
+          reason: "single_worker",
+          alternates: [],
+        },
+      },
+    };
   }
 
+  let candidates = pool;
+  if (!heuristicFirst) return { candidates, shortcut: null };
+
+  const required = detectRequiredCapabilities(body);
+  if (required.size === 0) return { candidates, shortcut: null };
+
+  const needed = [...required];
+  const able = pool.filter((id) => modelHasCaps(id, needed));
+  if (able.length === 1) {
+    log?.info?.("AUTO", `only one model capable of [${needed}] → ${able[0]}`);
+    return {
+      candidates,
+      shortcut: {
+        worker: able[0],
+        pick: {
+          model: able[0],
+          cluster: needed.includes("vision")
+            ? "vision"
+            : needed.includes("pdf")
+              ? "document"
+              : "general",
+          confidence: "high",
+          reason: "heuristic_only_capable",
+          alternates: [],
+        },
+      },
+    };
+  }
+
+  candidates = able.length > 1
+    ? reorderByCapabilities(able, required)
+    : reorderByCapabilities(pool, required);
+  return { candidates, shortcut: null };
+}
+
+async function loadAutoRoutingData({ comboName, strategy, loadLearning, loadStats, log }) {
   const learningEnabled = strategy.learningEnabled !== false;
   // freezeLearning / activeLearningVersionId: loadLearning should resolve the pin or promoted version
   let learning = null;
@@ -205,7 +283,26 @@ export async function handleAutoChat({
   } catch {
     /* fail-open */
   }
+  return { learning, stats };
+}
 
+async function selectAutoWorker({
+  body,
+  models,
+  candidates,
+  comboName,
+  strategy,
+  learning,
+  stats,
+  objective,
+  explorationRate,
+  routerModel,
+  routerTimeoutMs,
+  childDepth,
+  handleSingleModel,
+  log,
+  clientAbortSignal,
+}) {
   const routerInPool = (models || []).includes(routerModel);
   if (routerInPool) {
     log?.info?.("AUTO", `router ${routerModel} also listed in models — excluded from worker pool`);
@@ -234,9 +331,55 @@ export async function handleAutoChat({
   };
 
   if (clientAbortSignal?.aborted) {
-    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Client disconnected");
+    return { response: errorResponse(HTTP_STATUS.BAD_REQUEST, "Client disconnected") };
   }
 
+  const routed = await callAutoRouter({
+    routerBody,
+    routerModel,
+    candidates,
+    routerTimeoutMs,
+    childDepth,
+    handleSingleModel,
+    log,
+    clientAbortSignal,
+  });
+  if (routed.response) return routed;
+  let { pick } = routed;
+  let exploration = false;
+  if (Math.random() < explorationRate && candidates.length > 1) {
+    const rnd = candidates[Math.floor(Math.random() * candidates.length)];
+    if (rnd !== pick.model) {
+      log?.info?.("AUTO", `exploration → ${rnd} (ε=${explorationRate})`);
+      pick = {
+        ...pick,
+        model: rnd,
+        reason: `exploration:${pick.reason || ""}`,
+        confidence: "low",
+      };
+      exploration = true;
+    }
+  }
+
+  return {
+    pick,
+    routerLatencyMs: routed.routerLatencyMs,
+    exploration,
+    signals,
+    routerInPool,
+  };
+}
+
+async function callAutoRouter({
+  routerBody,
+  routerModel,
+  candidates,
+  routerTimeoutMs,
+  childDepth,
+  handleSingleModel,
+  log,
+  clientAbortSignal,
+}) {
   let routerLatencyMs = 0;
   let pick;
   const t0 = Date.now();
@@ -258,10 +401,7 @@ export async function handleAutoChat({
     routerLatencyMs = Date.now() - t0;
     const extracted = await extractAssistantText(routerRes);
     if (extracted.httpError) {
-      log?.warn?.(
-        "AUTO",
-        `router HTTP ${extracted.status}; using pool[0]`
-      );
+      log?.warn?.("AUTO", `router HTTP ${extracted.status}; using pool[0]`);
       pick = {
         model: candidates[0],
         cluster: "unknown",
@@ -283,6 +423,9 @@ export async function handleAutoChat({
     }
   } catch (e) {
     routerLatencyMs = Date.now() - t0;
+    if (clientAbortSignal?.aborted || e?.name === "AbortError" || e?.message === "client_aborted") {
+      return { response: errorResponse(HTTP_STATUS.BAD_REQUEST, "Client disconnected") };
+    }
     log?.warn?.("AUTO", `router failed: ${e.message}; pool[0]`);
     pick = {
       model: candidates[0],
@@ -293,46 +436,7 @@ export async function handleAutoChat({
       parseError: e.message === "router_timeout" ? "router_timeout" : "error",
     };
   }
-
-  let exploration = false;
-  if (Math.random() < explorationRate && candidates.length > 1) {
-    const rnd = candidates[Math.floor(Math.random() * candidates.length)];
-    if (rnd !== pick.model) {
-      log?.info?.("AUTO", `exploration → ${rnd} (ε=${explorationRate})`);
-      pick = {
-        ...pick,
-        model: rnd,
-        reason: `exploration:${pick.reason || ""}`,
-        confidence: "low",
-      };
-      exploration = true;
-    }
-  }
-
-  return executeAndRecord({
-    body,
-    worker: pick.model,
-    pool: candidates,
-    handleSingleModel,
-    log,
-    comboName,
-    routerModel,
-    objective,
-    pick,
-    routerLatencyMs,
-    learningVersionId: learning?.id || strategy.activeLearningVersionId || null,
-    exploration,
-    signals,
-    recordEvent,
-    alternates: pick.alternates,
-    stats,
-    autoDepth: childDepth,
-    routerInPool,
-    emitHeaders,
-    loadClusterP50,
-    windowDays,
-    clientAbortSignal,
-  });
+  return { pick, routerLatencyMs };
 }
 
 async function executeAndRecord({
@@ -361,27 +465,261 @@ async function executeAndRecord({
   clientAbortSignal = null,
 }) {
   const routerPickedWorker = pick.model;
+  const clusterRefLatency = await resolveClusterReferenceLatency({
+    loadClusterP50,
+    comboName,
+    cluster: pick.cluster,
+    windowDays,
+    stats,
+  });
+
+  /** Groups all attempt rows from this chat (fallback chain). */
+  const requestId = randomUUID();
+  const { attempts, attempted, tryWorker } = createWorkerAttemptRunner({
+    body,
+    handleSingleModel,
+    log,
+    autoDepth,
+    clientAbortSignal,
+  });
+  const success = await runWorkerFallbackChain({
+    worker,
+    alternates,
+    pool,
+    attempted,
+    tryWorker,
+    log,
+  });
+
+  if (!success) {
+    // Log failures even on skippedRouter shortcuts (single-worker empty → 503)
+    // so Insights can show why; SQL bandit queries already exclude skippedRouter.
+    recordAutoFailureEvents({
+      attempts,
+      recordEvent,
+      log,
+      body,
+      comboName,
+      signals,
+      pick,
+      routerModel,
+      routerLatencyMs,
+      learningVersionId,
+      exploration,
+      skippedRouter,
+      objective,
+      routerPickedWorker,
+      clusterRefLatency,
+      requestId,
+      requestFallbackUsed: attempts.length > 1,
+      allFailed: true,
+    });
+    return errorResponse(
+      HTTP_STATUS.SERVICE_UNAVAILABLE,
+      `Auto combo "${comboName}" all workers failed`
+    );
+  }
+
+  // Intermediate failures (if any) before the winner — non-terminal bandit rows
+  if (!skippedRouter && attempts.some((a) => !a.ok)) {
+    recordAutoFailureEvents({
+      attempts, // full chain for meta.attempts; only !ok rows are written
+      recordEvent,
+      log,
+      body,
+      comboName,
+      signals,
+      pick,
+      routerModel,
+      routerLatencyMs,
+      learningVersionId,
+      exploration,
+      skippedRouter,
+      objective,
+      routerPickedWorker,
+      clusterRefLatency,
+      requestId,
+      requestFallbackUsed: true,
+      allFailed: false,
+    });
+  }
+
+  return finalizeSuccessfulWorker({
+    success,
+    attempts,
+    requestId,
+    routerPickedWorker,
+    body,
+    comboName,
+    signals,
+    pick,
+    routerModel,
+    routerLatencyMs,
+    learningVersionId,
+    exploration,
+    skippedRouter,
+    objective,
+    recordEvent,
+    log,
+    routerInPool,
+    emitHeaders,
+    clusterRefLatency,
+  });
+}
+
+async function finalizeSuccessfulWorker({
+  success,
+  attempts,
+  requestId,
+  routerPickedWorker,
+  body,
+  comboName,
+  signals,
+  pick,
+  routerModel,
+  routerLatencyMs,
+  learningVersionId,
+  exploration,
+  skippedRouter,
+  objective,
+  recordEvent,
+  log,
+  routerInPool,
+  emitHeaders,
+  clusterRefLatency,
+}) {
+  const {
+    result,
+    latencyMs,
+    modelStr: winner,
+    preInspect,
+    ttfbMs,
+    workerStartMs,
+  } = success;
+  const isRescue = winner !== routerPickedWorker;
+  const requestUsedFallback = attempts.some((a) => !a.ok) || isRescue;
+
+  // For streaming: observe completion before finalizing score; return response immediately.
+  // Rescuer is NOT penalized for earlier failures (score path: fallbackUsed/retries false).
+  // Stored column fallbackUsed is request-level (true if rescue/fallback happened).
+  const baseEvent = buildBaseAutoEvent({
+    body,
+    comboName,
+    signals,
+    pick,
+    routerModel,
+    routerLatencyMs,
+    learningVersionId,
+    exploration,
+    skippedRouter,
+    objective,
+    routerPickedWorker,
+    winner,
+    result,
+    latencyMs,
+    requestFallbackUsed: requestUsedFallback,
+    clusterRefLatency,
+    attempts,
+    requestId,
+  });
+
+  if (skippedRouter) {
+    // Do not write bandit-poisoning success events for heuristic/single shortcuts,
+    // but still emit headers so clients can see auto was skipped.
+    return emitHeaders
+      ? withAutoRouterHeaders(result, {
+          worker: winner,
+          cluster: pick.cluster,
+          confidence: pick.confidence || "high",
+          routerLatencyMs,
+          workerLatencyMs: latencyMs,
+          skipped: true,
+        })
+      : result;
+  }
+
+  const ct = (result.headers?.get?.("content-type") || "").toLowerCase();
+  const isStream = ct.includes("text/event-stream") || ct.includes("ndjson");
+
+  if (isStream && result.body) {
+    return observeStreamAndRecord({
+      response: result,
+      recordEvent,
+      log,
+      baseEvent,
+      ttfbMs: ttfbMs ?? latencyMs,
+      // Wall-clock from worker dispatch (includes probe) for accurate latency scoring
+      workerStartMs: workerStartMs || Date.now() - latencyMs,
+      emitHeaders,
+      routerLatencyMs,
+      routerInPool,
+      // Probe may accept on first event before real completion; only seed tokens
+      seedHasCompletion: !!preInspect?.hasCompletion,
+      seedTokensIn: preInspect?.tokensIn ?? null,
+      seedTokensOut: preInspect?.tokensOut ?? null,
+    });
+  }
+
+  // Non-streaming: use probe/pre-inspect when available; else clone+parse
+  const { tokensIn, tokensOut, hasCompletion } = await inspectNonStreamingResult({
+    result,
+    preInspect,
+  });
+  const outcomeScore = fireRecordEvent(recordEvent, log, {
+    ...baseEvent,
+    hasCompletion,
+    tokensIn,
+    tokensOut,
+    routerInPool,
+  });
+
+  return emitHeaders
+    ? withAutoRouterHeaders(result, {
+        worker: winner,
+        cluster: pick.cluster,
+        confidence: pick.confidence,
+        score: outcomeScore,
+        routerLatencyMs,
+        workerLatencyMs: latencyMs,
+        exploration: baseEvent.exploration,
+      })
+    : result;
+}
+
+async function resolveClusterReferenceLatency({
+  loadClusterP50,
+  comboName,
+  cluster,
+  windowDays,
+  stats,
+}) {
   // Prefer true cluster p50 when available; fall back to n-weighted mean of avgs
   let clusterRefLatency = null;
-  if (typeof loadClusterP50 === "function" && pick.cluster) {
+  if (typeof loadClusterP50 === "function" && cluster) {
     try {
-      clusterRefLatency = await loadClusterP50(comboName, pick.cluster, windowDays);
+      clusterRefLatency = await loadClusterP50(comboName, cluster, windowDays);
     } catch {
       clusterRefLatency = null;
     }
   }
   if (clusterRefLatency == null) {
-    clusterRefLatency = clusterLatencyRef(stats, pick.cluster);
+    clusterRefLatency = clusterLatencyRef(stats, cluster);
   }
-  /** Groups all attempt rows from this chat (fallback chain). */
-  const requestId = randomUUID();
+  return clusterRefLatency;
+}
+
+function createWorkerAttemptRunner({
+  body,
+  handleSingleModel,
+  log,
+  autoDepth,
+  clientAbortSignal,
+}) {
   /** @type {Set<string>} */
   const attempted = new Set();
   /** @type {Array<{worker:string,ok:boolean,status:number,latencyMs:number}>} */
   const attempts = [];
 
-  // Collect failures; flush after the chain so we can mark the last as terminal
-  // when everything fails (request-level counts use meta.terminal + requestId).
   // Empty 2xx (stream or non-stream) is treated as failure so the chain can
   // fall back before anything is committed to the client.
   const tryWorker = async (modelStr) => {
@@ -468,6 +806,17 @@ async function executeAndRecord({
     };
   };
 
+  return { attempts, attempted, tryWorker };
+}
+
+async function runWorkerFallbackChain({
+  worker,
+  alternates,
+  pool,
+  attempted,
+  tryWorker,
+  log,
+}) {
   // Primary pick
   let success = await tryWorker(worker);
 
@@ -490,77 +839,73 @@ async function executeAndRecord({
       if (success) break;
     }
   }
+  return success;
+}
 
-  if (!success) {
-    // Log failures even on skippedRouter shortcuts (single-worker empty → 503)
-    // so Insights can show why; SQL bandit queries already exclude skippedRouter.
-    if (attempts.length) {
-      flushFailureEvents({
-        attempts,
-        recordEvent,
-        log,
-        body,
-        comboName,
-        signals,
-        pick,
-        routerModel,
-        routerLatencyMs,
-        learningVersionId,
-        exploration,
-        skippedRouter,
-        objective,
-        routerPickedWorker,
-        clusterRefLatency,
-        requestId,
-        requestFallbackUsed: attempts.length > 1,
-        allFailed: true,
-      });
-    }
-    return errorResponse(
-      HTTP_STATUS.SERVICE_UNAVAILABLE,
-      `Auto combo "${comboName}" all workers failed`
-    );
-  }
+function recordAutoFailureEvents({
+  attempts,
+  recordEvent,
+  log,
+  body,
+  comboName,
+  signals,
+  pick,
+  routerModel,
+  routerLatencyMs,
+  learningVersionId,
+  exploration,
+  skippedRouter,
+  objective,
+  routerPickedWorker,
+  clusterRefLatency,
+  requestId,
+  requestFallbackUsed,
+  allFailed,
+}) {
+  if (!attempts.length) return;
+  flushFailureEvents({
+    attempts,
+    recordEvent,
+    log,
+    body,
+    comboName,
+    signals,
+    pick,
+    routerModel,
+    routerLatencyMs,
+    learningVersionId,
+    exploration,
+    skippedRouter,
+    objective,
+    routerPickedWorker,
+    clusterRefLatency,
+    requestId,
+    requestFallbackUsed,
+    allFailed,
+  });
+}
 
-  // Intermediate failures (if any) before the winner — non-terminal bandit rows
-  if (!skippedRouter && attempts.some((a) => !a.ok)) {
-    flushFailureEvents({
-      attempts, // full chain for meta.attempts; only !ok rows are written
-      recordEvent,
-      log,
-      body,
-      comboName,
-      signals,
-      pick,
-      routerModel,
-      routerLatencyMs,
-      learningVersionId,
-      exploration,
-      skippedRouter,
-      objective,
-      routerPickedWorker,
-      clusterRefLatency,
-      requestId,
-      requestFallbackUsed: true,
-      allFailed: false,
-    });
-  }
-
-  const {
-    result,
-    latencyMs,
-    modelStr: winner,
-    preInspect,
-    ttfbMs,
-    workerStartMs,
-  } = success;
-  const isRescue = winner !== routerPickedWorker;
-  const requestUsedFallback = attempts.some((a) => !a.ok) || isRescue;
-
-  // For streaming: observe completion before finalizing score; return response immediately.
-  // Rescuer is NOT penalized for earlier failures (score path: fallbackUsed/retries false).
-  // Stored column fallbackUsed is request-level (true if rescue/fallback happened).
-  const baseEvent = {
+function buildBaseAutoEvent({
+  body,
+  comboName,
+  signals,
+  pick,
+  routerModel,
+  routerLatencyMs,
+  learningVersionId,
+  exploration,
+  skippedRouter,
+  objective,
+  routerPickedWorker,
+  winner,
+  result,
+  latencyMs,
+  requestFallbackUsed,
+  clusterRefLatency,
+  attempts,
+  requestId,
+}) {
+  return {
     body,
     comboName,
     signals,
@@ -580,51 +925,15 @@ async function executeAndRecord({
     fallbackUsed: false,
     retries: 0,
     // Column + meta: the request used a fallback chain
-    requestFallbackUsed: requestUsedFallback,
+    requestFallbackUsed,
     clusterP50LatencyMs: clusterRefLatency,
     attemptsSnapshot: [...attempts],
     requestId,
     terminal: true,
   };
+}
 
-  if (skippedRouter) {
-    // Do not write bandit-poisoning success events for heuristic/single shortcuts,
-    // but still emit headers so clients can see auto was skipped.
-    return emitHeaders
-      ? withAutoRouterHeaders(result, {
-          worker: winner,
-          cluster: pick.cluster,
-          confidence: pick.confidence || "high",
-          routerLatencyMs,
-          workerLatencyMs: latencyMs,
-          skipped: true,
-        })
-      : result;
-  }
-
-  const ct = (result.headers?.get?.("content-type") || "").toLowerCase();
-  const isStream = ct.includes("text/event-stream") || ct.includes("ndjson");
-
-  if (isStream && result.body) {
-    return observeStreamAndRecord({
-      response: result,
-      recordEvent,
-      log,
-      baseEvent,
-      ttfbMs: ttfbMs ?? latencyMs,
-      // Wall-clock from worker dispatch (includes probe) for accurate latency scoring
-      workerStartMs: workerStartMs || Date.now() - latencyMs,
-      emitHeaders,
-      routerLatencyMs,
-      routerInPool,
-      // Probe may accept on first event before real completion; only seed tokens
-      seedHasCompletion: !!preInspect?.hasCompletion,
-      seedTokensIn: preInspect?.tokensIn ?? null,
-      seedTokensOut: preInspect?.tokensOut ?? null,
-    });
-  }
-
-  // Non-streaming: use probe/pre-inspect when available; else clone+parse
+async function inspectNonStreamingResult({ result, preInspect }) {
   let tokensIn = preInspect?.tokensIn ?? null;
   let tokensOut = preInspect?.tokensOut ?? null;
   let hasCompletion = !!preInspect?.hasCompletion;
@@ -644,25 +953,7 @@ async function executeAndRecord({
       hasCompletion = false;
     }
   }
-  const outcomeScore = fireRecordEvent(recordEvent, log, {
-    ...baseEvent,
-    hasCompletion,
-    tokensIn,
-    tokensOut,
-    routerInPool,
-  });
-
-  return emitHeaders
-    ? withAutoRouterHeaders(result, {
-        worker: winner,
-        cluster: pick.cluster,
-        confidence: pick.confidence,
-        score: outcomeScore,
-        routerLatencyMs,
-        workerLatencyMs: latencyMs,
-        exploration: baseEvent.exploration,
-      })
-    : result;
+  return { tokensIn, tokensOut, hasCompletion };
 }
 
 

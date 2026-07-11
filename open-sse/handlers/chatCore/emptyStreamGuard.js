@@ -89,6 +89,30 @@ function classifyEvent(parsed, meaningfulSeen) {
 }
 
 /**
+ * Abort-aware backoff timer.
+ *
+ * Pure helper extracted for testability. Returns a promise that resolves
+ * after `delayMs` or immediately on signal abort (clearing the pending
+ * timer). On normal timer expiry the abort listener is removed so no
+ * dangling reference to the promise closure survives.
+ *
+ * @param {AbortSignal|null|undefined} signal
+ * @param {number} delayMs
+ * @returns {Promise<void>}
+ */
+export function waitForBackoff(signal, delayMs) {
+  return new Promise((resolve) => {
+    let t;
+    const onAbort = () => { clearTimeout(t); resolve(); };
+    t = setTimeout(() => {
+      signal?.removeEventListener?.("abort", onAbort);
+      resolve();
+    }, delayMs);
+    signal?.addEventListener?.("abort", onAbort, { once: true });
+  });
+}
+
+/**
  * Wrap the upstream SSE body so empty attempts are retried in-stream.
  *
  * @param {ReadableStream} options.body       attempt 1's body
@@ -107,6 +131,17 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
   const encoder = new TextEncoder();
   let currentReader = null;
   let downstreamGone = false;
+  let demandWaiter = null;
+  let demandAbortHandler = null;
+  const releaseDemandWaiter = () => {
+    const resolve = demandWaiter;
+    demandWaiter = null;
+    if (demandAbortHandler) {
+      signal?.removeEventListener?.("abort", demandAbortHandler);
+      demandAbortHandler = null;
+    }
+    resolve?.();
+  };
 
   return new ReadableStream({
     async start(controller) {
@@ -114,8 +149,23 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
       let meaningfulSeen = false;
       let lastHeld = null; // last withheld terminal, kept for the exhaustion event
 
-      const emit = (text) => {
+      const waitForDemand = () => {
+        const desiredSize = controller.desiredSize;
+        if (downstreamGone || signal?.aborted || desiredSize == null || desiredSize > 0) {
+          return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+          demandWaiter = resolve;
+          if (signal?.addEventListener) {
+            demandAbortHandler = releaseDemandWaiter;
+            signal.addEventListener("abort", demandAbortHandler, { once: true });
+          }
+        });
+      };
+      const emit = async (text) => {
         if (downstreamGone) return;
+        await waitForDemand();
+        if (downstreamGone || signal?.aborted) return;
         try { controller.enqueue(encoder.encode(text)); } catch { downstreamGone = true; }
       };
       const closeStream = () => {
@@ -123,6 +173,7 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
         try { controller.close(); } catch { /* already closed */ }
       };
       const abortStream = () => {
+        releaseDemandWaiter();
         // cancel() rejects when the stream already errored — swallow the promise too
         try { currentReader.cancel().catch(() => { }); } catch { /* already closed */ }
         if (downstreamGone) return;
@@ -143,7 +194,7 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
         const line = lastHeld?.kind === "error_object"
           ? lastHeld.line
           : `data: ${JSON.stringify({ error: { code: 502, status: "EMPTY_RESPONSE", message: reason } })}`;
-        emit(`${line}\n\n`);
+        await emit(`${line}\n\n`);
         closeStream();
       };
 
@@ -193,15 +244,15 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
             if (held) continue;
 
             const trimmed = line.trim();
-            if (!trimmed.startsWith("data:")) { emit(line + "\n"); continue; }
+            if (!trimmed.startsWith("data:")) { await emit(line + "\n"); continue; }
             const payload = trimmed.slice(5).trim();
-            if (!payload || payload === "[DONE]") { emit(line + "\n"); continue; }
+            if (!payload || payload === "[DONE]") { await emit(line + "\n"); continue; }
 
             let parsed;
             try {
               parsed = JSON.parse(payload);
             } catch {
-              emit(line + "\n"); // not ours to judge — forward verbatim
+              await emit(line + "\n"); // not ours to judge — forward verbatim
               continue;
             }
 
@@ -213,7 +264,7 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
               continue;
             }
             if (decision.terminal) terminalForwarded = true;
-            emit(line + "\n");
+            await emit(line + "\n");
           }
         }
 
@@ -222,7 +273,7 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
         // finalization and is never retried (replay-unsafe, as in oh-my-pi).
         if (meaningfulSeen || terminalForwarded) {
           const remaining = lineBuffer + decoder.decode();
-          if (!held && remaining) emit(remaining);
+          if (!held && remaining) await emit(remaining);
           closeStream();
           return;
         }
@@ -235,10 +286,7 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
         }
 
         // Abort-aware backoff, then splice the retried attempt into this stream.
-        await new Promise((resolve) => {
-          const t = setTimeout(resolve, baseDelayMs * 2 ** attempt);
-          signal?.addEventListener?.("abort", () => { clearTimeout(t); resolve(); }, { once: true });
-        });
+        await waitForBackoff(signal, baseDelayMs * 2 ** attempt);
         if (signal?.aborted) return abortStream();
 
         try {
@@ -250,8 +298,13 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
       }
     },
 
+    pull() {
+      releaseDemandWaiter();
+    },
+
     cancel(reason) {
       downstreamGone = true;
+      releaseDemandWaiter();
       try { currentReader?.cancel(reason)?.catch?.(() => { }); } catch { /* already closed */ }
     },
   });

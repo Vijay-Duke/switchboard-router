@@ -7,6 +7,14 @@ let translationMap = {};
 let currentLocale = DEFAULT_LOCALE;
 let reloadCallbacks = [];
 
+const TRANSLATABLE_ATTRIBUTES = {
+  "data-i18n-placeholder": "placeholder",
+  "data-i18n-title": "title",
+  "data-i18n-aria-label": "aria-label",
+  "data-i18n-alt": "alt",
+};
+const AUTO_TRANSLATABLE_ATTRIBUTES = ["placeholder", "title", "aria-label", "alt"];
+
 // Read locale from cookie
 function getLocaleFromCookie() {
   if (typeof document === "undefined") return DEFAULT_LOCALE;
@@ -63,14 +71,7 @@ function processTextNode(node) {
   const parent = node.parentElement;
   if (!parent) return;
   
-  // Skip if parent or any ancestor has data-i18n-skip attribute
-  let element = parent;
-  while (element) {
-    if (element.hasAttribute && element.hasAttribute('data-i18n-skip')) {
-      return;
-    }
-    element = element.parentElement;
-  }
+  if (isI18nSkipped(parent)) return;
   
   const tagName = parent.tagName?.toLowerCase();
   
@@ -78,7 +79,6 @@ function processTextNode(node) {
   const skipTags = [
     "script", "style", "code", "pre",
     "colgroup", "table", "thead", "tbody", "tfoot", "tr",
-    "select", "datalist", "optgroup"
   ];
   
   if (skipTags.includes(tagName)) return;
@@ -96,6 +96,55 @@ function processTextNode(node) {
   if (translated !== node.nodeValue) {
     node.nodeValue = translated;
   }
+}
+
+function isI18nSkipped(element) {
+  let current = element;
+  while (current) {
+    if (current.hasAttribute?.("data-i18n-skip")) return true;
+    current = current.parentElement;
+  }
+  return false;
+}
+
+function processI18nAttributes(element) {
+  if (!element || isI18nSkipped(element)) return;
+
+  const textKey = element.getAttribute?.("data-i18n");
+  if (textKey && element.children?.length === 0) {
+    const translated = translate(textKey);
+    if (element.textContent !== translated) element.textContent = translated;
+  }
+
+  const originalAttributes = element._originalI18nAttributes || {};
+  const lastTranslatedAttributes = element._lastI18nAttributeValues || {};
+  for (const targetAttribute of AUTO_TRANSLATABLE_ATTRIBUTES) {
+    const sourceAttribute = Object.keys(TRANSLATABLE_ATTRIBUTES)
+      .find((attribute) => TRANSLATABLE_ATTRIBUTES[attribute] === targetAttribute);
+    const markedSource = sourceAttribute ? element.getAttribute?.(sourceAttribute) : null;
+    const current = element.getAttribute?.(targetAttribute);
+    if (!markedSource && current == null) continue;
+
+    let source = markedSource || originalAttributes[targetAttribute];
+    if (markedSource) {
+      source = markedSource;
+    } else if (source === undefined) {
+      source = current;
+    } else if (current !== lastTranslatedAttributes[targetAttribute] && current !== source) {
+      // React may have supplied a new English attribute value since the last pass.
+      source = current;
+    }
+    if (!source) continue;
+
+    const translated = translate(source);
+    if (current !== translated) {
+      element.setAttribute(targetAttribute, translated);
+    }
+    originalAttributes[targetAttribute] = source;
+    lastTranslatedAttributes[targetAttribute] = translated;
+  }
+  element._originalI18nAttributes = originalAttributes;
+  element._lastI18nAttributeValues = lastTranslatedAttributes;
 }
 
 // Process all text nodes in element
@@ -119,6 +168,9 @@ function processElement(element) {
   
   // Process collected nodes
   nodesToProcess.forEach(processTextNode);
+
+  processI18nAttributes(element);
+  element.querySelectorAll?.("*")?.forEach(processI18nAttributes);
 }
 
 // Initialize runtime i18n
@@ -134,6 +186,10 @@ export async function initRuntimeI18n() {
   // Watch for new nodes
   const observer = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
+      if (mutation.type === "attributes") {
+        processI18nAttributes(mutation.target);
+        return;
+      }
       mutation.addedNodes.forEach((node) => {
         if (node.nodeType === Node.ELEMENT_NODE) {
           processElement(node);
@@ -147,6 +203,19 @@ export async function initRuntimeI18n() {
   observer.observe(document.body, {
     childList: true,
     subtree: true,
+    attributes: true,
+    attributeFilter: [
+      "data-i18n",
+      "data-i18n-skip",
+      "data-i18n-placeholder",
+      "data-i18n-title",
+      "data-i18n-aria-label",
+      "data-i18n-alt",
+      "placeholder",
+      "title",
+      "aria-label",
+      "alt",
+    ],
   });
 }
 

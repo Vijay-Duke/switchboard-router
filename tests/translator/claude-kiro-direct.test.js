@@ -176,4 +176,63 @@ describe("Kiro → Claude (direct route, OpenAI-shaped chunks from executor)", (
     const md = events.find((e) => e.type === "message_delta");
     expect(md.delta.stop_reason).toBe("tool_use");
   });
+
+  it("flushes buffered tool calls and emits message_stop when finish_reason is truncated", () => {
+    const state = {};
+    R(
+      {
+        id: "chatcmpl-truncated",
+        model: "m",
+        choices: [{
+          index: 0,
+          delta: {
+            tool_calls: [{
+              index: 0,
+              id: "tu-truncated",
+              function: { name: "search", arguments: '{"q":"x"}' },
+            }],
+          },
+          finish_reason: null,
+        }],
+      },
+      state
+    );
+
+    const events = R(null, state);
+    const jsonDelta = events.find(
+      (e) => e.type === "content_block_delta" && e.delta.type === "input_json_delta"
+    );
+    expect(jsonDelta.delta.partial_json).toBe('{"q":"x"}');
+    expect(events).toContainEqual({ type: "content_block_stop", index: 0 });
+    expect(events.find((e) => e.type === "message_delta")).toMatchObject({
+      delta: { stop_reason: "end_turn" },
+    });
+    expect(events.at(-1)).toEqual({ type: "message_stop" });
+    expect(R(null, state)).toEqual([]);
+  });
+
+  it("does not emit duplicate terminal events for duplicate finish chunks", () => {
+    const state = {};
+    R(
+      {
+        id: "chatcmpl-duplicate-finish",
+        model: "m",
+        choices: [{ index: 0, delta: { content: "done" }, finish_reason: null }],
+      },
+      state
+    );
+
+    const finish = {
+      id: "chatcmpl-duplicate-finish",
+      model: "m",
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+    };
+    const first = R(finish, state);
+    expect(first).toContainEqual({ type: "message_stop" });
+    expect(R(finish, state)).toEqual([]);
+  });
+
+  it("does not synthesize a Claude terminal event for an empty stream", () => {
+    expect(R(null, {})).toEqual([]);
+  });
 });

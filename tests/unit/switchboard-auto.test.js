@@ -1166,4 +1166,28 @@ describe("handleAutoChat", () => {
     });
     expect(sawSignal).toBe(true);
   });
+
+  it("stops before routing when the client is already disconnected", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let calls = 0;
+
+    const res = await handleAutoChat({
+      body,
+      models: POOL,
+      handleSingleModel: async () => {
+        calls += 1;
+        return openaiChatText("unexpected");
+      },
+      log: { info: () => {}, warn: () => {} },
+      comboName: "auto",
+      strategy: { routerModel: "router/x", explorationRate: 0 },
+      recordEvent,
+      clientAbortSignal: controller.signal,
+    });
+
+    expect(res.status).toBe(400);
+    expect(await res.text()).toMatch(/client disconnected/i);
+    expect(calls).toBe(0);
+  });
 });

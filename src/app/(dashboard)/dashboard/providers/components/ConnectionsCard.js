@@ -150,14 +150,18 @@ function AddApiKeyModal({ isOpen, provider, providerName, onSave, onClose }) {
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
   const [saving, setSaving] = useState(false);
+  const hasName = formData.name.trim().length > 0;
+  const hasApiKey = formData.apiKey.trim().length > 0;
 
   const handleValidate = async () => {
+    const apiKey = formData.apiKey.trim();
+    if (!apiKey) return;
     setValidating(true);
     try {
       const res = await fetch("/api/providers/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, apiKey: formData.apiKey }),
+        body: JSON.stringify({ provider, apiKey }),
       });
       const data = await res.json();
       setValidationResult(data.valid ? "success" : "failed");
@@ -166,7 +170,9 @@ function AddApiKeyModal({ isOpen, provider, providerName, onSave, onClose }) {
   };
 
   const handleSubmit = async () => {
-    if (!provider || !formData.apiKey) return;
+    const name = formData.name.trim();
+    const apiKey = formData.apiKey.trim();
+    if (!provider || !name || !apiKey) return;
     setSaving(true);
     try {
       let isValid = false;
@@ -175,7 +181,7 @@ function AddApiKeyModal({ isOpen, provider, providerName, onSave, onClose }) {
         const res = await fetch("/api/providers/validate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, apiKey: formData.apiKey }),
+          body: JSON.stringify({ provider, apiKey }),
         });
         const data = await res.json();
         isValid = !!data.valid;
@@ -183,8 +189,8 @@ function AddApiKeyModal({ isOpen, provider, providerName, onSave, onClose }) {
       } catch { setValidationResult("failed"); }
       finally { setValidating(false); }
       await onSave({
-        name: formData.name,
-        apiKey: formData.apiKey,
+        name,
+        apiKey,
         priority: formData.priority,
         testStatus: isValid ? "active" : "unknown",
       });
@@ -206,7 +212,7 @@ function AddApiKeyModal({ isOpen, provider, providerName, onSave, onClose }) {
             <input type="password" autoComplete="off" className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary" value={formData.apiKey} onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })} />
           </div>
           <div className="pt-6">
-            <Button onClick={handleValidate} disabled={!formData.apiKey || validating || saving} variant="secondary">
+            <Button onClick={handleValidate} disabled={!hasApiKey || validating || saving} variant="secondary">
               {validating ? "Checking..." : "Check"}
             </Button>
           </div>
@@ -218,10 +224,10 @@ function AddApiKeyModal({ isOpen, provider, providerName, onSave, onClose }) {
         )}
         <div>
           <label className="text-xs text-text-muted mb-1 block">Priority</label>
-          <input type="number" className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary" value={formData.priority} onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value) || 1 })} />
+          <input type="number" min={1} className="w-full px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary" value={formData.priority} onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value) || 1 })} />
         </div>
         <div className="flex gap-2">
-          <Button onClick={handleSubmit} fullWidth disabled={!formData.name || !formData.apiKey || saving}>
+          <Button onClick={handleSubmit} fullWidth disabled={!hasName || !hasApiKey || saving}>
             {saving ? "Saving..." : "Save"}
           </Button>
           <Button onClick={onClose} variant="ghost" fullWidth>Cancel</Button>
@@ -303,9 +309,10 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
 
   const handleDelete = async (id) => {
     const connection = connections.find((item) => item.id === id);
+    const connectionLabel = connection?.name?.trim() || connection?.email?.trim() || id;
     setConfirmState({
       title: "Delete Connection",
-      message: `Delete connection “${connection?.name || connection?.email || id}”?`,
+      message: `Delete connection “${connectionLabel}”?`,
       onConfirm: async () => {
         setConfirmState(null);
         try {

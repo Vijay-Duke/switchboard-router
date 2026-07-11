@@ -252,9 +252,10 @@ export default function EndpointPageClient({ initialData }) {
                     checked={key.isActive ?? true}
                     onChange={(checked) => {
                       if (key.isActive && !checked) {
+                        const keyLabel = key.name?.trim() || key.id;
                         setConfirmState({
                           title: "Pause API Key",
-                          message: `Pause API key "${key.name}"?\n\nThis key will stop working immediately but can be resumed later.`,
+                          message: `Pause API key "${keyLabel}"?\n\nThis key will stop working immediately but can be resumed later.`,
                           onConfirm: async () => {
                             setConfirmState(null);
                             toggleKeyMutation.mutate({ id: key.id, isActive: checked });
@@ -271,7 +272,7 @@ export default function EndpointPageClient({ initialData }) {
                     onClick={() =>
                       setConfirmState({
                         title: "Delete API Key",
-                        message: "Delete this API key?",
+                        message: `Delete API key "${key.name?.trim() || key.id}"?`,
                         onConfirm: async () => {
                           setConfirmState(null);
                           deleteKeyMutation.mutate(key.id);

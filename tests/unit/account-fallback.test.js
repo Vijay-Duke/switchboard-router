@@ -53,7 +53,7 @@ describe("checkFallbackError classification", () => {
     ["401 rotates on a long cooldown", 401, "", true, LONG_COOLDOWN],
     ["402 rotates on a long cooldown", 402, "", true, LONG_COOLDOWN],
     ["403 rotates on a long cooldown", 403, "", true, LONG_COOLDOWN],
-    ["404 rotates on a long cooldown", 404, "", true, LONG_COOLDOWN],
+    ["404 does not rotate accounts", 404, "", false, LONG_COOLDOWN],
     ["500 is transient", 500, "", true, TRANSIENT_COOLDOWN_MS],
     ["503 is transient", 503, "", true, TRANSIENT_COOLDOWN_MS],
     ["408 is transient, not a request bug", 408, "", true, TRANSIENT_COOLDOWN_MS],

@@ -57,18 +57,19 @@ export async function handleImageGeneration(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId }),
+      handleSingleModel: (b, m, callOpts) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, signal: callOpts?.signal }),
       log,
       comboName: modelStr,
       comboStrategy,
       comboStickyLimit,
+      abortSignal: request?.signal || null,
     });
   }
 
-  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId });
+  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, signal: request?.signal || null });
 }
 
-async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId } = {}) {
+async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, signal = null } = {}) {
   const modelInfo = await getModelInfo(modelStr);
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
@@ -81,6 +82,7 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
       modelInfo: { provider, model },
       credentials: null,
       binaryOutput,
+      abortSignal: signal,
     });
     if (result.success) return result.response;
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Image generation failed");
@@ -114,6 +116,7 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
       credentials: refreshedCredentials,
       streamToClient: wantsStream,
       binaryOutput,
+      abortSignal: signal,
       onCredentialsRefreshed: async (newCreds) => {
         await updateProviderCredentials(credentials.connectionId, {
           accessToken: newCreds.accessToken,

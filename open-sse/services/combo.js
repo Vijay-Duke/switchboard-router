@@ -6,6 +6,11 @@ import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
 import { unavailableResponse } from "../utils/error.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
+import { detectFormat } from "./provider.js";
+import { FORMATS } from "../translator/formats.js";
+import { initState, translateResponse } from "../translator/index.js";
+import { formatSSE } from "../utils/streamHelpers.js";
+import { SSE_DONE, SSE_HEADERS_CORS } from "../utils/sseConstants.js";
 
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
 // stripped). Must be prioritized. Soft (e.g. search) only degrades a feature.
@@ -219,6 +224,48 @@ export function getComboModelsFromData(modelStr, combosData) {
   return null;
 }
 
+function abortedComboResponse() {
+  return new Response(
+    JSON.stringify({ error: { message: "Request aborted" } }),
+    { status: 499, headers: { "Content-Type": "application/json" } }
+  );
+}
+
+function mergeAbortSignals(...signals) {
+  const active = signals.filter((signal) => signal && typeof signal === "object");
+  if (active.length === 0) return undefined;
+  if (active.length === 1) return active[0];
+  if (typeof AbortSignal.any === "function") return AbortSignal.any(active);
+
+  const controller = new AbortController();
+  const onAbort = (event) => {
+    try { controller.abort(event?.target?.reason); } catch { /* ignore */ }
+  };
+  for (const signal of active) {
+    if (signal.aborted) {
+      onAbort({ target: signal });
+      break;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  }
+  return controller.signal;
+}
+
+function waitForComboDelay(ms, signal) {
+  if (!signal || ms <= 0) return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => {
+    let timer = null;
+    const finish = () => {
+      if (timer) clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    timer = setTimeout(finish, ms);
+    if (signal.aborted) finish();
+    else signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
 /**
  * Handle combo chat with fallback
  * @param {Object} options
@@ -229,9 +276,13 @@ export function getComboModelsFromData(modelStr, combosData) {
  * @param {string} [options.comboName] - Name of the combo (for round-robin tracking)
  * @param {string} [options.comboStrategy] - Strategy: "fallback" or "round-robin"
  * @param {number|string} [options.comboStickyLimit=1] - Requests per combo model before switching
+ * @param {AbortSignal} [options.abortSignal] - Caller disconnect signal
  * @returns {Promise<Response>}
  */
-export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true }) {
+export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, abortSignal = null, clientAbortSignal = null, signal = null }) {
+  const callerSignal = abortSignal || clientAbortSignal || signal || null;
+  if (callerSignal?.aborted) return abortedComboResponse();
+
   // Apply rotation strategy if enabled
   let rotatedModels = getRotatedModels(models, comboName, comboStrategy, comboStickyLimit);
 
@@ -261,7 +312,11 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       const attemptBody = typeof structuredClone === "function"
         ? structuredClone(body)
         : JSON.parse(JSON.stringify(body));
-      const result = await handleSingleModel(attemptBody, modelStr);
+      const result = await handleSingleModel(attemptBody, modelStr, {
+        signal: callerSignal || undefined,
+      });
+
+      if (callerSignal?.aborted) return abortedComboResponse();
       
       // Success (2xx) - return response
       if (result.ok) {
@@ -290,8 +345,13 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         try { errorText = JSON.stringify(errorText); } catch { errorText = String(errorText); }
       }
 
-      // Check if should fallback to next model
-      const { shouldFallback, cooldownMs } = checkFallbackError(result.status, errorText);
+      // In combo context, 404 (model not found) should advance to the next
+      // candidate — the next model may be available. This overrides the
+      // account-level 404 rule (shouldFallback: false) which prevents rotating
+      // accounts for an unavailable model.
+      const isNotFound = result.status === 404;
+      const { shouldFallback: fb, cooldownMs } = checkFallbackError(result.status, errorText);
+      const shouldFallback = isNotFound ? true : fb;
 
       if (!shouldFallback) {
         log.warn("COMBO", `Model ${modelStr} failed (no fallback)`, { status: result.status });
@@ -304,7 +364,8 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       if (cooldownMs && cooldownMs > 0 && cooldownMs <= 5000 &&
           (result.status === 503 || result.status === 502 || result.status === 504)) {
         log.info("COMBO", `Model ${modelStr} transient ${result.status}, waiting ${cooldownMs}ms before next`);
-        await new Promise(r => setTimeout(r, cooldownMs));
+        await waitForComboDelay(cooldownMs, callerSignal);
+        if (callerSignal?.aborted) return abortedComboResponse();
       }
 
       // Fallback to next model
@@ -312,6 +373,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       if (!lastStatus) lastStatus = result.status;
       log.warn("COMBO", `Model ${modelStr} failed, trying next`, { status: result.status });
     } catch (error) {
+      if (callerSignal?.aborted) return abortedComboResponse();
       // Catch unexpected exceptions to ensure fallback continues
       lastError = error.message || String(error);
       if (!lastStatus) lastStatus = 500;
@@ -369,6 +431,13 @@ function extractPanelText(json) {
     if (t.trim()) return t;
   }
 
+  // Antigravity wraps Gemini candidates in a response envelope.
+  const wrappedParts = json.response?.candidates?.[0]?.content?.parts;
+  if (Array.isArray(wrappedParts)) {
+    const t = wrappedParts.map((p) => p?.text || "").join("");
+    if (t.trim()) return t;
+  }
+
   // OpenAI Responses API
   if (Array.isArray(json.output)) {
     const t = json.output
@@ -378,6 +447,161 @@ function extractPanelText(json) {
   }
 
   return "";
+}
+
+function extractPanelReasoning(json) {
+  if (!json || typeof json !== "object") return "";
+
+  const messageReasoning = json.choices?.[0]?.message?.reasoning_content;
+  if (typeof messageReasoning === "string") return messageReasoning;
+
+  const claudeReasoning = Array.isArray(json.content)
+    ? json.content.filter((block) => block?.type === "thinking").map((block) => block.thinking || "").join("")
+    : "";
+  if (claudeReasoning) return claudeReasoning;
+
+  const parts = json.candidates?.[0]?.content?.parts || json.response?.candidates?.[0]?.content?.parts;
+  if (Array.isArray(parts)) {
+    return parts.filter((part) => part?.thought === true).map((part) => part.text || "").join("");
+  }
+
+  return "";
+}
+
+function buildBufferedCompletion(json, body, model) {
+  const fallbackId = `chatcmpl-${Date.now()}`;
+  const fallbackModel = model || body?.model || "combo";
+  const fallbackCreated = Math.floor(Date.now() / 1000);
+
+  if (Array.isArray(json?.choices) && json.choices.length > 0) {
+    return {
+      ...json,
+      id: json.id || fallbackId,
+      object: json.object || "chat.completion",
+      created: json.created || fallbackCreated,
+      model: json.model || fallbackModel,
+      choices: json.choices.map((choice, index) => ({
+        ...choice,
+        index: choice.index ?? index,
+        message: {
+          role: choice.message?.role || "assistant",
+          ...(choice.message || {}),
+        },
+      })),
+    };
+  }
+
+  const reasoning = extractPanelReasoning(json);
+  return {
+    id: json?.id || fallbackId,
+    object: "chat.completion",
+    created: json?.created || fallbackCreated,
+    model: json?.model || fallbackModel,
+    choices: [{
+      index: 0,
+      message: {
+        role: "assistant",
+        content: extractPanelText(json),
+        ...(reasoning ? { reasoning_content: reasoning } : {}),
+      },
+      finish_reason: json?.stop_reason || "stop",
+    }],
+    ...(json?.usage ? { usage: json.usage } : {}),
+  };
+}
+
+function buildBufferedOpenAIChunks(completion) {
+  const choice = completion.choices?.[0] || {};
+  const message = choice.message || {};
+  const delta = { role: message.role || "assistant" };
+  for (const key of ["content", "reasoning_content", "tool_calls", "function_call"]) {
+    if (message[key] !== undefined) delta[key] = message[key];
+  }
+
+  const base = {
+    id: completion.id,
+    object: "chat.completion.chunk",
+    created: completion.created,
+    model: completion.model,
+  };
+  return [
+    {
+      ...base,
+      choices: [{ index: choice.index ?? 0, delta, finish_reason: null }],
+    },
+    {
+      ...base,
+      choices: [{
+        index: choice.index ?? 0,
+        delta: {},
+        finish_reason: choice.finish_reason || (message.tool_calls ? "tool_calls" : "stop"),
+      }],
+      ...(completion.usage ? { usage: completion.usage } : {}),
+    },
+  ];
+}
+
+function streamFormatForBody(body) {
+  try {
+    return detectFormat(body) || FORMATS.OPENAI;
+  } catch {
+    return FORMATS.OPENAI;
+  }
+}
+
+function streamFormatForBufferedResponse(body, json) {
+  const bodyFormat = streamFormatForBody(body);
+  if (bodyFormat !== FORMATS.OPENAI) return bodyFormat;
+  if (json?.type === "message" || Array.isArray(json?.content)) return FORMATS.CLAUDE;
+  if (json?.object === "response" || (Array.isArray(json?.output) && body?.input)) {
+    return FORMATS.OPENAI_RESPONSES;
+  }
+  if (Array.isArray(json?.candidates) || Array.isArray(json?.response?.candidates)) {
+    return body?.userAgent === FORMATS.ANTIGRAVITY ? FORMATS.ANTIGRAVITY : FORMATS.GEMINI;
+  }
+  return bodyFormat;
+}
+
+async function wrapBufferedResponseAsSse(response, body, model) {
+  if (!response?.ok || body?.stream !== true) return response;
+
+  const contentType = response.headers?.get?.("content-type") || "";
+  if (contentType.toLowerCase().includes("text/event-stream")) return response;
+
+  let json;
+  try {
+    const readable = typeof response.clone === "function" ? response.clone() : response;
+    json = await readable.json();
+  } catch {
+    return response;
+  }
+
+  const sourceFormat = streamFormatForBufferedResponse(body, json);
+  const completion = buildBufferedCompletion(json, body, model);
+  const state = initState(sourceFormat);
+  const frames = [];
+  for (const chunk of buildBufferedOpenAIChunks(completion)) {
+    const translated = translateResponse(FORMATS.OPENAI, sourceFormat, chunk, state) || [];
+    for (const item of translated) {
+      if (item !== null && item !== undefined) frames.push(formatSSE(item, sourceFormat));
+    }
+  }
+
+  const flushed = translateResponse(FORMATS.OPENAI, sourceFormat, null, state) || [];
+  for (const item of flushed) {
+    if (item !== null && item !== undefined) frames.push(formatSSE(item, sourceFormat));
+  }
+  // Native Claude/Gemini-family clients terminate on their protocol events;
+  // an OpenAI `[DONE]` sentinel is invalid for those wire formats. OpenAI
+  // Chat and Responses clients explicitly expect the sentinel.
+  if (sourceFormat === FORMATS.OPENAI || sourceFormat === FORMATS.OPENAI_RESPONSES) {
+    frames.push(SSE_DONE);
+  }
+
+  return new Response(frames.join(""), {
+    status: response.status,
+    headers: SSE_HEADERS_CORS,
+  });
 }
 
 /**
@@ -470,18 +694,21 @@ function withTimeout(promise, ms, abortController) {
  * stragglers stop consuming provider credits.
  * Returns a sparse array aligned to `calls` (undefined = not yet / dropped).
  */
-function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs, abortControllers = [] }) {
+function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs, abortControllers = [], abortSignal = null }) {
   return new Promise((resolve) => {
     const out = new Array(calls.length);
     let settled = 0;
     let ok = 0;
     let finished = false;
     let graceTimer = null;
+    let hardTimer = null;
+    const onCallerAbort = () => finish();
     const finish = () => {
       if (finished) return;
       finished = true;
-      clearTimeout(hardTimer);
+      if (hardTimer) clearTimeout(hardTimer);
       if (graceTimer) clearTimeout(graceTimer);
+      abortSignal?.removeEventListener?.("abort", onCallerAbort);
       // Abort any panel still in flight (stragglers / non-quorum)
       for (const ac of abortControllers) {
         if (ac && !ac.signal.aborted) {
@@ -490,7 +717,14 @@ function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs, a
       }
       resolve(out);
     };
-    const hardTimer = setTimeout(finish, panelHardTimeoutMs);
+    hardTimer = setTimeout(finish, panelHardTimeoutMs);
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        finish();
+        return;
+      }
+      abortSignal.addEventListener("abort", onCallerAbort, { once: true });
+    }
     calls.forEach((p, i) => {
       Promise.resolve(p)
         .then((v) => { out[i] = v; })
@@ -526,9 +760,13 @@ function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs, a
  * @param {string} [options.comboName] - Combo name (logging)
  * @param {string} [options.judgeModel] - Judge model; falls back to panel[0]
  * @param {Object} [options.tuning] - Override FUSION_DEFAULTS (minPanel, grace, timeout)
+ * @param {AbortSignal} [options.abortSignal] - Caller disconnect signal
  * @returns {Promise<Response>}
  */
-export async function handleFusionChat({ body, models, handleSingleModel, log, comboName, judgeModel, tuning }) {
+export async function handleFusionChat({ body, models, handleSingleModel, log, comboName, judgeModel, tuning, abortSignal = null, clientAbortSignal = null, signal = null }) {
+  const callerSignal = abortSignal || clientAbortSignal || signal || null;
+  if (callerSignal?.aborted) return abortedComboResponse();
+
   const panel = Array.isArray(models) ? models.filter(Boolean) : [];
   if (panel.length === 0) {
     return new Response(
@@ -539,7 +777,13 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
 
   // A single-model fusion has nothing to fuse — just answer directly.
   if (panel.length === 1) {
-    return handleSingleModel(body, panel[0]);
+    try {
+      const result = await handleSingleModel(body, panel[0], { signal: callerSignal || undefined });
+      return wrapBufferedResponseAsSse(result, body, panel[0]);
+    } catch (error) {
+      if (callerSignal?.aborted) return abortedComboResponse();
+      throw error;
+    }
   }
 
   const cfg = { ...FUSION_DEFAULTS, ...(tuning || {}) };
@@ -561,16 +805,18 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   const t0 = Date.now();
   // M3: per-panel AbortControllers so stragglers are cancelled after collection
   const abortControllers = panel.map(() => new AbortController());
+  const panelSignals = abortControllers.map((controller) => mergeAbortSignals(callerSignal, controller.signal));
   const calls = panel.map((m, i) =>
     withTimeout(
       // Prefer callOpts shape { isPanel, signal }; third-arg `true` still works for old wrappers
-      handleSingleModel(panelBody, m, { isPanel: true, signal: abortControllers[i].signal }),
+      handleSingleModel(panelBody, m, { isPanel: true, signal: panelSignals[i] }),
       cfg.panelHardTimeoutMs,
       abortControllers[i]
     )
   );
-  const settled = await collectPanel(calls, { ...cfg, minPanel, abortControllers });
+  const settled = await collectPanel(calls, { ...cfg, minPanel, abortControllers, abortSignal: callerSignal });
   log.info("FUSION", `fan-out collected in ${Date.now() - t0}ms`);
+  if (callerSignal?.aborted) return abortedComboResponse();
 
   // 2. Collect successful answers (body already buffered for survivor path — no re-dispatch).
   const answers = [];
@@ -606,11 +852,17 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   if (answers.length === 1) {
     // M3: reuse buffered answer — do NOT re-dispatch (double bill / rate-limit risk)
     log.info("FUSION", `Only ${answers[0].model} succeeded — returning buffered answer (no re-dispatch)`);
-    return answers[0].response;
+    return wrapBufferedResponseAsSse(answers[0].response, body, answers[0].model);
   }
 
   // 4. Judge analyzes + writes one final answer (streams to client if requested).
   const judgeBody = appendUserTurn(body, buildJudgePrompt(answers));
   log.info("FUSION", `Judging ${answers.length} answers with ${judge}`);
-  return handleSingleModel(judgeBody, judge);
+  try {
+    const result = await handleSingleModel(judgeBody, judge, { signal: callerSignal || undefined });
+    return wrapBufferedResponseAsSse(result, body, judge);
+  } catch (error) {
+    if (callerSignal?.aborted) return abortedComboResponse();
+    throw error;
+  }
 }

@@ -2,26 +2,92 @@ import { register } from "../registry.js";
 import { FORMATS } from "../formats.js";
 import { GEMINI_ROLE, OPENAI_FINISH, GEMINI_FINISH } from "../schema/index.js";
 
+const FINISH_REASON_MAP = {
+  [OPENAI_FINISH.STOP]: GEMINI_FINISH.STOP,
+  [OPENAI_FINISH.LENGTH]: GEMINI_FINISH.MAX_TOKENS,
+  [OPENAI_FINISH.TOOL_CALLS]: GEMINI_FINISH.STOP,
+  [OPENAI_FINISH.CONTENT_FILTER]: GEMINI_FINISH.SAFETY,
+};
+
+function appendToolCallParts(state, parts) {
+  for (const idx of Object.keys(state._toolCallAccum)) {
+    const accum = state._toolCallAccum[idx];
+    let args = {};
+    try { args = JSON.parse(accum.arguments); } catch { /* empty */ }
+    const originalName = state.toolNameMap?.get(accum.name) || accum.name;
+    parts.push({
+      functionCall: {
+        name: originalName,
+        args,
+      },
+    });
+  }
+}
+
+function buildResponse(state, parts, finishReason = null, usage = state._usage) {
+  const candidate = { content: { role: GEMINI_ROLE.MODEL, parts } };
+  if (finishReason) {
+    candidate.finishReason = FINISH_REASON_MAP[finishReason] || GEMINI_FINISH.STOP;
+  }
+
+  const response = {
+    candidates: [candidate],
+    modelVersion: state._modelVersion,
+    responseId: state._responseId,
+  };
+
+  if (usage) {
+    response.usageMetadata = {
+      promptTokenCount: usage.prompt_tokens || 0,
+      candidatesTokenCount: usage.completion_tokens || 0,
+      totalTokenCount: usage.total_tokens || 0,
+    };
+    if (usage.completion_tokens_details?.reasoning_tokens) {
+      response.usageMetadata.thoughtsTokenCount = usage.completion_tokens_details.reasoning_tokens;
+    }
+    if (usage.prompt_tokens_details?.cached_tokens) {
+      response.usageMetadata.cachedContentTokenCount = usage.prompt_tokens_details.cached_tokens;
+    }
+  }
+
+  return { response };
+}
+
 // Convert OpenAI SSE chunk to Antigravity SSE format
 // Real Antigravity format:
 //   data: {"response":{"candidates":[{"content":{"role":"model","parts":[...]}, "finishReason":"STOP"}], "usageMetadata":{...}, "modelVersion":"...", "responseId":"..."}}
 // Tool calls: OpenAI sends incremental args across chunks → accumulate and emit ONCE at finish
 export function openaiToAntigravityResponse(chunk, state) {
+  if (!state._toolCallAccum) state._toolCallAccum = {};
+
+  // Gemini-family clients do not use OpenAI's [DONE] sentinel; the final
+  // candidate with finishReason STOP is their terminal response. Emit it on
+  // EOF so buffered tool calls do not disappear when upstream truncates.
+  if (chunk === null) {
+    if (state._finishHandled) return null;
+    if (!state._responseId) state._responseId = `resp_${Date.now()}`;
+    if (!state._modelVersion) state._modelVersion = "";
+    state._finishHandled = true;
+    const parts = [];
+    appendToolCallParts(state, parts);
+    if (parts.length === 0) parts.push({ text: "" });
+    return buildResponse(state, parts, OPENAI_FINISH.STOP);
+  }
+
   if (!chunk) return null;
+
+  if (chunk.usage && typeof chunk.usage === "object") {
+    state._usage = chunk.usage;
+  }
 
   const choice = chunk.choices?.[0];
   if (!choice) {
-    if (chunk.usage) {
-      state._usage = chunk.usage;
-    }
     return null;
   }
 
   const delta = choice.delta || {};
   const finishReason = choice.finish_reason;
-
-  // Init state
-  if (!state._toolCallAccum) state._toolCallAccum = {};
+  if (finishReason && state._finishHandled) return null;
   if (!state._responseId) state._responseId = chunk.id || `resp_${Date.now()}`;
   if (!state._modelVersion) state._modelVersion = chunk.model || "";
 
@@ -62,20 +128,8 @@ export function openaiToAntigravityResponse(chunk, state) {
 
   // On finish, emit accumulated tool calls as complete functionCall parts
   if (finishReason) {
-    const indices = Object.keys(state._toolCallAccum);
-    for (const idx of indices) {
-      const accum = state._toolCallAccum[idx];
-      let args = {};
-      try { args = JSON.parse(accum.arguments); } catch { /* empty */ }
-      // Restore original tool name if it was prefixed during cloaking
-      const originalName = state.toolNameMap?.get(accum.name) || accum.name;
-      parts.push({
-        functionCall: {
-          name: originalName,
-          args
-        }
-      });
-    }
+    appendToolCallParts(state, parts);
+    state._finishHandled = true;
   }
 
   // Skip empty non-finish chunks
@@ -86,44 +140,7 @@ export function openaiToAntigravityResponse(chunk, state) {
     parts.push({ text: "" });
   }
 
-  // Build candidate
-  const candidate = { content: { role: GEMINI_ROLE.MODEL, parts } };
-
-  // Finish reason mapping
-  if (finishReason) {
-    const reasonMap = {
-      [OPENAI_FINISH.STOP]: GEMINI_FINISH.STOP,
-      [OPENAI_FINISH.LENGTH]: GEMINI_FINISH.MAX_TOKENS,
-      [OPENAI_FINISH.TOOL_CALLS]: GEMINI_FINISH.STOP,
-      [OPENAI_FINISH.CONTENT_FILTER]: GEMINI_FINISH.SAFETY
-    };
-    candidate.finishReason = reasonMap[finishReason] || GEMINI_FINISH.STOP;
-  }
-
-  // Build response
-  const response = {
-    candidates: [candidate],
-    modelVersion: state._modelVersion,
-    responseId: state._responseId
-  };
-
-  // Usage metadata
-  const usage = chunk.usage || state._usage;
-  if (usage) {
-    response.usageMetadata = {
-      promptTokenCount: usage.prompt_tokens || 0,
-      candidatesTokenCount: usage.completion_tokens || 0,
-      totalTokenCount: usage.total_tokens || 0
-    };
-    if (usage.completion_tokens_details?.reasoning_tokens) {
-      response.usageMetadata.thoughtsTokenCount = usage.completion_tokens_details.reasoning_tokens;
-    }
-    if (usage.prompt_tokens_details?.cached_tokens) {
-      response.usageMetadata.cachedContentTokenCount = usage.prompt_tokens_details.cached_tokens;
-    }
-  }
-
-  return { response };
+  return buildResponse(state, parts, finishReason, chunk.usage || state._usage);
 }
 
 // Register

@@ -3,6 +3,7 @@
  * /v1/search response format. Supports gemini, openai, xai, kimi, minimax, perplexity.
  */
 import { PROVIDER_MEDIA } from "../../providers/index.js";
+import { mergeAbortSignals } from "../../utils/abort.js";
 
 // Default search model + endpoint derive from registry searchViaChat (single source)
 const searchModel = (id) => PROVIDER_MEDIA[id]?.searchViaChat?.defaultModel;
@@ -293,7 +294,8 @@ export async function handleChatSearch({
   maxResults,
   model,
   credentials,
-  log
+  log,
+  abortSignal = null,
 }) {
   const startTime = Date.now();
   const cfg = CHAT_SEARCH_CONFIG[provider];
@@ -338,7 +340,7 @@ export async function handleChatSearch({
       method: "POST",
       headers,
       body: JSON.stringify(body),
-      signal: controller.signal
+      signal: mergeAbortSignals(controller.signal, abortSignal)
     });
   } catch (err) {
     clearTimeout(timer);

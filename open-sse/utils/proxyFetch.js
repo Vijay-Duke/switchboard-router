@@ -310,6 +310,23 @@ export async function createBypassRequest(parsedUrl, realIP, options) {
       };
 
       req = https.request(reqOptions, (res) => {
+        const onBodyAbort = () => {
+          try { res.destroy(new DOMException("The operation was aborted.", "AbortError")); } catch { res.destroy(); }
+        };
+        const cleanupBodyAbort = () => options.signal?.removeEventListener("abort", onBodyAbort);
+        if (options.signal?.aborted) {
+          settled = true;
+          cleanup();
+          onBodyAbort();
+          cleanupBodyAbort();
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+          return;
+        }
+        options.signal?.addEventListener("abort", onBodyAbort, { once: true });
+        res.once("end", cleanupBodyAbort);
+        res.once("close", cleanupBodyAbort);
+        res.once("error", cleanupBodyAbort);
+
         const response = {
           ok: res.statusCode >= HTTP_SUCCESS_MIN && res.statusCode < HTTP_SUCCESS_MAX,
           status: res.statusCode,

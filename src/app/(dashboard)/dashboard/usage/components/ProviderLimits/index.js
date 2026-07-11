@@ -343,7 +343,9 @@ export default function ProviderLimits() {
 
   const handleDeleteConnection = useCallback(
     async (id) => {
-      if (!await requestConfirmation({ message: "Delete this connection?", confirmText: "Continue" })) return;
+      const connection = connections.find((item) => item.id === id);
+      const connectionLabel = getConnectionLabel(connection || {}) || id;
+      if (!await requestConfirmation({ message: `Delete connection “${connectionLabel}”?`, confirmText: "Continue" })) return;
       setDeletingId(id);
       try {
         const res = await fetch(`/api/providers/${id}`, { method: "DELETE" });
@@ -387,7 +389,7 @@ export default function ProviderLimits() {
         setDeletingId(null);
       }
     },
-    [fetchConnections, page],
+    [connections, fetchConnections, page],
   );
 
   const handleToggleConnectionActive = useCallback(

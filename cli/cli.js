@@ -136,8 +136,9 @@ Options:
   }
 }
 
-// Auto-relaunch after update: detached process has no TTY → fallback to tray
-if (skipUpdate && !trayMode && !process.stdin.isTTY) {
+// A detached or piped CLI cannot answer the interactive menu. Keep it in the
+// long-lived tray lifecycle even when it was launched without lifecycle flags.
+if ((!process.stdin.isTTY || !process.stdout.isTTY) && !trayMode) {
   trayMode = true;
   process.env.TRAY_MODE = "1";
 }
@@ -174,7 +175,13 @@ function writeOwnedProcessState(serverPid) {
   try {
     const file = getProcessStateFile();
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ cliPid: process.pid, serverPid, serverPath, writtenAt: Date.now() }), { mode: 0o600 });
+    fs.writeFileSync(file, JSON.stringify({
+      cliPid: process.pid,
+      cliPath: __filename,
+      serverPid,
+      serverPath,
+      writtenAt: Date.now(),
+    }), { mode: 0o600 });
   } catch { /* best effort */ }
 }
 
@@ -183,6 +190,32 @@ function clearOwnedProcessState() {
     const state = readOwnedProcessState();
     if (Number(state.cliPid) === process.pid) fs.unlinkSync(getProcessStateFile());
   } catch { /* best effort */ }
+}
+
+function processMatchesRecordedPath(pid, expectedPath) {
+  if (!expectedPath) return false;
+  try {
+    const command = process.platform === "win32"
+      ? execSync(`powershell -NonInteractive -NoProfile -Command "(Get-CimInstance Win32_Process -Filter 'ProcessId = ${Number(pid)}').CommandLine"`, { encoding: "utf8", windowsHide: true, timeout: 3000 })
+      : execSync(`ps -p ${Number(pid)} -o command=`, { encoding: "utf8", timeout: 3000 });
+    return command.includes(expectedPath);
+  } catch {
+    // If identity cannot be verified, fail closed rather than risking a PID
+    // reuse killing an unrelated process.
+    return false;
+  }
+}
+
+function readOwnedAppPids() {
+  const state = readOwnedProcessState();
+  return [
+    [state.serverPid, state.serverPath],
+    [state.cliPid, state.cliPath],
+  ]
+    .filter(([, expectedPath]) => typeof expectedPath === "string" && expectedPath.length > 0)
+    .map(([pid, expectedPath]) => [Number(pid), expectedPath])
+    .filter(([pid, expectedPath]) => Number.isInteger(pid) && pid > 1 && pid !== process.pid && processMatchesRecordedPath(pid, expectedPath))
+    .map(([pid]) => pid);
 }
 
 // Kill PID from file (best-effort, removes file after)
@@ -209,36 +242,6 @@ function killTunnelByPidFile() {
   killByPidFile(path.join(tunnelDir, "tailscale.pid"));
 }
 
-// Kill cloudflared whose --url targets this app's port (covers stale PID file case)
-function killCloudflaredByAppPort(appPort) {
-  if (!appPort) return [];
-  const portMatchers = [`localhost:${appPort}`, `127.0.0.1:${appPort}`];
-  const pids = [];
-  try {
-    if (process.platform === "win32") {
-      const psCmd = `powershell -NonInteractive -WindowStyle Hidden -Command "Get-WmiObject Win32_Process -Filter 'Name=\\"cloudflared.exe\\"' | Select-Object ProcessId,CommandLine | ConvertTo-Csv -NoTypeInformation"`;
-      const output = execSync(psCmd, { encoding: "utf8", windowsHide: true, timeout: 5000 });
-      const lines = output.split("\n").slice(1).filter(l => l.trim());
-      lines.forEach(line => {
-        if (portMatchers.some(m => line.includes(m))) {
-          const match = line.match(/^"(\d+)"/);
-          if (match && match[1]) pids.push(match[1]);
-        }
-      });
-    } else {
-      const output = execSync("ps -eo pid,command 2>/dev/null", { encoding: "utf8", timeout: 5000 });
-      output.split("\n").forEach(line => {
-        if (line.includes("cloudflared") && portMatchers.some(m => line.includes(m))) {
-          const parts = line.trim().split(/\s+/);
-          const pid = parts[0];
-          if (pid && !isNaN(pid)) pids.push(pid);
-        }
-      });
-    }
-  } catch { }
-  return pids;
-}
-
 // Kill only processes previously recorded by this launcher.
 function killAllAppProcesses(appPort) {
   return new Promise((resolve) => {
@@ -249,13 +252,7 @@ function killAllAppProcesses(appPort) {
       killTunnelByPidFile();
 
       const platform = process.platform;
-      const owned = readOwnedProcessState();
-      const pids = [owned.serverPid, owned.cliPid]
-        .map(Number)
-        .filter((pid) => Number.isInteger(pid) && pid > 1 && pid !== process.pid);
-
-      // Catch stale PID files: kill cloudflared bound to this app's port
-      pids.push(...killCloudflaredByAppPort(appPort));
+      const pids = readOwnedAppPids();
 
       // Gracefully stop owned processes, then force only survivors.
       if (pids.length > 0) {
@@ -342,51 +339,69 @@ function killProxyByPidFile() {
   } catch { }
 }
 
-// Kill any process on specific port
-function killProcessOnPort(port) {
-  return new Promise((resolve) => {
-    try {
-      const platform = process.platform;
-      let pid;
+function findListeningPids(port) {
+  const numericPort = Number(port);
+  if (!Number.isInteger(numericPort) || numericPort <= 0) return [];
 
-      if (platform === "win32") {
-        try {
-          const output = execSync(`netstat -ano | findstr :${port}`, {
-            encoding: 'utf8',
-            shell: true,
-            windowsHide: true,
-            timeout: 5000
-          }).trim();
-          const lines = output.split('\n').filter(l => l.includes('LISTENING'));
-          if (lines.length > 0) {
-            pid = lines[0].trim().split(/\s+/).pop();
-            execSync(`taskkill /F /PID ${pid} 2>nul`, { stdio: 'ignore', shell: true, windowsHide: true, timeout: 3000 });
-          }
-        } catch (e) {
-          // Port is free or error
-        }
-      } else {
-        // macOS/Linux
-        try {
-          const pidOutput = execSync(`lsof -ti:${port}`, {
-            encoding: 'utf8',
-            stdio: ['pipe', 'pipe', 'ignore']
-          }).trim();
-          if (pidOutput) {
-            pid = pidOutput.split('\n')[0];
-            execSync(`kill -9 ${pid} 2>/dev/null`, { stdio: 'ignore', timeout: 3000 });
-          }
-        } catch (e) {
-          // Port is free or error
-        }
-      }
-
-      // Wait for port to be released
-      setTimeout(() => resolve(), 500);
-    } catch (err) {
-      // Silent fail - continue anyway
-      resolve();
+  try {
+    if (process.platform === "win32") {
+      const output = execSync(`netstat -ano | findstr :${numericPort}`, {
+        encoding: "utf8",
+        shell: true,
+        windowsHide: true,
+        timeout: 5000,
+      });
+      return output.split("\n")
+        .filter((line) => line.includes("LISTENING"))
+        .filter((line) => line.trim().split(/\s+/).some((field) => field.endsWith(`:${numericPort}`)))
+        .map((line) => Number(line.trim().split(/\s+/).pop()))
+        .filter((pid) => Number.isInteger(pid) && pid > 1);
     }
+
+    const output = execSync(`lsof -tiTCP:${numericPort} -sTCP:LISTEN`, {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    return output.split(/\s+/)
+      .map(Number)
+      .filter((pid) => Number.isInteger(pid) && pid > 1);
+  } catch {
+    return [];
+  }
+}
+
+// Never kill an arbitrary listener that happens to share the app port. The
+// launcher may only signal PIDs recorded in its ownership state file.
+function killProcessOnPort(port) {
+  const ownedPids = new Set(readOwnedAppPids());
+  const pids = findListeningPids(port).filter((pid) => ownedPids.has(pid));
+  if (pids.length === 0) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    const platform = process.platform;
+    pids.forEach((pid) => {
+      try {
+        if (platform === "win32") {
+          execSync(`taskkill /T /PID ${pid}`, { stdio: "ignore", shell: true, windowsHide: true, timeout: 3000 });
+        } else {
+          process.kill(pid, "SIGTERM");
+        }
+      } catch { /* already dead or inaccessible */ }
+    });
+
+    setTimeout(() => {
+      pids.forEach((pid) => {
+        try {
+          process.kill(pid, 0);
+          if (platform === "win32") {
+            execSync(`taskkill /F /T /PID ${pid}`, { stdio: "ignore", shell: true, windowsHide: true, timeout: 3000 });
+          } else {
+            process.kill(pid, "SIGKILL");
+          }
+        } catch { /* already stopped */ }
+      });
+      resolve();
+    }, 500);
   });
 }
 
@@ -775,7 +790,8 @@ function startServer(latestVersion) {
   function attachServerEvents() {
     server.on("error", (err) => {
       console.error("Failed to start server:", err.message);
-      if (!isShuttingDown) tryRestart();
+      if (err?.code === "EADDRINUSE") stopForPortConflict();
+      else if (!isShuttingDown) tryRestart();
       else { cleanup(); process.exit(1); }
     });
 
@@ -784,13 +800,33 @@ function startServer(latestVersion) {
         process.exit(code || 0);
         return;
       }
+      if (isPortConflict()) {
+        stopForPortConflict();
+        return;
+      }
       tryRestart(code);
     });
   }
 
   let mitmResetDone = false;
 
+  function isPortConflict() {
+    return crashLog.some((line) => /EADDRINUSE|address already in use|listen .*already in use/i.test(line));
+  }
+
+  function stopForPortConflict() {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    console.error(`\n❌ Port ${port} is already in use. Stop the other listener or choose a different port.`);
+    cleanup();
+    process.exit(1);
+  }
+
   function tryRestart(code) {
+    if (isPortConflict()) {
+      stopForPortConflict();
+      return;
+    }
     const aliveMs = Date.now() - serverStartTime;
     // Reset counter if last run was stable
     if (aliveMs >= RESTART_RESET_MS) restartCount = 0;

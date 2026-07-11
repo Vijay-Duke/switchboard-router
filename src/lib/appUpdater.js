@@ -1,4 +1,4 @@
-import { spawn, execSync } from "child_process";
+import { spawn, execSync, execFileSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import os from "os";
@@ -8,6 +8,20 @@ const PROCESS_WAIT_MS = 2000;
 
 function isPidAlive(pid) {
   try { process.kill(Number(pid), 0); return true; } catch { return false; }
+}
+
+function processMatchesRecordedPath(pid, expectedPath) {
+  if (!expectedPath) return false;
+  try {
+    const command = process.platform === "win32"
+      ? execFileSync("powershell", ["-NonInteractive", "-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${Number(pid)}').CommandLine`], { encoding: "utf8", windowsHide: true, timeout: 3000 })
+      : execFileSync("ps", ["-p", String(Number(pid)), "-o", "command="], { encoding: "utf8", timeout: 3000 });
+    return command.includes(expectedPath);
+  } catch {
+    // PID reuse is worse than leaving an old process behind: fail closed when
+    // the recorded command identity cannot be checked.
+    return false;
+  }
 }
 
 async function terminateOwnedPid(pid) {
@@ -38,9 +52,7 @@ async function terminateOwnedPid(pid) {
 function killMitmByPidFile() {
   try {
     const mitmPidFile = path.join(
-      process.platform === "win32"
-        ? path.join(process.env.APPDATA || "", "switchboard")
-        : path.join(os.homedir(), ".switchboard"),
+      getDataDir(),
       "mitm",
       ".mitm.pid"
     );
@@ -69,9 +81,14 @@ function collectAppPids() {
   try {
     const stateFile = path.join(getDataDir(), "runtime", "owned-processes.json");
     const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-    return [state.cliPid, state.serverPid]
-      .map(Number)
-      .filter((pid) => Number.isInteger(pid) && pid > 1 && pid !== process.pid);
+    return [
+      [state.cliPid, state.cliPath],
+      [state.serverPid, state.serverPath],
+    ]
+      .filter(([, expectedPath]) => typeof expectedPath === "string" && expectedPath.length > 0)
+      .map(([pid, expectedPath]) => [Number(pid), expectedPath])
+      .filter(([pid, expectedPath]) => Number.isInteger(pid) && pid > 1 && pid !== process.pid && processMatchesRecordedPath(pid, expectedPath))
+      .map(([pid]) => pid);
   } catch { return []; }
 }
 
@@ -130,15 +147,29 @@ function resolveRelaunchCommand() {
   return { cmd: npx, args: [UPDATER_CONFIG.npmPackageName] };
 }
 
+function resolveRelaunchSettings() {
+  const configuredPort = Number.parseInt(process.env.PORT || "", 10);
+  const port = Number.isInteger(configuredPort) && configuredPort > 0
+    ? configuredPort
+    : UPDATER_CONFIG.appPort;
+  const host = process.env.HOST || process.env.HOSTNAME || "127.0.0.1";
+  return { port, host };
+}
+
 // Spawn detached headless updater (Node process) then exit current server
 export function spawnUpdaterAndExit(packageName = UPDATER_CONFIG.npmPackageName) {
   const updaterPath = ensureRuntimeUpdater(resolveBundledUpdaterPath());
   const isTray = process.env.TRAY_MODE === "1";
   const relaunch = resolveRelaunchCommand();
-  // Relaunch matching original env: tray stays tray, foreground stays foreground
-  const relaunchArgs = isTray
-    ? [...relaunch.args, "--tray", "--skip-update"]
-    : [...relaunch.args, "--skip-update"];
+  const relaunchSettings = resolveRelaunchSettings();
+  // Relaunch matching original settings: preserve custom bind/port and mode.
+  const relaunchArgs = [
+    ...relaunch.args,
+    "--port", String(relaunchSettings.port),
+    "--host", relaunchSettings.host,
+    ...(isTray ? ["--tray"] : []),
+    "--skip-update",
+  ];
 
   spawn(process.execPath, [updaterPath], {
     detached: true,
@@ -155,7 +186,8 @@ export function spawnUpdaterAndExit(packageName = UPDATER_CONFIG.npmPackageName)
       UPDATER_WAIT_MIN_MS: String(UPDATER_CONFIG.waitForExitMinMs),
       UPDATER_WAIT_MAX_MS: String(UPDATER_CONFIG.waitForExitMaxMs),
       UPDATER_WAIT_CHECK_MS: String(UPDATER_CONFIG.waitForExitCheckMs),
-      UPDATER_APP_PORT: String(UPDATER_CONFIG.appPort),
+      UPDATER_STARTUP_TIMEOUT_MS: String(UPDATER_CONFIG.statusStartupTimeoutMs),
+      UPDATER_APP_PORT: String(relaunchSettings.port),
       UPDATER_RELAUNCH: "1",
       UPDATER_RELAUNCH_CMD: relaunch.cmd,
       UPDATER_RELAUNCH_ARGS: JSON.stringify(relaunchArgs),

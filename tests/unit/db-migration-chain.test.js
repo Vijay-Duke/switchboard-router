@@ -60,6 +60,35 @@ describe("Schema migrations", () => {
     expect(JSON.parse(settings.data)).toEqual({ foo: "bar" });
   });
 
+  it("checkpoints WAL before creating an app-upgrade backup", async () => {
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const db = await getAdapter();
+    db.run(`UPDATE _meta SET value = '0.0.1' WHERE key = 'appVersion'`);
+
+    const events = [];
+    const originalCheckpoint = db.checkpoint;
+    db.checkpoint = vi.fn(() => {
+      events.push("checkpoint");
+      originalCheckpoint?.();
+    });
+    const originalCopyFileSync = fs.copyFileSync;
+    const copyFileSync = vi.spyOn(fs, "copyFileSync").mockImplementation((...args) => {
+      events.push("backup");
+      return originalCopyFileSync(...args);
+    });
+
+    // A fresh migration module gives this adapter a new once-only migration scope,
+    // matching a process restart while keeping the real adapter and WAL available.
+    vi.resetModules();
+    const { runMigrationOnce } = await import("@/lib/db/migrate.js");
+    await runMigrationOnce(db);
+
+    expect(db.checkpoint).toHaveBeenCalledOnce();
+    expect(copyFileSync).toHaveBeenCalledOnce();
+    expect(events.indexOf("checkpoint")).toBeLessThan(events.indexOf("backup"));
+    copyFileSync.mockRestore();
+  });
+
   it("fresh DB + legacy db.json → imports data automatically", async () => {
     // Simulate user upgrading: place legacy JSON in DATA_DIR before first boot
     const legacy = {
