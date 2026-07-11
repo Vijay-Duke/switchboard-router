@@ -422,8 +422,10 @@ export async function deleteRoutingDataForCombo(comboName) {
 export async function rekeyRoutingDataForCombo(oldName, newName) {
   if (!oldName || !newName || oldName === newName) return;
   const db = await getAdapter();
-  db.run(`UPDATE routing_events SET comboName = ? WHERE comboName = ?`, [newName, oldName]);
-  db.run(`UPDATE router_learning_versions SET comboName = ? WHERE comboName = ?`, [newName, oldName]);
+  db.transaction(() => {
+    db.run(`UPDATE routing_events SET comboName = ? WHERE comboName = ?`, [newName, oldName]);
+    db.run(`UPDATE router_learning_versions SET comboName = ? WHERE comboName = ?`, [newName, oldName]);
+  });
   notifyWrite(oldName);
   notifyWrite(newName);
 }
