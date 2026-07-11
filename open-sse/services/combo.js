@@ -11,6 +11,7 @@ import { FORMATS } from "../translator/formats.js";
 import { initState, translateResponse } from "../translator/index.js";
 import { formatSSE } from "../utils/streamHelpers.js";
 import { SSE_DONE, SSE_HEADERS_CORS } from "../utils/sseConstants.js";
+import { acceptWorkerResponse } from "../routing/autoResponse.js";
 
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
 // stripped). Must be prioritized. Soft (e.g. search) only degrades a feature.
@@ -318,10 +319,21 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
 
       if (callerSignal?.aborted) return abortedComboResponse();
       
-      // Success (2xx) - return response
+      // Success (2xx) — probe for empty/incomplete response before committing.
+      // Reuses Auto's acceptWorkerResponse probe: rejects empty JSON, empty
+      // streams, and no-content 2xx so fallback can continue to the next model.
       if (result.ok) {
-        log.info("COMBO", `Model ${modelStr} succeeded`);
-        return result;
+        const accepted = await acceptWorkerResponse(result, log, {
+          abortSignal: callerSignal,
+        });
+        if (callerSignal?.aborted) return abortedComboResponse();
+        if (accepted.ok) {
+          log.info("COMBO", `Model ${modelStr} succeeded`);
+          return accepted.result;
+        }
+        lastError = accepted.reason || "empty_2xx";
+        log.warn("COMBO", `Model ${modelStr} returned empty/incomplete 2xx (${accepted.reason}), falling back`);
+        continue;
       }
 
       // Extract error info from response
@@ -358,14 +370,42 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         return result;
       }
 
-      // For transient errors (503/502/504), wait for cooldown before falling through
-      // so a briefly-overloaded provider gets a chance to recover rather than being
-      // skipped immediately (fixes: combo falls through on transient 503)
+      // For transient errors (503/502/504), wait for cooldown then retry the
+      // same model once before falling through — the sleep was burning latency
+      // without ever re-trying the overloaded provider.
       if (cooldownMs && cooldownMs > 0 && cooldownMs <= 5000 &&
           (result.status === 503 || result.status === 502 || result.status === 504)) {
-        log.info("COMBO", `Model ${modelStr} transient ${result.status}, waiting ${cooldownMs}ms before next`);
+        log.info("COMBO", `Model ${modelStr} transient ${result.status}, waiting ${cooldownMs}ms then retrying`);
         await waitForComboDelay(cooldownMs, callerSignal);
         if (callerSignal?.aborted) return abortedComboResponse();
+        try {
+          const retryBody = typeof structuredClone === "function"
+            ? structuredClone(body)
+            : JSON.parse(JSON.stringify(body));
+          const retryResult = await handleSingleModel(retryBody, modelStr, {
+            signal: callerSignal || undefined,
+          });
+          if (callerSignal?.aborted) return abortedComboResponse();
+          if (retryResult.ok) {
+            const accepted = await acceptWorkerResponse(retryResult, log, {
+              abortSignal: callerSignal,
+            });
+            if (callerSignal?.aborted) return abortedComboResponse();
+            if (accepted.ok) {
+              log.info("COMBO", `Model ${modelStr} succeeded on retry after ${cooldownMs}ms cooldown`);
+              return accepted.result;
+            }
+          }
+          lastError = `retry_${retryResult.status}_${retryResult.statusText || ""}`;
+          if (!lastStatus) lastStatus = retryResult.status;
+          log.warn("COMBO", `Model ${modelStr} retry also failed (${retryResult.status}), moving on`);
+          continue;
+        } catch (retryError) {
+          lastError = retryError.message || String(retryError);
+          if (!lastStatus) lastStatus = 503;
+          log.warn("COMBO", `Model ${modelStr} retry threw error`, { error: lastError });
+          continue;
+        }
       }
 
       // Fallback to next model
@@ -740,6 +780,38 @@ function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs, a
 }
 
 /**
+ * Wrap a non-streaming completion JSON as a single-chunk SSE response.
+ * Used when the panel answered non-streaming (stream:false forced) but the
+ * client requested stream:true — preserves protocol compatibility without
+ * re-dispatching the request.
+ */
+function wrapAnswerAsSse(json) {
+  const encoder = new TextEncoder();
+  // Build an SSE data line carrying the full completion in OpenAI chat
+  // completions delta format. A single event with finish_reason signals
+  // the complete answer to streaming-aware clients.
+  const content = json?.choices?.[0]?.message?.content || "";
+  const dataLine = JSON.stringify({
+    choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: "stop" }]
+  });
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(`data: ${dataLine}\n\n`));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    }
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+}
+
+/**
  * Handle a fusion combo: fan the prompt out to every panel model in parallel,
  * then a judge model synthesizes one final answer from all panel responses.
  *
@@ -860,9 +932,18 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   log.info("FUSION", `Judging ${answers.length} answers with ${judge}`);
   try {
     const result = await handleSingleModel(judgeBody, judge, { signal: callerSignal || undefined });
+    if (!result?.ok) {
+      const best = answers.reduce((a, b) => (a.text.length >= b.text.length ? a : b));
+      log.warn("FUSION", `Judge ${judge} failed (${result?.status}), falling back to best panel answer`);
+      return wrapBufferedResponseAsSse(best.response, body, best.model);
+    }
     return wrapBufferedResponseAsSse(result, body, judge);
   } catch (error) {
     if (callerSignal?.aborted) return abortedComboResponse();
-    throw error;
+    const best = answers.reduce((a, b) => (a.text.length >= b.text.length ? a : b));
+    log.warn("FUSION", `Judge ${judge} threw, falling back to best panel answer`, {
+      error: error?.message || String(error),
+    });
+    return wrapBufferedResponseAsSse(best.response, body, best.model);
   }
 }

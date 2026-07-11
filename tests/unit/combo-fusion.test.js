@@ -366,6 +366,72 @@ describe("fusion combo", () => {
     // Flattened tool_result
     expect(panelBody.messages[2].content).toBe("[Tool result: done]");
   });
+
+  it("wraps single survivor as SSE when client requested streaming", async () => {
+    const handleSingleModel = vi.fn(async (_body, model) => {
+      if (model === "p/ok") return okResponse("stream-me");
+      return errResponse(500);
+    });
+    const res = await handleFusionChat({
+      body: { messages: [{ role: "user", content: "Q" }], stream: true },
+      models: ["p/ok", "p/bad"],
+      handleSingleModel,
+      log,
+      judgeModel: "p/judge",
+      tuning: { minPanel: 2, stragglerGraceMs: 50, panelHardTimeoutMs: 5000 },
+    });
+    // Should return SSE since client asked stream:true
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+    const text = await res.text();
+    expect(text).toContain("data:");
+    expect(text).toContain("stream-me");
+    expect(text).toContain("[DONE]");
+  });
+
+  it("falls back to best panel answer when judge fails", async () => {
+    const handleSingleModel = vi.fn(async (_body, model) => {
+      if (model === "p/judge") return errResponse(500);
+      if (model === "p/a") return okResponse("answer a lorem ipsum dolor sit");
+      return okResponse("answer b short");
+    });
+    const res = await handleFusionChat({
+      body: { messages: [{ role: "user", content: "Q" }] },
+      models: ["p/a", "p/b"],
+      handleSingleModel,
+      log,
+      judgeModel: "p/judge",
+      tuning: { minPanel: 2, stragglerGraceMs: 50, panelHardTimeoutMs: 5000 },
+    });
+    // Judge failed → falls back to longest panel answer (p/a)
+    expect(res.ok).toBe(true);
+    const json = await res.json();
+    expect(json.choices?.[0]?.message?.content).toBe("answer a lorem ipsum dolor sit");
+    expect(handleSingleModel.mock.calls.filter(([, m]) => m === "p/judge").length).toBe(1);
+    // Only 2 panel calls + 1 judge call = 3 total
+    expect(handleSingleModel.mock.calls.length).toBe(3);
+  });
+
+  it("wraps best panel answer as SSE when judge fails and client streamed", async () => {
+    const handleSingleModel = vi.fn(async (_body, model) => {
+      if (model === "p/judge") return errResponse(503);
+      if (model === "p/a") return okResponse("panel answer a");
+      return okResponse("panel answer b");
+    });
+    const res = await handleFusionChat({
+      body: { messages: [{ role: "user", content: "Q" }], stream: true },
+      models: ["p/a", "p/b"],
+      handleSingleModel,
+      log,
+      judgeModel: "p/judge",
+      tuning: { minPanel: 2, stragglerGraceMs: 50, panelHardTimeoutMs: 5000 },
+    });
+    expect(res.ok).toBe(true);
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+    const text = await res.text();
+    expect(text).toContain("data:");
+    expect(text).toContain("panel answer");
+    expect(text).toContain("[DONE]");
+  });
 });
 
 describe("combo 404 fallback", () => {
