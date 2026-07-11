@@ -57,6 +57,7 @@ export async function handleEmbeddingsCore({
       method: "POST",
       headers,
       body: JSON.stringify(requestBody),
+      redirect: "error",
     });
   } catch (error) {
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
@@ -91,6 +92,7 @@ export async function handleEmbeddingsCore({
           method: "POST",
           headers: retryHeaders,
           body: JSON.stringify(requestBody),
+          redirect: "error",
         });
       } catch {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);
