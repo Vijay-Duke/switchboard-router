@@ -793,6 +793,15 @@ describe("extractAssistantText", () => {
     expect(out.text).toContain("model");
     expect(out.httpError).toBeUndefined();
   });
+
+  it("preserves a non-JSON router body after JSON parsing fails", async () => {
+    const res = new Response("router picked openai/gpt-4o", {
+      headers: { "Content-Type": "application/json" },
+    });
+    const out = await extractAssistantText(res);
+
+    expect(out.text).toBe("router picked openai/gpt-4o");
+  });
 });
 
 describe("handleAutoChat", () => {
