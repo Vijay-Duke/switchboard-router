@@ -1,6 +1,7 @@
 import { getAdapter } from "../driver.js";
 import { stringifyJson, parseJson } from "../helpers/jsonCol.js";
 import { randomUUID } from "crypto";
+import { recomputeStoredOutcome } from "open-sse/routing/scoring.js";
 
 function nowIso() {
   return new Date().toISOString();
@@ -59,6 +60,62 @@ export async function insertRoutingEvent(event) {
   // thrash the 15s stats/learning cache on every auto request. Learning
   // version create/promote/rollback, retention, delete, and rekey still
   // invalidate; TTL covers aggregate staleness.
+}
+
+/**
+ * Recompute + persist outcomeScore for the terminal event(s) of one request
+ * after a user rating and/or judge score (Auto v2 quality signal).
+ * Shared by the feedback endpoint and the async LLM-judge.
+ *
+ * Does NOT notifyWrite: adjustments are low-frequency relative to inserts and the
+ * 15s stats/learning TTL (plus the next relearn) picks the new scores up — same
+ * rationale as insertRoutingEvent skipping invalidation.
+ *
+ * @param {string} requestId
+ * @param {{ userRating?: number, judgeScore?: number }} update
+ * @returns {Promise<{ updated: number, comboName?: string }>}
+ */
+async function applyOutcomeAdjustmentByRequestId(requestId, update) {
+  if (!requestId || typeof requestId !== "string") return { updated: 0 };
+  const db = await getAdapter();
+  const rows = db.all(`SELECT * FROM routing_events WHERE requestId = ?`, [requestId]);
+  if (!rows?.length) return { updated: 0 };
+  // Only the terminal row(s) carry the request's scored outcome. Legacy rows with
+  // no terminal flag are treated as terminal (one row per request pre-fix).
+  const targets = rows.filter((r) => {
+    const meta = parseJson(r.meta, {});
+    return meta?.terminal === true || meta?.terminal == null;
+  });
+  if (!targets.length) return { updated: 0 };
+
+  let updated = 0;
+  db.transaction(() => {
+    for (const r of targets) {
+      const meta = parseJson(r.meta, {});
+      const { outcomeScore, meta: nextMeta } = recomputeStoredOutcome(
+        meta,
+        r.outcomeScore,
+        update
+      );
+      db.run(`UPDATE routing_events SET outcomeScore = ?, meta = ? WHERE id = ?`, [
+        outcomeScore,
+        stringifyJson(nextMeta),
+        r.id,
+      ]);
+      updated += 1;
+    }
+  });
+  return { updated, comboName: rows[0].comboName };
+}
+
+/** Feedback endpoint: set/clear the user rating (1 | -1 | 0) for a request. */
+export async function setUserRatingByRequestId(requestId, rating) {
+  return applyOutcomeAdjustmentByRequestId(requestId, { userRating: rating });
+}
+
+/** LLM-judge: fold a 0–10 judge score into a request's terminal event. */
+export async function applyJudgeScoreByRequestId(requestId, judgeScore) {
+  return applyOutcomeAdjustmentByRequestId(requestId, { judgeScore });
 }
 
 export async function getPromotedLearningVersion(comboName) {

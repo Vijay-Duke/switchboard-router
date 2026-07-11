@@ -26,6 +26,7 @@ import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
 import { hasValidCliToken } from "@/shared/utils/cliToken.js";
 import {
   insertRoutingEvent,
+  applyJudgeScoreByRequestId,
   getPromotedLearningVersion,
   getLearningVersionById,
   getClusterWorkerStats,
@@ -205,6 +206,8 @@ export async function handleChat(request, clientRawRequest = null) {
             getClusterLatencyP50(combo, cluster, days)
           ),
         recordEvent: (ev) => insertRoutingEvent(ev),
+        applyJudgeScore: (requestId, judgeScore) =>
+          applyJudgeScoreByRequestId(requestId, judgeScore),
         autoDepth: 0,
         clientAbortSignal: request?.signal || null,
       });
@@ -327,6 +330,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               getClusterLatencyP50(combo, cluster, days)
             ),
           recordEvent: (ev) => insertRoutingEvent(ev),
+          applyJudgeScore: (requestId, judgeScore) =>
+            applyJudgeScoreByRequestId(requestId, judgeScore),
           autoDepth,
           clientAbortSignal: request?.signal || null,
         });

@@ -58,6 +58,28 @@ function RoutingInsightsInner() {
     load();
   }, [load]);
 
+  // Optional user feedback thumbs (Auto v2). Feeds the same ±25 slot the judge
+  // uses; an explicit rating overrides a judge adjustment on the same event.
+  const sendFeedback = useCallback(
+    async (requestId, rating) => {
+      if (!requestId) return;
+      try {
+        const r = await fetch("/api/routing/feedback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId, rating }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || "Feedback failed");
+        setLearnMsg(rating === 0 ? "Feedback cleared" : "Thanks — feedback recorded");
+        await load();
+      } catch (e) {
+        setLearnMsg(e.message || "Feedback failed");
+      }
+    },
+    [load]
+  );
+
   const maxAvg = useMemo(() => {
     if (!data?.heatmap) return 100;
     let m = 1;
@@ -432,16 +454,27 @@ function RoutingInsightsInner() {
                     <th className="py-1 pr-2">Cluster</th>
                     <th className="py-1 pr-2">Worker</th>
                     <th className="py-1 pr-2">Score</th>
-                    <th className="py-1">Reason</th>
+                    <th className="py-1 pr-2">Reason</th>
+                    <th className="py-1">Rate</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(data.recent || []).map((e) => (
+                  {(data.recent || []).map((e) => {
+                    const rating = e.meta?.userRating ?? null;
+                    return (
                     <tr key={e.id} className="border-t border-border">
                       <td className="py-1.5 pr-2 font-mono text-text-muted whitespace-nowrap">
                         {e.timestamp?.slice(0, 19)?.replace("T", " ")}
                         {e.meta?.exploration ? (
                           <span className="ml-1 text-[9px] text-primary">ε</span>
+                        ) : null}
+                        {e.meta?.judgeScore != null ? (
+                          <span
+                            className="ml-1 text-[9px] text-text-subtle"
+                            title={`LLM-judge score ${e.meta.judgeScore}/10`}
+                          >
+                            J{e.meta.judgeScore}
+                          </span>
                         ) : null}
                       </td>
                       <td className="py-1.5 pr-2">{e.cluster || "—"}</td>
@@ -451,11 +484,36 @@ function RoutingInsightsInner() {
                       <td className="py-1.5 pr-2 font-mono">
                         {e.outcomeScore != null ? Math.round(e.outcomeScore) : "—"}
                       </td>
-                      <td className="py-1.5 text-text-muted truncate max-w-[240px]" title={e.routerReason}>
+                      <td className="py-1.5 pr-2 text-text-muted truncate max-w-[240px]" title={e.routerReason}>
                         {e.routerReason || "—"}
                       </td>
+                      <td className="py-1.5 whitespace-nowrap">
+                        {e.requestId ? (
+                          <span className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              title="Good route"
+                              className={`text-[13px] leading-none ${rating === 1 ? "text-primary" : "text-text-subtle hover:text-primary"}`}
+                              onClick={() => sendFeedback(e.requestId, rating === 1 ? 0 : 1)}
+                            >
+                              ▲
+                            </button>
+                            <button
+                              type="button"
+                              title="Bad route"
+                              className={`text-[13px] leading-none ${rating === -1 ? "text-red-400" : "text-text-subtle hover:text-red-400"}`}
+                              onClick={() => sendFeedback(e.requestId, rating === -1 ? 0 : -1)}
+                            >
+                              ▼
+                            </button>
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-text-subtle">—</span>
+                        )}
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
               {!(data.recent || []).length && (

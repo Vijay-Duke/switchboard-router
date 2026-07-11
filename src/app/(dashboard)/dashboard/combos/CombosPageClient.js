@@ -10,6 +10,7 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { useNotificationStore } from "@/store/notificationStore";
 import { reportClientError } from "@/shared/utils/clientFeedback";
+import { splitPoolByTier } from "open-sse/routing/objective.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -387,6 +388,51 @@ function strategyPatchFromForm(strategy, capacityAutoSwitch, routerModel, object
   return patch;
 }
 
+/**
+ * Read-only cost-tier split for the Auto worker pool (Auto v2). Shows which
+ * workers form the cheap vs frontier tier that tiered routing / escalation uses.
+ */
+function TierLabels({ models, routerModel }) {
+  const pool = (models || []).filter((m) => m && m !== routerModel);
+  if (pool.length < 2) return null;
+  const { cheap, frontier, disabled } = splitPoolByTier(pool);
+  const short = (m) => String(m).split("/").pop();
+  if (disabled) {
+    return (
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <span className="text-[11px] font-medium text-text-muted">Tiers</span>
+        <span className="text-[10px] text-text-subtle" title="All workers share one cost tier — tiered routing is off">
+          single tier (tiering off)
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <span className="text-[11px] font-medium text-text-muted">Tiers</span>
+      {cheap.map((m) => (
+        <span
+          key={`c-${m}`}
+          className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] text-emerald-600 dark:text-emerald-400"
+          title={`${m} — cheap tier`}
+        >
+          {short(m)}
+        </span>
+      ))}
+      <span className="material-symbols-outlined text-[12px] text-text-subtle">arrow_forward</span>
+      {frontier.map((m) => (
+        <span
+          key={`f-${m}`}
+          className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-600 dark:text-amber-400"
+          title={`${m} — frontier tier`}
+        >
+          {short(m)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const STRATEGY_OPTIONS = [
   { value: "fallback", label: "Fallback — try in order" },
   { value: "round-robin", label: "Round Robin — rotate load" },
@@ -497,6 +543,7 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
                     Router is also in the worker list — it is auto-excluded from the pool.
                   </p>
                 )}
+                <TierLabels models={combo.models} routerModel={routerModel} />
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   <span className="text-[11px] font-medium text-text-muted">Objective</span>
                   <select

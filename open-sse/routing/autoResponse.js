@@ -414,6 +414,11 @@ function assistantTextFromJson(data) {
   return "";
 }
 
+/** Extract concatenated assistant text from an accumulated SSE buffer (judge input). */
+export function assistantTextFromSseBuffer(buf) {
+  return textFromSse(buf);
+}
+
 function textFromSse(rawSSE) {
   const parts = [];
   for (const line of String(rawSSE || "").split("\n")) {

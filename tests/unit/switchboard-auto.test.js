@@ -61,7 +61,8 @@ describe("parseRouterPick", () => {
       POOL
     );
     expect(p.model).toBe("anthropic/claude-sonnet");
-    expect(p.cluster).toBe("refactor");
+    // Auto v2: cluster field is normalized to the taxonomy ("refactor" → mechanical-edit).
+    expect(p.cluster).toBe("mechanical-edit");
     expect(p.confidence).toBe("high");
     expect(p.alternates).toContain("openai/gpt-4o");
   });
@@ -422,10 +423,10 @@ describe("pickFewShots", () => {
 describe("buildBanditTable", () => {
   it("uses real wins from stats and clamps to attempts", () => {
     const t = buildBanditTable([
-      { cluster: "g", pickedWorker: "a", n: 10, wins: 15, avgScore: 80, avgLatencyMs: 100 },
+      { cluster: "debug", pickedWorker: "a", n: 10, wins: 15, avgScore: 80, avgLatencyMs: 100 },
     ]);
-    expect(t.g.a.wins).toBe(10); // clamped
-    expect(t.g.a.attempts).toBe(10);
+    expect(t.debug.a.wins).toBe(10); // clamped
+    expect(t.debug.a.attempts).toBe(10);
   });
 });
 
@@ -531,13 +532,13 @@ describe("computeReplayEval", () => {
 describe("buildBanditTableFromEvents", () => {
   it("aggregates wins and p50 from events", () => {
     const t = buildBanditTableFromEvents([
-      { cluster: "g", pickedWorker: "a", outcomeScore: 80, workerLatencyMs: 100, meta: {} },
-      { cluster: "g", pickedWorker: "a", outcomeScore: 40, workerLatencyMs: 300, meta: {} },
-      { cluster: "g", pickedWorker: "b", outcomeScore: 70, workerLatencyMs: 200, meta: {} },
+      { cluster: "debug", pickedWorker: "a", outcomeScore: 80, workerLatencyMs: 100, meta: {} },
+      { cluster: "debug", pickedWorker: "a", outcomeScore: 40, workerLatencyMs: 300, meta: {} },
+      { cluster: "debug", pickedWorker: "b", outcomeScore: 70, workerLatencyMs: 200, meta: {} },
     ]);
-    expect(t.g.a.attempts).toBe(2);
-    expect(t.g.a.wins).toBe(1);
-    expect(t.g.a.p50LatencyMs).toBe(200);
+    expect(t.debug.a.attempts).toBe(2);
+    expect(t.debug.a.wins).toBe(1);
+    expect(t.debug.a.p50LatencyMs).toBe(200);
   });
 });
 

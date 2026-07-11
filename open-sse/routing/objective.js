@@ -122,6 +122,101 @@ export function pickByObjective(models, objective = "balanced", poolFilter = nul
 }
 
 /**
+ * Split a worker pool into a cheap tier (costTier 0–1) and a frontier tier
+ * (costTier 2–4) for Auto v2 tiered routing.
+ *
+ * - If either half is empty under the 0–1 / 2–4 boundary, fall back to a median
+ *   split by tier so both tiers are non-empty when ≥2 distinct tiers exist.
+ * - If ALL models share one tier, tier logic is disabled (behave as today):
+ *   `disabled: true`, whole pool returned as `cheap`, `frontier` empty.
+ *
+ * @param {string[]} pool
+ * @returns {{ cheap: string[], frontier: string[], disabled: boolean }}
+ */
+export function splitPoolByTier(pool) {
+  const models = (pool || []).filter(Boolean);
+  if (models.length <= 1) {
+    return { cheap: models.slice(), frontier: [], disabled: true };
+  }
+  const withTier = models.map((m) => ({ m, t: costTier(m) }));
+  const distinct = new Set(withTier.map((x) => x.t));
+  if (distinct.size <= 1) {
+    return { cheap: models.slice(), frontier: [], disabled: true };
+  }
+
+  let cheap = withTier.filter((x) => x.t <= 1).map((x) => x.m);
+  let frontier = withTier.filter((x) => x.t >= 2).map((x) => x.m);
+
+  if (!cheap.length || !frontier.length) {
+    // Median split: sort by tier (stable on original order), halve by count.
+    const sorted = withTier
+      .map((x, i) => ({ ...x, i }))
+      .sort((a, b) => a.t - b.t || a.i - b.i);
+    const mid = Math.ceil(sorted.length / 2);
+    cheap = sorted.slice(0, mid).map((x) => x.m);
+    frontier = sorted.slice(mid).map((x) => x.m);
+  }
+
+  return { cheap, frontier, disabled: false };
+}
+
+/**
+ * Deterministic bandit policy pick for the pre-generation fast path.
+ * Returns the winning worker id only when the cluster is confidently decided:
+ *   - the winner has n ≥ minAttempts, AND
+ *   - it is the only qualified (n ≥ minAttempts) candidate, OR its avgScore
+ *     leads the next-best qualified candidate by > leadMargin.
+ * Otherwise null (caller falls through to the cached route / router LLM).
+ *
+ * @param {Record<string, Record<string, { avgScore?: number, attempts?: number }>>|null} banditTable
+ * @param {string} cluster
+ * @param {string[]} candidates - current worker pool (winner must be in it)
+ * @param {string} [objective]
+ * @param {{ minAttempts?: number, leadMargin?: number }} [opts]
+ * @returns {{ model: string, qualified: number, lead: number }|null}
+ */
+export function pickBanditPolicy(banditTable, cluster, candidates, objective = "balanced", opts = {}) {
+  const minAttempts = Number.isFinite(opts.minAttempts) ? opts.minAttempts : 10;
+  const leadMargin = Number.isFinite(opts.leadMargin) ? opts.leadMargin : 15;
+  if (!banditTable || typeof banditTable !== "object" || !cluster) return null;
+  const models = banditTable[cluster];
+  if (!models || typeof models !== "object") return null;
+  const allow = new Set((candidates || []).filter(Boolean));
+  if (!allow.size) return null;
+
+  // Qualified = in pool AND enough samples.
+  const qualified = {};
+  const qEntries = [];
+  for (const [id, s] of Object.entries(models)) {
+    if (!allow.has(id)) continue;
+    const attempts = Number(s?.attempts) || 0;
+    if (attempts < minAttempts) continue;
+    qualified[id] = s;
+    qEntries.push({ id, avgScore: Number(s?.avgScore) || 0, attempts });
+  }
+  if (!qEntries.length) return null;
+
+  const winner = pickByObjective(qualified, objective);
+  if (!winner) return null;
+
+  if (qEntries.length === 1) {
+    return { model: winner, qualified: 1, lead: Infinity };
+  }
+  // avgScore lead of the objective winner over the best OTHER qualified candidate.
+  const winnerAvg = Number(qualified[winner]?.avgScore) || 0;
+  let bestOther = -Infinity;
+  for (const e of qEntries) {
+    if (e.id === winner) continue;
+    if (e.avgScore > bestOther) bestOther = e.avgScore;
+  }
+  const lead = winnerAvg - bestOther;
+  if (lead > leadMargin) {
+    return { model: winner, qualified: qEntries.length, lead };
+  }
+  return null;
+}
+
+/**
  * Human-readable objective instructions for the router system prompt.
  * @param {string} objective
  */

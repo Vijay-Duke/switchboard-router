@@ -1,3 +1,5 @@
+import { normalizeCluster } from "./taxonomy.js";
+
 /**
  * Parse router model JSON: { model, cluster, confidence, reason, alternates? }
  * Fail-open helpers for markdown fences and trailing junk.
@@ -120,14 +122,8 @@ export function resolvePoolModel(model, pool) {
 }
 
 function slugCluster(c) {
-  if (typeof c !== "string" || !c.trim()) return "general";
-  return (
-    c
-      .toLowerCase()
-      .replace(/[^a-z0-9_]+/g, "_")
-      .replace(/^_+|_+$/g, "")
-      .slice(0, 48) || "general"
-  );
+  // Auto v2: constrain to the curated taxonomy (unknown/legacy → nearest or "general").
+  return normalizeCluster(c);
 }
 
 function sanitizeReason(r) {

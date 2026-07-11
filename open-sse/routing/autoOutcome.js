@@ -3,7 +3,8 @@
  * This module owns scoring side effects while handleAutoChat owns policy.
  */
 import { computeOutcomeScore } from "./scoring.js";
-import { extractUsageFromSseSlice, hasStreamContent } from "./autoResponse.js";
+import { extractUsageFromSseSlice, hasStreamContent, assistantTextFromSseBuffer } from "./autoResponse.js";
+import { normalizeCluster } from "./taxonomy.js";
 
 export function observeStreamAndRecord({
   response,
@@ -18,6 +19,7 @@ export function observeStreamAndRecord({
   seedHasCompletion = false,
   seedTokensIn = null,
   seedTokensOut = null,
+  judgeCtx = null,
 }) {
   const body = response.body;
   const startedAt =
@@ -38,6 +40,7 @@ export function observeStreamAndRecord({
     return emitHeaders
       ? withAutoRouterHeaders(response, {
           worker: baseEvent.pickedWorker,
+          requestId: baseEvent.requestId,
           cluster: baseEvent.pick?.cluster,
           confidence: baseEvent.pick?.confidence,
           routerLatencyMs,
@@ -95,6 +98,9 @@ export function observeStreamAndRecord({
         ...metaExtra,
       },
     });
+    // Non-blocking quality judge on a clean completion (never delays the client;
+    // the client stream has already fully flushed by the time finalize runs).
+    maybeFireJudge(judgeCtx, baseEvent, workerOk, () => assistantTextFromSseBuffer(buf), log);
   };
 
   const clientBody = new ReadableStream({
@@ -161,6 +167,7 @@ export function observeStreamAndRecord({
   return emitHeaders
     ? withAutoRouterHeaders(out, {
         worker: baseEvent.pickedWorker,
+        requestId: baseEvent.requestId,
         cluster: baseEvent.pick?.cluster,
         confidence: baseEvent.pick?.confidence,
         routerLatencyMs,
@@ -168,6 +175,24 @@ export function observeStreamAndRecord({
         exploration: baseEvent.exploration,
       })
     : out;
+}
+
+/**
+ * Fire the sampled quality judge without blocking (fail-open). Only runs on a
+ * clean completion and when a judge context exists. The text getter is lazy so
+ * we don't extract when judging is off.
+ */
+function maybeFireJudge(judgeCtx, baseEvent, workerOk, getText, log) {
+  if (!judgeCtx || !workerOk || !judgeCtx.shouldSample()) return;
+  try {
+    const assistantText = getText() || "";
+    if (!assistantText) return;
+    Promise.resolve(judgeCtx.runJudge({ baseEvent, assistantText })).catch((e) =>
+      log?.warn?.("AUTO", `judge dispatch failed: ${e?.message || e}`)
+    );
+  } catch (e) {
+    log?.warn?.("AUTO", `judge dispatch failed: ${e?.message || e}`);
+  }
 }
 
 /**
@@ -264,15 +289,18 @@ export function fireRecordEvent(recordEvent, log, args) {
   // Score uses per-attempt fallbackUsed/retries (rescuer scored clean).
   // Confidence-neutral by design (see computeOutcomeScore) — confidence stays in
   // event meta below for telemetry, never in the stored outcome score.
-  const outcomeScore = computeOutcomeScore({
-    workerOk,
-    workerLatencyMs,
+  // scoreInputs are persisted so the judge / feedback path can recompute the
+  // exact score after folding in a ±25 rating (see recomputeStoredOutcome).
+  const scoreInputs = {
+    workerOk: !!workerOk,
+    workerLatencyMs: workerLatencyMs ?? null,
     clusterP50LatencyMs: clusterP50LatencyMs ?? null,
-    fallbackUsed,
-    retries,
-    hasCompletion,
-    tokensOut,
-  });
+    fallbackUsed: !!fallbackUsed,
+    retries: retries ?? 0,
+    hasCompletion: !!hasCompletion,
+    tokensOut: tokensOut ?? null,
+  };
+  const outcomeScore = computeOutcomeScore(scoreInputs);
 
   // SPEC §11 — log outcome with score + latencies (prefer terminal / success lines)
   if (terminal || !workerOk) {
@@ -298,7 +326,9 @@ export function fireRecordEvent(recordEvent, log, args) {
         body?.metadata?.conversation_id ||
         null,
       requestFingerprint: signals?.fingerprint || null,
-      cluster: pick.cluster,
+      // Auto v2: store the canonical taxonomy cluster (router output is already
+      // normalized; this also folds "unknown" parse-error fallbacks → "general").
+      cluster: normalizeCluster(pick.cluster),
       routerModel: skippedRouter ? null : routerModel,
       pickedWorker,
       alternates: pick.alternates || [],
@@ -328,6 +358,9 @@ export function fireRecordEvent(recordEvent, log, args) {
         // Score inputs for recomputation (column fallbackUsed is request-level)
         scoreFallbackUsed: !!fallbackUsed,
         scoreRetries: retries ?? 0,
+        // Full input set + base score so judge/feedback can recompute exactly.
+        scoreInputs,
+        baseOutcomeScore: outcomeScore,
         // For few-shot summaries (LEARNING.md): first 120 chars of user intent
         userSummary: signals?.userSummary
           ? String(signals.userSummary).slice(0, 120)
@@ -347,6 +380,8 @@ export function withAutoRouterHeaders(response, meta) {
   try {
     const headers = new Headers(response.headers);
     if (meta.worker) headers.set("X-Auto-Router-Worker", String(meta.worker));
+    // Feedback endpoint correlation: client integrations POST this back with a rating.
+    if (meta.requestId) headers.set("X-Auto-Router-Request-Id", String(meta.requestId));
     if (meta.cluster) headers.set("X-Auto-Router-Cluster", String(meta.cluster));
     if (meta.confidence) headers.set("X-Auto-Router-Confidence", String(meta.confidence));
     if (meta.score != null) headers.set("X-Auto-Router-Score", String(meta.score));
@@ -362,6 +397,7 @@ export function withAutoRouterHeaders(response, meta) {
     const expose = headers.get("Access-Control-Expose-Headers") || "";
     const needed = [
       "X-Auto-Router-Worker",
+      "X-Auto-Router-Request-Id",
       "X-Auto-Router-Cluster",
       "X-Auto-Router-Confidence",
       "X-Auto-Router-Score",

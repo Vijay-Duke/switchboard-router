@@ -27,6 +27,9 @@ import {
   writeRoutingCache,
   invalidateRoutingCache,
 } from "./routingCache.js";
+import { deriveClusterGuess } from "./taxonomy.js";
+import { splitPoolByTier, pickBanditPolicy, pickByObjective } from "./objective.js";
+import { createJudgeContext, takeJudgeEscalation } from "./judge.js";
 
 export {
   STREAM_PROBE_IDLE_MS,
@@ -89,6 +92,7 @@ export async function handleAutoChat({
   loadStats = async () => [],
   loadClusterP50 = null,
   recordEvent = async () => {},
+  applyJudgeScore = async () => {},
   autoDepth = 0,
   clientAbortSignal = null,
 }) {
@@ -130,6 +134,19 @@ export async function handleAutoChat({
 
   const emitHeaders = strategy.emitAutoRouterHeaders !== false;
   const windowDays = strategy.learningWindowDays ?? 14;
+
+  // Sampled quality judge (Auto v2). Null when disabled (judgeSampleRate 0) so the
+  // hot path pays nothing. Judge work is always fire-and-forget and fail-open.
+  const judgeCtx = createJudgeContext({
+    tuning,
+    routerModel,
+    comboName,
+    handleSingleModel,
+    extractAssistantText,
+    applyJudgeScore,
+    log,
+  });
+
   const { candidates, shortcut } = prepareAutoCandidates({
     body,
     pool,
@@ -171,6 +188,8 @@ export async function handleAutoChat({
     loadStats,
     log,
   });
+  // Tier membership for the policy fast path escalation + failure reordering.
+  const tierSplit = splitPoolByTier(candidates);
   const route = await selectAutoWorker({
     body,
     models,
@@ -185,6 +204,7 @@ export async function handleAutoChat({
     routerTimeoutMs,
     childDepth,
     tuning,
+    tierSplit,
     handleSingleModel,
     log,
     clientAbortSignal,
@@ -214,6 +234,8 @@ export async function handleAutoChat({
     loadClusterP50,
     windowDays,
     clientAbortSignal,
+    judgeCtx,
+    tierSplit,
   });
 }
 
@@ -333,6 +355,7 @@ async function selectAutoWorker({
   routerTimeoutMs,
   childDepth,
   tuning,
+  tierSplit = null,
   handleSingleModel,
   log,
   clientAbortSignal,
@@ -352,7 +375,38 @@ async function selectAutoWorker({
   let pick = null;
   let routerLatencyMs = 0;
   let usedCachedRoute = false;
-  if (cachedRoutesEnabled && !clientAbortSignal?.aborted) {
+
+  // ── Pre-generation bandit policy fast path (Auto v2) ──────────────────────
+  // When the cluster is unambiguous from signals AND the promoted bandit has a
+  // clear winner (n≥10, solo or >15 lead), pick without the router LLM. Events
+  // still record; exploration still applies below.
+  if (tuning.policyFastPath !== false && !clientAbortSignal?.aborted) {
+    const clusterGuess = deriveClusterGuess(signals);
+    if (clusterGuess) {
+      const policy = pickBanditPolicy(
+        learning?.banditTable || null,
+        clusterGuess,
+        candidates,
+        objective
+      );
+      if (policy && candidates.includes(policy.model)) {
+        log?.info?.(
+          "AUTO",
+          `bandit_policy → ${policy.model} cluster=${clusterGuess} ` +
+            `(${policy.lead === Infinity ? "solo" : `lead ${Math.round(policy.lead)}`})`
+        );
+        pick = {
+          model: policy.model,
+          cluster: clusterGuess,
+          confidence: "high",
+          reason: "bandit_policy",
+          alternates: candidates.filter((c) => c !== policy.model).slice(0, 2),
+        };
+      }
+    }
+  }
+
+  if (!pick && cachedRoutesEnabled && !clientAbortSignal?.aborted) {
     const cachedPick = readRoutingCache(cacheKey);
     if (cachedPick && candidates.includes(cachedPick.model)) {
       log?.info?.("AUTO", `cached route → ${cachedPick.model} (fp ${signals.fingerprint})`);
@@ -407,6 +461,20 @@ async function selectAutoWorker({
     routerLatencyMs = routed.routerLatencyMs;
   }
 
+  // ── One-shot judge-flag escalation (Auto v2) ──────────────────────────────
+  // When the judge recently flagged this cluster past the objective threshold,
+  // the NEXT policy/cached pick escalates to the frontier tier's best worker.
+  const escalated = maybeEscalateForJudgeFlags({
+    pick,
+    tierSplit,
+    candidates,
+    comboName,
+    objective,
+    learning,
+    log,
+  });
+  if (escalated) pick = escalated;
+
   let exploration = false;
   if (Math.random() < explorationRate && candidates.length > 1) {
     const rnd = candidates[Math.floor(Math.random() * candidates.length)];
@@ -426,6 +494,8 @@ async function selectAutoWorker({
     cachedRoutesEnabled &&
     !usedCachedRoute &&
     !exploration &&
+    // Escalation is one-shot; caching it would pin the frontier model for the TTL.
+    pick.reason !== "judge_flag_escalation" &&
     pick.confidence === "high" &&
     !pick.parseError
   ) {
@@ -442,6 +512,43 @@ async function selectAutoWorker({
     exploration,
     signals,
     routerInPool,
+  };
+}
+
+/**
+ * Consume a one-shot judge-flag escalation for a policy/cached pick, returning a
+ * new pick on the frontier tier's best worker, or null when it does not apply.
+ */
+function maybeEscalateForJudgeFlags({
+  pick,
+  tierSplit,
+  candidates,
+  comboName,
+  objective,
+  learning,
+  log,
+}) {
+  if (!pick || tierSplit?.disabled) return null;
+  if (pick.reason !== "bandit_policy" && pick.reason !== "cached_route") return null;
+
+  // Check the frontier is usable BEFORE consuming the one-shot escalation, so a
+  // threshold breach is never silently spent when there is nowhere to escalate.
+  const frontier = (tierSplit?.frontier || []).filter((m) => candidates.includes(m));
+  if (!frontier.length) return null;
+  if (!takeJudgeEscalation(comboName, pick.cluster, objective)) return null;
+
+  const best =
+    pickByObjective(learning?.banditTable?.[pick.cluster] || {}, objective, frontier) ||
+    frontier[0];
+  if (!best || best === pick.model) return null;
+
+  log?.info?.("AUTO", `judge_flag_escalation → ${best} (cluster=${pick.cluster})`);
+  return {
+    ...pick,
+    model: best,
+    reason: "judge_flag_escalation",
+    confidence: "high",
+    alternates: candidates.filter((c) => c !== best).slice(0, 2),
   };
 }
 
@@ -538,6 +645,8 @@ async function executeAndRecord({
   loadClusterP50 = null,
   windowDays = 14,
   clientAbortSignal = null,
+  judgeCtx = null,
+  tierSplit = null,
 }) {
   const routerPickedWorker = pick.model;
   const clusterRefLatency = await resolveClusterReferenceLatency({
@@ -563,6 +672,7 @@ async function executeAndRecord({
     pool,
     attempted,
     tryWorker,
+    tierSplit,
     log,
   });
 
@@ -639,6 +749,7 @@ async function executeAndRecord({
     routerInPool,
     emitHeaders,
     clusterRefLatency,
+    judgeCtx,
   });
 }
 
@@ -662,6 +773,7 @@ async function finalizeSuccessfulWorker({
   routerInPool,
   emitHeaders,
   clusterRefLatency,
+  judgeCtx = null,
 }) {
   const {
     result,
@@ -700,7 +812,8 @@ async function finalizeSuccessfulWorker({
 
   if (skippedRouter) {
     // Do not write bandit-poisoning success events for heuristic/single shortcuts,
-    // but still emit headers so clients can see auto was skipped.
+    // but still emit headers so clients can see auto was skipped. No requestId
+    // header here: shortcuts record no terminal event, so feedback would 404.
     return emitHeaders
       ? withAutoRouterHeaders(result, {
           worker: winner,
@@ -732,6 +845,7 @@ async function finalizeSuccessfulWorker({
       seedHasCompletion: !!preInspect?.hasCompletion,
       seedTokensIn: preInspect?.tokensIn ?? null,
       seedTokensOut: preInspect?.tokensOut ?? null,
+      judgeCtx,
     });
   }
 
@@ -740,6 +854,14 @@ async function finalizeSuccessfulWorker({
     result,
     preInspect,
   });
+  // Sample the judge FIRST, then clone — so the ~93% of unsampled responses pay
+  // nothing. Clone BEFORE withAutoRouterHeaders takes result.body (cloning after
+  // the transfer makes the two readers contend on one stream).
+  const judgeClone =
+    judgeCtx && hasCompletion && judgeCtx.shouldSample()
+      ? safeCloneResponse(result)
+      : null;
+
   const outcomeScore = fireRecordEvent(recordEvent, log, {
     ...baseEvent,
     hasCompletion,
@@ -748,9 +870,14 @@ async function finalizeSuccessfulWorker({
     routerInPool,
   });
 
+  // Non-blocking quality judge (Auto v2) — reads the pristine clone, never the
+  // client-facing body.
+  if (judgeClone) fireNonStreamJudge(judgeCtx, baseEvent, judgeClone, log);
+
   return emitHeaders
     ? withAutoRouterHeaders(result, {
         worker: winner,
+        requestId,
         cluster: pick.cluster,
         confidence: pick.confidence,
         score: outcomeScore,
@@ -759,6 +886,36 @@ async function finalizeSuccessfulWorker({
         exploration: baseEvent.exploration,
       })
     : result;
+}
+
+/** Clone a Response for out-of-band inspection; null when the body is unusable. */
+function safeCloneResponse(response) {
+  try {
+    return response?.clone?.() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fire the quality judge for a non-streaming worker response without blocking.
+ * `judgeClone` is a pristine clone taken before the client body was transferred.
+ * Fail-open.
+ */
+function fireNonStreamJudge(judgeCtx, baseEvent, judgeClone, log) {
+  if (!judgeCtx || !judgeClone) return;
+  try {
+    Promise.resolve()
+      .then(async () => {
+        const extracted = await extractAssistantText(judgeClone);
+        const assistantText = extracted?.text || "";
+        if (!assistantText) return;
+        await judgeCtx.runJudge({ baseEvent, assistantText });
+      })
+      .catch((e) => log?.warn?.("AUTO", `judge dispatch failed: ${e?.message || e}`));
+  } catch (e) {
+    log?.warn?.("AUTO", `judge dispatch failed: ${e?.message || e}`);
+  }
 }
 
 async function resolveClusterReferenceLatency({
@@ -890,13 +1047,19 @@ async function runWorkerFallbackChain({
   pool,
   attempted,
   tryWorker,
+  tierSplit = null,
   log,
 }) {
   // Primary pick
   let success = await tryWorker(worker);
 
-  // Try all declared alternates (not just [0]), skipping already-attempted
-  if (!success && Array.isArray(alternates)) {
+  // Auto v2 escalation: when the cheap-tier primary failed and a frontier tier
+  // exists, the whole remaining chain goes frontier-first — router-suggested
+  // alternates do NOT jump ahead of the tier bump ("move up a tier" wins).
+  const escalating = isCheapTierEscalation(tierSplit, worker);
+
+  // Try all declared alternates (not just [0]) first — unless escalating.
+  if (!success && !escalating && Array.isArray(alternates)) {
     for (const alt of alternates) {
       if (!alt || attempted.has(alt) || !pool.includes(alt)) continue;
       log?.info?.("AUTO", `worker failed → alternate ${alt}`);
@@ -905,9 +1068,13 @@ async function runWorkerFallbackChain({
     }
   }
 
-  // Full pool fallback chain — skip every previously attempted model
+  // Full pool fallback chain — skip every previously attempted model. When
+  // escalating, frontier-tier workers come first (within tier keep pool order).
   if (!success && pool.length > 1) {
-    for (const m of pool) {
+    const orderedPool = escalating
+      ? orderPoolFrontierFirst(pool, tierSplit, worker, log)
+      : pool;
+    for (const m of orderedPool) {
       if (attempted.has(m)) continue;
       log?.info?.("AUTO", `fallback chain → ${m}`);
       success = await tryWorker(m);
@@ -915,6 +1082,23 @@ async function runWorkerFallbackChain({
     }
   }
   return success;
+}
+
+/** True when the failed primary was cheap-tier and a frontier tier exists. */
+function isCheapTierEscalation(tierSplit, primaryWorker) {
+  if (!tierSplit || tierSplit.disabled) return false;
+  const cheapSet = new Set(tierSplit.cheap || []);
+  const frontier = tierSplit.frontier || [];
+  return cheapSet.has(primaryWorker) && frontier.length > 0;
+}
+
+/** Reorder the pool frontier-tier-first (within tier keep pool order). */
+function orderPoolFrontierFirst(pool, tierSplit, primaryWorker, log) {
+  const frontierSet = new Set(tierSplit.frontier || []);
+  const frontier = pool.filter((m) => frontierSet.has(m));
+  const rest = pool.filter((m) => !frontierSet.has(m));
+  log?.info?.("AUTO", `escalation: cheap ${primaryWorker} failed → frontier-first fallback`);
+  return [...frontier, ...rest];
 }
 
 function recordAutoFailureEvents({

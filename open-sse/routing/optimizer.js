@@ -10,6 +10,7 @@ import {
   countRoutingEvents,
 } from "../runtimeDeps.js";
 import { pickByObjective } from "./objective.js";
+import { normalizeCluster } from "./taxonomy.js";
 
 const DEFAULT_MAX_FEW_SHOTS = 5;
 const RULE_MIN_ATTEMPTS = 10;
@@ -212,7 +213,9 @@ export function buildBanditTable(stats) {
   /** @type {Record<string, Record<string, { wins: number, attempts: number, avgScore: number, avgLatencyMs: number, p50LatencyMs: number }>>} */
   const table = {};
   for (const row of stats || []) {
-    const c = row.cluster || "general";
+    // Auto v2: fold legacy free-form clusters into the taxonomy so historical
+    // SQL aggregates (grouped by raw cluster) merge under the canonical key.
+    const c = normalizeCluster(row.cluster);
     const w = row.pickedWorker;
     if (!w) continue;
     if (!table[c]) table[c] = {};
@@ -228,13 +231,28 @@ export function buildBanditTable(stats) {
       row.p50LatencyMs != null && Number.isFinite(Number(row.p50LatencyMs))
         ? Number(row.p50LatencyMs)
         : latency;
-    table[c][w] = {
-      wins,
-      attempts: n,
-      avgScore: avg,
-      avgLatencyMs: latency,
-      p50LatencyMs: p50,
-    };
+    const prev = table[c][w];
+    if (prev) {
+      // Two legacy clusters collapsed to the same canonical key — merge weighted.
+      const totalN = prev.attempts + n;
+      table[c][w] = {
+        wins: Math.max(0, Math.min(totalN, prev.wins + wins)),
+        attempts: totalN,
+        avgScore: totalN ? (prev.avgScore * prev.attempts + avg * n) / totalN : 0,
+        avgLatencyMs: totalN
+          ? (prev.avgLatencyMs * prev.attempts + latency * n) / totalN
+          : 0,
+        p50LatencyMs: totalN ? (prev.p50LatencyMs * prev.attempts + p50 * n) / totalN : 0,
+      };
+    } else {
+      table[c][w] = {
+        wins,
+        attempts: n,
+        avgScore: avg,
+        avgLatencyMs: latency,
+        p50LatencyMs: p50,
+      };
+    }
   }
   return table;
 }
@@ -248,7 +266,7 @@ export function buildBanditTableFromEvents(events) {
   const acc = {};
   for (const e of events || []) {
     if (e.meta?.skippedRouter) continue;
-    const c = e.cluster || "general";
+    const c = normalizeCluster(e.cluster);
     const w = e.pickedWorker;
     if (!w || e.outcomeScore == null) continue;
     if (!acc[c]) acc[c] = {};
@@ -392,7 +410,7 @@ export function pickFewShots(events, max = DEFAULT_MAX_FEW_SHOTS) {
   /** @type {Map<string, typeof eligible>} */
   const byCluster = new Map();
   for (const e of eligible) {
-    const c = e.cluster || "general";
+    const c = normalizeCluster(e.cluster);
     if (!byCluster.has(c)) byCluster.set(c, []);
     byCluster.get(c).push(e);
   }
@@ -465,7 +483,7 @@ export function computeReplayEval(banditTable, events, objective = "balanced") {
   let total = 0;
   let n = 0;
   for (const e of usable) {
-    const cluster = e.cluster || "general";
+    const cluster = normalizeCluster(e.cluster);
     const models = banditTable[cluster];
     if (!models || !Object.keys(models).length) {
       total += Number(e.outcomeScore) || 0;
