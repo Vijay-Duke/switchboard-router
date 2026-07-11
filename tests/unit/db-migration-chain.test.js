@@ -94,6 +94,12 @@ describe("Schema migrations", () => {
     const legacy = {
       settings: { foo: "legacy-value" },
       apiKeys: [{ id: "k1", key: "abc", name: "test", createdAt: new Date().toISOString() }],
+      providerConnections: [{
+        id: "legacy-connection",
+        provider: "legacy",
+        authType: "oauth",
+        accessToken: "legacy-access-token",
+      }],
       modelAliases: { "gpt-4": "gpt-4-turbo" },
     };
     fs.writeFileSync(path.join(tempDir, "db.json"), JSON.stringify(legacy));
@@ -106,7 +112,10 @@ describe("Schema migrations", () => {
 
     const keys = db.all(`SELECT * FROM apiKeys`);
     expect(keys).toHaveLength(1);
-    expect(keys[0].key).toBe("abc");
+    expect(keys[0].key).toMatch(/^v1:/);
+
+    const connection = db.get(`SELECT data FROM providerConnections WHERE id = ?`, ["legacy-connection"]);
+    expect(connection.data).not.toContain("legacy-access-token");
 
     const aliases = db.all(`SELECT * FROM kv WHERE scope='modelAliases'`);
     expect(aliases).toHaveLength(1);

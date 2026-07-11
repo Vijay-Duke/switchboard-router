@@ -73,6 +73,10 @@ export class QwenExecutor extends DefaultExecutor {
     super("qwen");
   }
 
+  isUserConfiguredBase(credentials) {
+    return super.isUserConfiguredBase(credentials) || !!credentials?.providerSpecificData?.resourceUrl;
+  }
+
   // Qwen tokens are bound to a resource_url returned at OAuth time.
   // Using portal.qwen.ai when the token is issued for another shard returns 401/403.
   buildUrl(model, stream, urlIndex = 0, credentials = null) {

@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { forwardOutput, resolveCommand, withBindHostname } from "../../scripts/launch.mjs";
+import { forwardOutput, resolveBindHostname, resolveCommand, withBindHostname } from "../../scripts/launch.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 let probe;
@@ -114,6 +114,13 @@ describe("withBindHostname", () => {
   it("leaves unrelated commands untouched", () => {
     const args = ["probe.cjs", "value"];
     expect(withBindHostname("node", args, "127.0.0.1")).toEqual(args);
+  });
+});
+
+describe("resolveBindHostname", () => {
+  it("uses an explicit Next hostname for the locality guard environment", () => {
+    expect(resolveBindHostname(["start", "--hostname", "0.0.0.0"], "127.0.0.1")).toBe("0.0.0.0");
+    expect(resolveBindHostname(["start", "--hostname=::"], "127.0.0.1")).toBe("::");
   });
 });
 

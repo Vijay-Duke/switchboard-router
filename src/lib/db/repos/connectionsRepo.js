@@ -72,7 +72,7 @@ function rowToConn(row) {
   };
 }
 
-function connToRow(c) {
+export function connToRow(c) {
   const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, ...rest } = c;
   const sealed = encryptSecrets(rest);
   return {

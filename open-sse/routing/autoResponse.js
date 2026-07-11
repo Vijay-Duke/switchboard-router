@@ -371,16 +371,15 @@ export async function extractAssistantText(response) {
       const raw = await response.text();
       return { text: textFromSse(raw), status };
     }
-    const data = await response.json();
-    return { text: assistantTextFromJson(data), status };
-  } catch {
+    const raw = await response.text();
     try {
-      const raw = await response.text();
+      return { text: assistantTextFromJson(JSON.parse(raw)), status };
+    } catch {
       if (raw.includes("data:")) return { text: textFromSse(raw), status };
       return { text: raw, status };
-    } catch {
-      return { text: "", status };
     }
+  } catch {
+    return { text: "", status };
   }
 }
 

@@ -282,6 +282,14 @@ describe("buildRequestSignals", () => {
     });
     expect(s2.tokenBand).toBe("500-2k");
   });
+
+  it("scans string Responses API input as user content", () => {
+    const s = buildRequestSignals({ input: "debug this request ".repeat(500) });
+
+    expect(s.tokenBand).toBe("8k+");
+    expect(s.userSummary).toContain("debug this request");
+    expect(s.keywordHints).toContain("debug");
+  });
 });
 
 describe("buildRouterPrompt", () => {
@@ -836,6 +844,15 @@ describe("extractAssistantText", () => {
     const out = await extractAssistantText(res);
     expect(out.text).toContain("model");
     expect(out.httpError).toBeUndefined();
+  });
+
+  it("preserves a non-JSON router body after JSON parsing fails", async () => {
+    const res = new Response("router picked openai/gpt-4o", {
+      headers: { "Content-Type": "application/json" },
+    });
+    const out = await extractAssistantText(res);
+
+    expect(out.text).toBe("router picked openai/gpt-4o");
   });
 });
 

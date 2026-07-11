@@ -1,6 +1,8 @@
 // Public API barrel — all DB functions
 import { getAdapter } from "./driver.js";
 import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
+import { connToRow } from "./repos/connectionsRepo.js";
+import { packApiKeyRecord, unpackApiKeyRecord } from "@/lib/crypto/secrets.js";
 
 // Settings
 export {
@@ -145,10 +147,10 @@ export async function importDb(payload) {
     }
 
     for (const c of payload.providerConnections || []) {
-      const { id, provider, authType, name, email, priority, isActive, createdAt, updatedAt, ...rest } = c;
+      const row = connToRow(c);
       db.run(
         `INSERT OR REPLACE INTO providerConnections(id, provider, authType, name, email, priority, isActive, data, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, provider, authType || "oauth", name || null, email || null, priority || null, isActive === false ? 0 : 1, stringifyJson(rest), createdAt || new Date().toISOString(), updatedAt || new Date().toISOString()]
+        [row.id, row.provider, row.authType || "oauth", row.name, row.email, row.priority, row.isActive, row.data, row.createdAt || new Date().toISOString(), row.updatedAt || new Date().toISOString()]
       );
     }
     for (const n of payload.providerNodes || []) {
@@ -166,9 +168,12 @@ export async function importDb(payload) {
       );
     }
     for (const k of payload.apiKeys || []) {
+      const storedKey = typeof k.key === "string" && unpackApiKeyRecord(k.key).legacy
+        ? packApiKeyRecord(k.key)
+        : k.key;
       db.run(
         `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
-        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString()]
+        [k.id, storedKey, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString()]
       );
     }
     for (const c of payload.combos || []) {

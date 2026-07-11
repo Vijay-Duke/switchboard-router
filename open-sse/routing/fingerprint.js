@@ -51,13 +51,17 @@ export function buildRequestSignals(body) {
   for (const m of body?.messages || []) {
     if (m?.role === "user" || m?.role === "tool") scanContent(m.content);
   }
-  for (const it of body?.input || []) {
-    if (it?.role === "user" || it?.type === "message") {
-      // scanContent already walks arrays via scanBlock — do not double-count
-      scanContent(it.content);
+  if (typeof body?.input === "string") {
+    scanContent(body.input);
+  } else if (Array.isArray(body?.input)) {
+    for (const it of body.input) {
+      if (it?.role === "user" || it?.type === "message") {
+        // scanContent already walks arrays via scanBlock — do not double-count
+        scanContent(it.content);
+      }
+      // Responses API: { type: "input_text", text: "..." } at top of input[]
+      if (it?.type === "input_text" || it?.type === "text") scanBlock(it);
     }
-    // Responses API: { type: "input_text", text: "..." } at top of input[]
-    if (it?.type === "input_text" || it?.type === "text") scanBlock(it);
   }
 
   if (Array.isArray(body?.tools)) toolCount = body.tools.length;

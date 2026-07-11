@@ -12,20 +12,33 @@ export async function OPTIONS() {
 }
 
 function countValueChars(value) {
-  if (value == null) return 0;
-  if (typeof value === "string") return value.length;
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value).length;
+  const pending = [value];
+  let total = 0;
+
+  while (pending.length) {
+    const current = pending.pop();
+    if (current == null) continue;
+    if (typeof current === "string") {
+      total += current.length;
+      continue;
+    }
+    if (typeof current === "number" || typeof current === "boolean") {
+      total += String(current).length;
+      continue;
+    }
+    if (Array.isArray(current)) {
+      pending.push(...current);
+      continue;
+    }
+    if (typeof current === "object") {
+      for (const [key, item] of Object.entries(current)) {
+        total += key.length;
+        pending.push(item);
+      }
+    }
   }
-  if (Array.isArray(value)) {
-    return value.reduce((total, item) => total + countValueChars(item), 0);
-  }
-  if (typeof value === "object") {
-    return Object.entries(value).reduce((total, [key, item]) => {
-      return total + key.length + countValueChars(item);
-    }, 0);
-  }
-  return 0;
+
+  return total;
 }
 
 function countContentBlockChars(block) {
@@ -77,6 +90,13 @@ export async function POST(request) {
   try {
     body = await request.json();
   } catch {
+    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json", ...CORS_HEADERS }
+    });
+  }
+
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
     return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
       status: 400,
       headers: { "Content-Type": "application/json", ...CORS_HEADERS }

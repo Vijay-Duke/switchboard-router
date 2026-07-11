@@ -1,5 +1,41 @@
 import { ERROR_TYPES, DEFAULT_ERROR_MESSAGES } from "../config/errorConfig.js";
 
+const MAX_UPSTREAM_ERROR_BODY_CHARS = 65_536;
+
+async function readResponseTextBounded(response, maxChars) {
+  const reader = response?.body?.getReader?.();
+  if (!reader) {
+    try {
+      return (await response.text()).slice(0, maxChars);
+    } catch {
+      return "";
+    }
+  }
+
+  const decoder = new TextDecoder();
+  let text = "";
+  let bytesRead = 0;
+  try {
+    while (bytesRead < maxChars) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      const remaining = maxChars - bytesRead;
+      text += decoder.decode(chunk.subarray(0, remaining), { stream: chunk.byteLength <= remaining });
+      bytesRead += Math.min(chunk.byteLength, remaining);
+      if (chunk.byteLength > remaining) {
+        try { await reader.cancel("upstream error body limit"); } catch { /* ignore */ }
+        break;
+      }
+    }
+    return text + decoder.decode();
+  } catch {
+    return text;
+  } finally {
+    try { reader.releaseLock?.(); } catch { /* ignore */ }
+  }
+}
+
 /**
  * Build OpenAI-compatible error response body
  * @param {number} statusCode - HTTP status code
@@ -55,12 +91,7 @@ export async function writeStreamError(writer, statusCode, message) {
  * @returns {Promise<{statusCode: number, message: string, resetsAtMs?: number}>}
  */
 export async function parseUpstreamError(response, executor = null) {
-  let bodyText = "";
-  try {
-    bodyText = await response.text();
-  } catch {
-    bodyText = "";
-  }
+  const bodyText = await readResponseTextBounded(response, MAX_UPSTREAM_ERROR_BODY_CHARS);
 
   // Let executor-specific parser extract provider-specific fields (e.g. codex resetsAtMs)
   if (executor && typeof executor.parseError === "function") {
@@ -76,12 +107,16 @@ export async function parseUpstreamError(response, executor = null) {
   let message = "";
   try {
     const json = JSON.parse(bodyText);
-    message = json.error?.message || json.message || json.error || bodyText;
+    message = typeof json?.error?.message === "string" ? json.error.message
+      : typeof json?.message === "string" ? json.message
+        : typeof json?.error_description === "string" ? json.error_description
+          : typeof json?.error === "string" ? json.error
+            : "";
   } catch {
     message = bodyText;
   }
 
-  const messageStr = typeof message === "string" ? message : JSON.stringify(message);
+  const messageStr = typeof message === "string" ? message : "";
   const finalMessage = messageStr || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
 
   return { statusCode: response.status, message: finalMessage };

@@ -14,6 +14,19 @@ async function countTokens(body) {
 }
 
 describe("Anthropic count_tokens estimator", () => {
+  it("does not crash on deeply nested JSON input", async () => {
+    const depth = 5_000;
+    const body = `{"system":${'{"nested":'.repeat(depth)}"x"${"}".repeat(depth)}}`;
+    const response = await POST(new Request("https://switchboard.local/v1/messages/count_tokens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    }));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ input_tokens: expect.any(Number) });
+  });
+
   it("preserves the existing plain text estimate", async () => {
     const result = await countTokens({
       messages: [

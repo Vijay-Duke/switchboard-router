@@ -58,6 +58,22 @@ export function withBindHostname(command, args, hostname) {
 }
 
 /**
+ * Resolve the hostname that Next will bind to, including an explicit CLI flag.
+ * The locality guard reads HOSTNAME because a normal `next start` process has
+ * no socket-derived peer address available.
+ * @param {string[]} args
+ * @param {string} fallback
+ */
+export function resolveBindHostname(args, fallback) {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--hostname" || arg === "-H") return args[i + 1] || fallback;
+    if (arg.startsWith("--hostname=")) return arg.slice("--hostname=".length) || fallback;
+  }
+  return fallback;
+}
+
+/**
  * Drain a child's output even if the launcher's terminal disappears. Passing
  * stdio through with `inherit` gives the child the same dead pipe; a later log
  * can then raise EPIPE inside framework error handling and wedge the server.
@@ -89,7 +105,8 @@ function main() {
     process.exit(1);
   }
 
-  const env = { ...process.env, HOSTNAME: process.env.HOSTNAME || "127.0.0.1" };
+  const defaultHostname = process.env.HOSTNAME || "127.0.0.1";
+  const env = { ...process.env, HOSTNAME: resolveBindHostname(args, defaultHostname) };
   const { file, prefixArgs } = resolveCommand(cmd);
   const bindArgs = withBindHostname(cmd, args, env.HOSTNAME);
 

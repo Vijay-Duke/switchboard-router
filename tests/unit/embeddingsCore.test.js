@@ -106,6 +106,15 @@ describe("buildEmbeddingsBody", () => {
     expect(sent.encoding_format).toBe("float");
   });
 
+  it("rejects redirects so SSRF validation cannot be bypassed", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+
+    await handleEmbeddingsCore(makeOptions());
+
+    const [, init] = vi.mocked(fetch).mock.calls[0];
+    expect(init.redirect).toBe("error");
+  });
+
   it("array input — passes array as-is", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 

@@ -5,6 +5,12 @@ export class AzureExecutor extends DefaultExecutor {
     super("azure");
   }
 
+  isUserConfiguredBase(credentials) {
+    return super.isUserConfiguredBase(credentials)
+      || !!credentials?.providerSpecificData?.azureEndpoint
+      || !!process.env.AZURE_ENDPOINT;
+  }
+
   buildUrl(model, stream, urlIndex = 0, credentials = null) {
     const azureEndpoint = credentials?.providerSpecificData?.azureEndpoint
       || process.env.AZURE_ENDPOINT
