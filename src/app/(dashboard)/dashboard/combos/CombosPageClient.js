@@ -220,7 +220,13 @@ export default function CombosPageClient({ initialData }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ comboStrategies: updated }),
       });
-      if (!res.ok) throw new Error(`Failed to update combo strategy (${res.status})`);
+      if (!res.ok) {
+        // Surface the API's specific message (e.g. Auto requires a routerModel)
+        // instead of failing silently or with a generic error.
+        const err = await res.json().catch(() => ({}));
+        notify(err.error || `Failed to update combo strategy (${res.status})`);
+        return;
+      }
 
       setComboStrategies(updated);
     } catch (error) {
@@ -405,6 +411,9 @@ const OBJECTIVE_OPTIONS = [
 function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
   const [showRouterSelect, setShowRouterSelect] = useState(false);
+  // routerModel is mandatory for Auto — when switching to Auto without one, open
+  // the router picker and persist strategy + router together (avoids the API 400).
+  const [pendingAutoSwitch, setPendingAutoSwitch] = useState(false);
   const [learnBusy, setLearnBusy] = useState(false);
   const [learnMsg, setLearnMsg] = useState("");
   const current = strategy.fallbackStrategy || "fallback";
@@ -473,23 +482,14 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
                     type="button"
                     onClick={() => setShowRouterSelect(true)}
                     className="inline-flex max-w-full items-center gap-1 rounded border border-dashed border-primary/40 px-1.5 py-0.5 font-mono text-[11px] text-primary hover:border-primary hover:bg-primary/5 transition-colors"
-                    title="Model that picks the worker each request"
+                    title="Model that picks the worker each request — required for Auto"
                   >
                     <span className="material-symbols-outlined text-[13px]">alt_route</span>
                     <span className="truncate">
                       {routerModel || "Select a router model (required)"}
                     </span>
                   </button>
-                  {routerModel && (
-                    <button
-                      type="button"
-                      onClick={() => onSetStrategy({ routerModel: "" })}
-                      className="p-0.5 rounded text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
-                      title="Reset router to default"
-                    >
-                      <span className="material-symbols-outlined text-[13px]">close</span>
-                    </button>
-                  )}
+                  {/* No clear/reset here — routerModel is required for Auto (there is no default). */}
                 </div>
                 {routerModel && combo.models?.includes(routerModel) && (
                   <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
@@ -649,7 +649,16 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
             <Select
               options={STRATEGY_OPTIONS}
               value={current}
-              onChange={(e) => onSetStrategy({ fallbackStrategy: e.target.value })}
+              onChange={(e) => {
+                const value = e.target.value;
+                // Auto needs a router first — pick one, then persist both together.
+                if (value === "auto" && !routerModel) {
+                  setPendingAutoSwitch(true);
+                  setShowRouterSelect(true);
+                  return;
+                }
+                onSetStrategy({ fallbackStrategy: value });
+              }}
               selectClassName="py-1.5 text-xs"
             />
             {!isAuto && (
@@ -708,9 +717,20 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
       />
       <ModelSelectModal
         isOpen={showRouterSelect}
-        onClose={() => setShowRouterSelect(false)}
+        onClose={() => {
+          // Cancelled without picking — abandon a pending Auto switch (stay on current).
+          setPendingAutoSwitch(false);
+          setShowRouterSelect(false);
+        }}
         onSelect={(m) => {
-          onSetStrategy({ routerModel: m?.value || "" });
+          const picked = m?.value || "";
+          if (pendingAutoSwitch) {
+            setPendingAutoSwitch(false);
+            // Only commit the Auto switch if a router was actually chosen.
+            if (picked) onSetStrategy({ fallbackStrategy: "auto", routerModel: picked });
+          } else {
+            onSetStrategy({ routerModel: picked });
+          }
           setShowRouterSelect(false);
         }}
         activeProviders={activeProviders}
@@ -986,6 +1006,12 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
             <p className="text-[11px] text-text-muted mt-1.5">
               {STRATEGY_HELP[strategy]}
             </p>
+            {strategy === "auto" && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                <span className="material-symbols-outlined text-[12px]">info</span>
+                Auto requires a router model — select one on the combo card after saving.
+              </p>
+            )}
             {strategy !== "auto" && (
               <label className="mt-2 inline-flex items-center gap-2 text-xs text-text-muted cursor-pointer">
                 <input
