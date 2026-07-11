@@ -123,6 +123,13 @@ export class BaseExecutor {
     return shouldRefreshCredentials(this.provider, credentials);
   }
 
+  isUserConfiguredBase(credentials) {
+    return this.provider?.startsWith?.("openai-compatible-")
+      || this.provider?.startsWith?.("anthropic-compatible-")
+      || !!credentials?.providerSpecificData?.baseUrl
+      || !!credentials?.runtimeTransport?.baseUrl;
+  }
+
   parseError(response, bodyText) {
     return { status: response.status, message: bodyText || `HTTP ${response.status}` };
   }
@@ -174,12 +181,7 @@ export class BaseExecutor {
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 
       // H5: SSRF guard for user-configured / compatible base URLs (DNS-resolved)
-      const isUserConfiguredBase =
-        this.provider?.startsWith?.("openai-compatible-") ||
-        this.provider?.startsWith?.("anthropic-compatible-") ||
-        !!credentials?.providerSpecificData?.baseUrl ||
-        !!credentials?.runtimeTransport?.baseUrl;
-      if (isUserConfiguredBase) {
+      if (this.isUserConfiguredBase(credentials)) {
         try {
           await assertPublicUrlResolved(url);
         } catch (ssrfErr) {
