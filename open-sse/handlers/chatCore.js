@@ -71,7 +71,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (runtimeTransport && credentials) credentials.runtimeTransport = runtimeTransport;
   const targetFormat = skipTranslation
     ? sourceFormat
-    : (modelTargetFormat || runtimeTransport?.format || getTargetFormat(provider));
+    : (modelTargetFormat || runtimeTransport?.format || getTargetFormat(provider, credentials));
   const stripList = getModelStrip(alias, model);
   const upstreamModel = getModelUpstreamId(alias, model);
 
