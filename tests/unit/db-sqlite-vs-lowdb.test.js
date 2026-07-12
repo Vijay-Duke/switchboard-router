@@ -179,6 +179,23 @@ describe("DB SQLite layer — public API parity", () => {
     expect(await sqliteDb.deleteCombo(c.id)).toBe(true);
   });
 
+  it("combos: updateCombo drops unknown fields (no mass assignment)", async () => {
+    const c = await sqliteDb.createCombo({ name: "combo-ma", models: ["m1"], kind: null });
+    const returned = await sqliteDb.updateCombo(c.id, {
+      models: ["m2"], id: "evil-id", isAdmin: true, createdAt: "1999-01-01",
+    });
+    // Returned merged record reflects only writable fields
+    expect(returned.id).toBe(c.id);
+    expect(returned.isAdmin).toBeUndefined();
+    expect(returned.createdAt).toBe(c.createdAt);
+    // Persisted record is equally clean
+    const persisted = await sqliteDb.getComboById(c.id);
+    expect(persisted.models).toEqual(["m2"]);
+    expect(persisted.isAdmin).toBeUndefined();
+    expect(persisted.createdAt).toBe(c.createdAt);
+    expect(await sqliteDb.deleteCombo(c.id)).toBe(true);
+  });
+
   it("modelAliases: KV ops", async () => {
     await sqliteDb.setModelAlias("alias1", "real-model-1");
     await sqliteDb.setModelAlias("alias2", "real-model-2");

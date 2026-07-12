@@ -1,35 +1,11 @@
 // @ts-check
 import { NextResponse } from "next/server";
+import { getComboById } from "@/lib/db/index.js";
 import {
-  getComboById,
-  updateCombo,
-  deleteCombo,
-  getComboByName,
-  getSettings,
-  updateSettings,
-  deleteRoutingDataForCombo,
-  rekeyRoutingDataForCombo,
-} from "@/lib/db/index.js";
-import { resetComboRotation } from "open-sse/services/combo.js";
-
-// Validate combo name: only a-z, A-Z, 0-9, -, _
-const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
-
-/** Move or drop per-combo strategy when combo is renamed or deleted. */
-async function rekeyComboStrategy(oldName, newName) {
-  if (!oldName || oldName === newName) return;
-  const settings = await getSettings();
-  const strategies = { ...(settings.comboStrategies || {}) };
-  if (!(oldName in strategies)) return;
-  if (newName) {
-    // Prefer existing target key if present; otherwise move old → new
-    if (!(newName in strategies)) {
-      strategies[newName] = strategies[oldName];
-    }
-  }
-  delete strategies[oldName];
-  await updateSettings({ comboStrategies: strategies });
-}
+  ComboWriteError,
+  deleteComboWrite,
+  updateComboWrite,
+} from "@/lib/combos/comboWrites.js";
 
 // GET /api/combos/[id] - Get combo by ID
 export async function GET(request, { params }) {
@@ -52,44 +28,18 @@ export async function GET(request, { params }) {
 export async function PUT(request, { params }) {
   try {
     const { id } = await params;
-    const body = await request.json();
-    
-    // Validate name format if provided
-    if (body.name) {
-      if (!VALID_NAME_REGEX.test(body.name)) {
-        return NextResponse.json({ error: "Name can only contain letters, numbers, -, _ and ." }, { status: 400 });
-      }
-      
-      // Check if name already exists (exclude current combo)
-      const existing = await getComboByName(body.name);
-      if (existing && existing.id !== id) {
-        return NextResponse.json({ error: "Combo name already exists" }, { status: 400 });
-      }
-    }
-    
-    // Capture previous name to invalidate rotation state on rename
-    const prev = await getComboById(id);
-    const combo = await updateCombo(id, body);
-    
+    const combo = await updateComboWrite(id, await request.json());
+
     if (!combo) {
       return NextResponse.json({ error: "Combo not found" }, { status: 404 });
     }
 
-    // Invalidate rotation state (models/strategy/name may have changed)
-    if (prev?.name) resetComboRotation(prev.name);
-    if (combo.name && combo.name !== prev?.name) {
-      resetComboRotation(combo.name);
-      // Keep Auto/Fusion settings + routing history attached to the new name
-      await rekeyComboStrategy(prev.name, combo.name);
-      try {
-        await rekeyRoutingDataForCombo(prev.name, combo.name);
-      } catch (e) {
-        console.warn("rekey routing data failed:", e?.message || e);
-      }
-    }
-
     return NextResponse.json(combo);
   } catch (error) {
+    if (error instanceof ComboWriteError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
     console.log("Error updating combo:", error);
     return NextResponse.json({ error: "Failed to update combo" }, { status: 500 });
   }
@@ -99,22 +49,10 @@ export async function PUT(request, { params }) {
 export async function DELETE(request, { params }) {
   try {
     const { id } = await params;
-    const prev = await getComboById(id);
-    const success = await deleteCombo(id);
-    
+    const success = await deleteComboWrite(id);
+
     if (!success) {
       return NextResponse.json({ error: "Combo not found" }, { status: 404 });
-    }
-
-    if (prev?.name) {
-      resetComboRotation(prev.name);
-      // Drop orphan strategy so Overview / Auto routing don't reference a ghost name
-      await rekeyComboStrategy(prev.name, null);
-      try {
-        await deleteRoutingDataForCombo(prev.name);
-      } catch (e) {
-        console.warn("delete routing data failed:", e?.message || e);
-      }
     }
 
     return NextResponse.json({ success: true });

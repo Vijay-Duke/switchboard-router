@@ -5,26 +5,13 @@ import { getSettings, updateSettings } from "@/lib/db/index.js";
 import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
 import { resetComboRotation } from "open-sse/services/combo.js";
 import { runQuotaAutoPingTick } from "@/shared/services/quotaAutoPing";
+import { findAutoComboMissingRouter } from "@/lib/combos/comboWrites.js";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/**
- * Return the name of the first Auto combo strategy missing a routerModel, or null.
- * routerModel is mandatory for Auto combos — there is no default router.
- * @param {Record<string, any>|undefined|null} comboStrategies
- * @returns {string|null}
- */
-function findAutoComboMissingRouter(comboStrategies) {
-  if (!comboStrategies || typeof comboStrategies !== "object") return null;
-  for (const [name, strat] of Object.entries(comboStrategies)) {
-    if (!strat || strat.fallbackStrategy !== "auto") continue;
-    const router = strat.routerModel;
-    if (!router || typeof router !== "string" || !router.trim()) return name;
-  }
-  return null;
-}
-
+// findAutoComboMissingRouter now lives in comboWrites.js (shared with the
+// management API) — imported above.
 const PROVIDER_STRATEGIES = new Set([
   "off",
   "priority",
