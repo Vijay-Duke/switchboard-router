@@ -47,4 +47,20 @@ describe("generated catalog fail-open behavior", () => {
     expect(getGeneratedPricing(null)).toBeNull();
     expect(getGeneratedCapabilities("")).toBeNull();
   });
+
+  // vitest runs with cwd=tests/ (not the repo root), so the cwd-anchored
+  // candidate misses and the module-relative fallback must find the real
+  // committed catalog — proving default resolution works away from the root.
+  it("resolves the committed catalog from a non-root cwd", () => {
+    const committedPath = new URL(
+      "../../open-sse/providers/generated/catalog.json",
+      import.meta.url,
+    );
+    const committed = JSON.parse(fs.readFileSync(committedPath, "utf8"));
+
+    expect(readCatalogFile()).toEqual({
+      pricing: committed.pricing,
+      capabilities: committed.capabilities,
+    });
+  });
 });
