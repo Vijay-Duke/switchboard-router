@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSettings, validateApiKey } from "@/lib/db/index.js";
 import { hasValidCliToken } from "@/shared/utils/cliToken.js";
+import { isManagementTokenValid } from "@/lib/mgmt/token.js";
 
 // Public LLM API prefixes (optional API-key gate for non-local callers).
 const PUBLIC_PREFIXES = ["/v1", "/v1beta", "/api/v1", "/api/v1beta", "/codex"];
@@ -192,6 +193,10 @@ async function canAccessLocalOnlyRoute(request) {
   return false;
 }
 
+async function canAccessManagementRoute(request) {
+  return (await canAccessLocalOnlyRoute(request)) || isManagementTokenValid(request);
+}
+
 export const __test__ = {
   isLocalRequest,
   isLoopbackHostname,
@@ -201,6 +206,8 @@ export const __test__ = {
   extractApiKey,
   canAccessPublicLlmApi,
   canAccessLocalOnlyRoute,
+  canAccessManagementRoute,
+  isManagementTokenValid,
 };
 
 /**
@@ -220,6 +227,11 @@ export async function proxy(request) {
   if (isPublicLlmApi(pathname)) {
     if (await canAccessPublicLlmApi(request)) return NextResponse.next();
     return NextResponse.json({ error: "API key required" }, { status: 401 });
+  }
+
+  if (pathname.startsWith("/api/mgmt/")) {
+    if (await canAccessManagementRoute(request)) return NextResponse.next();
+    return NextResponse.json({ v: 1, error: { message: "Management API: unauthorized" } }, { status: 401 });
   }
 
   // All other /api/* (settings, keys, providers, combos writes, …) are loopback/CLI only.
