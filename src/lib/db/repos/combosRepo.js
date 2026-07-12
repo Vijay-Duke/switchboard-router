@@ -50,13 +50,22 @@ export async function createCombo(data) {
   return combo;
 }
 
+// Writable columns only — never spread a client payload into the combo record
+// (mass-assignment would reflect arbitrary keys back to callers).
+const COMBO_UPDATABLE_FIELDS = ["name", "kind", "models"];
+
 export async function updateCombo(id, data) {
   const db = await getAdapter();
   let result = null;
   db.transaction(() => {
     const row = db.get(`SELECT * FROM combos WHERE id = ?`, [id]);
     if (!row) return;
-    const merged = { ...rowToCombo(row), ...data, updatedAt: new Date().toISOString() };
+    const merged = { ...rowToCombo(row), updatedAt: new Date().toISOString() };
+    for (const field of COMBO_UPDATABLE_FIELDS) {
+      if (data && Object.prototype.hasOwnProperty.call(data, field)) {
+        merged[field] = data[field];
+      }
+    }
     db.run(
       `UPDATE combos SET name = ?, kind = ?, models = ?, updatedAt = ? WHERE id = ?`,
       [merged.name, merged.kind, stringifyJson(merged.models || []), merged.updatedAt, id]

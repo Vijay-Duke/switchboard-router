@@ -16,8 +16,9 @@ export function fail(status, message, code) {
 /** Route-level defense-in-depth auth (middleware already gates, but never trust one layer).
  *  Returns null when authorized, or a 401 `fail(...)` Response when not. */
 export async function requireManagementAuth(request) {
+  // Cheap synchronous checks first; the CLI-token lookup hits the DB.
   if (isLocalRequest(request)) return null;
-  if (await hasValidCliToken(request)) return null;
   if (isManagementTokenValid(request)) return null;
+  if (await hasValidCliToken(request)) return null;
   return fail(401, "Management API requires local access or a valid bearer token", "unauthorized");
 }

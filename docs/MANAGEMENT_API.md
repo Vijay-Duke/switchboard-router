@@ -75,7 +75,9 @@ A strategy is an object keyed by combo name in Switchboard settings. The stable 
 | `freezeLearning` | boolean | Stops Auto learning updates |
 | `explorationRate` | number | Auto-routing exploration rate |
 
-Additional strategy fields may be returned as Switchboard adds capabilities. To set a strategy, send the complete strategy object you want stored. An `auto` strategy without a non-empty `routerModel` is rejected with `400`.
+Additional strategy fields may be returned as Switchboard adds capabilities. To set a strategy, send the complete strategy object you want stored. The body must be a JSON object; an `auto` strategy without a non-empty `routerModel` is rejected with `400`.
+
+Strategy writes are allowlisted to the known schema: `fallbackStrategy`, `routerModel`, `objective`, `judgeModel`, `explorationRate`, `explorationRateCap`, `learningEnabled`, `learningWindowDays`, `freezeLearning`, `activeLearningVersionId`, `autoLearnIntervalHours`, `capacityAutoSwitch`, `emitAutoRouterHeaders`, `autoTuning` (`heuristicFirst`, `maxFewShots`, `minEventsBeforeLearn`), and `fusionTuning` (`cachedRoutes`, `policyFastPath`, `routerTimeoutMs`). Unknown keys are silently dropped and never persisted; the response `strategy` reflects exactly what was stored. Combo writes (`POST`/`PUT` on combos) are likewise limited to `name`, `models`, and `kind`.
 
 ## Endpoints
 

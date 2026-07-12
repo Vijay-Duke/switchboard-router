@@ -194,7 +194,10 @@ async function canAccessLocalOnlyRoute(request) {
 }
 
 async function canAccessManagementRoute(request) {
-  return (await canAccessLocalOnlyRoute(request)) || isManagementTokenValid(request);
+  // Cheap synchronous checks first; the CLI-token lookup hits the DB.
+  if (isLocalRequest(request)) return true;
+  if (isManagementTokenValid(request)) return true;
+  return await hasValidCliToken(request);
 }
 
 export const __test__ = {

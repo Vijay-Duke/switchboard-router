@@ -44,11 +44,12 @@ vi.mock("@/shared/utils/cliToken.js", () => ({ hasValidCliToken: mocks.hasValidC
 vi.mock("open-sse/services/combo.js", () => ({ resetComboRotation: mocks.resetComboRotation }));
 
 const combosRoute = await import("../../src/app/api/mgmt/v1/combos/route.js");
+const comboByIdRoute = await import("../../src/app/api/mgmt/v1/combos/[id]/route.js");
 const strategyRoute = await import("../../src/app/api/mgmt/v1/combos/[id]/strategy/route.js");
 
-function request(url, body) {
+function request(url, body, method = "POST") {
   return new Request(url, {
-    method: "POST",
+    method,
     headers: { "content-type": "application/json", host: "localhost:20128" },
     body: JSON.stringify(body),
   });
@@ -107,5 +108,76 @@ describe("management API combo writes", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ v: 1, data: { combo: "auto-combo", strategy } });
     expect(mocks.updateSettings).toHaveBeenCalledWith({ comboStrategies: { "auto-combo": strategy } });
+  });
+
+  it("drops unknown combo fields on update (no mass assignment)", async () => {
+    mocks.updateCombo.mockImplementation(async (id, data) => ({
+      id, name: "auto-combo", kind: null, models: [], ...data,
+    }));
+
+    const response = await comboByIdRoute.PUT(
+      request(
+        "http://localhost:20128/api/mgmt/v1/combos/combo-1",
+        { name: "renamed-combo", id: "evil-id", isAdmin: true, createdAt: "1999-01-01" },
+        "PUT",
+      ),
+      { params: Promise.resolve({ id: "combo-1" }) },
+    );
+    const body = await response.json();
+    const serialized = JSON.stringify(body);
+
+    expect(response.status).toBe(200);
+    // The repo is only ever called with the allowlisted fields...
+    expect(mocks.updateCombo).toHaveBeenCalledWith("combo-1", { name: "renamed-combo" });
+    // ...so neither the persisted record nor the response can carry injected keys.
+    expect(serialized).not.toContain("isAdmin");
+    expect(serialized).not.toContain("evil-id");
+    expect(serialized).not.toContain("1999-01-01");
+  });
+
+  it("drops unknown strategy keys on strategy update", async () => {
+    const response = await strategyRoute.PUT(
+      request(
+        "http://localhost:20128/api/mgmt/v1/combos/combo-1/strategy",
+        {
+          fallbackStrategy: "fallback",
+          capacityAutoSwitch: true,
+          filterWorker: "() => true",
+          __proto__polluted: true,
+          evilKey: "x",
+          autoTuning: { maxFewShots: 3, evilNested: "y" },
+        },
+        "PUT",
+      ),
+      { params: Promise.resolve({ id: "combo-1" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.strategy).toEqual({
+      fallbackStrategy: "fallback",
+      capacityAutoSwitch: true,
+      autoTuning: { maxFewShots: 3 },
+    });
+    expect(mocks.updateSettings).toHaveBeenCalledWith({
+      comboStrategies: {
+        "auto-combo": {
+          fallbackStrategy: "fallback",
+          capacityAutoSwitch: true,
+          autoTuning: { maxFewShots: 3 },
+        },
+      },
+    });
+  });
+
+  it("rejects a non-object strategy body", async () => {
+    const response = await strategyRoute.PUT(
+      request("http://localhost:20128/api/mgmt/v1/combos/combo-1/strategy", ["auto"], "PUT"),
+      { params: Promise.resolve({ id: "combo-1" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.message).toBe("Strategy must be a JSON object");
+    expect(mocks.updateSettings).not.toHaveBeenCalled();
   });
 });

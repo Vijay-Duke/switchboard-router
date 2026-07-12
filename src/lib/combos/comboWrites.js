@@ -74,16 +74,76 @@ export function findAutoComboMissingRouter(comboStrategies) {
   return null;
 }
 
+// Known strategy schema. Anything else is dropped — persisted strategies are
+// read back by the router (e.g. `strategy.filterWorker` is INVOKED as a
+// function in handleAutoChat), so arbitrary client keys must never reach settings.
+const STRATEGY_ALLOWED_KEYS = new Set([
+  "fallbackStrategy", "routerModel", "objective", "judgeModel",
+  "explorationRate", "explorationRateCap",
+  "learningEnabled", "learningWindowDays", "freezeLearning",
+  "activeLearningVersionId", "autoLearnIntervalHours",
+  "capacityAutoSwitch", "emitAutoRouterHeaders",
+  "fusionTuning", "autoTuning",
+]);
+const AUTO_TUNING_ALLOWED_KEYS = new Set([
+  "heuristicFirst", "maxFewShots", "minEventsBeforeLearn",
+]);
+const FUSION_TUNING_ALLOWED_KEYS = new Set([
+  "cachedRoutes", "policyFastPath", "routerTimeoutMs",
+]);
+
+/**
+ * @param {Record<string, any>} value
+ * @param {Set<string>} allowed
+ * @returns {Record<string, any>}
+ */
+function pickAllowedKeys(value, allowed) {
+  /** @type {Record<string, any>} */
+  const out = {};
+  for (const [key, v] of Object.entries(value)) {
+    if (allowed.has(key)) out[key] = v;
+  }
+  return out;
+}
+
+/**
+ * Reduce client strategy input to the known schema (unknown keys dropped).
+ * Rejects non-object input; nested tuning objects get their own allowlists.
+ * @param {unknown} strategy
+ * @returns {Record<string, any>}
+ */
+export function sanitizeStrategyInput(strategy) {
+  if (!strategy || typeof strategy !== "object" || Array.isArray(strategy)) {
+    throw new ComboWriteError("Strategy must be a JSON object", 400);
+  }
+  const safe = pickAllowedKeys(/** @type {Record<string, any>} */ (strategy), STRATEGY_ALLOWED_KEYS);
+  for (const [key, allowed] of /** @type {[string, Set<string>][]} */ ([
+    ["autoTuning", AUTO_TUNING_ALLOWED_KEYS],
+    ["fusionTuning", FUSION_TUNING_ALLOWED_KEYS],
+  ])) {
+    if (!(key in safe)) continue;
+    const nested = safe[key];
+    if (!nested || typeof nested !== "object" || Array.isArray(nested)) {
+      delete safe[key];
+      continue;
+    }
+    safe[key] = pickAllowedKeys(nested, allowed);
+  }
+  return safe;
+}
+
 /**
  * Merge, validate, and persist one combo's strategy, then reset its rotation.
+ * Input is allowlisted to the known strategy schema before persisting.
  * @param {string} comboName
  * @param {Record<string, any>} strategy
  * @returns {Promise<Record<string, any>>}
  */
 export async function updateComboStrategyChecked(comboName, strategy) {
+  const safeStrategy = sanitizeStrategyInput(strategy);
   const settings = await getSettings();
-  const merged = { ...(settings.comboStrategies || {}), [comboName]: strategy };
-  const invalidAuto = findAutoComboMissingRouter({ [comboName]: strategy });
+  const merged = { ...(settings.comboStrategies || {}), [comboName]: safeStrategy };
+  const invalidAuto = findAutoComboMissingRouter({ [comboName]: safeStrategy });
   if (invalidAuto) {
     throw new ComboWriteError(AUTO_ROUTER_REQUIRED_ERROR(invalidAuto), 400);
   }
@@ -128,21 +188,34 @@ export async function createComboWrite(data) {
   return createComboRecord({ name, models: models || [], kind: kind || null });
 }
 
+// Persisted combo fields writable by clients. Everything else is dropped so a
+// request body can never mass-assign onto the merged combo record.
+const COMBO_WRITABLE_FIELDS = ["name", "models", "kind"];
+
 /**
  * Update a combo and maintain rotation, strategy, and routing history state.
  * Returns null when the combo does not exist, matching updateCombo.
+ * Only `name`, `models`, and `kind` are accepted; unknown keys are dropped.
  * @param {string} id
  * @param {Record<string, any>} data
  * @returns {Promise<any|null>}
  */
 export async function updateComboWrite(id, data) {
-  if (data.name) {
-    validateComboName(data.name);
-    await ensureComboNameAvailable(data.name, id);
+  /** @type {Record<string, any>} */
+  const safeData = {};
+  for (const field of COMBO_WRITABLE_FIELDS) {
+    if (data && Object.prototype.hasOwnProperty.call(data, field)) {
+      safeData[field] = data[field];
+    }
+  }
+
+  if (safeData.name) {
+    validateComboName(safeData.name);
+    await ensureComboNameAvailable(safeData.name, id);
   }
 
   const previous = await getComboById(id);
-  const combo = await updateComboRecord(id, data);
+  const combo = await updateComboRecord(id, safeData);
   if (!combo) return null;
 
   if (previous?.name) resetComboRotation(previous.name);

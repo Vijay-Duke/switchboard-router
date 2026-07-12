@@ -7,7 +7,9 @@ export function managementTokenConfigured() {
 }
 
 /** Constant-time compare of the request bearer token against MANAGEMENT_TOKEN.
- *  Returns false when MANAGEMENT_TOKEN is unset/empty (fails closed). */
+ *  Returns false when MANAGEMENT_TOKEN is unset/empty (fails closed).
+ *  Both sides are hashed to fixed-length digests before timingSafeEqual so no
+ *  length branch can leak the configured token's length via timing. */
 export function isManagementTokenValid(request) {
   const configured = (process.env.MANAGEMENT_TOKEN || "").trim();
   if (!configured) return false;
@@ -15,8 +17,7 @@ export function isManagementTokenValid(request) {
   if (!auth.startsWith("Bearer ")) return false;
   const presented = auth.slice(7).trim();
   if (!presented) return false;
-  const a = Buffer.from(presented);
-  const b = Buffer.from(configured);
-  if (a.length !== b.length) return false;
+  const a = crypto.createHash("sha256").update(presented).digest();
+  const b = crypto.createHash("sha256").update(configured).digest();
   return crypto.timingSafeEqual(a, b);
 }
