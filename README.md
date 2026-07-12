@@ -103,6 +103,17 @@ export OPENAI_API_KEY="sk-…"   # from the dashboard
 
 [User guide](https://vijay-duke.github.io/switchboard-router/) · [Architecture](docs/ARCHITECTURE.md) · [Environment reference](docs/ENVIRONMENT.md) · [Releases](https://github.com/Vijay-Duke/switchboard-router/releases)
 
+### Refreshing the model catalog
+
+Capability and pricing metadata has a generated override layer at `open-sse/providers/generated/catalog.json`.
+It merges over the hand-maintained tables: generated pricing numbers win.
+For capabilities, generated data only fills gaps; explicit hand-maintained values win.
+Run `npm run catalog:refresh` to pull LiteLLM's public `model_prices_and_context_window.json`.
+Add `--live` to also include models reported by the running local gateway.
+The server never fetches this catalog at runtime.
+Unknown models are skipped, never invented.
+Commit the regenerated file.
+
 ---
 
 ## License

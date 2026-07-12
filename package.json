@@ -12,6 +12,7 @@
     "start:bun": "node scripts/start-standalone.mjs --runtime bun",
     "start:standalone": "node scripts/start-standalone.mjs",
     "check:i18n": "node scripts/i18n-parity-check.mjs",
+    "catalog:refresh": "node scripts/fetch-model-catalog.mjs",
     "generate:providers": "node scripts/generate-provider-registry.mjs",
     "check:providers": "node scripts/generate-provider-registry.mjs --check",
     "check:versions": "node scripts/assert-release-version.mjs",

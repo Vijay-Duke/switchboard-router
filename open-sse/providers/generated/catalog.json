@@ -1,0 +1,1710 @@
+{
+  "capabilities": {
+    "DeepSeek-V4-Flash": {
+      "contextWindow": 32768,
+      "maxOutput": 32768,
+      "reasoning": true,
+      "tools": true
+    },
+    "Kimi-K2.6": {
+      "contextWindow": 32768,
+      "maxOutput": 32768,
+      "reasoning": true,
+      "tools": true
+    },
+    "MiniMax-M2.1": {
+      "contextWindow": 196608,
+      "maxOutput": 16384
+    },
+    "MiniMax-M2.5": {
+      "contextWindow": 1000000,
+      "maxOutput": 8192,
+      "reasoning": true,
+      "tools": true
+    },
+    "MiniMax-M2.7": {
+      "contextWindow": 196608,
+      "maxOutput": 131072,
+      "reasoning": true,
+      "tools": true
+    },
+    "MiniMax-M3": {
+      "contextWindow": 1000000,
+      "maxOutput": 128000,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-3-5-sonnet-20241022": {
+      "contextWindow": 200000,
+      "maxOutput": 8192,
+      "tools": true
+    },
+    "claude-4.5-haiku": {
+      "tools": true,
+      "vision": true
+    },
+    "claude-4.5-sonnet": {
+      "tools": true,
+      "vision": true
+    },
+    "claude-fable-5": {
+      "contextWindow": 1000000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-haiku-4-5-20251001": {
+      "contextWindow": 200000,
+      "maxOutput": 64000,
+      "pdf": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-haiku-4.5": {
+      "contextWindow": 128000,
+      "maxOutput": 16000,
+      "tools": true,
+      "vision": true
+    },
+    "claude-opus-4-20250514": {
+      "contextWindow": 200000,
+      "maxOutput": 32000,
+      "pdf": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-opus-4-5-20251101": {
+      "contextWindow": 200000,
+      "maxOutput": 64000,
+      "pdf": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-opus-4-6": {
+      "contextWindow": 1000000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-opus-4-7": {
+      "contextWindow": 1000000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-opus-4-8": {
+      "contextWindow": 1000000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-opus-4.1": {
+      "contextWindow": 200000,
+      "maxOutput": 32000,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-opus-4.5": {
+      "contextWindow": 128000,
+      "maxOutput": 16000,
+      "tools": true,
+      "vision": true
+    },
+    "claude-opus-4.6": {
+      "contextWindow": 1000000,
+      "maxOutput": 128000,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-opus-4.7": {
+      "contextWindow": 1000000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-sonnet-4": {
+      "contextWindow": 128000,
+      "maxOutput": 16000,
+      "tools": true,
+      "vision": true
+    },
+    "claude-sonnet-4-20250514": {
+      "contextWindow": 1000000,
+      "maxOutput": 64000,
+      "pdf": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-sonnet-4-5-20250929": {
+      "contextWindow": 200000,
+      "maxOutput": 64000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-sonnet-4-6": {
+      "contextWindow": 1000000,
+      "maxOutput": 64000,
+      "pdf": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-sonnet-4.5": {
+      "contextWindow": 128000,
+      "maxOutput": 16000,
+      "tools": true,
+      "vision": true
+    },
+    "claude-sonnet-4.6": {
+      "contextWindow": 1000000,
+      "maxOutput": 128000,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "claude-sonnet-5": {
+      "contextWindow": 1000000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "codestral-latest": {
+      "contextWindow": 32000,
+      "maxOutput": 8191
+    },
+    "command-a-03-2025": {
+      "contextWindow": 256000,
+      "maxOutput": 8000,
+      "tools": true
+    },
+    "command-r-08-2024": {
+      "contextWindow": 128000,
+      "maxOutput": 4096,
+      "tools": true
+    },
+    "command-r-plus-08-2024": {
+      "contextWindow": 128000,
+      "maxOutput": 4096,
+      "tools": true
+    },
+    "dall-e-2": {
+      "imageOutput": true
+    },
+    "dall-e-3": {
+      "imageOutput": true
+    },
+    "deepseek-chat": {
+      "contextWindow": 131072,
+      "maxOutput": 8192,
+      "tools": true
+    },
+    "deepseek-r1": {
+      "contextWindow": 128000,
+      "maxOutput": 8192,
+      "reasoning": true
+    },
+    "deepseek-reasoner": {
+      "contextWindow": 131072,
+      "maxOutput": 65536,
+      "reasoning": true,
+      "tools": false
+    },
+    "deepseek-v3": {
+      "contextWindow": 128000,
+      "maxOutput": 8192
+    },
+    "deepseek-v3.1": {
+      "contextWindow": 131072,
+      "maxOutput": 131072,
+      "reasoning": true,
+      "tools": true
+    },
+    "deepseek-v3.2": {
+      "contextWindow": 163840,
+      "maxOutput": 163840,
+      "reasoning": true,
+      "tools": true
+    },
+    "deepseek-v4-flash": {
+      "contextWindow": 1000000,
+      "maxOutput": 8192,
+      "tools": true,
+      "vision": false
+    },
+    "deepseek-v4-pro": {
+      "contextWindow": 1000000,
+      "maxOutput": 8192,
+      "tools": true,
+      "vision": false
+    },
+    "deepseek/deepseek-chat": {
+      "contextWindow": 131072,
+      "maxOutput": 8192,
+      "tools": true
+    },
+    "deepseek/deepseek-reasoner": {
+      "contextWindow": 131072,
+      "maxOutput": 65536,
+      "reasoning": true,
+      "tools": false
+    },
+    "deepseek/deepseek-v4-flash": {
+      "contextWindow": 1000000,
+      "maxOutput": 8192,
+      "tools": true,
+      "vision": false
+    },
+    "deepseek/deepseek-v4-pro": {
+      "contextWindow": 1000000,
+      "maxOutput": 8192,
+      "tools": true,
+      "vision": false
+    },
+    "flux-dev": {
+      "imageOutput": true
+    },
+    "flux-kontext-max": {
+      "contextWindow": 4096,
+      "imageOutput": true,
+      "maxOutput": 4096
+    },
+    "flux-kontext-pro": {
+      "contextWindow": 4096,
+      "imageOutput": true,
+      "maxOutput": 4096
+    },
+    "flux-pro": {
+      "imageOutput": true
+    },
+    "flux-pro-1.1": {
+      "imageOutput": true
+    },
+    "flux-pro-1.1-ultra": {
+      "imageOutput": true
+    },
+    "gemini-2.0-flash": {
+      "audioInput": true,
+      "audioOutput": true,
+      "contextWindow": 1048576,
+      "maxOutput": 8192,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gemini-2.5-flash": {
+      "audioOutput": false,
+      "contextWindow": 1048576,
+      "maxOutput": 65535,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gemini-2.5-flash-image": {
+      "audioOutput": false,
+      "contextWindow": 32768,
+      "imageOutput": true,
+      "maxOutput": 32768,
+      "pdf": true,
+      "search": false,
+      "tools": true,
+      "vision": true
+    },
+    "gemini-2.5-flash-lite": {
+      "audioOutput": false,
+      "contextWindow": 1048576,
+      "maxOutput": 65535,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gemini-2.5-pro": {
+      "audioInput": true,
+      "contextWindow": 1048576,
+      "maxOutput": 65535,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "videoInput": true,
+      "vision": true
+    },
+    "gemini-2.5-pro-preview-tts": {
+      "audioOutput": false,
+      "contextWindow": 1048576,
+      "maxOutput": 65535,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gemini-3-flash-preview": {
+      "audioOutput": false,
+      "contextWindow": 1048576,
+      "maxOutput": 65535,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gemini-3-pro-image-preview": {
+      "contextWindow": 65536,
+      "imageOutput": true,
+      "maxOutput": 32768,
+      "search": true,
+      "tools": false,
+      "vision": true
+    },
+    "gemini-3-pro-preview": {
+      "audioInput": true,
+      "contextWindow": 1048576,
+      "maxOutput": 65535,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "videoInput": true,
+      "vision": true
+    },
+    "gemini-3.1-flash-image": {
+      "contextWindow": 65536,
+      "imageOutput": true,
+      "maxOutput": 32768,
+      "search": true,
+      "tools": false,
+      "vision": true
+    },
+    "gemini-3.1-flash-image-preview": {
+      "contextWindow": 65536,
+      "imageOutput": true,
+      "maxOutput": 32768,
+      "search": true,
+      "tools": false,
+      "vision": true
+    },
+    "gemini-3.1-flash-lite-preview": {
+      "audioInput": true,
+      "audioOutput": false,
+      "contextWindow": 1048576,
+      "maxOutput": 65536,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "videoInput": true,
+      "vision": true
+    },
+    "gemini-3.1-pro-preview": {
+      "audioInput": true,
+      "contextWindow": 1048576,
+      "maxOutput": 65536,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "videoInput": true,
+      "vision": true
+    },
+    "gemma-4-31b-it": {
+      "contextWindow": 262144,
+      "maxOutput": 262144,
+      "tools": true,
+      "vision": true
+    },
+    "gen4_image": {
+      "imageOutput": true
+    },
+    "gen4_image_turbo": {
+      "imageOutput": true
+    },
+    "glm-4-7-251222": {
+      "contextWindow": 204800,
+      "maxOutput": 131072,
+      "reasoning": true,
+      "tools": true
+    },
+    "glm-4.5-air": {
+      "contextWindow": 131072,
+      "maxOutput": 98304,
+      "reasoning": true,
+      "tools": true
+    },
+    "glm-4.6": {
+      "contextWindow": 204800,
+      "maxOutput": 131072,
+      "reasoning": true,
+      "tools": true
+    },
+    "glm-4.6v": {
+      "contextWindow": 131072,
+      "maxOutput": 32768,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "glm-4.7": {
+      "contextWindow": 204800,
+      "maxOutput": 131072,
+      "reasoning": true,
+      "tools": true
+    },
+    "glm-4.7-flash": {
+      "contextWindow": 131072,
+      "maxOutput": 131072,
+      "reasoning": true,
+      "tools": true
+    },
+    "glm-5": {
+      "contextWindow": 202752,
+      "maxOutput": 128000,
+      "reasoning": true,
+      "tools": true
+    },
+    "glm-5.1": {
+      "contextWindow": 202752,
+      "maxOutput": 65535,
+      "reasoning": true,
+      "tools": true
+    },
+    "glm-5.2": {
+      "contextWindow": 262144,
+      "maxOutput": 262144,
+      "reasoning": true,
+      "tools": true
+    },
+    "gpt-3.5-turbo": {
+      "contextWindow": 16385,
+      "maxOutput": 4096,
+      "tools": true
+    },
+    "gpt-4": {
+      "contextWindow": 8192,
+      "maxOutput": 4096,
+      "tools": true
+    },
+    "gpt-4-turbo": {
+      "contextWindow": 128000,
+      "maxOutput": 4096,
+      "pdf": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-4.1": {
+      "contextWindow": 1047576,
+      "maxOutput": 32768,
+      "pdf": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-4.1-mini": {
+      "contextWindow": 1047576,
+      "maxOutput": 32768,
+      "pdf": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-4.1-nano": {
+      "contextWindow": 1047576,
+      "maxOutput": 32768,
+      "pdf": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-4o": {
+      "contextWindow": 128000,
+      "maxOutput": 16384,
+      "pdf": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-4o-mini": {
+      "contextWindow": 128000,
+      "maxOutput": 16384,
+      "pdf": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5": {
+      "contextWindow": 272000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5-codex": {
+      "contextWindow": 272000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5-mini": {
+      "contextWindow": 272000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5-nano": {
+      "contextWindow": 272000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5.1": {
+      "contextWindow": 272000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5.1-codex": {
+      "contextWindow": 272000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5.1-codex-max": {
+      "contextWindow": 272000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5.1-codex-mini": {
+      "contextWindow": 272000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5.2": {
+      "contextWindow": 272000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5.2-codex": {
+      "contextWindow": 272000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5.3-codex": {
+      "contextWindow": 272000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5.3-codex-spark": {
+      "contextWindow": 128000,
+      "maxOutput": 128000,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5.4": {
+      "contextWindow": 1050000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5.4-mini": {
+      "contextWindow": 1050000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5.4-nano": {
+      "contextWindow": 1050000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5.4-pro": {
+      "contextWindow": 1050000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-5.5": {
+      "contextWindow": 1050000,
+      "maxOutput": 128000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "gpt-image-1": {
+      "imageOutput": true
+    },
+    "gpt-image-2": {
+      "imageOutput": true,
+      "pdf": true,
+      "vision": true
+    },
+    "gpt-oss-120b": {
+      "contextWindow": 131072,
+      "maxOutput": 131072,
+      "tools": true
+    },
+    "grok-3": {
+      "contextWindow": 131072,
+      "maxOutput": 131072,
+      "search": true,
+      "tools": true
+    },
+    "grok-3-mini": {
+      "contextWindow": 131072,
+      "maxOutput": 131072,
+      "reasoning": true,
+      "search": true,
+      "tools": true
+    },
+    "grok-4": {
+      "contextWindow": 131072,
+      "maxOutput": 131072,
+      "search": true,
+      "tools": true
+    },
+    "grok-4-fast-reasoning": {
+      "contextWindow": 131072,
+      "maxOutput": 131072,
+      "search": true,
+      "tools": true
+    },
+    "grok-4.3": {
+      "contextWindow": 1000000,
+      "maxOutput": 1000000,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "grok-code-fast-1": {
+      "contextWindow": 131072,
+      "maxOutput": 131072,
+      "search": true,
+      "tools": true
+    },
+    "hermes-3-llama-3.1-405b": {
+      "contextWindow": 131072,
+      "maxOutput": 131072,
+      "tools": true
+    },
+    "kimi-k2": {
+      "contextWindow": 131072,
+      "maxOutput": 16384,
+      "tools": true
+    },
+    "kimi-k2-thinking": {
+      "contextWindow": 262144,
+      "maxOutput": 262144,
+      "reasoning": true,
+      "tools": false
+    },
+    "kimi-k2-thinking-251104": {
+      "contextWindow": 229376,
+      "maxOutput": 32768,
+      "reasoning": true,
+      "tools": true
+    },
+    "kimi-k2.5": {
+      "contextWindow": 262144,
+      "maxOutput": 262144,
+      "tools": true,
+      "videoInput": true,
+      "vision": true
+    },
+    "kimi-k2.6": {
+      "contextWindow": 262144,
+      "maxOutput": 262144,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "kimi-k2.7-code": {
+      "contextWindow": 262144,
+      "maxOutput": 262144,
+      "reasoning": true,
+      "tools": true
+    },
+    "kimi-latest": {
+      "contextWindow": 131072,
+      "maxOutput": 131072,
+      "tools": true,
+      "vision": true
+    },
+    "llama-3.3-70b": {
+      "contextWindow": 128000,
+      "maxOutput": 128000,
+      "tools": true
+    },
+    "llama-3.3-70b-versatile": {
+      "contextWindow": 128000,
+      "maxOutput": 32768,
+      "tools": true
+    },
+    "llama-4-scout-17b-16e-instruct": {
+      "contextWindow": 10000000,
+      "maxOutput": 16384,
+      "tools": true,
+      "vision": true
+    },
+    "mimo-v2-flash": {
+      "contextWindow": 262144,
+      "maxOutput": 32000,
+      "reasoning": true,
+      "tools": true
+    },
+    "mimo-v2.5": {
+      "audioInput": true,
+      "contextWindow": 1048576,
+      "maxOutput": 131072,
+      "reasoning": true,
+      "tools": true,
+      "videoInput": true,
+      "vision": true
+    },
+    "mimo-v2.5-pro": {
+      "contextWindow": 1048576,
+      "maxOutput": 16384,
+      "reasoning": true,
+      "tools": true,
+      "vision": false
+    },
+    "minimax-m2.1": {
+      "contextWindow": 204800,
+      "maxOutput": 131072,
+      "tools": true
+    },
+    "minimax-m2.5": {
+      "contextWindow": 196608,
+      "maxOutput": 65536,
+      "reasoning": true,
+      "tools": true,
+      "vision": false
+    },
+    "minimax-m2.7": {
+      "contextWindow": 1000192,
+      "maxOutput": 1000192,
+      "reasoning": false,
+      "tools": true
+    },
+    "minimax-m3": {
+      "contextWindow": 512000,
+      "maxOutput": 512000,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "mistral-large-latest": {
+      "contextWindow": 32000,
+      "maxOutput": 32000,
+      "tools": true
+    },
+    "mistral-medium-latest": {
+      "contextWindow": 262144,
+      "maxOutput": 262144,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "o1": {
+      "contextWindow": 200000,
+      "maxOutput": 100000,
+      "pdf": true,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "o1-mini": {
+      "contextWindow": 128000,
+      "maxOutput": 65536,
+      "reasoning": true,
+      "tools": true,
+      "vision": false
+    },
+    "o3": {
+      "contextWindow": 200000,
+      "maxOutput": 100000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "o3-mini": {
+      "contextWindow": 200000,
+      "maxOutput": 100000,
+      "reasoning": true,
+      "tools": true,
+      "vision": false
+    },
+    "o3-pro": {
+      "contextWindow": 200000,
+      "maxOutput": 100000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "o4-mini": {
+      "contextWindow": 200000,
+      "maxOutput": 100000,
+      "pdf": true,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "qwen-3-32b": {
+      "contextWindow": 128000,
+      "maxOutput": 128000,
+      "reasoning": true,
+      "tools": true
+    },
+    "qwen3-235b-a22b-instruct-2507": {
+      "contextWindow": 262144,
+      "maxOutput": 262144,
+      "tools": true
+    },
+    "qwen3-235b-a22b-thinking-2507": {
+      "contextWindow": 262144,
+      "maxOutput": 262144,
+      "tools": true
+    },
+    "qwen3-32b": {
+      "contextWindow": 40960,
+      "maxOutput": 40960,
+      "tools": true
+    },
+    "qwen3-coder-480b-a35b-instruct-turbo": {
+      "contextWindow": 262144,
+      "maxOutput": 262144,
+      "tools": true
+    },
+    "qwen3-coder-flash": {
+      "contextWindow": 997952,
+      "maxOutput": 65536,
+      "reasoning": true,
+      "tools": true
+    },
+    "qwen3-coder-plus": {
+      "contextWindow": 997952,
+      "maxOutput": 65536,
+      "reasoning": true,
+      "tools": true
+    },
+    "qwen3-max": {
+      "contextWindow": 258048,
+      "maxOutput": 65536,
+      "reasoning": true,
+      "tools": true
+    },
+    "qwen3-max-2026-01-23": {
+      "contextWindow": 258048,
+      "maxOutput": 65536,
+      "reasoning": true,
+      "tools": true
+    },
+    "qwen3-max-preview": {
+      "contextWindow": 258048,
+      "maxOutput": 65536,
+      "reasoning": true,
+      "tools": true
+    },
+    "qwen3-vl-plus": {
+      "contextWindow": 260096,
+      "maxOutput": 32768,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "qwen3.5-plus": {
+      "contextWindow": 991808,
+      "maxOutput": 65536,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "qwen3.6-plus": {
+      "contextWindow": 1000000,
+      "maxOutput": 65536,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
+    "recraftv2": {
+      "imageOutput": true
+    },
+    "recraftv3": {
+      "imageOutput": true
+    },
+    "sd3.5-large": {
+      "imageOutput": true
+    },
+    "sd3.5-large-turbo": {
+      "imageOutput": true
+    },
+    "sd3.5-medium": {
+      "imageOutput": true
+    },
+    "sonar": {
+      "reasoning": false,
+      "search": true,
+      "tools": true
+    },
+    "sonar-pro": {
+      "contextWindow": 200000,
+      "maxOutput": 8000,
+      "search": true
+    },
+    "stable-image-core": {
+      "imageOutput": true
+    },
+    "stable-image-ultra": {
+      "imageOutput": true
+    },
+    "zai-glm-4.7": {
+      "contextWindow": 128000,
+      "maxOutput": 128000,
+      "reasoning": true,
+      "tools": true
+    }
+  },
+  "fetchedAt": "2026-07-12T11:43:33.429Z",
+  "note": "GENERATED FILE — regenerate with `npm run catalog:refresh`. Do not hand-edit.",
+  "pricing": {
+    "DeepSeek-V4-Flash": {
+      "cached": 0,
+      "input": 0.14,
+      "output": 0.28
+    },
+    "Kimi-K2.6": {
+      "cached": 0,
+      "input": 0.96,
+      "output": 4
+    },
+    "MiniMax-M2.1": {
+      "input": 0.3,
+      "output": 1.2
+    },
+    "MiniMax-M2.5": {
+      "input": 0.3,
+      "output": 1.2
+    },
+    "MiniMax-M2.7": {
+      "input": 0.6,
+      "output": 2.4
+    },
+    "MiniMax-M3": {
+      "cached": 0.06,
+      "input": 0.3,
+      "output": 1.2
+    },
+    "claude-3-5-sonnet-20241022": {
+      "cache_creation": 3.75,
+      "cached": 0.3,
+      "input": 3,
+      "output": 15
+    },
+    "claude-4.5-haiku": {
+      "input": 1,
+      "output": 5
+    },
+    "claude-4.5-sonnet": {
+      "input": 3,
+      "output": 15
+    },
+    "claude-fable-5": {
+      "cache_creation": 12.5,
+      "cached": 1,
+      "input": 10,
+      "output": 50
+    },
+    "claude-haiku-4-5-20251001": {
+      "cache_creation": 1.25,
+      "cached": 0.1,
+      "input": 1,
+      "output": 5
+    },
+    "claude-haiku-4.5": {
+      "cache_creation": 1.25,
+      "cached": 0.1,
+      "input": 1,
+      "output": 5
+    },
+    "claude-opus-4-20250514": {
+      "cache_creation": 18.75,
+      "cached": 1.5,
+      "input": 15,
+      "output": 75
+    },
+    "claude-opus-4-5-20251101": {
+      "cache_creation": 6.25,
+      "cached": 0.5,
+      "input": 5,
+      "output": 25
+    },
+    "claude-opus-4-6": {
+      "cache_creation": 6.25,
+      "cached": 0.5,
+      "input": 5,
+      "output": 25
+    },
+    "claude-opus-4-7": {
+      "cache_creation": 6.25,
+      "cached": 0.5,
+      "input": 5,
+      "output": 25
+    },
+    "claude-opus-4-8": {
+      "cache_creation": 6.25,
+      "cached": 0.5,
+      "input": 5,
+      "output": 25
+    },
+    "claude-opus-4.1": {
+      "cache_creation": 18.75,
+      "cached": 1.5,
+      "input": 15,
+      "output": 75
+    },
+    "claude-opus-4.5": {
+      "input": 5,
+      "output": 25
+    },
+    "claude-opus-4.6": {
+      "cache_creation": 6.25,
+      "cached": 0.5,
+      "input": 5,
+      "output": 25
+    },
+    "claude-opus-4.7": {
+      "cache_creation": 6.25,
+      "cached": 0.5,
+      "input": 5,
+      "output": 25
+    },
+    "claude-sonnet-4": {
+      "input": 3,
+      "output": 15
+    },
+    "claude-sonnet-4-20250514": {
+      "cache_creation": 3.75,
+      "cached": 0.3,
+      "input": 3,
+      "output": 15
+    },
+    "claude-sonnet-4-5-20250929": {
+      "cache_creation": 3.75,
+      "cached": 0.3,
+      "input": 3,
+      "output": 15
+    },
+    "claude-sonnet-4-6": {
+      "cache_creation": 3.75,
+      "cached": 0.3,
+      "input": 3,
+      "output": 15
+    },
+    "claude-sonnet-4.5": {
+      "input": 3,
+      "output": 15
+    },
+    "claude-sonnet-4.6": {
+      "cache_creation": 3.75,
+      "cached": 0.3,
+      "input": 3,
+      "output": 15
+    },
+    "claude-sonnet-5": {
+      "cache_creation": 2.5,
+      "cached": 0.2,
+      "input": 2,
+      "output": 10
+    },
+    "codestral-latest": {
+      "input": 0,
+      "output": 0
+    },
+    "command-a-03-2025": {
+      "input": 2.5,
+      "output": 10
+    },
+    "command-r-08-2024": {
+      "input": 0.15,
+      "output": 0.6
+    },
+    "command-r-plus-08-2024": {
+      "input": 2.5,
+      "output": 10
+    },
+    "deepseek-chat": {
+      "cached": 0.028,
+      "input": 0.28,
+      "output": 0.42
+    },
+    "deepseek-r1": {
+      "input": 1.35,
+      "output": 5.4
+    },
+    "deepseek-reasoner": {
+      "cached": 0.028,
+      "input": 0.28,
+      "output": 0.42
+    },
+    "deepseek-v3": {
+      "input": 1.14,
+      "output": 4.56
+    },
+    "deepseek-v3.1": {
+      "input": 1.23,
+      "output": 4.94
+    },
+    "deepseek-v3.2": {
+      "input": 0.58,
+      "output": 1.68
+    },
+    "deepseek-v4-flash": {
+      "cache_creation": 0,
+      "cached": 0.0028,
+      "input": 0.14,
+      "output": 0.28
+    },
+    "deepseek-v4-pro": {
+      "cache_creation": 0,
+      "cached": 0.003625,
+      "input": 0.435,
+      "output": 0.87
+    },
+    "deepseek/deepseek-chat": {
+      "cache_creation": 0,
+      "cached": 0.028,
+      "input": 0.28,
+      "output": 0.42
+    },
+    "deepseek/deepseek-reasoner": {
+      "cached": 0.028,
+      "input": 0.28,
+      "output": 0.42
+    },
+    "deepseek/deepseek-v4-flash": {
+      "cache_creation": 0,
+      "cached": 0.0028,
+      "input": 0.14,
+      "output": 0.28
+    },
+    "deepseek/deepseek-v4-pro": {
+      "cache_creation": 0,
+      "cached": 0.003625,
+      "input": 0.435,
+      "output": 0.87
+    },
+    "flux-kontext-max": {
+      "input": 0.08,
+      "output": 0.08
+    },
+    "flux-kontext-pro": {
+      "input": 0.04,
+      "output": 0.04
+    },
+    "gemini-2.0-flash": {
+      "cached": 0.025,
+      "input": 0.1,
+      "output": 0.4
+    },
+    "gemini-2.5-flash": {
+      "cached": 0.03,
+      "input": 0.3,
+      "output": 2.5,
+      "reasoning": 2.5
+    },
+    "gemini-2.5-flash-image": {
+      "cached": 0.03,
+      "input": 0.3,
+      "output": 2.5,
+      "reasoning": 2.5
+    },
+    "gemini-2.5-flash-lite": {
+      "cached": 0.01,
+      "input": 0.1,
+      "output": 0.4,
+      "reasoning": 0.4
+    },
+    "gemini-2.5-pro": {
+      "cached": 0.125,
+      "input": 1.25,
+      "output": 10
+    },
+    "gemini-2.5-pro-preview-tts": {
+      "cached": 0.125,
+      "input": 1.25,
+      "output": 10
+    },
+    "gemini-3-flash-preview": {
+      "cached": 0.05,
+      "input": 0.5,
+      "output": 3,
+      "reasoning": 3
+    },
+    "gemini-3-pro-image-preview": {
+      "input": 2,
+      "output": 12
+    },
+    "gemini-3-pro-preview": {
+      "cached": 0.2,
+      "input": 2,
+      "output": 12
+    },
+    "gemini-3.1-flash-image": {
+      "input": 0.5,
+      "output": 3
+    },
+    "gemini-3.1-flash-image-preview": {
+      "input": 0.5,
+      "output": 3
+    },
+    "gemini-3.1-flash-lite-preview": {
+      "cached": 0.025,
+      "input": 0.25,
+      "output": 1.5,
+      "reasoning": 1.5
+    },
+    "gemini-3.1-pro-preview": {
+      "cached": 0.2,
+      "input": 2,
+      "output": 12
+    },
+    "gemma-4-31b-it": {
+      "input": 0.15,
+      "output": 0.4
+    },
+    "glm-4-7-251222": {
+      "input": 0,
+      "output": 0
+    },
+    "glm-4.5-air": {
+      "input": 0.13,
+      "output": 0.85
+    },
+    "glm-4.6": {
+      "input": 0.6,
+      "output": 2.2
+    },
+    "glm-4.6v": {
+      "cached": 0.055,
+      "input": 0.3,
+      "output": 0.9
+    },
+    "glm-4.7": {
+      "input": 0.6,
+      "output": 2.2
+    },
+    "glm-4.7-flash": {
+      "input": 0.0605,
+      "output": 0.4
+    },
+    "glm-5": {
+      "input": 0.95,
+      "output": 3.15
+    },
+    "glm-5.1": {
+      "cache_creation": 0,
+      "cached": 0.525,
+      "input": 1.05,
+      "output": 3.5
+    },
+    "glm-5.2": {
+      "cached": 0.26,
+      "input": 1.4,
+      "output": 4.4
+    },
+    "gpt-3.5-turbo": {
+      "input": 0.5,
+      "output": 1.5
+    },
+    "gpt-4": {
+      "input": 30,
+      "output": 60
+    },
+    "gpt-4-turbo": {
+      "input": 10,
+      "output": 30
+    },
+    "gpt-4.1": {
+      "cached": 0.5,
+      "input": 2,
+      "output": 8
+    },
+    "gpt-4.1-mini": {
+      "cached": 0.1,
+      "input": 0.4,
+      "output": 1.6
+    },
+    "gpt-4.1-nano": {
+      "cached": 0.025,
+      "input": 0.1,
+      "output": 0.4
+    },
+    "gpt-4o": {
+      "cached": 1.25,
+      "input": 2.5,
+      "output": 10
+    },
+    "gpt-4o-mini": {
+      "cached": 0.075,
+      "input": 0.15,
+      "output": 0.6
+    },
+    "gpt-5": {
+      "cached": 0.125,
+      "input": 1.25,
+      "output": 10
+    },
+    "gpt-5-codex": {
+      "cached": 0.125,
+      "input": 1.25,
+      "output": 10
+    },
+    "gpt-5-mini": {
+      "cached": 0.025,
+      "input": 0.25,
+      "output": 2
+    },
+    "gpt-5-nano": {
+      "cached": 0.005,
+      "input": 0.05,
+      "output": 0.4
+    },
+    "gpt-5.1": {
+      "cached": 0.125,
+      "input": 1.25,
+      "output": 10
+    },
+    "gpt-5.1-codex": {
+      "cached": 0.125,
+      "input": 1.25,
+      "output": 10
+    },
+    "gpt-5.1-codex-max": {
+      "cached": 0.125,
+      "input": 1.25,
+      "output": 10
+    },
+    "gpt-5.1-codex-mini": {
+      "cached": 0.025,
+      "input": 0.25,
+      "output": 2
+    },
+    "gpt-5.2": {
+      "cached": 0.175,
+      "input": 1.75,
+      "output": 14
+    },
+    "gpt-5.2-codex": {
+      "cached": 0.175,
+      "input": 1.75,
+      "output": 14
+    },
+    "gpt-5.3-codex": {
+      "cached": 0.175,
+      "input": 1.75,
+      "output": 14
+    },
+    "gpt-5.4": {
+      "cached": 0.25,
+      "input": 2.5,
+      "output": 15
+    },
+    "gpt-5.4-mini": {
+      "cached": 0.075,
+      "input": 0.75,
+      "output": 4.5
+    },
+    "gpt-5.4-nano": {
+      "cached": 0.02,
+      "input": 0.2,
+      "output": 1.25
+    },
+    "gpt-5.4-pro": {
+      "cached": 3,
+      "input": 30,
+      "output": 180
+    },
+    "gpt-5.5": {
+      "cached": 0.5,
+      "input": 5,
+      "output": 30
+    },
+    "gpt-image-2": {
+      "cached": 1.25,
+      "input": 5,
+      "output": 10
+    },
+    "gpt-oss-120b": {
+      "input": 0.15,
+      "output": 0.6
+    },
+    "grok-3": {
+      "input": 3,
+      "output": 15
+    },
+    "grok-3-mini": {
+      "input": 0.25,
+      "output": 1.27
+    },
+    "grok-4": {
+      "input": 3,
+      "output": 15
+    },
+    "grok-4-fast-reasoning": {
+      "input": 0.2,
+      "output": 0.5
+    },
+    "grok-4.3": {
+      "cached": 0.2,
+      "input": 1.25,
+      "output": 2.5
+    },
+    "grok-code-fast-1": {
+      "input": 0.2,
+      "output": 1.5
+    },
+    "hermes-3-llama-3.1-405b": {
+      "input": 1,
+      "output": 1
+    },
+    "kimi-k2": {
+      "input": 0.55,
+      "output": 2.2
+    },
+    "kimi-k2-thinking": {
+      "input": 0.6,
+      "output": 2.5
+    },
+    "kimi-k2-thinking-251104": {
+      "input": 0,
+      "output": 0
+    },
+    "kimi-k2.5": {
+      "input": 0.6,
+      "output": 3
+    },
+    "kimi-k2.6": {
+      "input": 0.95,
+      "output": 4
+    },
+    "kimi-k2.7-code": {
+      "cached": 0.19,
+      "input": 0.95,
+      "output": 4
+    },
+    "kimi-latest": {
+      "cached": 0.15,
+      "input": 2,
+      "output": 5
+    },
+    "llama-3.3-70b": {
+      "input": 0.85,
+      "output": 1.2
+    },
+    "llama-3.3-70b-versatile": {
+      "input": 0.59,
+      "output": 0.79
+    },
+    "llama-4-scout-17b-16e-instruct": {
+      "input": 0.2,
+      "output": 0.78
+    },
+    "mimo-v2-flash": {
+      "cached": 0.02,
+      "input": 0.1,
+      "output": 0.3
+    },
+    "mimo-v2.5": {
+      "cache_creation": 0,
+      "cached": 0.08,
+      "input": 0.4,
+      "output": 2
+    },
+    "mimo-v2.5-pro": {
+      "cache_creation": 0,
+      "cached": 0.2,
+      "input": 1,
+      "output": 3
+    },
+    "minimax-m2.1": {
+      "cached": 0.03,
+      "input": 0.3,
+      "output": 1.2
+    },
+    "minimax-m2.5": {
+      "cached": 0.15,
+      "input": 0.3,
+      "output": 1.1
+    },
+    "minimax-m2.7": {
+      "input": 0.255,
+      "output": 0.55
+    },
+    "minimax-m3": {
+      "cached": 0.06,
+      "input": 0.3,
+      "output": 1.2
+    },
+    "mistral-embed": {
+      "input": 0.1,
+      "output": 0
+    },
+    "mistral-large-latest": {
+      "input": 8,
+      "output": 24
+    },
+    "mistral-medium-latest": {
+      "input": 1.5,
+      "output": 7.5
+    },
+    "o1": {
+      "cached": 7.5,
+      "input": 15,
+      "output": 60
+    },
+    "o1-mini": {
+      "cached": 0.605,
+      "input": 1.21,
+      "output": 4.84
+    },
+    "o3": {
+      "cached": 0.5,
+      "input": 2,
+      "output": 8
+    },
+    "o3-mini": {
+      "cached": 0.55,
+      "input": 1.1,
+      "output": 4.4
+    },
+    "o3-pro": {
+      "input": 20,
+      "output": 80
+    },
+    "o4-mini": {
+      "cached": 0.275,
+      "input": 1.1,
+      "output": 4.4
+    },
+    "qwen-3-32b": {
+      "input": 0.4,
+      "output": 0.8
+    },
+    "qwen3-235b-a22b-instruct-2507": {
+      "input": 3,
+      "output": 3
+    },
+    "qwen3-235b-a22b-thinking-2507": {
+      "input": 0.3,
+      "output": 2.9
+    },
+    "qwen3-32b": {
+      "input": 0.1,
+      "output": 0.28
+    },
+    "qwen3-coder-480b-a35b-instruct-turbo": {
+      "input": 0.29,
+      "output": 1.2
+    },
+    "qwen3-coder-plus": {
+      "input": 1,
+      "output": 5
+    },
+    "qwen3-max": {
+      "input": 2.11,
+      "output": 8.45
+    },
+    "qwen3.6-plus": {
+      "input": 0.325,
+      "output": 1.95
+    },
+    "sonar": {
+      "input": 1,
+      "output": 1
+    },
+    "sonar-pro": {
+      "input": 3,
+      "output": 15
+    },
+    "zai-glm-4.7": {
+      "input": 2.25,
+      "output": 2.75
+    }
+  },
+  "source": "litellm:model_prices_and_context_window.json"
+}

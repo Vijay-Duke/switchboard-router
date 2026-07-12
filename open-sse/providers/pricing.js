@@ -1,3 +1,5 @@
+import { getGeneratedPricing } from "./generated/loader.js";
+
 // Pricing rates for AI models — all rates in $/1M tokens
 //
 // Fallback order (first match wins):
@@ -212,10 +214,28 @@ export function matchPattern(pattern, model) {
 }
 
 /**
- * Resolve pricing for a model using the 3-step fallback chain:
- *   1. PROVIDER_PRICING[provider][model]
- *   2. MODEL_PRICING[model]
- *   3. PATTERN_PRICING (glob match)
+ * Resolve hand-maintained pricing for a model using canonical and pattern fallbacks.
+ *
+ * @param {string} model
+ * @returns {object|null}
+ */
+export function resolveHandPricing(model) {
+  const baseModel = model.includes("/") ? model.split("/").pop() : model;
+  if (MODEL_PRICING[baseModel] || MODEL_PRICING[model]) {
+    return MODEL_PRICING[baseModel] || MODEL_PRICING[model];
+  }
+
+  for (const { pattern, pricing } of PATTERN_PRICING) {
+    if (matchPattern(pattern, baseModel || model)) {
+      return pricing;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolve pricing for a model using provider-specific, generated, then hand-maintained pricing.
  *
  * @param {string} provider
  * @param {string} model
@@ -224,24 +244,15 @@ export function matchPattern(pattern, model) {
 export function getPricingForModel(provider, model) {
   if (!model) return null;
 
-  // 1. Provider-specific override
   if (provider && PROVIDER_PRICING[provider]?.[model]) {
     return PROVIDER_PRICING[provider][model];
   }
 
-  // 2. Canonical model pricing (strip vendor prefix if needed: "deepseek/deepseek-chat" → "deepseek-chat")
-  const baseModel = model.includes("/") ? model.split("/").pop() : model;
-  if (MODEL_PRICING[baseModel]) return MODEL_PRICING[baseModel];
-  if (MODEL_PRICING[model]) return MODEL_PRICING[model];
-
-  // 3. Pattern match
-  for (const { pattern, pricing } of PATTERN_PRICING) {
-    if (matchPattern(pattern, baseModel) || matchPattern(pattern, model)) {
-      return pricing;
-    }
-  }
-
-  return null;
+  const generatedPricing = getGeneratedPricing(model);
+  const handPricing = resolveHandPricing(model);
+  if (generatedPricing && handPricing) return { ...handPricing, ...generatedPricing };
+  if (generatedPricing) return generatedPricing;
+  return handPricing;
 }
 
 /**

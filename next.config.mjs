@@ -44,8 +44,11 @@ const nextConfig = {
       ...staleDistExcludes,
     ]
   },
-  // Ship skills/*.md with standalone so /api/skills/[id] can serve them
+  // Ship skills/*.md with standalone so /api/skills/[id] can serve them.
+  // catalog.json is read via runtime fs (process.getBuiltinModule — invisible
+  // to nft tracing), so include it explicitly for every route.
   outputFileTracingIncludes: {
+    "*": ["./open-sse/providers/generated/catalog.json"],
     "/api/skills/[id]": ["./skills/**/*"],
     "/api/skills/*": ["./skills/**/*"],
   },
