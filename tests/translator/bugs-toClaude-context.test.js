@@ -74,9 +74,11 @@ describe("OpenAI → Claude context mapping", () => {
   describe("max_tokens vs thinking.budget_tokens reconciliation", () => {
     // 64k-ceiling model (maxOutput 64000) + max-effort budget 128000: budget alone
     // exceeds the ceiling → cap max_tokens at 64000 and shrink budget below it.
+    // Fixture: claude-sonnet-4-5-20250929 (a true 64k-output model — the generated
+    // catalog now supplies Opus 4's factual 32000 ceiling, so it no longer fits here).
     it("max effort budget on a 64k model → budget < max_tokens ≤ 64000", () => {
       const out = prepareClaudeRequest({
-        model: "claude-opus-4-20250514",
+        model: "claude-sonnet-4-5-20250929",
         max_tokens: 64000,
         thinking: { type: "enabled", budget_tokens: 128000 },
         messages: [{ role: "user", content: "q" }],
@@ -90,7 +92,7 @@ describe("OpenAI → Claude context mapping", () => {
     // raise max_tokens to fit, preserving the requested thinking depth.
     it("xhigh budget with a low client max_tokens → raise max_tokens, preserve budget", () => {
       const out = prepareClaudeRequest({
-        model: "claude-opus-4-20250514",
+        model: "claude-sonnet-4-5-20250929",
         max_tokens: 16000,
         thinking: { type: "enabled", budget_tokens: 32768 },
         messages: [{ role: "user", content: "q" }],
@@ -102,7 +104,7 @@ describe("OpenAI → Claude context mapping", () => {
     // Budget already below max_tokens → nothing to reconcile.
     it("high budget under max_tokens → both unchanged", () => {
       const out = prepareClaudeRequest({
-        model: "claude-opus-4-20250514",
+        model: "claude-sonnet-4-5-20250929",
         max_tokens: 64000,
         thinking: { type: "enabled", budget_tokens: 24576 },
         messages: [{ role: "user", content: "q" }],
@@ -115,7 +117,7 @@ describe("OpenAI → Claude context mapping", () => {
     // the reconciliation must never touch them.
     it("adaptive thinking (no budget_tokens) is left untouched", () => {
       const out = prepareClaudeRequest({
-        model: "claude-opus-4-20250514",
+        model: "claude-sonnet-4-5-20250929",
         max_tokens: 64000,
         thinking: { type: "adaptive" },
         messages: [{ role: "user", content: "q" }],
@@ -143,7 +145,7 @@ describe("OpenAI → Claude context mapping", () => {
     // max_tokens down to 64000 (the lift is per-model, not global).
     it("over-large client max_tokens on a 64k model is still clamped to 64000", () => {
       const out = prepareClaudeRequest({
-        model: "claude-opus-4-20250514",
+        model: "claude-sonnet-4-5-20250929",
         max_tokens: 120000,
         messages: [{ role: "user", content: "q" }],
       }, "anthropic");

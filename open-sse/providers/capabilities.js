@@ -22,6 +22,7 @@
 // model spec); set `search` from vendor docs (Claude 4.x+, GPT-5.x/4o, Gemini
 // 2.0+, Grok, Perplexity). Verify with: curl -s https://models.dev/api.json
 
+import { getGeneratedCapabilities } from "./generated/loader.js";
 import { matchPattern } from "./pricing.js";
 
 /**
@@ -259,8 +260,31 @@ export const PATTERN_CAPABILITIES = [
 ];
 
 /**
- * Resolve capabilities for a model using the 4-step fallback chain,
- * merged over DEFAULT_CAPABILITIES so the result is always complete.
+ * Resolve explicitly maintained capability deltas without applying defaults.
+ *
+ * @param {string} provider
+ * @param {string} model
+ * @returns {object|null} explicit capability delta, if matched
+ */
+export function resolveHandCaps(provider, model) {
+  const providerCaps = PROVIDER_CAPABILITIES[provider]?.[model];
+  if (providerCaps) return providerCaps;
+
+  // Strip vendor prefix: "anthropic/claude-opus-4.7" -> "claude-opus-4.7".
+  const baseModel = model.includes("/") ? model.split("/").pop() : model;
+  const modelCaps = MODEL_CAPABILITIES[baseModel] || MODEL_CAPABILITIES[model];
+  if (modelCaps) return modelCaps;
+
+  for (const { pattern, caps } of PATTERN_CAPABILITIES) {
+    if (matchPattern(pattern, baseModel || model)) return caps;
+  }
+
+  return null;
+}
+
+/**
+ * Resolve generated and explicitly maintained capability deltas, merged over
+ * DEFAULT_CAPABILITIES so the result is always complete.
  *
  * @param {string} provider
  * @param {string} model
@@ -269,23 +293,7 @@ export const PATTERN_CAPABILITIES = [
 export function getCapabilitiesForModel(provider, model) {
   if (!model) return { ...DEFAULT_CAPABILITIES };
 
-  // 1. Provider-specific override
-  if (provider && PROVIDER_CAPABILITIES[provider]?.[model]) {
-    return { ...DEFAULT_CAPABILITIES, ...PROVIDER_CAPABILITIES[provider][model] };
-  }
-
-  // 2. Canonical exact (strip vendor prefix: "anthropic/claude-opus-4.7" -> "claude-opus-4.7")
-  const baseModel = model.includes("/") ? model.split("/").pop() : model;
-  if (MODEL_CAPABILITIES[baseModel]) return { ...DEFAULT_CAPABILITIES, ...MODEL_CAPABILITIES[baseModel] };
-  if (MODEL_CAPABILITIES[model]) return { ...DEFAULT_CAPABILITIES, ...MODEL_CAPABILITIES[model] };
-
-  // 3. Pattern match (first match wins)
-  for (const { pattern, caps } of PATTERN_CAPABILITIES) {
-    if (matchPattern(pattern, baseModel) || matchPattern(pattern, model)) {
-      return { ...DEFAULT_CAPABILITIES, ...caps };
-    }
-  }
-
-  // 4. Floor
-  return { ...DEFAULT_CAPABILITIES };
+  const hand = resolveHandCaps(provider, model);
+  const gen = getGeneratedCapabilities(model);
+  return { ...DEFAULT_CAPABILITIES, ...(gen || {}), ...(hand || {}) };
 }
