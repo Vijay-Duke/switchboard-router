@@ -28,12 +28,14 @@ describe("Claude Code wire compatibility", () => {
       "openai"
     );
 
-    assertGolden("claude-code.request", out);
+    // Structural guards run BEFORE assertGolden: under UPDATE_GOLDEN=1 a regen
+    // must not persist a golden for a payload that violates these invariants.
     expect(out.messages.length).toBeGreaterThan(0);
     expect(out.messages.some(message =>
       message.role === "tool" ||
       (message.role === "assistant" && Array.isArray(message.tool_calls))
     )).toBe(true);
+    assertGolden("claude-code.request", out);
   });
 
   it("translates OpenAI chunks to Claude message events", () => {
@@ -41,10 +43,12 @@ describe("Claude Code wire compatibility", () => {
     const parsedEvents = events.map(eventObject).filter(Boolean);
     const eventTypes = parsedEvents.map(event => event.type);
 
-    assertGolden("claude-code.response", events);
+    // Structural guards run BEFORE assertGolden: under UPDATE_GOLDEN=1 a regen
+    // must not persist a golden for a payload that violates these invariants.
     expect(eventTypes).toContain("message_start");
     expect(eventTypes.filter(type => type === "content_block_delta").length).toBeGreaterThanOrEqual(1);
     expect(parsedEvents.some(event => event.type === "message_delta" && event.usage)).toBe(true);
     expect(eventTypes).toContain("message_stop");
+    assertGolden("claude-code.response", events);
   });
 });

@@ -28,7 +28,8 @@ describe("Codex wire compatibility", () => {
       "openai"
     );
 
-    assertGolden("codex.request", out);
+    // Structural guards run BEFORE assertGolden: under UPDATE_GOLDEN=1 a regen
+    // must not persist a golden for a payload that violates these invariants.
     expect(out.messages.length).toBeGreaterThan(0);
     expect(out.messages.some(message =>
       message.role === "system" && message.content === request.instructions
@@ -40,6 +41,7 @@ describe("Codex wire compatibility", () => {
       message.role === "assistant" && Array.isArray(message.tool_calls)
     )).toBe(true);
     expect(out.messages.some(message => message.role === "tool")).toBe(true);
+    assertGolden("codex.request", out);
   });
 
   it("response -> responses SSE", () => {
@@ -50,9 +52,11 @@ describe("Codex wire compatibility", () => {
     );
     const eventTypes = events.map(event => event.data?.type ?? eventObject(event)?.type);
 
-    assertGolden("codex.response", events);
+    // Structural guards run BEFORE assertGolden: under UPDATE_GOLDEN=1 a regen
+    // must not persist a golden for a payload that violates these invariants.
     expect(eventTypes).toContain("response.created");
     expect(eventTypes.filter(type => type === "response.output_text.delta").length).toBeGreaterThanOrEqual(1);
     expect(eventTypes).toContain("response.completed");
+    assertGolden("codex.response", events);
   });
 });

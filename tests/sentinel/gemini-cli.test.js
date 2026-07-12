@@ -16,11 +16,13 @@ describe("Gemini CLI wire compatibility", () => {
       "gemini"
     );
 
-    assertGolden("gemini-cli.request", out);
+    // Structural guards run BEFORE assertGolden: under UPDATE_GOLDEN=1 a regen
+    // must not persist a golden for a payload that violates these invariants.
     // URL-controlled-streaming regression guard: the URL, not the body, selects streaming.
     expect(out).not.toHaveProperty("stream");
     expect(Object.keys(out)).not.toContain("stream");
     expect(out.contents).toBeDefined();
+    assertGolden("gemini-cli.request", out);
   });
 
   it("response -> gemini-cli mapping", () => {
@@ -30,8 +32,10 @@ describe("Gemini CLI wire compatibility", () => {
       upstreamChunks
     );
 
-    assertGolden("gemini-cli.response", events);
+    // Structural guards run BEFORE assertGolden: under UPDATE_GOLDEN=1 a regen
+    // must not persist a golden for a payload that violates these invariants.
     expect(Array.isArray(events)).toBe(true);
     expect(events.length).toBeGreaterThan(0);
+    assertGolden("gemini-cli.response", events);
   });
 });
