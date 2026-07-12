@@ -23,7 +23,7 @@ async function loadRoute(connection) {
     safeErrorMessage: error => error?.message || String(error),
   }));
   vi.doMock("@/sse/services/model.js", () => ({
-    getModelInfo: vi.fn(),
+    getModelInfo: vi.fn(async model => ({ provider: "openai-compatible-responses-crof", model })),
   }));
   vi.doMock("@/lib/db/index.js", () => ({
     getProviderConnections: vi.fn(async () => [connection]),
@@ -91,7 +91,7 @@ describe("translator translate route", () => {
     vi.clearAllMocks();
   });
 
-  it("keeps the request body and URL on the saved chat transport even when the provider id ends with responses", async () => {
+  it("keeps the request body, URL, and metadata on the saved chat transport even when the provider id ends with responses", async () => {
     const connection = {
       isActive: true,
       apiKey: "test-key",
@@ -101,6 +101,19 @@ describe("translator translate route", () => {
       },
     };
     const { POST } = await loadRoute(connection);
+
+    const step1Response = await POST(makeRequest({
+      step: 1,
+      body: {
+        model: "test-model",
+        messages: [{ role: "user", content: "hello" }],
+      },
+    }));
+
+    expect(step1Response.status).toBe(200);
+    const step1Payload = await step1Response.json();
+    expect(step1Payload.success).toBe(true);
+    expect(step1Payload.result.targetFormat).toBe("openai");
 
     const response = await POST(makeRequest({
       step: 3,

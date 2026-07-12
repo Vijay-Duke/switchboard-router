@@ -8,6 +8,26 @@ import { getModelInfo } from "@/sse/services/model.js";
 import { getProviderConnections } from "@/lib/db/index.js";
 import { getExecutor } from "open-sse/executors/index.js";
 
+async function getActiveProviderCredentials(provider) {
+  const connections = await getProviderConnections({ provider });
+  const connection = connections.find(c => c.isActive !== false);
+  if (!connection) {
+    return { connection: null, credentials: null };
+  }
+
+  return {
+    connection,
+    credentials: {
+      apiKey: connection.apiKey,
+      accessToken: connection.accessToken,
+      refreshToken: connection.refreshToken,
+      copilotToken: connection.copilotToken,
+      projectId: connection.projectId,
+      providerSpecificData: connection.providerSpecificData,
+    },
+  };
+}
+
 export async function POST(request) {
   try {
     const { step, body } = await request.json();
@@ -22,7 +42,8 @@ export async function POST(request) {
         const clientBody = body.body || body;
         const { provider, model } = await getModelInfo(clientBody.model);
         const sourceFormat = detectFormat(clientBody);
-        const targetFormat = getTargetFormat(provider);
+        const credentials = provider?.startsWith?.("openai-compatible-") ? (await getActiveProviderCredentials(provider)).credentials : null;
+        const targetFormat = getTargetFormat(provider, credentials);
         return NextResponse.json({ success: true, result: { provider, model, sourceFormat, targetFormat } });
       }
 
@@ -52,20 +73,10 @@ export async function POST(request) {
         }
 
         // Build URL + headers via executor (same as chatCore → executor.execute)
-        const connections = await getProviderConnections({ provider });
-        const connection = connections.find(c => c.isActive !== false);
+        const { connection, credentials } = await getActiveProviderCredentials(provider);
         if (!connection) {
           return NextResponse.json({ success: false, error: `No active connection for provider: ${provider}` }, { status: 400 });
         }
-
-        const credentials = {
-          apiKey: connection.apiKey,
-          accessToken: connection.accessToken,
-          refreshToken: connection.refreshToken,
-          copilotToken: connection.copilotToken,
-          projectId: connection.projectId,
-          providerSpecificData: connection.providerSpecificData
-        };
 
         const targetFormat = getTargetFormat(provider, credentials);
         const stream = openaiBody.stream !== false;
