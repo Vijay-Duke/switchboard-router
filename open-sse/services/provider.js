@@ -19,8 +19,16 @@ function isAnthropicCompatible(provider) {
   return typeof provider === "string" && provider.startsWith(ANTHROPIC_COMPATIBLE_PREFIX);
 }
 
-function getOpenAICompatibleType(provider) {
+export function resolveOpenAICompatibleApiType(provider, credentials = null) {
   if (!isOpenAICompatible(provider)) return "chat";
+
+  // Persisted node metadata wins so custom/imported models keep the transport
+  // that was saved with the provider connection; legacy ID is the fallback.
+  const savedApiType = credentials?.providerSpecificData?.apiType;
+  if (savedApiType === "chat" || savedApiType === "responses") {
+    return savedApiType;
+  }
+
   return provider.includes("responses") ? "responses" : "chat";
 }
 
@@ -105,9 +113,9 @@ export function detectFormat(body) {
 }
 
 // Get provider config (internal — no external runtime consumer)
-function getProviderConfig(provider) {
+function getProviderConfig(provider, credentials = null) {
   if (isOpenAICompatible(provider)) {
-    const apiType = getOpenAICompatibleType(provider);
+    const apiType = resolveOpenAICompatibleApiType(provider, credentials);
     return {
       ...PROVIDERS.openai,
       format: apiType === "responses" ? "openai-responses" : "openai",
@@ -125,14 +133,14 @@ function getProviderConfig(provider) {
 }
 
 // Get target format for provider
-export function getTargetFormat(provider) {
+export function getTargetFormat(provider, credentials = null) {
   if (isOpenAICompatible(provider)) {
-    return getOpenAICompatibleType(provider) === "responses" ? "openai-responses" : "openai";
+    return resolveOpenAICompatibleApiType(provider, credentials) === "responses" ? "openai-responses" : "openai";
   }
   if (isAnthropicCompatible(provider)) {
     return "claude";
   }
-  const config = getProviderConfig(provider);
+  const config = getProviderConfig(provider, credentials);
   return config.format || "openai";
 }
 
