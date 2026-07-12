@@ -13,6 +13,17 @@ function preserveEnvRefs(value) {
   return String(value);
 }
 
+/**
+ * OpenCode resolves environment references with {env:NAME}, not ${NAME}.
+ * @param {string} value
+ */
+function toOpenCodeEnvRefs(value) {
+  return String(value).replace(
+    /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g,
+    (_, name) => `{env:${name}}`
+  );
+}
+
 function isPlainObject(v) {
   return v != null && typeof v === "object" && !Array.isArray(v);
 }
@@ -35,6 +46,42 @@ function toAgentMcpEntry(server, agent) {
     return {
       url: server.url,
       http_headers: server.headers || {},
+    };
+  }
+
+  if (agent === "opencode") {
+    if (transport === "stdio") {
+      return {
+        type: "local",
+        command: [server.command, ...(server.args || [])],
+        environment: Object.fromEntries(
+          Object.entries(server.env || {}).map(([k, v]) => [k, toOpenCodeEnvRefs(v)])
+        ),
+        enabled: true,
+      };
+    }
+    return {
+      type: "remote",
+      url: server.url,
+      headers: Object.fromEntries(
+        Object.entries(server.headers || {}).map(([k, v]) => [k, toOpenCodeEnvRefs(v)])
+      ),
+      enabled: true,
+    };
+  }
+
+  if (agent === "gemini") {
+    if (transport === "stdio") {
+      return {
+        command: server.command,
+        args: server.args || [],
+        env: server.env || {},
+      };
+    }
+    return {
+      url: server.url,
+      type: transport === "sse" ? "sse" : "http",
+      headers: server.headers || {},
     };
   }
 
@@ -148,18 +195,7 @@ export async function mergeJsonMcpConfig(filePath, servers, opts) {
       continue;
     }
 
-    if (kind === "opencode" && entry.command) {
-      currentMap[key] = {
-        type: "local",
-        command: [entry.command, ...(entry.args || [])],
-        enabled: true,
-        environment: entry.env,
-      };
-    } else if (kind === "gemini" && entry.url) {
-      currentMap[key] = { ...entry, trust: true };
-    } else {
-      currentMap[key] = entry;
-    }
+    currentMap[key] = entry;
     written.push(key);
   }
 

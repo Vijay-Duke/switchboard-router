@@ -117,8 +117,8 @@ export function getAgentSkillsRoot(agentId, opts = {}) {
         : path.join(home, ".claude", "skills");
     case "codex":
       return project
-        ? path.join(project, ".codex", "skills")
-        : path.join(home, ".codex", "skills");
+        ? path.join(project, ".agents", "skills")
+        : path.join(home, ".agents", "skills");
     case "opencode":
       return project
         ? path.join(project, ".opencode", "skills")
@@ -134,6 +134,25 @@ export function getAgentSkillsRoot(agentId, opts = {}) {
     default:
       return null;
   }
+}
+
+/**
+ * Skill roots written by older Switchboard versions that can be safely
+ * migrated away after the current root has been synced.
+ * @param {string} agentId
+ * @param {{ scope?: "global"|"project", projectPath?: string|null }} [opts]
+ * @returns {string[]}
+ */
+export function getLegacyAgentSkillsRoots(agentId, opts = {}) {
+  if (agentId !== "codex") return [];
+  const project = opts.scope === "project" && opts.projectPath
+    ? path.resolve(opts.projectPath)
+    : null;
+  return [
+    project
+      ? path.join(project, ".codex", "skills")
+      : path.join(os.homedir(), ".codex", "skills"),
+  ];
 }
 
 /**

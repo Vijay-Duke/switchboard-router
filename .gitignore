@@ -95,3 +95,6 @@ tests/.tmp-data/
 
 # Local Pi sub-agent transcripts (may contain prompts or credentials)
 .pi-subagents/
+
+# Local git worktrees
+.worktrees/
