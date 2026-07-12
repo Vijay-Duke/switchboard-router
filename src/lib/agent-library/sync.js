@@ -7,6 +7,7 @@ import {
   ensureLibraryDirs,
   getAgentMcpConfig,
   getAgentSkillsRoot,
+  getLegacyAgentSkillsRoots,
   managedSkillDirName,
 } from "./paths.js";
 import {
@@ -45,6 +46,59 @@ async function safeRemoveManaged(destDir, libraryRoot) {
   await removePath(destDir);
   await removeManagedMarker(destDir);
   return { ok: true, reason: gate.reason };
+}
+
+/**
+ * Remove a previous harness-specific skill projection after its replacement
+ * has been written to the current discovery root.
+ * @param {string} agentId
+ * @param {string} currentRoot
+ * @param {string[]} destNames
+ * @param {Record<string, unknown>} scopeOpts
+ * @param {string} libraryRoot
+ * @param {boolean} dryRun
+ * @param {any[]} results
+ */
+async function migrateLegacySkillRoots(
+  agentId,
+  currentRoot,
+  destNames,
+  scopeOpts,
+  libraryRoot,
+  dryRun,
+  results
+) {
+  for (const legacyRoot of getLegacyAgentSkillsRoots(agentId, scopeOpts)) {
+    if (legacyRoot === currentRoot) continue;
+    for (const destName of destNames) {
+      const destDir = path.join(legacyRoot, destName);
+      try {
+        await fs.lstat(destDir);
+      } catch {
+        continue;
+      }
+      if (dryRun) {
+        const gate = await canManagePath(destDir, true, { libraryRoot });
+        if (gate.ok) {
+          results.push({
+            agent: agentId,
+            skillId: destName,
+            dest: destDir,
+            action: "would_remove_legacy",
+          });
+        }
+        continue;
+      }
+      const removed = await safeRemoveManaged(destDir, libraryRoot);
+      results.push({
+        agent: agentId,
+        skillId: destName,
+        dest: destDir,
+        action: removed.ok ? "removed_legacy" : "skipped_legacy_conflict",
+        ...(removed.ok ? {} : { reason: removed.reason, message: removed.message }),
+      });
+    }
+  }
 }
 
 /**
@@ -207,6 +261,20 @@ async function applySyncBody(settingsOverride, opts = {}) {
           }
         }
       }
+
+      const legacyDestNames = [...new Set([
+        ...(state.managedSkills?.[agentId] || []),
+        ...skills.map((skill) => managedSkillDirName(skill.id)).filter(Boolean),
+      ])];
+      await migrateLegacySkillRoots(
+        agentId,
+        root,
+        legacyDestNames,
+        scopeOpts,
+        libraryRoot,
+        !!opts.dryRun,
+        skillResults
+      );
 
       // Remove managed skills no longer in library
       const managedList = [...(state.managedSkills?.[agentId] || [])];
@@ -384,6 +452,15 @@ async function cleanSyncBody(settingsOverride) {
             });
           }
         }
+        await migrateLegacySkillRoots(
+          agentId,
+          root,
+          managed,
+          scopeOpts,
+          libraryRoot,
+          false,
+          results
+        );
         if (state.managedSkills) state.managedSkills[agentId] = [];
       }
     }
