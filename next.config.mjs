@@ -60,12 +60,13 @@ const nextConfig = {
     serverComponentsHmrCache: true,
   },
   webpack: (config, { isServer }) => {
-    // Ignore fs/path modules in browser bundle
+    // Ignore Node-only modules in browser bundle
     if (!isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,
         fs: false,
         path: false,
+        crypto: false,
       };
     }
     // Exclude non-source dirs from watcher to reduce inotify load
