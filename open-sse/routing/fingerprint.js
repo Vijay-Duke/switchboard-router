@@ -3,7 +3,7 @@ import { createHash } from "crypto";
 /**
  * Lightweight request signals for router + learning (docs/switchboard/SPEC.md §7).
  * @param {object} body
- * @returns {{ fingerprint: string, modalities: string[], hasTools: boolean, toolCountBand: string, tokenBand: string, keywordHints: string[], userSummary: string }}
+ * @returns {{ fingerprint: string, modalities: string[], hasTools: boolean, toolCountBand: string, tokenBand: string, textLen: number, keywordHints: string[], userSummary: string }}
  */
 export function buildRequestSignals(body) {
   const modalities = [];
@@ -105,6 +105,7 @@ export function buildRequestSignals(body) {
     hasTools,
     toolCountBand,
     tokenBand,
+    textLen,
     keywordHints,
     userSummary,
   };

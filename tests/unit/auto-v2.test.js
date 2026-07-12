@@ -19,6 +19,7 @@ import {
   parseJudgeResponse,
   tryConsumeJudgeBudget,
   recordJudgeFlag,
+  armEscalation,
   takeJudgeEscalation,
   clampJudgeSampleRate,
   createJudgeContext,
@@ -195,6 +196,10 @@ describe("judge flag escalation window", () => {
     recordJudgeFlag("c", "chat", false);
     recordJudgeFlag("c", "chat", false);
     expect(takeJudgeEscalation("c", "chat", "balanced")).toBe(false);
+  });
+  it("arms every objective by reaching the economy threshold", () => {
+    armEscalation("c", "debug");
+    expect(takeJudgeEscalation("c", "debug", "economy")).toBe(true);
   });
 });
 

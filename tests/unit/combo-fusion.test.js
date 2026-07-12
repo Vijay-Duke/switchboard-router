@@ -49,6 +49,7 @@ describe("fusion combo", () => {
       handleSingleModel,
       log,
       judgeModel: "p/judge",
+      childComboDepth: 2,
     });
 
     // 3 panel calls + 1 judge call.
@@ -62,6 +63,7 @@ describe("fusion combo", () => {
       expect(body.tools).toBeUndefined();
       expect(panelOpts === true || panelOpts?.isPanel === true).toBe(true);
       expect(panelOpts?.signal).toBeDefined();
+      expect(panelOpts?.comboDepth).toBe(2);
     }
 
     // Judge call carries every panel answer + keeps the client's stream flag.
@@ -73,6 +75,7 @@ describe("fusion combo", () => {
     expect(judgeText).toContain("Source 1");
     expect(judgeBody.stream).toBe(true);
     expect(judgeOpts === true || judgeOpts?.isPanel === true).toBe(false);
+    expect(judgeOpts?.comboDepth).toBe(2);
 
     expect(res.ok).toBe(true);
     expect(res.headers.get("content-type")).toContain("text/event-stream");

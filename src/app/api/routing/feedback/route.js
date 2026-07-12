@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { jsonError, safeErrorMessage } from "@/lib/jsonError.js";
 import { setUserRatingByRequestId } from "@/lib/db/repos/routingRepo.js";
+import { applyRatingSideEffects } from "@/sse/routing/ratingSideEffects.js";
 
 /**
  * POST /api/routing/feedback
@@ -36,6 +37,7 @@ export async function POST(request) {
         { status: 404 }
       );
     }
+    await applyRatingSideEffects(requestId, rating);
     return NextResponse.json({ ok: true, updated: result.updated, rating });
   } catch (e) {
     return jsonError(500, safeErrorMessage(e, "feedback_failed"));

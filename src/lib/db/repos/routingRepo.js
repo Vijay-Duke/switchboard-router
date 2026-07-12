@@ -2,6 +2,7 @@ import { getAdapter } from "../driver.js";
 import { stringifyJson, parseJson } from "../helpers/jsonCol.js";
 import { randomUUID } from "crypto";
 import { recomputeStoredOutcome } from "open-sse/routing/scoring.js";
+import { providerOf } from "open-sse/routing/providerPreference.js";
 
 function nowIso() {
   return new Date().toISOString();
@@ -116,6 +117,26 @@ export async function setUserRatingByRequestId(requestId, rating) {
 /** LLM-judge: fold a 0–10 judge score into a request's terminal event. */
 export async function applyJudgeScoreByRequestId(requestId, judgeScore) {
   return applyOutcomeAdjustmentByRequestId(requestId, { judgeScore });
+}
+
+/** Latest terminal routing event for feedback's ephemeral routing side effects. */
+export async function getRoutingEventByRequestId(requestId) {
+  if (!requestId) return null;
+  const db = await getAdapter();
+  const row = db.get(
+    `SELECT comboName, cluster, pickedWorker FROM routing_events
+     WHERE requestId = ?
+       AND (meta LIKE '%"terminal":true%' OR meta IS NULL OR meta NOT LIKE '%"terminal"%')
+     ORDER BY id DESC LIMIT 1`,
+    [requestId]
+  );
+  if (!row) return null;
+  const event = mapEvent(row);
+  return {
+    comboName: event.comboName,
+    cluster: event.cluster,
+    pickedWorker: event.pickedWorker,
+  };
 }
 
 export async function getPromotedLearningVersion(comboName) {
@@ -397,7 +418,8 @@ export async function getClusterWorkerStats(comboName, days = 14) {
             COUNT(*) AS n,
             SUM(CASE WHEN outcomeScore >= 60 THEN 1 ELSE 0 END) AS wins,
             AVG(outcomeScore) AS avgScore,
-            AVG(workerLatencyMs) AS avgLatencyMs
+            AVG(workerLatencyMs) AS avgLatencyMs,
+            AVG(tokensOut) AS avgTokensOut
      FROM routing_events
      WHERE comboName = ? AND timestamp >= ?
        AND cluster IS NOT NULL AND pickedWorker IS NOT NULL
@@ -422,8 +444,10 @@ export async function getModelPerfStats(comboName, days = 14) {
   return db.all(
     `SELECT pickedWorker AS worker,
             COUNT(*) AS n,
+            SUM(CASE WHEN outcomeScore >= 60 THEN 1 ELSE 0 END) AS wins,
             AVG(outcomeScore) AS avgScore,
             AVG(workerLatencyMs) AS avgLatencyMs,
+            AVG(tokensOut) AS avgTokensOut,
             SUM(CASE WHEN workerStatus >= 400 THEN 1 ELSE 0 END) AS errors
      FROM routing_events
      WHERE comboName = ? AND timestamp >= ? AND pickedWorker IS NOT NULL
@@ -432,6 +456,174 @@ export async function getModelPerfStats(comboName, days = 14) {
      ORDER BY avgScore DESC`,
     [comboName, since]
   );
+}
+
+/** Mean worker latency grouped by provider for fallback combo preference. */
+export async function getProviderLatency(days = 14) {
+  const db = await getAdapter();
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const rows = db.all(
+    `SELECT pickedWorker, AVG(workerLatencyMs) AS avgLatencyMs, COUNT(*) AS n
+     FROM routing_events
+     WHERE timestamp >= ? AND pickedWorker IS NOT NULL AND workerLatencyMs IS NOT NULL
+       AND (meta IS NULL OR meta NOT LIKE '%"skippedRouter":true%')
+     GROUP BY pickedWorker`,
+    [since]
+  );
+  if (!rows?.length) return {};
+
+  const totals = Object.create(null);
+  for (const row of rows) {
+    const provider = providerOf(row.pickedWorker);
+    const n = Number(row.n) || 0;
+    const avgLatencyMs = Number(row.avgLatencyMs);
+    if (!Number.isFinite(avgLatencyMs) || n <= 0) continue;
+    if (!totals[provider]) totals[provider] = { n: 0, totalLatencyMs: 0 };
+    totals[provider].n += n;
+    totals[provider].totalLatencyMs += avgLatencyMs * n;
+  }
+
+  return Object.fromEntries(
+    Object.entries(totals).map(([provider, total]) => [
+      provider,
+      total.n > 0 ? total.totalLatencyMs / total.n : 0,
+    ])
+  );
+}
+
+export async function getGlobalModelStats(days = 14) {
+  const db = await getAdapter();
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const rows = db.all(
+    `SELECT pickedWorker, cluster, COUNT(*) AS n,
+            SUM(CASE WHEN outcomeScore >= 60 THEN 1 ELSE 0 END) AS wins,
+            AVG(outcomeScore) AS avgScore, AVG(workerLatencyMs) AS avgLatencyMs
+     FROM routing_events
+     WHERE timestamp >= ? AND pickedWorker IS NOT NULL
+       AND (meta LIKE '%"terminal":true%' OR meta IS NULL OR meta NOT LIKE '%"terminal"%')
+       AND (meta IS NULL OR meta NOT LIKE '%"skippedRouter":true%')
+     GROUP BY pickedWorker, cluster`,
+    [since]
+  );
+  const workers = Object.create(null);
+  for (const row of rows || []) {
+    const worker = row.pickedWorker;
+    const n = Number(row.n) || 0;
+    const wins = Number(row.wins) || 0;
+    const avgScore = Number(row.avgScore) || 0;
+    const avgLatencyMs = Number(row.avgLatencyMs) || 0;
+    if (!workers[worker]) {
+      workers[worker] = {
+        worker,
+        n: 0,
+        wins: 0,
+        totalScore: 0,
+        totalLatencyMs: 0,
+        clusters: Object.create(null),
+      };
+    }
+    const current = workers[worker];
+    current.n += n;
+    current.wins += wins;
+    current.totalScore += avgScore * n;
+    current.totalLatencyMs += avgLatencyMs * n;
+    current.clusters[row.cluster] = { n, avgScore };
+  }
+  return Object.values(workers)
+    .map((worker) => ({
+      worker: worker.worker,
+      n: worker.n,
+      wins: worker.wins,
+      winRate: worker.n > 0 ? worker.wins / worker.n : 0,
+      avgScore: worker.n > 0 ? worker.totalScore / worker.n : 0,
+      avgLatencyMs: worker.n > 0 ? worker.totalLatencyMs / worker.n : 0,
+      clusters: worker.clusters,
+    }))
+    .sort((a, b) => b.avgScore - a.avgScore);
+}
+
+export async function getComboScoreTimeline(comboName, days = 14) {
+  if (!comboName) return [];
+  const db = await getAdapter();
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const rows = db.all(
+    `SELECT substr(timestamp, 1, 10) AS day, pickedWorker AS worker,
+            COUNT(*) AS n, AVG(outcomeScore) AS avgScore
+     FROM routing_events
+     WHERE comboName = ? AND timestamp >= ? AND outcomeScore IS NOT NULL
+       AND pickedWorker IS NOT NULL
+       AND (meta LIKE '%"terminal":true%' OR meta IS NULL OR meta NOT LIKE '%"terminal"%')
+       AND (meta IS NULL OR meta NOT LIKE '%"skippedRouter":true%')
+     GROUP BY day, worker
+     ORDER BY day`,
+    [comboName, since]
+  );
+  return (rows || []).map((row) => ({
+    day: row.day,
+    worker: row.worker,
+    n: Number(row.n) || 0,
+    avgScore: Number(row.avgScore) || 0,
+  }));
+}
+
+/** Terminal, non-skipped rows with an LLM judge result for the selected window. */
+export async function getJudgeCoverage(comboName, days = 14) {
+  if (!comboName) return { judged: 0, total: 0 };
+  const db = await getAdapter();
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const row = db.get(
+    `SELECT COUNT(*) AS total,
+            SUM(CASE WHEN meta LIKE '%"judgeScore":%' THEN 1 ELSE 0 END) AS judged
+     FROM routing_events
+     WHERE comboName = ? AND timestamp >= ? AND pickedWorker IS NOT NULL
+       AND (meta LIKE '%"terminal":true%' OR meta IS NULL OR meta NOT LIKE '%"terminal"%')
+       AND (meta IS NULL OR meta NOT LIKE '%"skippedRouter":true%')`,
+    [comboName, since]
+  );
+  return {
+    judged: Number(row?.judged) || 0,
+    total: Number(row?.total) || 0,
+  };
+}
+
+export async function getPickSourceCounts(comboName, days = 14) {
+  const counts = {
+    router: 0,
+    bandit_policy: 0,
+    cached_route: 0,
+    exploration: 0,
+    judge_flag_escalation: 0,
+    fallback_rescue: 0,
+  };
+  if (!comboName) return counts;
+  const db = await getAdapter();
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const rows = db.all(
+    `SELECT routerReason, fallbackUsed, COUNT(*) AS n
+     FROM routing_events
+     WHERE comboName = ? AND timestamp >= ? AND pickedWorker IS NOT NULL
+       AND (meta LIKE '%"terminal":true%' OR meta IS NULL OR meta NOT LIKE '%"terminal"%')
+       AND (meta IS NULL OR meta NOT LIKE '%"skippedRouter":true%')
+     GROUP BY routerReason, fallbackUsed`,
+    [comboName, since]
+  );
+  for (const row of rows || []) {
+    const n = Number(row.n) || 0;
+    let source = "router";
+    if (String(row.routerReason).startsWith("exploration")) {
+      source = "exploration";
+    } else if (row.routerReason === "bandit_policy") {
+      source = "bandit_policy";
+    } else if (row.routerReason === "cached_route") {
+      source = "cached_route";
+    } else if (row.routerReason === "judge_flag_escalation") {
+      source = "judge_flag_escalation";
+    } else if (Number(row.fallbackUsed) === 1) {
+      source = "fallback_rescue";
+    }
+    counts[source] += n;
+  }
+  return counts;
 }
 
 /**

@@ -2,6 +2,9 @@ import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { encryptSecret, decryptSecret } from "@/lib/crypto/secrets.js";
+import { QUOTA_AUTOPING_CONFIG } from "@/shared/constants/config.js";
+
+export const DEFAULT_QUOTA_FRESH_MS = QUOTA_AUTOPING_CONFIG.tickIntervalMs * 2;
 
 const OPTIONAL_FIELDS = [
   "displayName", "email", "globalPriority", "defaultModel",
@@ -119,6 +122,29 @@ export async function getProviderConnectionById(id) {
   const db = await getAdapter();
   const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
   return rowToConn(row);
+}
+
+export async function getProviderQuotaHeadroom(freshMs = DEFAULT_QUOTA_FRESH_MS) {
+  try {
+    const headroom = Object.create(null);
+    const maxAgeMs = Number.isFinite(freshMs) ? freshMs : DEFAULT_QUOTA_FRESH_MS;
+    const now = Date.now();
+    const connections = await getProviderConnections();
+    for (const connection of connections) {
+      const snapshot = connection.lastQuota;
+      const snapshotAt = Number(snapshot?.at);
+      const remainingPercentage = Number(snapshot?.remainingPercentage);
+      if (!Number.isFinite(snapshotAt) || now - snapshotAt > maxAgeMs) continue;
+      if (!Number.isFinite(remainingPercentage)) continue;
+      const previous = headroom[connection.provider];
+      if (!Number.isFinite(previous) || remainingPercentage > previous) {
+        headroom[connection.provider] = remainingPercentage;
+      }
+    }
+    return headroom;
+  } catch {
+    return {};
+  }
 }
 
 // Internal sync reorder — must be called INSIDE a transaction

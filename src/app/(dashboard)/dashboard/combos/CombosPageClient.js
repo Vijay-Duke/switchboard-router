@@ -327,6 +327,7 @@ export default function CombosPageClient({ initialData }) {
         onClose={() => setShowCreateModal(false)}
         onSave={handleCreate}
         activeProviders={activeProviders}
+        modelCaps={modelCaps}
         initialStrategy={{ fallbackStrategy: "fallback", capacityAutoSwitch: true }}
       />
 
@@ -338,6 +339,7 @@ export default function CombosPageClient({ initialData }) {
         onClose={() => setEditingCombo(null)}
         onSave={(data) => handleUpdate(editingCombo.id, data)}
         activeProviders={activeProviders}
+        modelCaps={modelCaps}
         initialStrategy={
           editingCombo
             ? comboStrategies[editingCombo.name] || { fallbackStrategy: "fallback" }
@@ -386,6 +388,12 @@ function strategyPatchFromForm(strategy, capacityAutoSwitch, routerModel, object
     patch.explorationRate = "";
   }
   return patch;
+}
+
+/** Return true when a non-empty Auto worker pool has no vision-capable model. */
+function poolHasNoVisionModel(models, routerModel, modelCaps) {
+  const pool = (models || []).filter((model) => model && model !== routerModel);
+  return pool.length > 0 && !pool.some((model) => modelCaps[model]?.vision);
 }
 
 /**
@@ -468,6 +476,7 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
   const isAuto = current === "auto";
   const routerModel = strategy.routerModel || "";
   const objective = strategy.objective || "balanced";
+  const providerStrategy = strategy.providerStrategy || "off";
   const capacityAutoSwitch = strategy.capacityAutoSwitch !== false;
 
   return (
@@ -543,6 +552,12 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
                     Router is also in the worker list — it is auto-excluded from the pool.
                   </p>
                 )}
+                {poolHasNoVisionModel(combo.models, routerModel, modelCaps) && (
+                  <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[12px]">warning</span>
+                    No vision-capable model — image requests will have images stripped
+                  </p>
+                )}
                 <TierLabels models={combo.models} routerModel={routerModel} />
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   <span className="text-[11px] font-medium text-text-muted">Objective</span>
@@ -572,6 +587,15 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
                       onChange={(e) => onSetStrategy({ freezeLearning: e.target.checked })}
                     />
                     Freeze
+                  </label>
+                  <label className="inline-flex items-center gap-1 text-[11px] text-text-muted cursor-pointer" title="Occasionally append a 1/2/3 feedback prompt to Auto chat replies (human chat only). Off by default.">
+                    <input
+                      type="checkbox"
+                      className="rounded border-border"
+                      checked={!!strategy.feedbackAsk}
+                      onChange={(e) => onSetStrategy({ feedbackAsk: e.target.checked })}
+                    />
+                    Ask feedback
                   </label>
                   <button
                     type="button"
@@ -606,6 +630,52 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
                     Insights
                   </a>
                 </div>
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-text-muted">Provider</span>
+                  <select
+                    value={providerStrategy}
+                    onChange={(e) => onSetStrategy({ providerStrategy: e.target.value })}
+                    className="rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-main"
+                  >
+                    <option value="off">Off</option>
+                    <option value="priority">Priority</option>
+                    <option value="round-robin">Round robin</option>
+                    <option value="fastest">Fastest</option>
+                    <option value="quota-first">Quota first</option>
+                  </select>
+                  {providerStrategy === "priority" && (
+                    <>
+                      <input
+                        type="text"
+                        value={Array.isArray(strategy.providerOrder) ? strategy.providerOrder.join(", ") : ""}
+                        onChange={(e) =>
+                          onSetStrategy({
+                            providerOrder: e.target.value.split(",").map((value) => value.trim()).filter(Boolean),
+                          })
+                        }
+                        placeholder="provider-a, provider-b"
+                        className="w-40 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-main"
+                      />
+                      <span className="text-[10px] text-text-muted">comma-separated provider names, highest priority first</span>
+                    </>
+                  )}
+                  <input
+                    type="number"
+                    min="1"
+                    value={strategy.providerLatencyGuardMs ?? ""}
+                    onChange={(e) =>
+                      onSetStrategy({ providerLatencyGuardMs: Number(e.target.value) || undefined })
+                    }
+                    placeholder="20000"
+                    title="Demote providers slower than this latency in milliseconds"
+                    className="w-20 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-main"
+                  />
+                </div>
+                {providerStrategy === "quota-first" && (
+                  <p className="text-[10px] text-text-muted">
+                    Quota data currently available for Claude & Codex; other providers use availability (not rate-limited, lower recent use).
+                  </p>
+                )}
                 {/* Learning controls (DASHBOARD.md) */}
                 <div className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-text-muted">
                   <label className="inline-flex items-center gap-1">
@@ -789,7 +859,7 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
   );
 }
 
-function ModelItem({ id, index, model, isFirst, isLast, onEdit, onMoveUp, onMoveDown, onRemove }) {
+function ModelItem({ id, index, model, learned = null, isFirst, isLast, onEdit, onMoveUp, onMoveDown, onRemove }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({ id });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -855,6 +925,15 @@ function ModelItem({ id, index, model, isFirst, isLast, onEdit, onMoveUp, onMove
         </div>
       )}
 
+      {learned && learned.n >= 10 && (
+        <span
+          className="shrink-0 font-mono text-[10px] text-text-subtle"
+          title="Learned routing stats (all combos, last 14d)"
+        >
+          avg {Math.round(learned.avgScore)} · n={learned.n}{learned.bestCluster ? ` · best: ${learned.bestCluster}` : ""}
+        </span>
+      )}
+
       {/* Priority arrows */}
       <div className="flex shrink-0 items-center gap-0.5">
         <button
@@ -887,7 +966,7 @@ function ModelItem({ id, index, model, isFirst, isLast, onEdit, onMoveUp, onMove
   );
 }
 
-function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindFilter = null, initialStrategy = {} }) {
+function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, modelCaps = {}, kindFilter = null, initialStrategy = {} }) {
   // Initialize state with combo values; reset when modal re-opens (create key is stable)
   const [name, setName] = useState(combo?.name || "");
   const [models, setModels] = useState(combo?.models || []);
@@ -899,6 +978,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState("");
   const [modelAliases, setModelAliases] = useState({});
+  const [learnedStats, setLearnedStats] = useState({});
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -922,11 +1002,45 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   const fetchModalData = async () => {
     try {
       const aliasesRes = await fetch("/api/models/alias");
-      if (!aliasesRes.ok) return;
-      const aliasesData = await aliasesRes.json();
-      setModelAliases(aliasesData.aliases || {});
+      if (aliasesRes.ok) {
+        const aliasesData = await aliasesRes.json();
+        setModelAliases(aliasesData.aliases || {});
+      }
     } catch (error) {
       reportClientError("Error fetching modal data:", error);
+    }
+
+    try {
+      const statsRes = await fetch("/api/routing/stats");
+      if (!statsRes.ok) throw new Error("Failed to fetch learned routing stats");
+      const statsData = await statsRes.json();
+      const statsByWorker = {};
+
+      for (const workerStats of statsData.global || []) {
+        const clusters = Object.entries(workerStats.clusters || {});
+        const eligibleClusters = clusters.filter(([, clusterStats]) => clusterStats.n >= 3);
+        const bestClusterEntry = (eligibleClusters.length ? eligibleClusters : clusters)
+          .reduce((best, entry) => {
+            if (!best) return entry;
+            const [bestKey, bestStats] = best;
+            const [entryKey, entryStats] = entry;
+            const bestValue = eligibleClusters.length ? bestStats.avgScore : bestStats.n;
+            const entryValue = eligibleClusters.length ? entryStats.avgScore : entryStats.n;
+            return entryValue > bestValue || (entryValue === bestValue && entryKey < bestKey)
+              ? entry
+              : best;
+          }, null);
+
+        statsByWorker[workerStats.worker] = {
+          avgScore: workerStats.avgScore,
+          n: workerStats.n,
+          bestCluster: bestClusterEntry ? bestClusterEntry[0] : null,
+        };
+      }
+
+      setLearnedStats(statsByWorker);
+    } catch {
+      setLearnedStats({});
     }
   };
 
@@ -940,6 +1054,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
     setShowModelSelect(false);
     setSaving(false);
     setNameError("");
+    setLearnedStats({});
     fetchModalData();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-seed when open toggles / edit target changes
   }, [isOpen, combo?.id, combo?.name]);
@@ -1089,6 +1204,12 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
               Models {strategy === "fallback" ? "(order = priority)" : "(pool)"}
             </label>
 
+            {models.length > 0 && poolHasNoVisionModel(models, null, modelCaps) && (
+              <p className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1 mb-1">
+                <span className="material-symbols-outlined text-[12px]">warning</span>
+                No vision-capable model — image requests will have images stripped
+              </p>
+            )}
             {models.length === 0 ? (
               <div className="text-center py-4 border border-dashed border-black/10 dark:border-white/10 rounded-lg bg-black/[0.01] dark:bg-white/[0.01]">
                 <span className="material-symbols-outlined text-text-muted text-xl mb-1">layers</span>
@@ -1104,6 +1225,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
                       id={uid}
                       index={index}
                       model={model}
+                      learned={learnedStats[model] || null}
                       isFirst={index === 0}
                       isLast={index === modelItems.length - 1}
                       onEdit={(newVal) => {

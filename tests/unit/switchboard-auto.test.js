@@ -20,6 +20,7 @@ import {
   hasJsonCompletion,
   isSseKeepaliveText,
   acceptWorkerResponse,
+  filterByLatency,
   probeStreamForContent,
   restreamFromProbe,
 } from "../../open-sse/routing/handleAutoChat.js";
@@ -31,7 +32,12 @@ import {
   buildBanditTable,
   buildBanditTableFromEvents,
 } from "../../open-sse/routing/optimizer.js";
-import { rankByObjective, costTier } from "../../open-sse/routing/objective.js";
+import {
+  rankByObjective,
+  costTier,
+  estimateRequestCost,
+} from "../../open-sse/routing/objective.js";
+import { getPricingForModel } from "../../open-sse/providers/pricing.js";
 
 const POOL = ["openai/gpt-4o-mini", "anthropic/claude-sonnet", "openai/gpt-4o"];
 
@@ -247,6 +253,7 @@ describe("buildRequestSignals", () => {
     expect(s.hasTools).toBe(true);
     expect(s.keywordHints).toContain("refactor");
     expect(s.fingerprint).toHaveLength(16);
+    expect(s.textLen).toBe("refactor this image".length);
   });
 
   it("counts plain string content parts", () => {
@@ -319,6 +326,7 @@ describe("buildRouterPrompt", () => {
     expect(user).toContain("prefer mini");
     expect(user).toContain("BANDIT");
     expect(user).toContain("avgLat:");
+    expect(user).toContain("est:$");
     expect(user).toContain("<<<USER_INTENT");
     expect(user).toContain("USER_INTENT>>>");
     expect(user).toContain("FEWSHOT");
@@ -329,6 +337,17 @@ describe("buildRouterPrompt", () => {
 });
 
 describe("healthFromStats", () => {
+  it("accumulates average output tokens when present", () => {
+    const h = healthFromStats(
+      [
+        { cluster: "g", pickedWorker: POOL[0], n: 2, avgScore: 70, avgLatencyMs: 100, avgTokensOut: 100 },
+        { cluster: "g", pickedWorker: POOL[0], n: 1, avgScore: 70, avgLatencyMs: 100, avgTokensOut: 400 },
+      ],
+      POOL
+    );
+    expect(h[POOL[0]].avgTokensOut).toBe(200);
+  });
+
   it("does not produce winRate > 1 on first observation", () => {
     const h = healthFromStats(
       [{ cluster: "g", pickedWorker: POOL[0], n: 1, avgScore: 70, avgLatencyMs: 100 }],
@@ -343,6 +362,24 @@ describe("healthFromStats", () => {
     const h = healthFromStats([], POOL);
     expect(h[POOL[0]].winRate).toBe(0);
     expect(h[POOL[0]].attempts).toBe(0);
+  });
+});
+
+describe("filterByLatency", () => {
+  const candidates = ["openai/gpt-4o-mini", "openai/gpt-4o"];
+  const stats = [
+    { pickedWorker: candidates[0], n: 2, avgScore: 70, avgLatencyMs: 100 },
+    { pickedWorker: candidates[1], n: 2, avgScore: 70, avgLatencyMs: 900 },
+  ];
+
+  it("drops workers known to exceed the latency ceiling", () => {
+    expect(filterByLatency(candidates, stats, 500, null, "latency-test")).toEqual([candidates[0]]);
+  });
+
+  it("fails open when every worker exceeds the latency ceiling", () => {
+    const info = vi.fn();
+    expect(filterByLatency(candidates, stats, 50, { info }, "latency-test")).toEqual(candidates);
+    expect(info).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -430,7 +467,42 @@ describe("buildBanditTable", () => {
   });
 });
 
+describe("estimateRequestCost", () => {
+  it("uses catalog input and output pricing", () => {
+    const pricing = getPricingForModel("openai", "gpt-4o-mini");
+    const cost = estimateRequestCost("openai/gpt-4o-mini", 1000, 500);
+    expect(cost).toBeCloseTo((1000 / 1e6) * pricing.input + (500 / 1e6) * pricing.output, 12);
+  });
+
+  it("returns null for an unknown model", () => {
+    expect(estimateRequestCost("unknown/not-a-model", 1000, 500)).toBeNull();
+  });
+});
+
 describe("rankByObjective", () => {
+  it("uses predicted request cost for economy when costs are known", () => {
+    const ranked = rankByObjective(
+      [
+        { id: "openai/gpt-4o", avgScore: 80, avgTokensOut: 500 },
+        { id: "openai/gpt-4o-mini", avgScore: 80, avgTokensOut: 500 },
+      ],
+      "economy",
+      { estInputTokens: 1000 }
+    );
+    expect(ranked[0].id).toBe("openai/gpt-4o-mini");
+  });
+
+  it("keeps costTier fallback ordering when prediction options are absent", () => {
+    const ranked = rankByObjective(
+      [
+        { id: "openai/gpt-4o", avgScore: 80 },
+        { id: "openai/gpt-4o-mini", avgScore: 80 },
+      ],
+      "economy"
+    );
+    expect(ranked[0].id).toBe("openai/gpt-4o-mini");
+  });
+
   it("economy prefers cheaper when scores within 10%", () => {
     // Use ids with unknown pricing (tier 4) vs we can't control pricing easily —
     // just verify quality ranks by avgScore
@@ -539,6 +611,47 @@ describe("buildBanditTableFromEvents", () => {
     expect(t.debug.a.attempts).toBe(2);
     expect(t.debug.a.wins).toBe(1);
     expect(t.debug.a.p50LatencyMs).toBe(200);
+  });
+
+  it("averages output tokens and tolerates missing token usage", () => {
+    const t = buildBanditTableFromEvents([
+      { cluster: "debug", pickedWorker: "a", outcomeScore: 80, tokensOut: 100, meta: {} },
+      { cluster: "debug", pickedWorker: "a", outcomeScore: 70, tokensOut: 300, meta: {} },
+      { cluster: "debug", pickedWorker: "b", outcomeScore: 70, meta: {} },
+    ]);
+    expect(t.debug.a.avgTokensOut).toBe(200);
+    expect(t.debug.b.avgTokensOut).toBe(0);
+  });
+
+  it("weights user ratings without inflating real attempts", () => {
+    const t = buildBanditTableFromEvents([
+      { cluster: "debug", pickedWorker: "a", outcomeScore: 40, meta: {} },
+      { cluster: "debug", pickedWorker: "a", outcomeScore: 40, meta: {} },
+      {
+        cluster: "debug",
+        pickedWorker: "a",
+        outcomeScore: 100,
+        meta: { userRating: 1 },
+      },
+    ]);
+
+    expect(t.debug.a.avgScore).toBeCloseTo(82.9, 1);
+    expect(t.debug.a.attempts).toBe(3);
+  });
+
+  it("weights judge-adjusted events twice", () => {
+    const t = buildBanditTableFromEvents([
+      { cluster: "debug", pickedWorker: "a", outcomeScore: 40, meta: {} },
+      {
+        cluster: "debug",
+        pickedWorker: "a",
+        outcomeScore: 100,
+        meta: { judgeAdjusted: true },
+      },
+    ]);
+
+    expect(t.debug.a.avgScore).toBeCloseTo(80, 5);
+    expect(t.debug.a.attempts).toBe(2);
   });
 });
 

@@ -25,6 +25,41 @@ function findAutoComboMissingRouter(comboStrategies) {
   return null;
 }
 
+const PROVIDER_STRATEGIES = new Set([
+  "off",
+  "priority",
+  "round-robin",
+  "fastest",
+  "quota-first",
+]);
+
+function findInvalidProviderPreference(comboStrategies) {
+  if (!comboStrategies || typeof comboStrategies !== "object") return null;
+  for (const [name, strat] of Object.entries(comboStrategies)) {
+    if (!strat || typeof strat !== "object" || Array.isArray(strat)) continue;
+    if (
+      Object.prototype.hasOwnProperty.call(strat, "providerStrategy") &&
+      !PROVIDER_STRATEGIES.has(strat.providerStrategy)
+    ) {
+      return `Combo "${name}" providerStrategy must be one of: off, priority, round-robin, fastest, quota-first.`;
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(strat, "providerOrder") &&
+      (!Array.isArray(strat.providerOrder) ||
+        !strat.providerOrder.every((provider) => typeof provider === "string"))
+    ) {
+      return `Combo "${name}" providerOrder must be an array of provider name strings.`;
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(strat, "providerLatencyGuardMs") &&
+      (!Number.isFinite(strat.providerLatencyGuardMs) || strat.providerLatencyGuardMs <= 0)
+    ) {
+      return `Combo "${name}" providerLatencyGuardMs must be a positive finite number.`;
+    }
+  }
+  return null;
+}
+
 const SETTINGS_RESPONSE_HEADERS = {
   "Cache-Control": "no-store",
 };
@@ -102,6 +137,13 @@ export async function PATCH(request) {
           {
             error: `Auto combo "${invalidAuto}" requires a router model — select one in the combo's Auto settings (a cheap, fast model such as Haiku works well).`,
           },
+          { status: 400, headers: SETTINGS_RESPONSE_HEADERS }
+        );
+      }
+      const invalidProviderPreference = findInvalidProviderPreference(body.comboStrategies);
+      if (invalidProviderPreference) {
+        return NextResponse.json(
+          { error: invalidProviderPreference },
           { status: 400, headers: SETTINGS_RESPONSE_HEADERS }
         );
       }

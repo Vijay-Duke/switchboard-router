@@ -4,7 +4,63 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  LabelList,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { Card, Button } from "@/shared/components";
+
+const SERIES_COLORS = ["#3987e5", "#199e70", "#c98500", "#9085e9", "#008300", "#e66767"];
+const OTHER_COLOR = "#8a8172";
+const PICK_SOURCES = [
+  { key: "router", label: "Router" },
+  { key: "bandit_policy", label: "Bandit policy" },
+  { key: "cached_route", label: "Cached route" },
+  { key: "exploration", label: "Exploration" },
+  { key: "judge_flag_escalation", label: "Judge escalation" },
+  { key: "fallback_rescue", label: "Fallback rescue" },
+];
+const TOOLTIP_STYLE = {
+  backgroundColor: "var(--color-bg)",
+  border: "1px solid var(--color-border)",
+  borderRadius: "8px",
+  color: "var(--color-text)",
+  fontSize: "12px",
+};
+
+function buildWorkerColors(workers) {
+  const sorted = [...new Set(workers)].sort();
+  const map = {};
+  sorted.forEach((w, i) => {
+    map[w] = i < 6 ? SERIES_COLORS[i] : OTHER_COLOR;
+  });
+  return map;
+}
+
+function WorkerTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const model = payload[0].payload;
+  return (
+    <div className="font-mono" style={TOOLTIP_STYLE}>
+      <p className="mb-1 text-text-muted">{model.worker}</p>
+      <p className="text-text-main">Score: {Math.round(Number(model.avgScore) || 0)}</p>
+      {model.winRate != null && (
+        <p className="text-text-main">Win rate: {Math.round(model.winRate * 100)}%</p>
+      )}
+      <p className="text-text-main">Latency: {Math.round(Number(model.avgLatencyMs) || 0)}ms</p>
+    </div>
+  );
+}
 
 /**
  * Routing Insights for Auto combos (docs/switchboard/DASHBOARD.md).
@@ -22,6 +78,7 @@ function RoutingInsightsInner() {
   const searchParams = useSearchParams();
   const combo = searchParams.get("combo") || "";
   const [data, setData] = useState(/** @type {any} */ (null));
+  const [stats, setStats] = useState(/** @type {any} */ (null));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [learnMsg, setLearnMsg] = useState("");
@@ -42,13 +99,22 @@ function RoutingInsightsInner() {
       if (cluster) qs.set("cluster", cluster);
       if (worker) qs.set("worker", worker);
       if (explorationOnly) qs.set("exploration", "1");
-      const r = await fetch(`/api/routing/insights?${qs}`, { cache: "no-store" });
+      const [r, statsResponse] = await Promise.all([
+        fetch(`/api/routing/insights?${qs}`, { cache: "no-store" }),
+        fetch(`/api/routing/stats?combo=${encodeURIComponent(combo)}&days=${days}`, {
+          cache: "no-store",
+        })
+          .then(async (response) => (response.ok ? response.json() : null))
+          .catch(() => null),
+      ]);
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Failed to load insights");
       setData(j);
+      setStats(statsResponse);
     } catch (e) {
       setError(e.message || "Failed");
       setData(null);
+      setStats(null);
     } finally {
       setLoading(false);
     }
@@ -90,6 +156,68 @@ function RoutingInsightsInner() {
     }
     return m;
   }, [data]);
+
+  const timeline = stats?.timeline || [];
+  const workerNames = [
+    ...(data?.modelStats || []).map((model) => model.worker),
+    ...timeline.map((row) => row.worker),
+  ].filter(Boolean);
+  const workerColors = buildWorkerColors(workerNames);
+  const workerComparison = (data?.modelStats || []).map((model) => ({
+    ...model,
+    workerLabel: model.worker.split("/").pop(),
+    winRate:
+      model.wins != null && Number(model.n) > 0 ? Number(model.wins) / Number(model.n) : null,
+  }));
+  const timelineWorkers = [...new Set(timeline.map((row) => row.worker).filter(Boolean))].sort();
+  const trendWorkers = timelineWorkers.filter((workerName) => workerColors[workerName] !== OTHER_COLOR);
+  const hasOtherTrendWorkers = timelineWorkers.some(
+    (workerName) => workerColors[workerName] === OTHER_COLOR
+  );
+  const trendByDay = new Map();
+  for (const row of timeline) {
+    const score = Number(row.avgScore);
+    if (!Number.isFinite(score)) continue;
+    const day = trendByDay.get(row.day) || { day: row.day, otherN: 0, otherScore: 0 };
+    if (workerColors[row.worker] === OTHER_COLOR) {
+      const n = Number(row.n) || 0;
+      day.otherN += n;
+      day.otherScore += score * n;
+    } else {
+      day[row.worker] = score;
+    }
+    trendByDay.set(row.day, day);
+  }
+  const trendData = [...trendByDay.values()].map((row) => {
+    if (row.otherN > 0) row.Other = row.otherScore / row.otherN;
+    delete row.otherN;
+    delete row.otherScore;
+    return row;
+  });
+  const displayedTrendWorkers = hasOtherTrendWorkers
+    ? [...trendWorkers, "Other"]
+    : trendWorkers;
+  const pickSource = stats?.pickSource || {};
+  const totalPicks = Object.values(pickSource).reduce(
+    (total, value) => total + (Number(value) || 0),
+    0
+  );
+  const routerSkip = totalPicks
+    ? Math.round(
+        (((Number(pickSource.bandit_policy) || 0) + (Number(pickSource.cached_route) || 0)) /
+          totalPicks) *
+          100
+      )
+    : null;
+  const timelineSampleCount = timeline.reduce((total, row) => total + (Number(row.n) || 0), 0);
+  const weightedScore = timeline.reduce(
+    (total, row) => total + (Number(row.avgScore) || 0) * (Number(row.n) || 0),
+    0
+  );
+  const judgeCoverage = stats?.judgeCoverage;
+  const judgeCoveragePercent = judgeCoverage?.total
+    ? Math.round((Number(judgeCoverage.judged) / Number(judgeCoverage.total)) * 100)
+    : null;
 
   if (!combo) {
     return (
@@ -235,6 +363,20 @@ function RoutingInsightsInner() {
               }
             />
           </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Stat label="Router-skip %" value={routerSkip == null ? "—" : `${routerSkip}%`} />
+            <Stat
+              label="Avg score"
+              value={
+                timelineSampleCount > 0 ? (weightedScore / timelineSampleCount).toFixed(1) : "—"
+              }
+            />
+            <Stat
+              label="Judge coverage %"
+              value={judgeCoveragePercent == null ? "—" : `${judgeCoveragePercent}%`}
+            />
+            <Stat label="Total picks" value={String(totalPicks)} />
+          </div>
           <p className="text-[11px] text-text-subtle font-mono -mt-2">
             Request-level counts (one per chat). Intermediate fallback attempts
             {data.attemptCount != null && data.attemptCount !== data.eventCount
@@ -315,44 +457,174 @@ function RoutingInsightsInner() {
           <Card padding="md">
             <span className="text-[13px] font-semibold">Score trend</span>
             <p className="text-[11px] text-text-subtle font-mono mb-2">
-              mean outcomeScore per day over the selected window (request-level)
+              mean outcome score per worker per day (request-level)
             </p>
-            {(data.scoreTrend || []).length === 0 ? (
-              <p className="text-xs text-text-muted py-3 text-center">No scored days yet</p>
+            {trendData.length === 0 ? (
+              <p className="text-xs text-text-muted py-6 text-center">
+                No routing data in this window — Auto combos learn as they route
+              </p>
             ) : (
-              <div className="flex items-end gap-1 h-24 overflow-x-auto pt-2">
-                {(() => {
-                  const trend = data.scoreTrend || [];
-                  const maxS = Math.max(
-                    1,
-                    ...trend.map((d) => Number(d.avgScore) || 0)
-                  );
-                  return trend.map((d) => {
-                    const avg = Number(d.avgScore) || 0;
-                    const h = Math.max(4, Math.round((avg / maxS) * 80));
-                    return (
-                      <div
-                        key={d.day}
-                        className="flex flex-col items-center gap-0.5 min-w-[28px]"
-                        title={`${d.day}: ${avg.toFixed(1)} (n=${d.n})`}
-                      >
-                        <span className="text-[9px] font-mono text-text-subtle">
-                          {Math.round(avg)}
-                        </span>
-                        <div
-                          className="w-5 rounded-t bg-primary/70"
-                          style={{ height: h }}
-                        />
-                        <span className="text-[8px] font-mono text-text-subtle">
-                          {String(d.day).slice(5)}
-                        </span>
-                      </div>
-                    );
-                  });
-                })()}
-              </div>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={trendData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.1} />
+                  <XAxis
+                    dataKey="day"
+                    tick={{ className: "font-mono", fill: "currentColor", fillOpacity: 0.65, fontSize: 10 }}
+                    tickFormatter={(day) => String(day).slice(5)}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <YAxis
+                    domain={[0, 100]}
+                    tick={{ className: "font-mono", fill: "currentColor", fillOpacity: 0.65, fontSize: 10 }}
+                    tickLine={false}
+                    axisLine={false}
+                    width={32}
+                  />
+                  <Tooltip
+                    contentStyle={TOOLTIP_STYLE}
+                    itemStyle={{ color: "var(--color-text)" }}
+                    labelStyle={{ color: "var(--color-text-muted)" }}
+                    formatter={(value, name) => [Math.round(Number(value)), name]}
+                  />
+                  {displayedTrendWorkers.length >= 2 && (
+                    <Legend
+                      formatter={(value) => (
+                        <span className="font-mono text-[10px] text-text-muted">{value}</span>
+                      )}
+                    />
+                  )}
+                  {displayedTrendWorkers.map((workerName) => (
+                    <Line
+                      key={workerName}
+                      type="monotone"
+                      /* Function dataKey: recharts string dataKeys are lodash paths,
+                         so a model id with a dot (e.g. gemini-2.5-flash) would be
+                         mis-parsed as a nested path and render an empty line. */
+                      dataKey={(entry) => entry[workerName] ?? null}
+                      name={workerName === "Other" ? "Other" : workerName.split("/").pop()}
+                      stroke={workerName === "Other" ? OTHER_COLOR : workerColors[workerName]}
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4 }}
+                      connectNulls
+                      isAnimationActive={false}
+                    />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
             )}
           </Card>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Card padding="md">
+              <span className="text-[13px] font-semibold">Worker comparison</span>
+              <p className="text-[11px] text-text-subtle font-mono mb-3">
+                average outcome score (0–100)
+              </p>
+              {workerComparison.length === 0 ? (
+                <p className="text-xs text-text-muted py-6 text-center">
+                  No routing data in this window — Auto combos learn as they route
+                </p>
+              ) : (
+                <ResponsiveContainer width="100%" height={Math.max(180, workerComparison.length * 34)}>
+                  <BarChart
+                    data={workerComparison}
+                    layout="vertical"
+                    margin={{ top: 2, right: 34, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.1} horizontal={false} />
+                    <XAxis
+                      type="number"
+                      domain={[0, 100]}
+                      tick={{ className: "font-mono", fill: "currentColor", fillOpacity: 0.65, fontSize: 10 }}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="workerLabel"
+                      width={110}
+                      tick={{ className: "font-mono", fill: "currentColor", fillOpacity: 0.65, fontSize: 10 }}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <Tooltip content={<WorkerTooltip />} contentStyle={TOOLTIP_STYLE} />
+                    <Bar
+                      dataKey="avgScore"
+                      name="Average score"
+                      barSize={16}
+                      radius={[0, 4, 4, 0]}
+                      isAnimationActive={false}
+                    >
+                      {workerComparison.map((model) => (
+                        <Cell key={model.worker} fill={workerColors[model.worker] || OTHER_COLOR} />
+                      ))}
+                      <LabelList
+                        dataKey="avgScore"
+                        position="right"
+                        formatter={(value) => Math.round(Number(value) || 0)}
+                        fill="var(--color-text-muted)"
+                        className="font-mono"
+                      />
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </Card>
+
+            <Card padding="md">
+              <span className="text-[13px] font-semibold">Pick source</span>
+              <p className="text-[11px] text-text-subtle font-mono mb-3">
+                terminal selections in the selected window
+              </p>
+              {totalPicks === 0 ? (
+                <p className="text-xs text-text-muted py-6 text-center">
+                  No routing data in this window — Auto combos learn as they route
+                </p>
+              ) : (
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={[{ name: "window", ...pickSource }]} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.1} vertical={false} />
+                    <XAxis
+                      type="number"
+                      tick={{ className: "font-mono", fill: "currentColor", fillOpacity: 0.65, fontSize: 10 }}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="name"
+                      width={48}
+                      tick={{ className: "font-mono", fill: "currentColor", fillOpacity: 0.65, fontSize: 10 }}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <Tooltip
+                      contentStyle={TOOLTIP_STYLE}
+                      itemStyle={{ color: "var(--color-text)" }}
+                      labelStyle={{ color: "var(--color-text-muted)" }}
+                    />
+                    <Legend
+                      formatter={(value) => (
+                        <span className="font-mono text-[10px] text-text-muted">{value}</span>
+                      )}
+                    />
+                    {PICK_SOURCES.map((source, index) => (
+                      <Bar
+                        key={source.key}
+                        dataKey={source.key}
+                        name={source.label}
+                        stackId="s"
+                        fill={index < 6 ? SERIES_COLORS[index] : OTHER_COLOR}
+                        isAnimationActive={false}
+                      />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </Card>
+          </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card padding="md">

@@ -29,7 +29,18 @@ import {
 } from "./routingCache.js";
 import { deriveClusterGuess } from "./taxonomy.js";
 import { splitPoolByTier, pickBanditPolicy, pickByObjective } from "./objective.js";
+import { DEFAULT_PROVIDER_LATENCY_GUARD_MS } from "./providerPreference.js";
 import { createJudgeContext, takeJudgeEscalation } from "./judge.js";
+import {
+  computeAskValue,
+  decideAsk,
+  addPendingAsk,
+  recordInteraction,
+  ASK_LINE,
+} from "./feedbackAsk.js";
+import { injectAskIntoOpenAiStream, appendAskToOpenAiJson } from "./feedbackInject.js";
+import { overlayedBanditTable } from "./overlay.js";
+import { blendWarmStart } from "./warmStart.js";
 
 export {
   STREAM_PROBE_IDLE_MS,
@@ -47,6 +58,7 @@ export {
 
 const DEFAULT_TIMEOUT_MS = 15000;
 const MAX_AUTO_DEPTH = 2;
+const gVisionWarned = (global.__autoVisionWarned ??= new Set());
 /** Hard cap on explorationRate (dashboard + strategy); name documents [0, 0.2]. */
 export const EXPLORATION_RATE_CAP = 0.2;
 /** TTL for high-confidence cached routes; the bound forces periodic re-routing. */
@@ -76,10 +88,16 @@ export function invalidateCachedRoutes(comboName) {
  * @param {object} [opts.strategy] - comboStrategies[comboName]
  * @param {Function} [opts.loadLearning]
  * @param {Function} [opts.loadStats]
+ * @param {Function} [opts.loadGlobalStats] - (days) => Promise<Array>
  * @param {Function} [opts.loadClusterP50] - (combo, cluster, days) => Promise<number|null>
+ * @param {Function} [opts.loadProviderLatency] - (days) => Promise<Record<string, number>>
+ * @param {Function} [opts.loadProviderUsage] - () => Promise<Record<string, number>>
+ * @param {Function} [opts.loadProviderQuota] - () => Promise<Record<string, number>>
  * @param {Function} [opts.recordEvent]
  * @param {number} [opts.autoDepth] - recursion depth (reject at MAX_AUTO_DEPTH)
  * @param {AbortSignal} [opts.clientAbortSignal] - client disconnect aborts router + workers
+ * @param {object|null} [opts.feedbackCtx] - eligible OpenAI feedback context
+ * @param {Record<string, object>} [opts.workerCaps] - resolved worker capability overrides
  */
 export async function handleAutoChat({
   body,
@@ -90,11 +108,17 @@ export async function handleAutoChat({
   strategy = {},
   loadLearning = async () => null,
   loadStats = async () => [],
+  loadGlobalStats = async () => [],
   loadClusterP50 = null,
+  loadProviderLatency = async () => ({}),
+  loadProviderUsage = async () => ({}),
+  loadProviderQuota = async () => ({}),
   recordEvent = async () => {},
   applyJudgeScore = async () => {},
   autoDepth = 0,
   clientAbortSignal = null,
+  feedbackCtx = null,
+  workerCaps = {},
 }) {
   if (autoDepth >= MAX_AUTO_DEPTH) {
     return errorResponse(
@@ -132,6 +156,8 @@ export async function handleAutoChat({
     );
   }
 
+  warnIfPoolLacksVision({ pool, body, comboName, log, workerCaps });
+
   const emitHeaders = strategy.emitAutoRouterHeaders !== false;
   const windowDays = strategy.learningWindowDays ?? 14;
 
@@ -152,6 +178,7 @@ export async function handleAutoChat({
     pool,
     heuristicFirst,
     log,
+    workerCaps,
   });
 
   // Single-worker / heuristic shortcuts: execute without poisoning the bandit table
@@ -181,22 +208,44 @@ export async function handleAutoChat({
     });
   }
 
-  const { learning, stats } = await loadAutoRoutingData({
+  const { learning, stats, globalStats, providerLatencyMs, providerUsage, providerQuota } = await loadAutoRoutingData({
     comboName,
     strategy,
     loadLearning,
     loadStats,
+    loadGlobalStats,
+    loadProviderLatency,
+    loadProviderUsage,
+    loadProviderQuota,
     log,
   });
-  // Tier membership for the policy fast path escalation + failure reordering.
-  const tierSplit = splitPoolByTier(candidates);
+  const providerBias = providerBiasEnabled(strategy)
+    ? {
+        strategy: strategy.providerStrategy,
+        providerOrder: Array.isArray(strategy.providerOrder) ? strategy.providerOrder : [],
+        providerLatencyMs,
+        providerUsage,
+        providerQuota,
+        guardMs: strategy.providerLatencyGuardMs ?? DEFAULT_PROVIDER_LATENCY_GUARD_MS,
+      }
+    : null;
+  const overlayedBandit = overlayedBanditTable(learning?.banditTable, comboName);
+  const overlayedLearning = learning
+    ? {
+        ...learning,
+        banditTable:
+          tuning.warmStart !== false
+            ? blendWarmStart(overlayedBandit, globalStats)
+            : overlayedBandit,
+      }
+    : learning;
   const route = await selectAutoWorker({
     body,
     models,
     candidates,
     comboName,
     strategy,
-    learning,
+    learning: overlayedLearning,
     stats,
     objective,
     explorationRate,
@@ -204,17 +253,25 @@ export async function handleAutoChat({
     routerTimeoutMs,
     childDepth,
     tuning,
-    tierSplit,
     handleSingleModel,
     log,
     clientAbortSignal,
+    providerBias,
+    workerCaps,
   });
   if (route.response) return route.response;
+
+  const contested = feedbackContested(overlayedLearning?.banditTable, route.pick.cluster);
+  const coldCell = feedbackColdCell(
+    overlayedLearning?.banditTable,
+    route.pick.cluster,
+    route.pick.model
+  );
 
   return executeAndRecord({
     body,
     worker: route.pick.model,
-    pool: candidates,
+    pool: route.candidates,
     handleSingleModel,
     log,
     comboName,
@@ -222,7 +279,7 @@ export async function handleAutoChat({
     objective,
     pick: route.pick,
     routerLatencyMs: route.routerLatencyMs,
-    learningVersionId: learning?.id || strategy.activeLearningVersionId || null,
+    learningVersionId: overlayedLearning?.id || strategy.activeLearningVersionId || null,
     exploration: route.exploration,
     signals: route.signals,
     recordEvent,
@@ -235,8 +292,36 @@ export async function handleAutoChat({
     windowDays,
     clientAbortSignal,
     judgeCtx,
-    tierSplit,
+    tierSplit: route.tierSplit,
+    feedbackCtx: feedbackCtx ? { ...feedbackCtx, contested, coldCell } : null,
   });
+}
+
+function feedbackContested(table, cluster) {
+  try {
+    const models = table?.[cluster];
+    if (!models) return false;
+    const ranked = Object.values(models)
+      .map((s) => ({ avg: Number(s.avgScore) || 0, n: Number(s.attempts) || 0 }))
+      .filter((x) => x.n >= 10)
+      .sort((a, b) => b.avg - a.avg);
+    return ranked.length >= 2 && ranked[0].avg - ranked[1].avg <= 15;
+  } catch {
+    return false;
+  }
+}
+
+function feedbackColdCell(table, cluster, worker) {
+  try {
+    const cell = table?.[cluster]?.[worker];
+    return !cell || (Number(cell.attempts) || 0) < 10;
+  } catch {
+    return false;
+  }
+}
+
+function providerBiasEnabled(strategy) {
+  return !!strategy?.providerStrategy && strategy.providerStrategy !== "off";
 }
 
 function resolveAutoSettings({ strategy, autoDepth }) {
@@ -260,7 +345,6 @@ function resolveAutoSettings({ strategy, autoDepth }) {
 }
 
 function buildWorkerPool({ models, routerModel, strategy }) {
-  // Nested combos as workers are an explicit non-goal (SPEC §2) — drop them if still listed
   let pool = (models || []).filter((m) => m && m !== routerModel);
   if (typeof strategy.filterWorker === "function") {
     pool = pool.filter((m) => strategy.filterWorker(m));
@@ -268,7 +352,17 @@ function buildWorkerPool({ models, routerModel, strategy }) {
   return pool;
 }
 
-function prepareAutoCandidates({ body, pool, heuristicFirst, log }) {
+function warnIfPoolLacksVision({ pool, body, comboName, log, workerCaps }) {
+  if (gVisionWarned.has(comboName)) return;
+  const required = detectRequiredCapabilities(body);
+  if (!required.has("vision")) return;
+  const anyVision = pool.some((id) => modelHasCaps(id, ["vision"], workerCaps));
+  if (anyVision) return;
+  gVisionWarned.add(comboName);
+  log?.warn?.("AUTO", `combo "${comboName}" has no vision-capable worker — image inputs will be stripped`);
+}
+
+function prepareAutoCandidates({ body, pool, heuristicFirst, log, workerCaps }) {
   if (pool.length === 1) {
     log?.info?.("AUTO", `pool size 1 → direct ${pool[0]}`);
     return {
@@ -293,7 +387,7 @@ function prepareAutoCandidates({ body, pool, heuristicFirst, log }) {
   if (required.size === 0) return { candidates, shortcut: null };
 
   const needed = [...required];
-  const able = pool.filter((id) => modelHasCaps(id, needed));
+  const able = pool.filter((id) => modelHasCaps(id, needed, workerCaps));
   if (able.length === 1) {
     log?.info?.("AUTO", `only one model capable of [${needed}] → ${able[0]}`);
     return {
@@ -321,11 +415,26 @@ function prepareAutoCandidates({ body, pool, heuristicFirst, log }) {
   return { candidates, shortcut: null };
 }
 
-async function loadAutoRoutingData({ comboName, strategy, loadLearning, loadStats, log }) {
+async function loadAutoRoutingData({
+  comboName,
+  strategy,
+  loadLearning,
+  loadStats,
+  loadGlobalStats,
+  loadProviderLatency,
+  loadProviderUsage,
+  loadProviderQuota,
+  log,
+}) {
   const learningEnabled = strategy.learningEnabled !== false;
+  const tuning = strategy.autoTuning || {};
   // freezeLearning / activeLearningVersionId: loadLearning should resolve the pin or promoted version
   let learning = null;
   let stats = [];
+  let globalStats = [];
+  let providerLatencyMs = {};
+  let providerUsage = {};
+  let providerQuota = {};
   if (learningEnabled || strategy.activeLearningVersionId) {
     try {
       learning = await loadLearning(comboName, strategy);
@@ -338,7 +447,66 @@ async function loadAutoRoutingData({ comboName, strategy, loadLearning, loadStat
   } catch {
     /* fail-open */
   }
-  return { learning, stats };
+  if (tuning.warmStart !== false) {
+    try {
+      globalStats = await loadGlobalStats(strategy.learningWindowDays ?? 14);
+    } catch {
+      globalStats = [];
+    }
+  }
+  if (providerBiasEnabled(strategy)) {
+    try {
+      const latency = await loadProviderLatency(strategy.learningWindowDays ?? 14);
+      providerLatencyMs = latency && typeof latency === "object" ? latency : {};
+    } catch {
+      providerLatencyMs = {};
+    }
+    try {
+      const usage = await loadProviderUsage();
+      providerUsage = usage && typeof usage === "object" ? usage : {};
+    } catch {
+      providerUsage = {};
+    }
+    if (strategy.providerStrategy === "quota-first") {
+      try {
+        const quota = await loadProviderQuota();
+        providerQuota = quota && typeof quota === "object" ? quota : {};
+      } catch {
+        providerQuota = {};
+      }
+    }
+  }
+  return { learning, stats, globalStats, providerLatencyMs, providerUsage, providerQuota };
+}
+
+/**
+ * Remove workers with known mean latency above the per-request ceiling.
+ * Missing latency data stays eligible; an empty filtered pool fails open.
+ * @param {string[]} candidates
+ * @param {Array} stats
+ * @param {number} maxLatencyMs
+ * @param {{ info?: Function }} log
+ * @param {string} comboName
+ * @returns {string[]}
+ */
+export function filterByLatency(candidates, stats, maxLatencyMs, log, comboName) {
+  const original = Array.isArray(candidates) ? candidates : [];
+  if (!Number.isFinite(maxLatencyMs) || maxLatencyMs <= 0) return original;
+  try {
+    const healthByModel = healthFromStats(stats, original);
+    const filtered = original.filter((id) => {
+      const latency = Number(healthByModel[id]?.avgLatencyMs);
+      return !Number.isFinite(latency) || latency <= 0 || latency <= maxLatencyMs;
+    });
+    if (filtered.length) return filtered;
+    log?.info?.(
+      "AUTO",
+      `maxLatencyMs=${maxLatencyMs} would empty pool for combo ${comboName} — ignored`
+    );
+  } catch {
+    /* fail-open */
+  }
+  return original;
 }
 
 async function selectAutoWorker({
@@ -355,10 +523,11 @@ async function selectAutoWorker({
   routerTimeoutMs,
   childDepth,
   tuning,
-  tierSplit = null,
   handleSingleModel,
   log,
   clientAbortSignal,
+  providerBias,
+  workerCaps,
 }) {
   const routerInPool = (models || []).includes(routerModel);
   if (routerInPool) {
@@ -366,6 +535,10 @@ async function selectAutoWorker({
   }
 
   const signals = buildRequestSignals(body);
+  const maxLatencyMs = Number(strategy.maxLatencyMs);
+  candidates = filterByLatency(candidates, stats, maxLatencyMs, log, comboName);
+  const tierSplit = splitPoolByTier(candidates);
+  const estInputTokens = Math.round((signals.textLen || 0) / 4);
   const cachedRoutesEnabled = tuning.cachedRoutes !== false;
   const cacheKey = cachedRouteKey(comboName, signals.fingerprint);
   if (clientAbortSignal?.aborted) {
@@ -387,7 +560,8 @@ async function selectAutoWorker({
         learning?.banditTable || null,
         clusterGuess,
         candidates,
-        objective
+        objective,
+        { estInputTokens, providerBias }
       );
       if (policy && candidates.includes(policy.model)) {
         log?.info?.(
@@ -435,6 +609,7 @@ async function selectAutoWorker({
       healthByModel,
       maxFewShots,
       signals,
+      workerCaps,
     });
 
     // Always OpenAI wire shape for the router call so system prompt is not dropped
@@ -471,7 +646,9 @@ async function selectAutoWorker({
     comboName,
     objective,
     learning,
+    estInputTokens,
     log,
+    providerBias,
   });
   if (escalated) pick = escalated;
 
@@ -512,6 +689,8 @@ async function selectAutoWorker({
     exploration,
     signals,
     routerInPool,
+    candidates,
+    tierSplit,
   };
 }
 
@@ -526,7 +705,9 @@ function maybeEscalateForJudgeFlags({
   comboName,
   objective,
   learning,
+  estInputTokens,
   log,
+  providerBias,
 }) {
   if (!pick || tierSplit?.disabled) return null;
   if (pick.reason !== "bandit_policy" && pick.reason !== "cached_route") return null;
@@ -538,7 +719,10 @@ function maybeEscalateForJudgeFlags({
   if (!takeJudgeEscalation(comboName, pick.cluster, objective)) return null;
 
   const best =
-    pickByObjective(learning?.banditTable?.[pick.cluster] || {}, objective, frontier) ||
+    pickByObjective(learning?.banditTable?.[pick.cluster] || {}, objective, frontier, {
+      estInputTokens,
+      providerBias,
+    }) ||
     frontier[0];
   if (!best || best === pick.model) return null;
 
@@ -647,6 +831,7 @@ async function executeAndRecord({
   clientAbortSignal = null,
   judgeCtx = null,
   tierSplit = null,
+  feedbackCtx = null,
 }) {
   const routerPickedWorker = pick.model;
   const clusterRefLatency = await resolveClusterReferenceLatency({
@@ -750,6 +935,7 @@ async function executeAndRecord({
     emitHeaders,
     clusterRefLatency,
     judgeCtx,
+    feedbackCtx,
   });
 }
 
@@ -774,6 +960,7 @@ async function finalizeSuccessfulWorker({
   emitHeaders,
   clusterRefLatency,
   judgeCtx = null,
+  feedbackCtx = null,
 }) {
   const {
     result,
@@ -826,11 +1013,43 @@ async function finalizeSuccessfulWorker({
       : result;
   }
 
+  let askText = null;
+  const fb = feedbackCtx;
+  if (fb && fb.feedbackAsk && fb.openAiWire) {
+    try {
+      recordInteraction(fb.apiKeyHash);
+      const askValue = computeAskValue({
+        exploration,
+        contested: fb.contested,
+        coldCell: fb.coldCell,
+        escalatedOrRescue: pick.reason === "judge_flag_escalation" || requestUsedFallback,
+      });
+      if (
+        decideAsk({
+          apiKeyHash: fb.apiKeyHash,
+          conversationFp: fb.conversationFp,
+          askValue,
+          feedbackAskEnabled: true,
+          gateOk: fb.gateOk,
+        })
+      ) {
+        askText = ASK_LINE;
+        addPendingAsk({
+          apiKeyHash: fb.apiKeyHash,
+          conversationFp: fb.conversationFp,
+          requestId,
+        });
+      }
+    } catch {
+      /* fail-open: never affect the response */
+    }
+  }
+
   const ct = (result.headers?.get?.("content-type") || "").toLowerCase();
   const isStream = ct.includes("text/event-stream") || ct.includes("ndjson");
 
   if (isStream && result.body) {
-    return observeStreamAndRecord({
+    let out = observeStreamAndRecord({
       response: result,
       recordEvent,
       log,
@@ -847,6 +1066,8 @@ async function finalizeSuccessfulWorker({
       seedTokensOut: preInspect?.tokensOut ?? null,
       judgeCtx,
     });
+    if (askText) out = injectAskIntoOpenAiStream(out, askText);
+    return out;
   }
 
   // Non-streaming: use probe/pre-inspect when available; else clone+parse
@@ -874,7 +1095,7 @@ async function finalizeSuccessfulWorker({
   // client-facing body.
   if (judgeClone) fireNonStreamJudge(judgeCtx, baseEvent, judgeClone, log);
 
-  return emitHeaders
+  let out = emitHeaders
     ? withAutoRouterHeaders(result, {
         worker: winner,
         requestId,
@@ -886,6 +1107,8 @@ async function finalizeSuccessfulWorker({
         exploration: baseEvent.exploration,
       })
     : result;
+  if (askText) out = await appendAskToOpenAiJson(out, askText);
+  return out;
 }
 
 /** Clone a Response for out-of-band inspection; null when the body is unusable. */
@@ -1216,15 +1439,23 @@ async function inspectNonStreamingResult({ result, preInspect }) {
 }
 
 
-function modelHasCaps(modelStr, needed) {
-  const [provider, ...rest] = modelStr.split("/");
-  const model = rest.join("/") || provider;
-  const caps = getCapabilitiesForModel(provider, model) || {};
-  for (const n of needed) {
-    if (n === "vision" && !caps.vision) return false;
-    if (n === "pdf" && !caps.pdf) return false;
-  }
-  return true;
+export function modelHasCaps(modelStr, needed, workerCaps = {}) {
+  const override = workerCaps?.[modelStr];
+  const caps =
+    override && typeof override === "object" && Object.keys(override).length > 0
+      ? override
+      : (() => {
+          const [provider, ...rest] = modelStr.split("/");
+          const model = rest.join("/") || provider;
+          return getCapabilitiesForModel(provider, model) || {};
+        })();
+  return needed.every((capability) =>
+    capability === "vision"
+      ? !!caps.vision
+      : capability === "pdf"
+        ? !!caps.pdf
+        : true
+  );
 }
 
 function cloneBody(body) {

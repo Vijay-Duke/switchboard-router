@@ -12,6 +12,7 @@ import { refreshAndUpdateCredentials } from "@/app/api/usage/[connectionId]/rout
 import { QUOTA_AUTOPING_CONFIG } from "@/shared/constants/config";
 
 const C = QUOTA_AUTOPING_CONFIG;
+export const QUOTA_SNAPSHOT_FRESH_MS = C.tickIntervalMs * 2;
 const CLAUDE_PING_URL = "https://api.anthropic.com/v1/messages?beta=true";
 
 const providerHandlers = {
@@ -57,6 +58,21 @@ function toFiniteNumber(value, fallback = null) {
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
+}
+
+/** Remaining headroom as a 0-100 percentage, or null when not derivable. */
+function quotaRemainingPercentage(quota) {
+  if (!quota || typeof quota !== "object") return null;
+  if (quota.unlimited === true) return 100;
+  const pct = Number(quota.remainingPercentage);
+  if (Number.isFinite(pct)) return Math.max(0, Math.min(100, pct));
+  const remaining = Number(quota.remaining);
+  const total = Number(quota.total);
+  if (Number.isFinite(remaining) && Number.isFinite(total) && total > 0) {
+    return Math.max(0, Math.min(100, (remaining / total) * 100));
+  }
+  if (Number.isFinite(remaining)) return Math.max(0, remaining);
+  return null;
 }
 
 function isQuotaExhausted(quota) {
@@ -211,6 +227,20 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
   const usage = await handler.getUsage(connection.accessToken, proxyOptions);
   const quotas = usage?.quotas || {};
   const quota = quotas?.[providerConfig.quotaKey];
+  // Option A: persist a best-effort remaining-headroom snapshot (0-100) so
+  // quota-first routing can read it synchronously from the connection row.
+  // Normalize to a percentage: claude reports remainingPercentage directly;
+  // codex reports remaining/total counts → divide; unlimited = 100.
+  const snapshotPercentage = quotaRemainingPercentage(quota);
+  if (snapshotPercentage != null) {
+    try {
+      await deps.updateProviderConnection(connection.id, {
+        lastQuota: { remainingPercentage: snapshotPercentage, resetAt: quota.resetAt ?? null, at: Date.now() },
+      });
+    } catch {
+      /* fail-open: snapshot is best-effort */
+    }
+  }
   const resetAt = quota?.resetAt;
   if (!resetAt) return;
 

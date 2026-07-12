@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 
 import { handleComboChat } from "../../open-sse/services/combo.js";
+import { MAX_COMBO_DEPTH } from "../../open-sse/config/runtimeConfig.js";
 
 const log = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
 
@@ -174,5 +175,36 @@ describe("combo fallback", () => {
       log,
     });
     expect(res.status).toBe(503);
+  });
+
+  it("threads depth through recursive combo attempts so the cap can reject", async () => {
+    const seenDepths = [];
+    const recursiveCombo = async (_body, _model, opts) => {
+      seenDepths.push(opts.comboDepth);
+      if (opts.comboDepth >= MAX_COMBO_DEPTH) {
+        return new Response(JSON.stringify({ error: { message: "Combo nesting too deep" } }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return handleComboChat({
+        body: { messages: [{ role: "user", content: "hi" }] },
+        models: ["combo/self"],
+        handleSingleModel: recursiveCombo,
+        log,
+        childComboDepth: opts.comboDepth + 1,
+      });
+    };
+
+    const res = await handleComboChat({
+      body: { messages: [{ role: "user", content: "hi" }] },
+      models: ["combo/self"],
+      handleSingleModel: recursiveCombo,
+      log,
+      childComboDepth: 1,
+    });
+
+    expect(seenDepths).toEqual([1, 2, MAX_COMBO_DEPTH]);
+    expect(res.status).toBe(400);
   });
 });

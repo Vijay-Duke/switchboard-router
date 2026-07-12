@@ -6,6 +6,73 @@
  *  - cost tier labels in the router pool catalog
  */
 import { getPricingForModel } from "../providers/pricing.js";
+import {
+  DEFAULT_PROVIDER_LATENCY_GUARD_MS,
+  providerOf,
+} from "./providerPreference.js";
+
+/**
+ * Provider preference rank for one model. Lower is preferred; zero disables bias.
+ * @param {string} modelStr
+ * @param {{ strategy?: string, providerOrder?: string[], providerLatencyMs?: Record<string, number>, providerUsage?: Record<string, number>, providerQuota?: Record<string, number>, guardMs?: number }|null|undefined} bias
+ * @returns {number}
+ */
+export function providerBiasRank(modelStr, bias) {
+  try {
+    const strategy = bias?.strategy;
+    if (!strategy || strategy === "off" || strategy === "round-robin") return 0;
+    const provider = providerOf(modelStr);
+    const latency = bias.providerLatencyMs?.[provider];
+    const guardMs = Number.isFinite(bias.guardMs)
+      ? bias.guardMs
+      : DEFAULT_PROVIDER_LATENCY_GUARD_MS;
+    const guardDemotion = Number.isFinite(latency) && latency > guardMs ? 1e12 : 0;
+
+    if (strategy === "priority") {
+      const order = Array.isArray(bias.providerOrder) ? bias.providerOrder : [];
+      const index = order.indexOf(provider);
+      return (index === -1 ? 1e9 : index) + guardDemotion;
+    }
+    if (strategy === "fastest") {
+      return (Number.isFinite(latency) ? latency : Infinity) + guardDemotion;
+    }
+    if (strategy === "quota-first") {
+      const quota = bias.providerQuota?.[provider];
+      const usage = bias.providerUsage?.[provider];
+      const rank = Number.isFinite(quota)
+        ? 100 - quota
+        : 1e6 + (Number.isFinite(usage) ? usage : 0);
+      return rank + guardDemotion;
+    }
+  } catch {
+    return 0;
+  }
+  return 0;
+}
+
+function reorderProviderTies(list, providerBias) {
+  if (!providerBias || providerBias.strategy === "off") return list;
+  const reordered = [];
+  let start = 0;
+  while (start < list.length) {
+    const anchor = list[start].avgScore;
+    let end = start + 1;
+    while (end < list.length && Math.abs(list[end].avgScore - anchor) <= 15) end += 1;
+    const group = list.slice(start, end).map((entry, index) => ({
+      entry,
+      index,
+      rank: providerBiasRank(entry.id, providerBias),
+    }));
+    group.sort((a, b) => {
+      if (a.rank < b.rank) return -1;
+      if (a.rank > b.rank) return 1;
+      return a.index - b.index;
+    });
+    reordered.push(...group.map(({ entry }) => entry));
+    start = end;
+  }
+  return reordered;
+}
 
 /**
  * Cost tier 0 (cheapest) … 4 (unknown/expensive).
@@ -30,86 +97,137 @@ export function costTier(modelStr) {
 }
 
 /**
+ * Estimate the dollar cost of one request from current catalog pricing.
+ * @param {string} modelStr - provider/model
+ * @param {number} estInputTokens
+ * @param {number} avgTokensOut
+ * @returns {number|null}
+ */
+export function estimateRequestCost(modelStr, estInputTokens, avgTokensOut) {
+  if (!modelStr) return null;
+  const [provider, ...rest] = modelStr.split("/");
+  const model = rest.join("/") || provider;
+  const p = getPricingForModel(provider, model);
+  if (!p || typeof p.input !== "number") return null;
+  const out = typeof p.output === "number" ? p.output : p.input * 3;
+  return (
+    ((Number(estInputTokens) || 0) / 1e6) * p.input +
+    ((Number(avgTokensOut) || 0) / 1e6) * out
+  );
+}
+
+/**
  * Rank workers for a cluster given objective.
  * Higher score is better for sorting (descending).
  *
  * | quality   | highest avgScore |
- * | balanced  | avgScore - 0.001 * costTier |
+ * | balanced  | avgScore - 0.001 * costTier, or avgScore - 50 * predicted $ |
  * | economy   | prefer lower cost when avgScore within 10% of best |
  * | latency   | lowest p50LatencyMs (higher rank = lower latency) |
  *
- * @param {Array<{ id: string, avgScore?: number, attempts?: number, p50LatencyMs?: number, avgLatencyMs?: number }>} entries
+ * @param {Array<{ id: string, avgScore?: number, attempts?: number, p50LatencyMs?: number, avgLatencyMs?: number, avgTokensOut?: number }>} entries
  * @param {string} objective
+ * @param {{ estInputTokens?: number, providerBias?: object }} [opts]
  * @returns {Array} sorted best-first
  */
-export function rankByObjective(entries, objective = "balanced") {
-  const list = (entries || []).map((e) => ({
-    ...e,
-    avgScore: Number(e.avgScore) || 0,
-    attempts: Number(e.attempts) || 0,
-    p50:
-      Number(e.p50LatencyMs) ||
-      Number(e.avgLatencyMs) ||
-      Number.POSITIVE_INFINITY,
-    tier: costTier(e.id),
-  }));
+export function rankByObjective(entries, objective = "balanced", opts = {}) {
+  const estInputTokens = opts?.estInputTokens;
+  const predictedCosts = new Map();
+  const list = (entries || []).map((e) => {
+    const entry = {
+      ...e,
+      avgScore: Number(e.avgScore) || 0,
+      attempts: Number(e.attempts) || 0,
+      p50:
+        Number(e.p50LatencyMs) ||
+        Number(e.avgLatencyMs) ||
+        Number.POSITIVE_INFINITY,
+      tier: costTier(e.id),
+    };
+    predictedCosts.set(
+      entry,
+      estimateRequestCost(e.id, estInputTokens ?? 0, e.avgTokensOut ?? 500)
+    );
+    return entry;
+  });
   if (!list.length) return list;
 
+  const costKnown =
+    Number.isFinite(estInputTokens) &&
+    estInputTokens > 0 &&
+    list.every((e) => predictedCosts.get(e) != null);
   const obj = objective || "balanced";
 
   if (obj === "latency") {
-    return list.sort((a, b) => {
+    return reorderProviderTies(list.sort((a, b) => {
       if (a.p50 !== b.p50) return a.p50 - b.p50;
       return b.avgScore - a.avgScore;
-    });
+    }), opts.providerBias);
   }
 
   if (obj === "quality") {
-    return list.sort((a, b) => {
+    return reorderProviderTies(list.sort((a, b) => {
       if (b.avgScore !== a.avgScore) return b.avgScore - a.avgScore;
       return a.tier - b.tier;
-    });
+    }), opts.providerBias);
   }
 
   if (obj === "economy") {
     const best = Math.max(...list.map((e) => e.avgScore));
     // Fresh combo / all zeros: pure cost ordering is intentional (no quality signal yet)
     if (!(best > 0)) {
-      return list.sort((a, b) => {
+      return reorderProviderTies(list.sort((a, b) => {
+        if (costKnown && predictedCosts.get(a) !== predictedCosts.get(b)) {
+          return predictedCosts.get(a) - predictedCosts.get(b);
+        }
         if (a.tier !== b.tier) return a.tier - b.tier;
         return b.avgScore - a.avgScore;
-      });
+      }), opts.providerBias);
     }
-    // Prefer lower cost among those within 10% of best score
-    return list.sort((a, b) => {
+    // Prefer lower cost among those within 10% of best score.
+    return reorderProviderTies(list.sort((a, b) => {
       const aClose = a.avgScore >= best * 0.9;
       const bClose = b.avgScore >= best * 0.9;
       if (aClose && bClose) {
+        if (costKnown && predictedCosts.get(a) !== predictedCosts.get(b)) {
+          return predictedCosts.get(a) - predictedCosts.get(b);
+        }
         if (a.tier !== b.tier) return a.tier - b.tier;
         return b.avgScore - a.avgScore;
       }
       if (aClose !== bClose) return aClose ? -1 : 1;
       if (b.avgScore !== a.avgScore) return b.avgScore - a.avgScore;
+      if (costKnown && predictedCosts.get(a) !== predictedCosts.get(b)) {
+        return predictedCosts.get(a) - predictedCosts.get(b);
+      }
       return a.tier - b.tier;
-    });
+    }), opts.providerBias);
   }
 
-  // balanced: avgScore - 0.001 * costTier
-  return list.sort((a, b) => {
-    const sa = a.avgScore - 0.001 * a.tier;
-    const sb = b.avgScore - 0.001 * b.tier;
+  // $0.01 costs 0.5 score points: a light per-request cost tiebreak.
+  return reorderProviderTies(list.sort((a, b) => {
+    const sa = costKnown
+      ? a.avgScore - 50 * predictedCosts.get(a)
+      : a.avgScore - 0.001 * a.tier;
+    const sb = costKnown
+      ? b.avgScore - 50 * predictedCosts.get(b)
+      : b.avgScore - 0.001 * b.tier;
     if (sb !== sa) return sb - sa;
+    if (costKnown && predictedCosts.get(a) !== predictedCosts.get(b)) {
+      return predictedCosts.get(a) - predictedCosts.get(b);
+    }
     return a.tier - b.tier;
-  });
+  }), opts.providerBias);
 }
 
 /**
  * Pick best worker id for a cluster under objective, or null.
- * @param {Record<string, { avgScore?: number, attempts?: number, p50LatencyMs?: number, avgLatencyMs?: number }>} models
+ * @param {Record<string, { avgScore?: number, attempts?: number, p50LatencyMs?: number, avgLatencyMs?: number, avgTokensOut?: number }>} models
  * @param {string} objective
  * @param {string[]} [poolFilter] - if set, only consider these ids
+ * @param {{ estInputTokens?: number }} [opts]
  */
-export function pickByObjective(models, objective = "balanced", poolFilter = null) {
+export function pickByObjective(models, objective = "balanced", poolFilter = null, opts = {}) {
   if (!models || typeof models !== "object") return null;
   let entries = Object.entries(models).map(([id, s]) => ({ id, ...s }));
   if (Array.isArray(poolFilter) && poolFilter.length) {
@@ -117,7 +235,7 @@ export function pickByObjective(models, objective = "balanced", poolFilter = nul
     entries = entries.filter((e) => allow.has(e.id));
   }
   if (!entries.length) return null;
-  const ranked = rankByObjective(entries, objective);
+  const ranked = rankByObjective(entries, objective, opts);
   return ranked[0]?.id || null;
 }
 
@@ -172,7 +290,7 @@ export function splitPoolByTier(pool) {
  * @param {string} cluster
  * @param {string[]} candidates - current worker pool (winner must be in it)
  * @param {string} [objective]
- * @param {{ minAttempts?: number, leadMargin?: number }} [opts]
+ * @param {{ minAttempts?: number, leadMargin?: number, estInputTokens?: number }} [opts]
  * @returns {{ model: string, qualified: number, lead: number }|null}
  */
 export function pickBanditPolicy(banditTable, cluster, candidates, objective = "balanced", opts = {}) {
@@ -196,7 +314,7 @@ export function pickBanditPolicy(banditTable, cluster, candidates, objective = "
   }
   if (!qEntries.length) return null;
 
-  const winner = pickByObjective(qualified, objective);
+  const winner = pickByObjective(qualified, objective, null, opts);
   if (!winner) return null;
 
   if (qEntries.length === 1) {

@@ -129,7 +129,12 @@ describe("quota auto-ping", () => {
     await runQuotaAutoPingTick(deps, state);
 
     expect(deps.getExecutor).not.toHaveBeenCalled();
-    expect(deps.updateProviderConnection).not.toHaveBeenCalled();
+    // "did not ping" = no ping bookkeeping write. The best-effort lastQuota
+    // snapshot write (Option A) may still occur on no-ping paths and is allowed.
+    expect(deps.updateProviderConnection).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ lastPingedResetKey: expect.anything() })
+    );
     expect(state.resetCache["codex:codex-1"]).toBe("2026-01-01T13:00:00.000Z");
   });
 
@@ -166,7 +171,12 @@ describe("quota auto-ping", () => {
     await runQuotaAutoPingTick(deps, state);
 
     expect(deps.getExecutor).not.toHaveBeenCalled();
-    expect(deps.updateProviderConnection).not.toHaveBeenCalled();
+    // "did not ping" = no ping bookkeeping write. The best-effort lastQuota
+    // snapshot write (Option A) may still occur on no-ping paths and is allowed.
+    expect(deps.updateProviderConnection).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ lastPingedResetKey: expect.anything() })
+    );
   });
 
   it("does not repeat Codex ping inside the minimum ping interval", async () => {
@@ -184,7 +194,12 @@ describe("quota auto-ping", () => {
     await runQuotaAutoPingTick(deps, state);
 
     expect(deps.getExecutor).not.toHaveBeenCalled();
-    expect(deps.updateProviderConnection).not.toHaveBeenCalled();
+    // "did not ping" = no ping bookkeeping write. The best-effort lastQuota
+    // snapshot write (Option A) may still occur on no-ping paths and is allowed.
+    expect(deps.updateProviderConnection).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ lastPingedResetKey: expect.anything() })
+    );
   });
 
   it("does not ping Codex just because reported usage is zero", async () => {
@@ -199,7 +214,12 @@ describe("quota auto-ping", () => {
     await runQuotaAutoPingTick(deps, state);
 
     expect(deps.getExecutor).not.toHaveBeenCalled();
-    expect(deps.updateProviderConnection).not.toHaveBeenCalled();
+    // "did not ping" = no ping bookkeeping write. The best-effort lastQuota
+    // snapshot write (Option A) may still occur on no-ping paths and is allowed.
+    expect(deps.updateProviderConnection).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ lastPingedResetKey: expect.anything() })
+    );
     expect(state.resetCache["codex:codex-1"]).toBe("2026-01-01T17:00:00.000Z");
   });
 
@@ -219,7 +239,12 @@ describe("quota auto-ping", () => {
     await runQuotaAutoPingTick(deps, state);
 
     expect(deps.getExecutor).not.toHaveBeenCalled();
-    expect(deps.updateProviderConnection).not.toHaveBeenCalled();
+    // "did not ping" = no ping bookkeeping write. The best-effort lastQuota
+    // snapshot write (Option A) may still occur on no-ping paths and is allowed.
+    expect(deps.updateProviderConnection).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ lastPingedResetKey: expect.anything() })
+    );
   });
 
   it("does not ping Codex when monthly quota is exhausted", async () => {
@@ -238,7 +263,12 @@ describe("quota auto-ping", () => {
     await runQuotaAutoPingTick(deps, state);
 
     expect(deps.getExecutor).not.toHaveBeenCalled();
-    expect(deps.updateProviderConnection).not.toHaveBeenCalled();
+    // "did not ping" = no ping bookkeeping write. The best-effort lastQuota
+    // snapshot write (Option A) may still occur on no-ping paths and is allowed.
+    expect(deps.updateProviderConnection).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ lastPingedResetKey: expect.anything() })
+    );
   });
 
   it("does not ping Codex when session quota is exhausted", async () => {
@@ -254,7 +284,12 @@ describe("quota auto-ping", () => {
     await runQuotaAutoPingTick(deps, state);
 
     expect(deps.getExecutor).not.toHaveBeenCalled();
-    expect(deps.updateProviderConnection).not.toHaveBeenCalled();
+    // "did not ping" = no ping bookkeeping write. The best-effort lastQuota
+    // snapshot write (Option A) may still occur on no-ping paths and is allowed.
+    expect(deps.updateProviderConnection).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ lastPingedResetKey: expect.anything() })
+    );
   });
 
   it("sends one tiny gpt-5.5 Codex request through the executor", async () => {

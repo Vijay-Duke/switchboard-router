@@ -12,6 +12,10 @@ import { initState, translateResponse } from "../translator/index.js";
 import { formatSSE } from "../utils/streamHelpers.js";
 import { SSE_DONE, SSE_HEADERS_CORS } from "../utils/sseConstants.js";
 import { acceptWorkerResponse } from "../routing/autoResponse.js";
+import {
+  DEFAULT_PROVIDER_LATENCY_GUARD_MS,
+  orderModelsByProvider,
+} from "../routing/providerPreference.js";
 
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
 // stripped). Must be prioritized. Soft (e.g. search) only degrades a feature.
@@ -277,28 +281,56 @@ function waitForComboDelay(ms, signal) {
  * @param {string} [options.comboName] - Name of the combo (for round-robin tracking)
  * @param {string} [options.comboStrategy] - Strategy: "fallback" or "round-robin"
  * @param {number|string} [options.comboStickyLimit=1] - Requests per combo model before switching
+ * @param {string} [options.providerStrategy="off"] - Provider preference strategy
+ * @param {string[]} [options.providerOrder] - Explicit provider priority order
+ * @param {Object} [options.providerLatencyMs] - Mean latency keyed by provider
+ * @param {Object} [options.providerUsage] - Recent request count keyed by provider
+ * @param {Object} [options.providerQuota] - Fresh remaining quota percentage keyed by provider
+ * @param {number} [options.providerLatencyGuardMs] - Slow-provider demotion threshold
  * @param {AbortSignal} [options.abortSignal] - Caller disconnect signal
+ * @param {number} [options.childComboDepth=0] - Depth for nested combo model attempts
  * @returns {Promise<Response>}
  */
-export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, abortSignal = null, clientAbortSignal = null, signal = null }) {
+export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, providerStrategy = "off", providerOrder = [], providerLatencyMs = {}, providerUsage = {}, providerQuota = {}, providerLatencyGuardMs, abortSignal = null, clientAbortSignal = null, signal = null, childComboDepth = 0 }) {
   const callerSignal = abortSignal || clientAbortSignal || signal || null;
   if (callerSignal?.aborted) return abortedComboResponse();
 
   // Apply rotation strategy if enabled
   let rotatedModels = getRotatedModels(models, comboName, comboStrategy, comboStickyLimit);
 
+  const required = autoSwitch || providerStrategy !== "off"
+    ? detectRequiredCapabilities(body)
+    : null;
+
   // Auto-switch: float models that satisfy the request's required capabilities to the front.
-  if (autoSwitch) {
-    const required = detectRequiredCapabilities(body);
-    if (required.size > 0) {
-      const reordered = reorderByCapabilities(rotatedModels, required);
-      if (reordered[0] !== rotatedModels[0]) {
-        log.info("COMBO", `auto-switch for [${[...required].join(",")}] → ${reordered[0]}`);
-      }
-      rotatedModels = reordered;
+  if (autoSwitch && required?.size > 0) {
+    const reordered = reorderByCapabilities(rotatedModels, required);
+    if (reordered[0] !== rotatedModels[0]) {
+      log.info("COMBO", `auto-switch for [${[...required].join(",")}] → ${reordered[0]}`);
+    }
+    rotatedModels = reordered;
+  }
+
+  if (providerStrategy !== "off") {
+    try {
+      const providerOrdered = orderModelsByProvider(rotatedModels, {
+        strategy: providerStrategy,
+        providerOrder,
+        providerLatencyMs,
+        providerUsage,
+        providerQuota,
+        guardMs: providerLatencyGuardMs ?? DEFAULT_PROVIDER_LATENCY_GUARD_MS,
+        rotationKey: comboName,
+      });
+      // Capability tiers always take precedence; provider ordering is within each tier.
+      rotatedModels = required?.size > 0
+        ? reorderByCapabilities(providerOrdered, required)
+        : providerOrdered;
+    } catch {
+      // Provider preference must never prevent normal fallback.
     }
   }
-  
+
   let lastError = null;
   let earliestRetryAfter = null;
   let lastStatus = null;
@@ -315,6 +347,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         : JSON.parse(JSON.stringify(body));
       const result = await handleSingleModel(attemptBody, modelStr, {
         signal: callerSignal || undefined,
+        comboDepth: childComboDepth,
       });
 
       if (callerSignal?.aborted) return abortedComboResponse();
@@ -384,6 +417,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
             : JSON.parse(JSON.stringify(body));
           const retryResult = await handleSingleModel(retryBody, modelStr, {
             signal: callerSignal || undefined,
+            comboDepth: childComboDepth,
           });
           if (callerSignal?.aborted) return abortedComboResponse();
           if (retryResult.ok) {
@@ -833,9 +867,10 @@ function wrapAnswerAsSse(json) {
  * @param {string} [options.judgeModel] - Judge model; falls back to panel[0]
  * @param {Object} [options.tuning] - Override FUSION_DEFAULTS (minPanel, grace, timeout)
  * @param {AbortSignal} [options.abortSignal] - Caller disconnect signal
+ * @param {number} [options.childComboDepth=0] - Depth for nested combo model attempts
  * @returns {Promise<Response>}
  */
-export async function handleFusionChat({ body, models, handleSingleModel, log, comboName, judgeModel, tuning, abortSignal = null, clientAbortSignal = null, signal = null }) {
+export async function handleFusionChat({ body, models, handleSingleModel, log, comboName, judgeModel, tuning, abortSignal = null, clientAbortSignal = null, signal = null, childComboDepth = 0 }) {
   const callerSignal = abortSignal || clientAbortSignal || signal || null;
   if (callerSignal?.aborted) return abortedComboResponse();
 
@@ -850,7 +885,10 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   // A single-model fusion has nothing to fuse — just answer directly.
   if (panel.length === 1) {
     try {
-      const result = await handleSingleModel(body, panel[0], { signal: callerSignal || undefined });
+      const result = await handleSingleModel(body, panel[0], {
+        signal: callerSignal || undefined,
+        comboDepth: childComboDepth,
+      });
       return wrapBufferedResponseAsSse(result, body, panel[0]);
     } catch (error) {
       if (callerSignal?.aborted) return abortedComboResponse();
@@ -881,7 +919,11 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   const calls = panel.map((m, i) =>
     withTimeout(
       // Prefer callOpts shape { isPanel, signal }; third-arg `true` still works for old wrappers
-      handleSingleModel(panelBody, m, { isPanel: true, signal: panelSignals[i] }),
+      handleSingleModel(panelBody, m, {
+        isPanel: true,
+        signal: panelSignals[i],
+        comboDepth: childComboDepth,
+      }),
       cfg.panelHardTimeoutMs,
       abortControllers[i]
     )
@@ -931,7 +973,10 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   const judgeBody = appendUserTurn(body, buildJudgePrompt(answers));
   log.info("FUSION", `Judging ${answers.length} answers with ${judge}`);
   try {
-    const result = await handleSingleModel(judgeBody, judge, { signal: callerSignal || undefined });
+    const result = await handleSingleModel(judgeBody, judge, {
+      signal: callerSignal || undefined,
+      comboDepth: childComboDepth,
+    });
     if (!result?.ok) {
       const best = answers.reduce((a, b) => (a.text.length >= b.text.length ? a : b));
       log.warn("FUSION", `Judge ${judge} failed (${result?.status}), falling back to best panel answer`);

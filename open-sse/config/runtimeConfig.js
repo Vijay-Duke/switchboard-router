@@ -1,4 +1,7 @@
 // HTTP status codes
+// Maximum fallback/round-robin/fusion combo nesting before a request is rejected.
+export const MAX_COMBO_DEPTH = 3;
+
 export const HTTP_STATUS = {
   BAD_REQUEST: 400,
   UNAUTHORIZED: 401,

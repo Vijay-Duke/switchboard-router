@@ -9,17 +9,35 @@ import {
   isValidApiKey,
 } from "../services/auth.js";
 import { cacheClaudeHeaders } from "open-sse/utils/claudeHeaderCache.js";
-import { getSettings } from "@/lib/db/index.js";
+import { getSettings, getUsageStats } from "@/lib/db/index.js";
+import { getProviderQuotaHeadroom } from "@/lib/db/repos/connectionsRepo.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { handleComboChat, handleFusionChat } from "open-sse/services/combo.js";
 import { handleAutoChat, invalidateCachedRoutes } from "open-sse/routing/handleAutoChat.js";
+import { resetOverlay } from "open-sse/routing/overlay.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
-import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
+import { HTTP_STATUS, MAX_COMBO_DEPTH } from "open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
+import {
+  hashKey,
+  conversationFingerprint,
+  conversationInfo,
+  messagesMentionAsk,
+  matchPendingAsk,
+  consumePendingAsk,
+  recordAskAnswered,
+  recordAskIgnored,
+  parseRatingReply,
+  ratingFromReply,
+  stripAskExchange,
+  hasPendingAsks,
+} from "open-sse/routing/feedbackAsk.js";
 import * as log from "../utils/logger.js";
+import { applyRatingSideEffects } from "../routing/ratingSideEffects.js";
+import { resolveWorkerCaps } from "../routing/comboCaps.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
@@ -27,10 +45,13 @@ import { hasValidCliToken } from "@/shared/utils/cliToken.js";
 import {
   insertRoutingEvent,
   applyJudgeScoreByRequestId,
+  setUserRatingByRequestId,
   getPromotedLearningVersion,
   getLearningVersionById,
   getClusterWorkerStats,
+  getGlobalModelStats,
   getClusterLatencyP50,
+  getProviderLatency,
   setRoutingWriteHook,
 } from "@/lib/db/repos/routingRepo.js";
 import {
@@ -42,6 +63,7 @@ import {
 
 // Hot-path cache invalidation when routing events / learning versions change
 setRoutingWriteHook((comboName) => {
+  resetOverlay(comboName);
   if (comboName) {
     invalidateRoutingCache(`stats:${comboName}:`);
     invalidateRoutingCache(`learning:${comboName}`);
@@ -69,6 +91,107 @@ async function loadLearningCached(name, strategy = {}) {
 async function loadStatsCached(name, days = 14) {
   const d = Math.min(90, Math.max(1, Number(days) || 14));
   return cached(statsCacheKey(name, d), () => getClusterWorkerStats(name, d));
+}
+
+async function loadProviderLatency(days) {
+  try {
+    const latency = await cached(`provlat:${days}`, () => getProviderLatency(days), 15000);
+    return latency && typeof latency === "object" ? latency : {};
+  } catch {
+    return {};
+  }
+}
+
+async function loadProviderUsage() {
+  try {
+    const usage = await getUsageStats("7d");
+    const providerUsage = {};
+    for (const [provider, stats] of Object.entries(usage?.byProvider || {})) {
+      providerUsage[provider] = Number.isFinite(stats?.requests) ? stats.requests : 0;
+    }
+    return providerUsage;
+  } catch {
+    return {};
+  }
+}
+
+async function loadProviderQuota() {
+  try {
+    const providerQuota = await getProviderQuotaHeadroom();
+    return providerQuota && typeof providerQuota === "object" ? providerQuota : {};
+  } catch {
+    return {};
+  }
+}
+
+async function loadProviderPreference(strategy) {
+  const [providerLatencyMs, providerUsage] = await Promise.all([
+    loadProviderLatency(14),
+    loadProviderUsage(),
+  ]);
+  const providerQuota = strategy.providerStrategy === "quota-first"
+    ? await loadProviderQuota()
+    : {};
+  return {
+    providerStrategy: strategy.providerStrategy,
+    providerOrder: Array.isArray(strategy.providerOrder) ? strategy.providerOrder : [],
+    providerLatencyMs,
+    providerUsage,
+    providerQuota,
+    providerLatencyGuardMs: strategy.providerLatencyGuardMs,
+  };
+}
+
+function cannedThanksResponse(stream, modelStr) {
+  const now = Date.now();
+  const id = `chatcmpl-fb-${now}`;
+  const created = Math.floor(now / 1000);
+
+  if (!stream) {
+    return new Response(
+      JSON.stringify({
+        id,
+        object: "chat.completion",
+        created,
+        model: modelStr,
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: "Thanks — noted." },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  const encoder = new TextEncoder();
+  const chunk = (choices) => ({ id, object: "chat.completion.chunk", created, model: modelStr, choices });
+  const readable = new ReadableStream({
+    start(controller) {
+      controller.enqueue(
+        encoder.encode(`data: ${JSON.stringify(chunk([{ index: 0, delta: { role: "assistant" }, finish_reason: null }]))}\n\n`)
+      );
+      controller.enqueue(
+        encoder.encode(`data: ${JSON.stringify(chunk([{ index: 0, delta: { content: "Thanks — noted." }, finish_reason: null }]))}\n\n`)
+      );
+      controller.enqueue(
+        encoder.encode(`data: ${JSON.stringify(chunk([{ index: 0, delta: {}, finish_reason: "stop" }]))}\n\n`)
+      );
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  });
+  return new Response(readable, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 }
 
 /**
@@ -136,6 +259,50 @@ export async function handleChat(request, clientRawRequest = null) {
   const bypassResponse = handleBypassRequest(body, modelStr, userAgent, !!settings.ccFilterNaming);
   if (bypassResponse) return bypassResponse.response || bypassResponse;
 
+  // Dynamic in-chat feedback: capture a 1/2/3 reply, strip the synthetic exchange.
+  // OpenAI chat-completions wire only; fully fail-open.
+  try {
+    // Fast path: skip all hashing/scanning unless the feature is actually live —
+    // an ask is outstanding OR this history carries the synthetic ask line.
+    const mentionsAsk =
+      Array.isArray(body.messages) && body.messages.length
+        ? messagesMentionAsk(body.messages)
+        : false;
+    if ((hasPendingAsks() || mentionsAsk) && Array.isArray(body.messages) && body.messages.length) {
+      const wire = detectFormatByEndpoint(new URL(request.url).pathname, body);
+      const isOpenAiWire = wire === "openai";
+      const apiKeyHash = hashKey(apiKey);
+      const info = conversationInfo(body.messages);
+      const conversationFp = conversationFingerprint(info.firstUserText, apiKeyHash);
+      const pending = isOpenAiWire ? matchPendingAsk(apiKeyHash, conversationFp) : null;
+      if (pending) {
+        const rating = info.priorAssistantHasAsk ? parseRatingReply(info.latestUserText) : null;
+        if (rating != null) {
+          const mapped = ratingFromReply(rating);
+          try {
+            await setUserRatingByRequestId(pending.requestId, mapped);
+            await applyRatingSideEffects(pending.requestId, mapped);
+          } catch {
+            /* fail-open */
+          }
+          consumePendingAsk(apiKeyHash, conversationFp);
+          recordAskAnswered(apiKeyHash);
+          log.info?.("FEEDBACK", `captured rating ${mapped} for ${pending.requestId}`);
+          return cannedThanksResponse(!!body.stream, modelStr);
+        }
+        // A pending ask exists but the user moved on without rating -> count as ignored.
+        recordAskIgnored(apiKeyHash);
+        consumePendingAsk(apiKeyHash, conversationFp);
+      }
+      // Upstream must never see the ask exchange (strip on any messages[] defensively).
+      if (mentionsAsk) {
+        body.messages = stripAskExchange(body.messages);
+      }
+    }
+  } catch (e) {
+    log.warn?.("FEEDBACK", `capture/strip failed (ignored): ${e?.message || e}`);
+  }
+
   // Check if model is a combo (has multiple models with fallback)
   const comboModels = await getComboModels(modelStr);
   if (comboModels) {
@@ -157,6 +324,7 @@ export async function handleChat(request, clientRawRequest = null) {
             cleanRawReq = { ...clientRawRequest, body: cleanBody };
           }
           return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, {
+            ...opts,
             signal: opts.signal || null,
           });
         },
@@ -165,11 +333,32 @@ export async function handleChat(request, clientRawRequest = null) {
         judgeModel: comboStrategies[modelStr]?.judgeModel,
         tuning: comboStrategies[modelStr]?.fusionTuning,
         abortSignal: request?.signal || null,
+        childComboDepth: 1,
       });
     }
 
     if (comboStrategy === "auto") {
       const strat = comboStrategies[modelStr] || {};
+      const fbEnabled = strat.feedbackAsk === true;
+      let feedbackCtx = null;
+      if (fbEnabled) {
+        try {
+          const wire = detectFormatByEndpoint(new URL(request.url).pathname, body);
+          const info = conversationInfo(body.messages);
+          const apiKeyHash = hashKey(apiKey);
+          feedbackCtx = {
+            apiKeyHash,
+            conversationFp: conversationFingerprint(info.firstUserText, apiKeyHash),
+            openAiWire: wire === "openai",
+            gateOk:
+              !((body.tools && body.tools.length) || (body.functions && body.functions.length)) &&
+              Number(info.userTurns) >= 2,
+            feedbackAsk: true,
+          };
+        } catch {
+          feedbackCtx = null;
+        }
+      }
       // routerModel is mandatory for Auto combos (no default). handleAutoChat is
       // the authoritative guard; here we only avoid a nested-combo router target.
       const routerId = strat.routerModel;
@@ -180,41 +369,58 @@ export async function handleChat(request, clientRawRequest = null) {
           `routerModel cannot be a combo ("${routerId}"). Use a single provider/model.`
         );
       }
-      // Strip nested combos from worker pool (SPEC §2 non-goal)
       const workerModels = [];
       for (const m of comboModels) {
         if (m === routerId) continue;
-        if (await getComboModels(m)) {
-          log.warn("CHAT", `Auto pool drops nested combo worker "${m}"`);
-          continue;
-        }
         workerModels.push(m);
+      }
+      const workerCaps = {};
+      for (const m of workerModels) {
+        try {
+          workerCaps[m] = await resolveWorkerCaps(m);
+        } catch {
+          workerCaps[m] = {};
+        }
       }
       log.info("CHAT", `Combo "${modelStr}" with ${workerModels.length} workers (strategy: auto)`);
       return handleAutoChat({
         body,
         models: [...workerModels, ...(comboModels.includes(routerId) ? [routerId] : [])],
         handleSingleModel: (b, m, callOpts) =>
-          handleSingleModelChat(b, m, clientRawRequest, request, apiKey, callOpts),
+          handleSingleModelChat(b, m, clientRawRequest, request, apiKey, {
+            ...(callOpts || {}),
+            comboDepth: 0,
+          }),
         log,
         comboName: modelStr,
         strategy: strat,
         loadLearning: loadLearningCached,
         loadStats: loadStatsCached,
+        loadGlobalStats: (days) =>
+          cached(`gstats:${days}`, () => getGlobalModelStats(days), 15000),
         loadClusterP50: (combo, cluster, days) =>
           cached(`p50:${combo}:${cluster}:${days}`, () =>
             getClusterLatencyP50(combo, cluster, days)
           ),
+        loadProviderLatency,
+        loadProviderUsage,
+        loadProviderQuota,
         recordEvent: (ev) => insertRoutingEvent(ev),
         applyJudgeScore: (requestId, judgeScore) =>
           applyJudgeScoreByRequestId(requestId, judgeScore),
         autoDepth: 0,
         clientAbortSignal: request?.signal || null,
+        feedbackCtx,
+        workerCaps,
       });
     }
 
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
-    const capacityAutoSwitch = comboStrategies[modelStr]?.capacityAutoSwitch !== false;
+    const ps = comboStrategies[modelStr] || {};
+    const capacityAutoSwitch = ps.capacityAutoSwitch !== false;
+    const providerPreference = ps.providerStrategy && ps.providerStrategy !== "off"
+      ? await loadProviderPreference(ps)
+      : null;
     log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit}, capacitySwitch: ${capacityAutoSwitch})`);
     return handleComboChat({
       body,
@@ -226,7 +432,9 @@ export async function handleChat(request, clientRawRequest = null) {
       comboStrategy,
       comboStickyLimit,
       autoSwitch: capacityAutoSwitch,
+      ...(providerPreference || {}),
       abortSignal: request?.signal || null,
+      childComboDepth: 1,
     });
   }
 
@@ -242,10 +450,12 @@ export async function handleChat(request, clientRawRequest = null) {
  * @param {boolean} [callOpts.bypassNativePassthrough] - Force internal router bodies through translation
  * @param {AbortSignal} [callOpts.signal] - Abort upstream on timeout
  * @param {number} [callOpts.autoDepth] - Auto-combo recursion depth
+ * @param {number} [callOpts.comboDepth] - Fallback/round-robin/fusion combo recursion depth
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, callOpts = null) {
   const modelInfo = await getModelInfo(modelStr);
   const autoDepth = callOpts?.autoDepth || 0;
+  const comboDepth = callOpts?.comboDepth || 0;
 
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {
@@ -256,6 +466,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       const comboStrategies = chatSettings.comboStrategies || {};
       const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
       const comboStrategy = comboSpecificStrategy || chatSettings.comboStrategy || "fallback";
+
+      if (comboStrategy !== "auto" && comboDepth >= MAX_COMBO_DEPTH) {
+        log.warn("CHAT", `Combo nesting limit at "${modelStr}" (depth ${comboDepth})`);
+        return errorResponse(
+          HTTP_STATUS.BAD_REQUEST,
+          `Combo nesting too deep (>${MAX_COMBO_DEPTH}) at "${modelStr}"`
+        );
+      }
 
       if (comboStrategy === "fusion") {
         log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: fusion)`);
@@ -271,6 +489,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             }
             return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, {
               ...(callOpts || {}),
+              ...opts,
               signal: opts.signal || callOpts?.signal || null,
             });
           },
@@ -279,6 +498,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           judgeModel: comboStrategies[modelStr]?.judgeModel,
           tuning: comboStrategies[modelStr]?.fusionTuning,
           abortSignal: request?.signal || callOpts?.signal || null,
+          childComboDepth: comboDepth + 1,
         });
       }
 
@@ -291,6 +511,26 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           );
         }
         const strat = comboStrategies[modelStr] || {};
+        const fbEnabled = strat.feedbackAsk === true;
+        let feedbackCtx = null;
+        if (fbEnabled) {
+          try {
+            const wire = detectFormatByEndpoint(new URL(request.url).pathname, body);
+            const info = conversationInfo(body.messages);
+            const apiKeyHash = hashKey(apiKey);
+            feedbackCtx = {
+              apiKeyHash,
+              conversationFp: conversationFingerprint(info.firstUserText, apiKeyHash),
+              openAiWire: wire === "openai",
+              gateOk:
+                !((body.tools && body.tools.length) || (body.functions && body.functions.length)) &&
+                Number(info.userTurns) >= 2,
+              feedbackAsk: true,
+            };
+          } catch {
+            feedbackCtx = null;
+          }
+        }
         // routerModel is mandatory (no default); handleAutoChat rejects if absent.
         const routerId = strat.routerModel;
         if (routerId && (await getComboModels(routerId))) {
@@ -302,11 +542,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         const workerModels = [];
         for (const m of comboModels) {
           if (m === routerId) continue;
-          if (await getComboModels(m)) {
-            log.warn("CHAT", `Auto pool drops nested combo worker "${m}"`);
-            continue;
-          }
           workerModels.push(m);
+        }
+        const workerCaps = {};
+        for (const m of workerModels) {
+          try {
+            workerCaps[m] = await resolveWorkerCaps(m);
+          } catch {
+            workerCaps[m] = {};
+          }
         }
         log.info(
           "CHAT",
@@ -319,26 +563,40 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             ...(comboModels.includes(routerId) ? [routerId] : []),
           ],
           handleSingleModel: (b, m, opts) =>
-            handleSingleModelChat(b, m, clientRawRequest, request, apiKey, opts),
+            handleSingleModelChat(b, m, clientRawRequest, request, apiKey, {
+              ...(opts || {}),
+              comboDepth,
+            }),
           log,
           comboName: modelStr,
           strategy: strat,
           loadLearning: loadLearningCached,
           loadStats: loadStatsCached,
+          loadGlobalStats: (days) =>
+            cached(`gstats:${days}`, () => getGlobalModelStats(days), 15000),
           loadClusterP50: (combo, cluster, days) =>
             cached(`p50:${combo}:${cluster}:${days}`, () =>
               getClusterLatencyP50(combo, cluster, days)
             ),
+          loadProviderLatency,
+          loadProviderUsage,
+          loadProviderQuota,
           recordEvent: (ev) => insertRoutingEvent(ev),
           applyJudgeScore: (requestId, judgeScore) =>
             applyJudgeScoreByRequestId(requestId, judgeScore),
           autoDepth,
           clientAbortSignal: request?.signal || null,
+          feedbackCtx,
+          workerCaps,
         });
       }
 
       const comboStickyLimit = chatSettings.comboStickyRoundRobinLimit;
-      const capacityAutoSwitch = comboStrategies[modelStr]?.capacityAutoSwitch !== false;
+      const ps = comboStrategies[modelStr] || {};
+      const capacityAutoSwitch = ps.capacityAutoSwitch !== false;
+      const providerPreference = ps.providerStrategy && ps.providerStrategy !== "off"
+        ? await loadProviderPreference(ps)
+        : null;
       log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit}, capacitySwitch: ${capacityAutoSwitch})`);
       return handleComboChat({
         body,
@@ -350,7 +608,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         comboStrategy,
         comboStickyLimit,
         autoSwitch: capacityAutoSwitch,
+        ...(providerPreference || {}),
         abortSignal: request?.signal || callOpts?.signal || null,
+        childComboDepth: comboDepth + 1,
       });
     }
     log.warn("CHAT", "Invalid model format", { model: modelStr });

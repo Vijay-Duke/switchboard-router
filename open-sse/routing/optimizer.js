@@ -210,7 +210,7 @@ export async function runOptimizer(comboName, opts = {}) {
  * wins = count where outcomeScore >= 60 (from SQL wins column when present).
  */
 export function buildBanditTable(stats) {
-  /** @type {Record<string, Record<string, { wins: number, attempts: number, avgScore: number, avgLatencyMs: number, p50LatencyMs: number }>>} */
+  /** @type {Record<string, Record<string, { wins: number, attempts: number, avgScore: number, avgLatencyMs: number, p50LatencyMs: number, avgTokensOut: number }>>} */
   const table = {};
   for (const row of stats || []) {
     // Auto v2: fold legacy free-form clusters into the taxonomy so historical
@@ -227,6 +227,7 @@ export function buildBanditTable(stats) {
         : Math.round((avg / 100) * n);
     wins = Math.max(0, Math.min(n, wins));
     const latency = Number(row.avgLatencyMs) || 0;
+    const avgTokensOut = Number(row.avgTokensOut) || 0;
     const p50 =
       row.p50LatencyMs != null && Number.isFinite(Number(row.p50LatencyMs))
         ? Number(row.p50LatencyMs)
@@ -243,6 +244,9 @@ export function buildBanditTable(stats) {
           ? (prev.avgLatencyMs * prev.attempts + latency * n) / totalN
           : 0,
         p50LatencyMs: totalN ? (prev.p50LatencyMs * prev.attempts + p50 * n) / totalN : 0,
+        avgTokensOut: totalN
+          ? (prev.avgTokensOut * prev.attempts + avgTokensOut * n) / totalN
+          : 0,
       };
     } else {
       table[c][w] = {
@@ -251,6 +255,7 @@ export function buildBanditTable(stats) {
         avgScore: avg,
         avgLatencyMs: latency,
         p50LatencyMs: p50,
+        avgTokensOut,
       };
     }
   }
@@ -262,7 +267,7 @@ export function buildBanditTable(stats) {
  * @param {Array} events
  */
 export function buildBanditTableFromEvents(events) {
-  /** @type {Record<string, Record<string, { scores: number[], wins: number, lats: number[] }>>} */
+  /** @type {Record<string, Record<string, { scoreSum: number, weightSum: number, attempts_real: number, wins_real: number, lats: number[], tokensOuts: number[] }>>} */
   const acc = {};
   for (const e of events || []) {
     if (e.meta?.skippedRouter) continue;
@@ -270,13 +275,28 @@ export function buildBanditTableFromEvents(events) {
     const w = e.pickedWorker;
     if (!w || e.outcomeScore == null) continue;
     if (!acc[c]) acc[c] = {};
-    if (!acc[c][w]) acc[c][w] = { scores: [], wins: 0, lats: [] };
+    if (!acc[c][w]) {
+      acc[c][w] = {
+        scoreSum: 0,
+        weightSum: 0,
+        attempts_real: 0,
+        wins_real: 0,
+        lats: [],
+        tokensOuts: [],
+      };
+    }
     const cell = acc[c][w];
     const score = Number(e.outcomeScore) || 0;
-    cell.scores.push(score);
-    if (score >= 60) cell.wins += 1;
+    const wgt = ratedWeight(e);
+    cell.scoreSum += score * wgt;
+    cell.weightSum += wgt;
+    cell.attempts_real += 1;
+    cell.wins_real += score >= 60 ? 1 : 0;
     if (e.workerLatencyMs != null && Number.isFinite(Number(e.workerLatencyMs))) {
       cell.lats.push(Number(e.workerLatencyMs));
+    }
+    if (e.tokensOut != null && Number.isFinite(Number(e.tokensOut))) {
+      cell.tokensOuts.push(Number(e.tokensOut));
     }
   }
 
@@ -285,22 +305,33 @@ export function buildBanditTableFromEvents(events) {
   for (const [c, models] of Object.entries(acc)) {
     table[c] = {};
     for (const [w, cell] of Object.entries(models)) {
-      const n = cell.scores.length;
-      const avg = n ? cell.scores.reduce((a, b) => a + b, 0) / n : 0;
+      const n = cell.attempts_real;
+      const avg = cell.weightSum ? cell.scoreSum / cell.weightSum : 0;
       const avgLat = cell.lats.length
         ? cell.lats.reduce((a, b) => a + b, 0) / cell.lats.length
         : 0;
       const p50 = percentile(cell.lats, 50);
+      const avgTokensOut = cell.tokensOuts.length
+        ? cell.tokensOuts.reduce((a, b) => a + b, 0) / cell.tokensOuts.length
+        : 0;
       table[c][w] = {
-        wins: Math.max(0, Math.min(n, cell.wins)),
+        wins: Math.max(0, Math.min(n, cell.wins_real)),
         attempts: n,
         avgScore: avg,
         avgLatencyMs: avgLat,
         p50LatencyMs: p50 != null ? p50 : avgLat,
+        avgTokensOut,
       };
     }
   }
   return table;
+}
+
+function ratedWeight(e) {
+  const r = e?.meta?.userRating;
+  if (r === 1 || r === -1) return 5;
+  if (e?.meta?.judgeAdjusted === true) return 2;
+  return 1;
 }
 
 function percentile(values, p) {
