@@ -1,0 +1,58 @@
+{
+  "model": "gpt-4o",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are Claude Code, an agentic coding assistant. Work carefully and report concise results."
+    },
+    {
+      "role": "user",
+      "content": "Read /workspace/switchboard/package.json and tell me the application name."
+    },
+    {
+      "role": "assistant",
+      "tool_calls": [
+        {
+          "id": "toolu_01ClaudeCodeRead",
+          "type": "function",
+          "function": {
+            "name": "Read",
+            "arguments": "{\"file_path\":\"/workspace/switchboard/package.json\",\"limit\":200}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "toolu_01ClaudeCodeRead",
+      "content": "{\"name\":\"switchboard-app\"}"
+    }
+  ],
+  "stream": true,
+  "max_tokens": 32000,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "Read",
+        "description": "Read the contents of a file from the workspace.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "file_path": {
+              "type": "string",
+              "description": "Absolute path of the file to read."
+            },
+            "limit": {
+              "type": "integer",
+              "description": "Maximum number of lines to return."
+            }
+          },
+          "required": [
+            "file_path"
+          ]
+        }
+      }
+    }
+  ]
+}

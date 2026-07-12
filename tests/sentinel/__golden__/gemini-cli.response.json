@@ -1,0 +1,49 @@
+[
+  {
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "text": "It is sunny"
+              }
+            ]
+          }
+        }
+      ],
+      "modelVersion": "gemini-2.5-pro",
+      "responseId": "chatcmpl-resp_1"
+    }
+  },
+  {
+    "response": {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "get_weather",
+                  "args": {
+                    "city": "NYC"
+                  }
+                }
+              }
+            ]
+          },
+          "finishReason": "STOP"
+        }
+      ],
+      "modelVersion": "gemini-2.5-pro",
+      "responseId": "chatcmpl-resp_1",
+      "usageMetadata": {
+        "promptTokenCount": 8,
+        "candidatesTokenCount": 4,
+        "totalTokenCount": 12
+      }
+    }
+  }
+]
