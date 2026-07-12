@@ -51,13 +51,6 @@ export async function POST(request) {
           return NextResponse.json({ success: false, error: "provider and model required" }, { status: 400 });
         }
 
-        const targetFormat = getTargetFormat(provider);
-        const stream = openaiBody.stream !== false;
-
-        // translateRequest(OPENAI, target) = second half of pipeline
-        const translated = translateRequest(FORMATS.OPENAI, targetFormat, model, openaiBody, stream, null, provider);
-        delete translated._toolNameMap;
-
         // Build URL + headers via executor (same as chatCore → executor.execute)
         const connections = await getProviderConnections({ provider });
         const connection = connections.find(c => c.isActive !== false);
@@ -73,6 +66,13 @@ export async function POST(request) {
           projectId: connection.projectId,
           providerSpecificData: connection.providerSpecificData
         };
+
+        const targetFormat = getTargetFormat(provider, credentials);
+        const stream = openaiBody.stream !== false;
+
+        // translateRequest(OPENAI, target) = second half of pipeline
+        const translated = translateRequest(FORMATS.OPENAI, targetFormat, model, openaiBody, stream, null, provider);
+        delete translated._toolNameMap;
 
         const executor = getExecutor(provider);
         const url = executor.buildUrl(model, stream, 0, credentials);
