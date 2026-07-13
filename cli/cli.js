@@ -729,8 +729,11 @@ function startServer(latestVersion) {
       }
       return true;
     } catch (err) {
-      const { describeTrayError } = require("./src/cli/tray/tray");
+      const { describeTrayError, killTray } = require("./src/cli/tray/tray");
       console.error(`[switchboard] tray unavailable: ${describeTrayError(err)}`);
+      // A timed-out helper may still own an NSStatusItem/process. Release it
+      // before offering a retry so the next attempt cannot collide with it.
+      try { await killTray(); } catch { }
       return false;
     }
   };
@@ -784,7 +787,7 @@ function startServer(latestVersion) {
       }
       return;
     }
-    const trayReady = await initTrayIcon();
+    let trayReady = await initTrayIcon();
     if (!trayReady) {
       console.warn(`Tray icon unavailable. You can stop safely with Ctrl+C or "${APP_NAME} stop".`);
     }
@@ -814,6 +817,19 @@ function startServer(latestVersion) {
         } else if (choice === "hide") {
           const { clearScreen } = require("./src/cli/utils/display");
           clearScreen();
+
+          if (!trayReady) {
+            console.log("\n⏳ Retrying system tray startup...");
+            const { ensureTrayReady } = require("./src/cli/interfaceMenu");
+            trayReady = await ensureTrayReady(trayReady, initTrayIcon);
+            if (!trayReady) {
+              console.warn("\nTray startup still failed. Switchboard was not hidden.");
+              console.warn("You can retry from the interface menu or continue using the Web/Terminal UI.");
+              const { pause } = require("./src/cli/utils/input");
+              await pause("\nPress Enter to go back to the menu...");
+              continue;
+            }
+          }
 
           if (process.platform === "darwin") {
             // macOS: keep current process alive — spawning a detached child puts

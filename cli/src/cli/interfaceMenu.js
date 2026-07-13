@@ -14,12 +14,19 @@ function buildInterfaceMenuItems({ latestVersion = null, currentVersion = "", tr
     { action: "terminal", label: "Terminal UI (Interactive CLI)", icon: "💻" },
   );
 
-  if (trayAvailable) {
-    items.push({ action: "hide", label: "Hide to Tray (Background)", icon: "🔔" });
-  }
+  items.push({
+    action: "hide",
+    label: trayAvailable ? "Hide to Tray (Background)" : "Hide to Tray (Retry)",
+    icon: "🔔",
+  });
 
   items.push({ action: "exit", label: "Exit", icon: "🚪" });
   return items;
 }
 
-module.exports = { buildInterfaceMenuItems };
+async function ensureTrayReady(trayReady, initTrayIcon) {
+  if (trayReady) return true;
+  return Boolean(await initTrayIcon());
+}
+
+module.exports = { buildInterfaceMenuItems, ensureTrayReady };
