@@ -103,6 +103,58 @@ export function conversationFingerprint(firstUserText, apiKeyHash) {
   }
 }
 
+/** First tool-call / tool_use id on a message (OpenAI or Claude shape). */
+function firstToolCallIdOf(message) {
+  try {
+    if (Array.isArray(message?.tool_calls)) {
+      for (const call of message.tool_calls) {
+        if (typeof call?.id === "string" && call.id) return call.id;
+      }
+    }
+    if (Array.isArray(message?.content)) {
+      for (const block of message.content) {
+        if (block?.type === "tool_use" && typeof block?.id === "string" && block.id) return block.id;
+      }
+    }
+  } catch {}
+  return "";
+}
+
+/**
+ * Vault scope key. Unlike conversationFingerprint (first user text only), this
+ * folds in the first assistant reply and the first tool-call id, so two distinct
+ * chats that merely share an opening user message land in SEPARATE vaults —
+ * without them, chat B could retrieve chat A's stored tool results. All three
+ * inputs live in the immutable history prefix, so the id is stable across every
+ * request of the same conversation (and across internal loop turns, which only
+ * append to the tail). The first tool-call id in particular is present exactly
+ * when there is a tool result to vault, and is unique per conversation.
+ */
+export function vaultConversationId(messages, apiKeyHash) {
+  try {
+    const list = Array.isArray(messages) ? messages : [];
+    // null = not yet captured. An empty-string first turn (e.g. a pure tool-call
+    // assistant message) must still be captured, or a later non-empty turn would
+    // overwrite it and shift the id as history grows — breaking scope stability.
+    let firstUser = null;
+    let firstAssistant = null;
+    let firstToolId = "";
+    for (const message of list) {
+      if (message?.role === "user" && firstUser === null) firstUser = messageText(message.content);
+      if (message?.role === "assistant" && firstAssistant === null) firstAssistant = messageText(message.content);
+      if (!firstToolId) firstToolId = firstToolCallIdOf(message);
+      if (firstUser !== null && firstAssistant !== null && firstToolId) break;
+    }
+    const key = safeString(apiKeyHash, "anon");
+    return createHash("sha256")
+      .update(`${key}\n${firstUser || ""}\n${firstAssistant || ""}\n${firstToolId}`)
+      .digest("hex")
+      .slice(0, 16);
+  } catch {
+    return "";
+  }
+}
+
 /** Read text from an OpenAI-compatible message content value without throwing. */
 function messageText(content) {
   try {

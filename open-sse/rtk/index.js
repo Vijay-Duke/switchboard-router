@@ -128,7 +128,7 @@ function compressKiroFormat(body, enabled) {
 }
 
 /** Heuristic: preserve error/stack traces in OpenAI tool results (fail-open for traces). */
-function looksLikeToolError(text) {
+export function looksLikeToolError(text) {
   if (typeof text !== "string" || text.length < 8) return false;
   return /^\s*(Error|Exception|Traceback|TypeError|ReferenceError|SyntaxError|Failed)\b/m.test(text)
     || /\bat\s+\S+\s+\([^)]+:\d+:\d+\)/.test(text);

@@ -152,6 +152,50 @@ export const TABLES = {
       "CREATE INDEX IF NOT EXISTS idx_rd_conn ON requestDetails(connectionId)",
     ],
   },
+  fetchCache: {
+    columns: {
+      cacheKey: "TEXT PRIMARY KEY",
+      kind: "TEXT",
+      url: "TEXT",
+      content: "TEXT NOT NULL",
+      contentType: "TEXT",
+      sizeBytes: "INTEGER",
+      createdAt: "TEXT NOT NULL",
+      expiresAt: "TEXT NOT NULL",
+      lastAccessedAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_fc_expires_at ON fetchCache(expiresAt)",
+      "CREATE INDEX IF NOT EXISTS idx_fc_last_accessed_at ON fetchCache(lastAccessedAt)",
+    ],
+  },
+  vault_entries: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      conversationId: "TEXT NOT NULL",
+      toolName: "TEXT",
+      content: "TEXT NOT NULL",
+      sizeBytes: "INTEGER",
+      createdAt: "TEXT NOT NULL",
+      expiresAt: "TEXT NOT NULL",
+      lastAccessedAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_vault_conv ON vault_entries(conversationId)",
+      "CREATE INDEX IF NOT EXISTS idx_vault_expires ON vault_entries(expiresAt)",
+      "CREATE INDEX IF NOT EXISTS idx_vault_last_accessed ON vault_entries(lastAccessedAt)",
+    ],
+  },
+  vault_chunks: {
+    columns: {
+      entryId: "TEXT NOT NULL",
+      chunkIndex: "INTEGER NOT NULL",
+      conversationId: "TEXT NOT NULL",
+      text: "TEXT NOT NULL",
+    },
+    primaryKey: "PRIMARY KEY (entryId, chunkIndex)",
+    indexes: ["CREATE INDEX IF NOT EXISTS idx_vault_chunks_conv ON vault_chunks(conversationId)"],
+  },
   routing_events: {
     columns: {
       id: "INTEGER PRIMARY KEY AUTOINCREMENT",

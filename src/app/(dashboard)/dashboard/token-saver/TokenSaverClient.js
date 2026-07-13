@@ -1,7 +1,7 @@
 "use client";
 // @ts-check
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Card, Button, Input, Modal, Toggle } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { getCurrentLocale, onLocaleChange } from "@/i18n/runtime";
@@ -12,8 +12,24 @@ import {
 } from "../endpoint/endpointConstants";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 
+function formatVaultBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function TokenSaverClient() {
   const [rtkEnabled, setRtkEnabledState] = useState(true);
+  const [vaultEnabled, setVaultEnabled] = useState(false);
+  const [vaultThresholdKB, setVaultThresholdKB] = useState(8);
+  const [vaultStats, setVaultStats] = useState({
+    entries: 0,
+    hits: 0,
+    bytesSaved: 0,
+  });
+  const tokenSaverRef = useRef({});
   const [headroomEnabled, setHeadroomEnabled] = useState(false);
   const [headroomUrl, setHeadroomUrl] = useState("http://localhost:8787");
   const [headroomStatus, setHeadroomStatus] = useState({
@@ -77,6 +93,21 @@ export default function TokenSaverClient() {
     }
   };
 
+  const handleVaultEnabled = (value) => {
+    const tokenSaver = { ...tokenSaverRef.current, vault: value };
+    tokenSaverRef.current = tokenSaver;
+    setVaultEnabled(value);
+    patchSetting({ tokenSaver });
+  };
+
+  const handleVaultThresholdBlur = () => {
+    const threshold = Math.max(7, Number.parseInt(vaultThresholdKB, 10) || 8);
+    const tokenSaver = { ...tokenSaverRef.current, vaultThresholdKB: threshold };
+    tokenSaverRef.current = tokenSaver;
+    setVaultThresholdKB(threshold);
+    patchSetting({ tokenSaver });
+  };
+
   const handleCavemanEnabled = (value) => {
     setCavemanEnabled(value);
     patchSetting({ cavemanEnabled: value });
@@ -95,6 +126,15 @@ export default function TokenSaverClient() {
     await patchSetting({ headroomUrl: next });
     refreshHeadroomStatus();
   };
+
+  const refreshVaultStats = useCallback(async () => {
+    try {
+      const res = await fetch("/api/token-saver/vault-stats", {
+        headers: { "Cache-Control": "no-store" },
+      });
+      if (res.ok) setVaultStats(await res.json());
+    } catch {}
+  }, []);
 
   const refreshHeadroomStatus = useCallback(async () => {
     setHeadroomStatus((s) => ({ ...s, loading: true }));
@@ -161,6 +201,12 @@ export default function TokenSaverClient() {
         if (res.ok) {
           const data = await res.json();
           setRtkEnabledState(data.rtkEnabled !== false);
+          tokenSaverRef.current =
+            data.tokenSaver && typeof data.tokenSaver === "object"
+              ? data.tokenSaver
+              : {};
+          setVaultEnabled(!!data.tokenSaver?.vault);
+          setVaultThresholdKB(data.tokenSaver?.vaultThresholdKB ?? 8);
           setHeadroomEnabled(!!data.headroomEnabled);
           setHeadroomUrl(data.headroomUrl || "http://localhost:8787");
           setCavemanEnabled(!!data.cavemanEnabled);
@@ -173,6 +219,10 @@ export default function TokenSaverClient() {
     };
     loadSettings();
   }, [refreshHeadroomStatus]);
+
+  useEffect(() => {
+    refreshVaultStats();
+  }, [refreshVaultStats]);
 
   const headroomRunning = !!headroomStatus.running;
   const headroomStatusLabel = headroomStatus.loading
@@ -359,6 +409,66 @@ export default function TokenSaverClient() {
               onChange={() => handlePonytailEnabled(!ponytailEnabled)}
             />
           </div>
+        </div>
+      </Card>
+
+      <Card id="vault">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary">
+              inventory_2
+            </span>
+            Conversation Vault
+          </h2>
+        </div>
+        <div className="flex items-center justify-between pt-2 pb-4 border-b border-border gap-4">
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">Externalize large tool results</p>
+            <p className="text-sm text-text-muted">
+              Store full results outside the conversation and search them when needed
+            </p>
+          </div>
+          <Toggle
+            checked={vaultEnabled}
+            onChange={() => handleVaultEnabled(!vaultEnabled)}
+          />
+        </div>
+        <div className="py-4 border-b border-border">
+          <Input
+            label="Externalize tool results larger than (KB)"
+            type="number"
+            min={7}
+            step={1}
+            value={vaultThresholdKB}
+            onChange={(e) => setVaultThresholdKB(e.target.value)}
+            onBlur={handleVaultThresholdBlur}
+            className="max-w-xs"
+          />
+        </div>
+        <div className="flex items-center justify-between pt-4 gap-4 flex-wrap">
+          <div className="flex items-center gap-6 text-sm">
+            <div>
+              <p className="text-text-muted">Entries stored</p>
+              <p className="font-mono font-medium">{vaultStats.entries}</p>
+            </div>
+            <div>
+              <p className="text-text-muted">Search hits</p>
+              <p className="font-mono font-medium">{vaultStats.hits}</p>
+            </div>
+            <div>
+              <p className="text-text-muted">Bytes saved</p>
+              <p className="font-mono font-medium">
+                {formatVaultBytes(vaultStats.bytesSaved)}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={refreshVaultStats}
+            className="text-xs text-primary underline hover:opacity-80"
+          >
+            Refresh
+          </button>
         </div>
       </Card>
 

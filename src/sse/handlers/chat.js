@@ -21,10 +21,12 @@ import { resetOverlay } from "open-sse/routing/overlay.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS, MAX_COMBO_DEPTH } from "open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
+import { injectVaultTool, repairInboundVaultResults, runVaultLoop } from "open-sse/rtk/vaultLoop.js";
 import {
   hashKey,
   conversationFingerprint,
   conversationInfo,
+  vaultConversationId,
   messagesMentionAsk,
   matchPendingAsk,
   consumePendingAsk,
@@ -438,8 +440,42 @@ export async function handleChat(request, clientRawRequest = null) {
     });
   }
 
-  // Single model request — pass request.signal so abandoned calls abort upstream
-  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, { signal: request?.signal || null });
+  // Single model request — vault retrieval is deliberately scoped here, never combos/Auto.
+  let wire = null;
+  try {
+    wire = detectFormatByEndpoint(new URL(request.url).pathname, body);
+  } catch {}
+  const vaultActive = !!(settings.tokenSaver?.vault) && Array.isArray(body.tools) && body.tools.length > 0 && (wire === "openai" || wire === "claude");
+  if (!vaultActive) {
+    return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, { signal: request?.signal || null });
+  }
+
+  try {
+    const conversationId = vaultConversationId(body.messages, hashKey(apiKey));
+    if (!conversationId) {
+      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, { signal: request?.signal || null });
+    }
+    await repairInboundVaultResults(body, { conversationId });
+    injectVaultTool(body, wire);
+    const searchLimit = Number(settings.tokenSaver?.vaultSearchLimit ?? 5);
+    return await runVaultLoop({
+      dispatch: (currentBody, options) => handleSingleModelChat(
+        currentBody,
+        modelStr,
+        clientRawRequest,
+        request,
+        apiKey,
+        { signal: request?.signal || null, vaultInternal: !!options?.vaultInternal, vaultStore: true, vaultConversationId: conversationId },
+      ),
+      body,
+      wire,
+      conversationId,
+      searchLimit,
+      log,
+    });
+  } catch {
+    return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, { signal: request?.signal || null });
+  }
 }
 
 /**
@@ -451,6 +487,7 @@ export async function handleChat(request, clientRawRequest = null) {
  * @param {AbortSignal} [callOpts.signal] - Abort upstream on timeout
  * @param {number} [callOpts.autoDepth] - Auto-combo recursion depth
  * @param {number} [callOpts.comboDepth] - Fallback/round-robin/fusion combo recursion depth
+ * @param {boolean} [callOpts.vaultInternal] - Suppress duplicate client request-log rows
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, callOpts = null) {
   const modelInfo = await getModelInfo(modelStr);
@@ -694,6 +731,16 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       apiKey,
       ccFilterNaming: !!chatSettings.ccFilterNaming,
       rtkEnabled: bypassFilters ? false : !!chatSettings.rtkEnabled,
+      // Store is scoped to the single-model vault loop, which is the only path
+      // that injects sb_vault_search. Combos/Auto/fusion members reach here too
+      // but never inject, so vaulting there would strand the model with
+      // un-retrievable pointers — gate on the loop-set vaultStore flag.
+      vaultEnabled: (bypassFilters || !callOpts?.vaultStore) ? false : !!(chatSettings.tokenSaver?.vault),
+      vaultThresholdKB: chatSettings.tokenSaver?.vaultThresholdKB ?? 8,
+      vaultTtlHours: chatSettings.tokenSaver?.vaultTtlHours ?? 24,
+      // Single source of truth for the vault scope key: derived in the vault loop
+      // from the SOURCE body and threaded through here. chatCore never re-derives.
+      vaultConversationId: callOpts?.vaultConversationId ?? null,
       headroomEnabled: bypassFilters ? false : !!chatSettings.headroomEnabled,
       headroomUrl: chatSettings.headroomUrl || DEFAULT_HEADROOM_URL,
       headroomCompressUserMessages: bypassFilters
@@ -706,6 +753,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       providerThinking,
       sourceFormatOverride,
       bypassNativePassthrough: !!callOpts?.bypassNativePassthrough,
+      vaultInternal: !!callOpts?.vaultInternal,
       abortSignal: callOpts?.signal || null,
       onCredentialsRefreshed: async (newCreds) => {
         await updateProviderCredentials(credentials.connectionId, {

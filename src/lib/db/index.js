@@ -75,6 +75,17 @@ export {
   saveRequestDetail, getRequestDetails, getRequestDetailById,
 } from "./repos/requestDetailsRepo.js";
 
+// Web fetch/search cache
+export {
+  getFetchCache, putFetchCache, cleanupExpiredFetchCache,
+} from "./repos/fetchCacheRepo.js";
+
+// RTK tool-result vault
+export {
+  getVaultEntry, putVaultEntry, searchVault, cleanupExpiredVault, resetVaultFtsProbe,
+  __setFtsStateForTest,
+} from "./repos/vaultRepo.js";
+
 // Auto-route events + learning versions
 export {
   insertRoutingEvent,

@@ -21,6 +21,9 @@ import {
   getClusterLatencyP50,
 } from "@/lib/db/repos/routingRepo.js";
 import { getComboModels } from "./services/model.js";
+import {
+  getVaultEntry, putVaultEntry, searchVault, cleanupExpiredVault,
+} from "@/lib/db/repos/vaultRepo.js";
 
 let wired = false;
 
@@ -42,6 +45,10 @@ export function ensureOpenSseDeps() {
     getLastScheduledLearnAt,
     getClusterLatencyP50,
     getComboModels,
+    getVaultEntry,
+    putVaultEntry,
+    searchVault,
+    cleanupExpiredVault,
     buildExternalIdpRefreshParams: async (...args) => {
       const mod = await import("@/lib/oauth/kiroExternalIdp.js");
       return mod.buildExternalIdpRefreshParams(...args);

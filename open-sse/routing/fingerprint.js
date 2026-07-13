@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { charSafePrefix, charSafeSuffix } from "../utils/truncate.js";
 
 /**
  * Lightweight request signals for router + learning (docs/switchboard/SPEC.md §7).
@@ -76,7 +77,7 @@ export function buildRequestSignals(body) {
   const tokenBand =
     textLen < 500 ? "0-500" : textLen < 2000 ? "500-2k" : textLen < 8000 ? "2k-8k" : "8k+";
 
-  const blob = texts.slice(-3).join("\n").slice(0, 4000);
+  const blob = charSafePrefix(texts.slice(-3).join("\n"), 4000);
   const keywordHints = [];
   if (/\brefactor\b/i.test(blob)) keywordHints.push("refactor");
   if (/\b(debug|bug|error|stack)\b/i.test(blob)) keywordHints.push("debug");
@@ -120,5 +121,5 @@ function compressSummary(text) {
     .replace(/\s+/g, " ")
     .trim();
   if (cleaned.length <= 280) return cleaned;
-  return `${cleaned.slice(0, 200)}…${cleaned.slice(-60)}`;
+  return `${charSafePrefix(cleaned, 200)}…${charSafeSuffix(cleaned, 60)}`;
 }

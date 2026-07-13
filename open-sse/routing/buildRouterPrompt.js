@@ -1,5 +1,6 @@
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { getPricingForModel } from "../providers/pricing.js";
+import { charSafePrefix } from "../utils/truncate.js";
 import { buildRequestSignals } from "./fingerprint.js";
 import { costTier, estimateRequestCost, objectivePromptText } from "./objective.js";
 import { TASK_CLUSTERS } from "./taxonomy.js";
@@ -276,12 +277,12 @@ function shortModel(id) {
 }
 
 function sanitizeFewShotSummary(s) {
-  return String(s || "")
+  const cleaned = String(s || "")
     .replace(/<<+|>>+/g, " ")
     .replace(/FEWSHOT/gi, " ")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120);
+    .trim();
+  return charSafePrefix(cleaned, 120);
 }
 
 function filterBanditToPool(banditTable, poolSet) {

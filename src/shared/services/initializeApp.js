@@ -5,7 +5,10 @@ import "@/sse/initOpenSseDeps.js";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { existsSync } from "fs";
-import { cleanupProviderConnections, getSettings, updateSettings, getApiKeys, deleteOldRoutingEvents } from "@/lib/db/index.js";
+import {
+  cleanupProviderConnections, getSettings, updateSettings, getApiKeys,
+  deleteOldRoutingEvents, cleanupExpiredFetchCache, cleanupExpiredVault,
+} from "@/lib/db/index.js";
 import { getMitmStatus, startMitm, loadEncryptedPassword, initDbHooks, restoreToolDNS, removeAllDNSEntriesSync } from "@/mitm/manager";
 import { startQuotaAutoPing } from "@/shared/services/quotaAutoPing";
 import { startAutoLearnScheduler } from "open-sse/routing/scheduler.js";
@@ -98,6 +101,16 @@ function startRoutingEventRetention() {
         if (n > 0) console.log(`[InitApp] Purged ${n} routing_events older than ${ROUTING_RETENTION_DAYS}d`);
       })
       .catch((e) => console.warn("[InitApp] routing retention failed:", e?.message || e));
+    cleanupExpiredFetchCache()
+      .then((n) => {
+        if (n > 0) console.log(`[InitApp] Purged ${n} expired fetch cache entries`);
+      })
+      .catch((e) => console.warn("[InitApp] fetch cache cleanup failed:", e?.message || e));
+    cleanupExpiredVault()
+      .then((n) => {
+        if (n > 0) console.log(`[InitApp] Purged ${n} expired vault entries`);
+      })
+      .catch((e) => console.warn("[InitApp] vault cleanup failed:", e?.message || e));
   };
   // Run shortly after boot, then daily
   setTimeout(run, 30_000);

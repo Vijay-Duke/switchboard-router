@@ -16,6 +16,10 @@ import { updateProviderCredentials, checkAndRefreshToken } from "../services/tok
 import { handleComboChat, getComboModelsFromData } from "open-sse/services/combo.js";
 import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
 import { hasValidCliToken } from "@/shared/utils/cliToken.js";
+import { getFetchCache } from "@/lib/db/repos/fetchCacheRepo.js";
+import {
+  buildSearchCacheKey, cacheLiveResponse, fetchCacheHitResponse, getFetchCacheTtlMs,
+} from "../utils/fetchCache.js";
 
 /**
  * Handle web search request for the SSE/Next.js server.
@@ -67,6 +71,30 @@ export async function handleSearch(request) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: query");
   }
 
+  let ttlMs = 0;
+  try { ttlMs = getFetchCacheTtlMs(settings); } catch {}
+  let cache = null;
+  if (ttlMs > 0) {
+    try {
+      cache = {
+        cacheKey: buildSearchCacheKey(body, providerInput),
+        kind: "search",
+        url: query.trim(),
+        ttlMs,
+      };
+    } catch {}
+  }
+  if (cache) {
+    try {
+      const hit = await getFetchCache(cache.cacheKey);
+      if (hit) {
+        log.info("SEARCH", `cache hit ${cache.url}`);
+        return fetchCacheHitResponse(hit);
+      }
+    } catch {}
+  }
+  const cacheResponse = async (response) => cache ? cacheLiveResponse(response, cache, log) : response;
+
   // Combo expansion: providerInput may be a combo name → run fallback/round-robin across providers
   const combos = await getCombos();
   const comboModels = getComboModelsFromData(providerInput, combos);
@@ -75,7 +103,7 @@ export async function handleSearch(request) {
     const comboStrategy = comboStrategies[providerInput]?.fallbackStrategy || settings.comboStrategy || "fallback";
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
     log.info("SEARCH", `Combo "${providerInput}" with ${comboModels.length} providers (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
-    return handleComboChat({
+    return cacheResponse(await handleComboChat({
       body,
       models: comboModels,
       handleSingleModel: (b, m, callOpts) => handleSingleProviderSearch(b, m, request, apiKey, settings, callOpts),
@@ -84,10 +112,12 @@ export async function handleSearch(request) {
       comboStrategy,
       comboStickyLimit,
       abortSignal: request?.signal || null,
-    });
+    }));
   }
 
-  return handleSingleProviderSearch(body, providerInput, request, apiKey, settings, { signal: request?.signal || null });
+  return cacheResponse(await handleSingleProviderSearch(
+    body, providerInput, request, apiKey, settings, { signal: request?.signal || null },
+  ));
 }
 
 async function handleSingleProviderSearch(body, providerInput, request, apiKey, settings, callOpts = null) {

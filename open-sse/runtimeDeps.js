@@ -23,6 +23,11 @@ let deps = {
   getLastScheduledLearnAt: async () => null,
   getClusterLatencyP50: async () => null,
   getComboModels: async () => null,
+  // RTK vault persistence (optional; all fail open)
+  putVaultEntry: async () => false,
+  searchVault: async () => [],
+  getVaultEntry: async () => null,
+  cleanupExpiredVault: async () => 0,
   // oauth helpers used by token refresh (optional)
   buildExternalIdpRefreshParams: null,
   createXaiService: null,
@@ -85,4 +90,20 @@ export async function getClusterLatencyP50(...args) {
 
 export async function getComboModels(...args) {
   return deps.getComboModels(...args);
+}
+
+export async function putVaultEntry(...args) {
+  return deps.putVaultEntry ? deps.putVaultEntry(...args) : false;
+}
+
+export async function searchVault(...args) {
+  return deps.searchVault ? deps.searchVault(...args) : [];
+}
+
+export async function getVaultEntry(...args) {
+  return deps.getVaultEntry ? deps.getVaultEntry(...args) : null;
+}
+
+export async function cleanupExpiredVault(...args) {
+  return deps.cleanupExpiredVault ? deps.cleanupExpiredVault(...args) : 0;
 }

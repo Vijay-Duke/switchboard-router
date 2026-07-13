@@ -17,6 +17,10 @@ import { handleComboChat, getComboModelsFromData } from "open-sse/services/combo
 import { assertPublicUrl } from "@/shared/utils/ssrfGuard.js";
 import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
 import { hasValidCliToken } from "@/shared/utils/cliToken.js";
+import { getFetchCache } from "@/lib/db/repos/fetchCacheRepo.js";
+import {
+  buildFetchCacheKey, cacheLiveResponse, fetchCacheHitResponse, getFetchCacheTtlMs,
+} from "../utils/fetchCache.js";
 
 /**
  * Handle web fetch (URL extraction) request for the SSE/Next.js server.
@@ -87,6 +91,30 @@ export async function handleFetch(request) {
     return errorResponse(HTTP_STATUS.BAD_REQUEST, err.message);
   }
 
+  let ttlMs = 0;
+  try { ttlMs = getFetchCacheTtlMs(settings); } catch {}
+  let cache = null;
+  if (ttlMs > 0) {
+    try {
+      cache = {
+        cacheKey: buildFetchCacheKey(body, providerInput),
+        kind: "fetch",
+        url: targetUrl.trim(),
+        ttlMs,
+      };
+    } catch {}
+  }
+  if (cache) {
+    try {
+      const hit = await getFetchCache(cache.cacheKey);
+      if (hit) {
+        log.info("FETCH", `cache hit ${cache.url}`);
+        return fetchCacheHitResponse(hit);
+      }
+    } catch {}
+  }
+  const cacheResponse = async (response) => cache ? cacheLiveResponse(response, cache, log) : response;
+
   // Combo expansion: providerInput may be a combo name → run fallback/round-robin across providers
   const combos = await getCombos();
   const comboModels = getComboModelsFromData(providerInput, combos);
@@ -95,7 +123,7 @@ export async function handleFetch(request) {
     const comboStrategy = comboStrategies[providerInput]?.fallbackStrategy || settings.comboStrategy || "fallback";
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
     log.info("FETCH", `Combo "${providerInput}" with ${comboModels.length} providers (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
-    return handleComboChat({
+    return cacheResponse(await handleComboChat({
       body,
       models: comboModels,
       handleSingleModel: (b, m, callOpts) => handleSingleProviderFetch(b, m, request, apiKey, settings, callOpts),
@@ -104,10 +132,12 @@ export async function handleFetch(request) {
       comboStrategy,
       comboStickyLimit,
       abortSignal: request?.signal || null,
-    });
+    }));
   }
 
-  return handleSingleProviderFetch(body, providerInput, request, apiKey, settings, { signal: request?.signal || null });
+  return cacheResponse(await handleSingleProviderFetch(
+    body, providerInput, request, apiKey, settings, { signal: request?.signal || null },
+  ));
 }
 
 async function handleSingleProviderFetch(body, providerInput, request, apiKey, settings, callOpts = null) {

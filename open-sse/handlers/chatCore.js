@@ -26,6 +26,8 @@ import { stripOrphanedToolResults } from "../translator/concerns/toolCall.js";
 import { injectCaveman } from "../rtk/caveman.js";
 import { injectPonytail } from "../rtk/ponytail.js";
 import { compressMessages, formatRtkLog } from "../rtk/index.js";
+import { storeToVault, clampVaultThresholdKB } from "../rtk/vault.js";
+import { recordVaultStore } from "../rtk/vaultStats.js";
 import { compressWithHeadroom, formatHeadroomLog, formatHeadroomSizeLog, isHeadroomPhantomSavings } from "../rtk/headroom.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { stripUnsupportedModalities } from "../translator/concerns/modality.js";
@@ -49,7 +51,7 @@ const URL_CONTROLLED_STREAM_FORMATS = new Set([
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  * @param {AbortSignal} [options.abortSignal] - Optional external abort (e.g. router timeout)
  */
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, onUpstreamEmptyExhausted, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, sourceFormatOverride, providerThinking, bypassNativePassthrough, abortSignal }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, onUpstreamEmptyExhausted, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, vaultEnabled, vaultThresholdKB, vaultTtlHours, vaultConversationId, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, sourceFormatOverride, providerThinking, bypassNativePassthrough, vaultInternal, abortSignal }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
 
@@ -193,10 +195,33 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     delete translatedBody.tools;
   }
 
+  // Vault STORE runs before RTK so RTK sees compact, lossless pointers.
+  let vaultStats = null;
+  try {
+    // The scope key is derived ONCE in chat.js from the SOURCE body and passed in.
+    // chatCore must never re-derive it: translators can rewrite tool-call ids, so a
+    // key computed here (post-translation) could diverge from the search/repair key
+    // and strand stored entries. No key → skip vaulting.
+    const vaultOn = vaultEnabled && vaultConversationId && Array.isArray(translatedBody?.tools) && translatedBody.tools.length > 0
+      && (sourceFormat === FORMATS.OPENAI || sourceFormat === FORMATS.CLAUDE);
+    if (vaultOn) {
+      const thresholdBytes = clampVaultThresholdKB(vaultThresholdKB ?? 8) * 1024;
+      const ttlMs = Math.max(1, Number(vaultTtlHours ?? 24)) * 3600 * 1000;
+      vaultStats = await storeToVault(translatedBody, { conversationId: vaultConversationId, thresholdBytes, ttlMs, log });
+    }
+  } catch (e) {
+    log?.warn?.("VAULT", `store failed (dropped): ${e?.message || e}`);
+  }
+
   // RTK: compress tool_result content
   const rtkStats = compressMessages(translatedBody, rtkEnabled);
   const rtkLine = formatRtkLog(rtkStats);
   if (rtkLine) console.log(rtkLine);
+  if (vaultStats?.vaulted > 0) {
+    const saved = vaultStats.bytesBefore - vaultStats.bytesAfter;
+    recordVaultStore(vaultStats.vaulted, saved);
+    log?.info?.("VAULT", `externalized ${vaultStats.vaulted} tool result(s), saved ${saved}B`);
+  }
 
   // Headroom: optional external proxy compression; fail open if proxy is absent.
   const headroomDiagnostics = {};
@@ -251,7 +276,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   const executor = getExecutor(provider);
   trackPendingRequest(model, provider, connectionId, true);
-  appendRequestLog({ model, provider, connectionId, status: "PENDING" }).catch(() => { });
+  if (!vaultInternal) appendRequestLog({ model, provider, connectionId, status: "PENDING" }).catch(() => { });
 
   const msgCount = translatedBody.messages?.length || translatedBody.input?.length || translatedBody.contents?.length || translatedBody.request?.contents?.length || 0;
   log?.debug?.("REQUEST", `${provider.toUpperCase()} | ${model} | ${msgCount} msgs`);
@@ -332,7 +357,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
   } catch (error) {
     trackPendingRequest(model, provider, connectionId, false, true);
-    appendRequestLog({ model, provider, connectionId, status: `FAILED ${error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY}` }).catch(() => { });
+    if (!vaultInternal) appendRequestLog({ model, provider, connectionId, status: `FAILED ${error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY}` }).catch(() => { });
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId,
       latency: { ttft: 0, total: Date.now() - requestStartTime },
@@ -386,7 +411,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (!providerResponse.ok) {
     trackPendingRequest(model, provider, connectionId, false, true);
     const { statusCode, message, resetsAtMs } = await parseUpstreamError(providerResponse, executor);
-    appendRequestLog({ model, provider, connectionId, status: `FAILED ${statusCode}` }).catch(() => { });
+    if (!vaultInternal) appendRequestLog({ model, provider, connectionId, status: `FAILED ${statusCode}` }).catch(() => { });
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId,
       latency: { ttft: 0, total: Date.now() - requestStartTime },
@@ -439,7 +464,9 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // replayed save is idempotent instead of double-counting usage.
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
   const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, requestId };
-  const appendLog = (extra) => appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });
+  const appendLog = (extra) => {
+    if (!vaultInternal) appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });
+  };
   const trackDone = () => trackPendingRequest(model, provider, connectionId, false);
 
   // Provider forced streaming but client wants JSON
