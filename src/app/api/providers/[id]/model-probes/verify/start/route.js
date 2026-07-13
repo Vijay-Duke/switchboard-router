@@ -1,6 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { getProviderConnectionById } from "@/lib/db/index.js";
+import { getProviderConnectionById, upsertProbeResult, getProbesForScope } from "@/lib/db/index.js";
 import { buildModelProbeScopeKey } from "@/lib/model-probe/index.js";
 import { startVerify } from "@/lib/model-probe/verifyJob.js";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
@@ -25,6 +25,7 @@ export async function POST(request, { params }) {
       models: body.models || [],
       opts: { concurrency: body.concurrency, batchSize: body.batchSize, timeoutMs: body.timeoutMs },
       baseUrl,
+      deps: { upsertProbeResult, getProbesForScope },
     });
     return NextResponse.json(snapshot);
   } catch (error) {
