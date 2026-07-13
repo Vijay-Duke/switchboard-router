@@ -24,6 +24,7 @@ import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
 import VerifyModelsPanel from "./VerifyModelsPanel";
+import { getProviderModelToolbarActions } from "./providerModelActions";
 import { canonicalModelId } from "@/lib/model-probe/canonicalId.js";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 
@@ -159,6 +160,8 @@ export default function ProviderDetailPage() {
   const isOpenAICompatible = isOpenAICompatibleProvider(providerId);
   const isAnthropicCompatible = isAnthropicCompatibleProvider(providerId);
   const isCompatible = isOpenAICompatible || isAnthropicCompatible;
+  const hasActiveConnection = connections.some((connection) => connection.isActive !== false);
+  const modelToolbarActions = getProviderModelToolbarActions({ isCompatible, hasActiveConnection });
   const hasDualAuthModes = !isCompatible && isOAuth && supportsApiKeyAuth;
   const oauthConnectionLabel = providerId === "xai" ? "Grok Build OAuth" : "OAuth";
   const apiKeyConnectionLabel = providerId === "xai" ? "xAI API Key" : "API Key";
@@ -1529,26 +1532,29 @@ export default function ProviderDetailPage() {
               </select>
             )}
           </div>
-          {!isCompatible && (() => {
-            const allIds = [
-              ...models,
-              ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
-            ].filter((m) => { const k = getModelKind(m); return !k || k === "llm"; }).map((m) => m.id);
+          {modelToolbarActions.showToolbar && (() => {
+            const allIds = modelToolbarActions.showBulkControls
+              ? [
+                  ...models,
+                  ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
+                ].filter((m) => { const k = getModelKind(m); return !k || k === "llm"; }).map((m) => m.id)
+              : [];
             const activeIds = allIds.filter((id) => !disabledModelIds.includes(id));
-            const canImport = connections.some((conn) => conn.isActive !== false);
             return (
               <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  icon={importingModels ? "progress_activity" : "cloud_download"}
-                  onClick={handleImportModels}
-                  disabled={importingModels || !canImport}
-                  title={canImport ? "Import models from the active connection" : "Add an active connection to import models"}
-                >
-                  {importingModels ? "Importing..." : "Import models"}
-                </Button>
-                {canImport && (
+                {modelToolbarActions.showImport && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={importingModels ? "progress_activity" : "cloud_download"}
+                    onClick={handleImportModels}
+                    disabled={importingModels || !hasActiveConnection}
+                    title={hasActiveConnection ? "Import models from the active connection" : "Add an active connection to import models"}
+                  >
+                    {importingModels ? "Importing..." : "Import models"}
+                  </Button>
+                )}
+                {modelToolbarActions.showVerify && (
                   <Button
                     size="sm"
                     variant="secondary"
@@ -1558,12 +1564,12 @@ export default function ProviderDetailPage() {
                     {showVerifyPanel ? "Hide verify" : "Verify models"}
                   </Button>
                 )}
-                {disabledModelIds.length > 0 && (
+                {modelToolbarActions.showBulkControls && disabledModelIds.length > 0 && (
                   <Button size="sm" variant="secondary" icon="restart_alt" onClick={handleEnableAll}>
                     Active All
                   </Button>
                 )}
-                {activeIds.length > 0 && (
+                {modelToolbarActions.showBulkControls && activeIds.length > 0 && (
                   <Button size="sm" variant="secondary" icon="block" onClick={() => handleDisableAll(activeIds)}>
                     Disable All
                   </Button>
