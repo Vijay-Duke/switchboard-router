@@ -584,10 +584,11 @@ run()
   });
 
 // Show interface selection menu
-async function showInterfaceMenu(latestVersion) {
+async function showInterfaceMenu(latestVersion, { trayAvailable = true } = {}) {
   const { selectMenu } = require("./src/cli/utils/input");
   const { clearScreen } = require("./src/cli/utils/display");
   const { getEndpoint } = require("./src/cli/utils/endpoint");
+  const { buildInterfaceMenuItems } = require("./src/cli/interfaceMenu");
 
   clearScreen();
 
@@ -604,28 +605,14 @@ async function showInterfaceMenu(latestVersion) {
 
   const subtitle = `🚀 Server: \x1b[32m${serverUrl}\x1b[0m`;
 
-  const menuItems = [];
-
-  if (latestVersion) {
-    menuItems.push({ label: `Update to v${latestVersion} (current: v${pkg.version})`, icon: "⬆" });
-  }
-
-  menuItems.push(
-    { label: "Web UI (Open in Browser)", icon: "🌐" },
-    { label: "Terminal UI (Interactive CLI)", icon: "💻" },
-    { label: "Hide to Tray (Background)", icon: "🔔" },
-    { label: "Exit", icon: "🚪" }
-  );
+  const menuItems = buildInterfaceMenuItems({
+    latestVersion,
+    currentVersion: pkg.version,
+    trayAvailable,
+  });
 
   const selected = await selectMenu(`Choose Interface (v${pkg.version})`, menuItems, 0, subtitle);
-
-  const offset = latestVersion ? 1 : 0;
-
-  if (latestVersion && selected === 0) return "update";
-  if (selected === offset) return "web";
-  if (selected === offset + 1) return "terminal";
-  if (selected === offset + 2) return "hide";
-  return "exit";
+  return menuItems[selected]?.action || "exit";
 }
 
 const MAX_RESTARTS = 2;
@@ -742,7 +729,8 @@ function startServer(latestVersion) {
       }
       return true;
     } catch (err) {
-      console.error(`[switchboard] tray unavailable: ${err.message}`);
+      const { describeTrayError } = require("./src/cli/tray/tray");
+      console.error(`[switchboard] tray unavailable: ${describeTrayError(err)}`);
       return false;
     }
   };
@@ -803,7 +791,7 @@ function startServer(latestVersion) {
 
     try {
       while (true) {
-        const choice = await showInterfaceMenu(latestVersion);
+        const choice = await showInterfaceMenu(latestVersion, { trayAvailable: trayReady });
 
         if (choice === "update") {
           const { clearScreen } = require("./src/cli/utils/display");

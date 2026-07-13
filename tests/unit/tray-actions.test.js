@@ -9,9 +9,18 @@ const originalEnable = autostart.enableAutoStart;
 
 afterEach(() => {
   autostart.enableAutoStart = originalEnable;
+  vi.restoreAllMocks();
 });
 
 describe("tray actions", () => {
+  it("explains the x86-only tray helper failure on Apple Silicon", () => {
+    const spawnError = Object.assign(new Error("spawn Unknown system error -86"), { errno: -86 });
+
+    expect(tray.describeTrayError(spawnError, { platform: "darwin", arch: "arm64" })).toBe(
+      "the macOS tray helper is x86_64-only and Rosetta 2 is unavailable; continuing without a tray icon (Web UI and Terminal UI still work)",
+    );
+  });
+
   it("does not show autostart as enabled when installation fails", () => {
     autostart.enableAutoStart = vi.fn(() => false);
     const onAutostartToggle = vi.fn();
@@ -65,5 +74,68 @@ describe("tray actions", () => {
 
     expect(instance.kill).toHaveBeenCalledOnce();
     expect(instance.kill).toHaveBeenCalledWith(false);
+  });
+
+  it("observes rejected async click registration when the tray binary cannot run", () => {
+    const spawnError = Object.assign(new Error("spawn Unknown system error -86"), { errno: -86 });
+    const clickRegistration = { catch: vi.fn() };
+
+    class UnsupportedArchitectureTray {
+      onClick() {
+        return clickRegistration;
+      }
+
+      ready() {
+        return Promise.reject(spawnError);
+      }
+    }
+
+    const instance = tray.initUnixTray(
+      { port: 20128 },
+      {
+        resolveSystrayImpl: () => ({ mod: UnsupportedArchitectureTray, isV2: true }),
+        chmodTrayBinImpl: vi.fn(),
+        getAutostartEnabledImpl: () => false,
+      },
+    );
+
+    expect(instance).toBeInstanceOf(UnsupportedArchitectureTray);
+    expect(clickRegistration.catch).toHaveBeenCalledOnce();
+    expect(() => clickRegistration.catch.mock.calls[0][0](spawnError)).not.toThrow();
+  });
+
+  it("does not emit an unhandled rejection when tray readiness fails with -86", async () => {
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const spawnError = Object.assign(new Error("spawn Unknown system error -86"), { errno: -86 });
+    const readiness = Promise.reject(spawnError);
+    const unhandled = vi.fn();
+
+    class UnsupportedArchitectureTray {
+      onClick() {
+        return readiness.then(() => {});
+      }
+
+      ready() {
+        return readiness;
+      }
+    }
+
+    process.on("unhandledRejection", unhandled);
+    try {
+      const instance = tray.initUnixTray(
+        { port: 20128 },
+        {
+          resolveSystrayImpl: () => ({ mod: UnsupportedArchitectureTray, isV2: true }),
+          chmodTrayBinImpl: vi.fn(),
+          getAutostartEnabledImpl: () => false,
+        },
+      );
+
+      await expect(instance.ready()).rejects.toBe(spawnError);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.removeListener("unhandledRejection", unhandled);
+    }
   });
 });

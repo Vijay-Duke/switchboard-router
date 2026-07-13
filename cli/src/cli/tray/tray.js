@@ -6,6 +6,15 @@ const { isPidAlive } = require("../processManager");
 let trayInstance = null;
 let isWinTray = false;
 
+function describeTrayError(error, { platform = process.platform, arch = process.arch } = {}) {
+  const message = error?.message || String(error);
+  const incompatibleExecutable = error?.errno === -86 || message.includes("system error -86");
+  if (platform === "darwin" && arch === "arm64" && incompatibleExecutable) {
+    return "the macOS tray helper is x86_64-only and Rosetta 2 is unavailable; continuing without a tray icon (Web UI and Terminal UI still work)";
+  }
+  return message;
+}
+
 /**
  * Get icon base64 from file — used for systray (mac/linux)
  */
@@ -193,16 +202,20 @@ function chmodTrayBin(pkgName) {
   } catch (e) {}
 }
 
-function initUnixTray(options) {
+function initUnixTray(options, {
+  resolveSystrayImpl = resolveSystray,
+  chmodTrayBinImpl = chmodTrayBin,
+  getAutostartEnabledImpl = getAutostartEnabled,
+} = {}) {
   const { port } = options;
   try {
-    const resolved = resolveSystray();
+    const resolved = resolveSystrayImpl();
     if (!resolved) return null;
     const { mod: SysTray, isV2 } = resolved;
 
-    chmodTrayBin(isV2 ? "systray2" : "systray");
+    chmodTrayBinImpl(isV2 ? "systray2" : "systray");
 
-    const autostartEnabled = getAutostartEnabled();
+    const autostartEnabled = getAutostartEnabledImpl();
     const items = buildMenuItems(port, autostartEnabled);
 
     const menu = {
@@ -219,7 +232,7 @@ function initUnixTray(options) {
     trayInstance = new SysTray({ menu, debug: false, copyDir: true });
     isWinTray = false;
 
-    trayInstance.onClick((action) => {
+    const clickRegistration = trayInstance.onClick((action) => {
       handleClick(action.seq_id, options, (newEnabled) => {
         trayInstance.sendAction({
           type: "update-item",
@@ -232,14 +245,18 @@ function initUnixTray(options) {
         });
       });
     });
+    // systray2 waits for ready() inside onClick(). If its bundled executable
+    // cannot run (for example x86_64 on ARM without Rosetta), this separate
+    // promise rejects too. Observe it so Node does not promote the rejection
+    // to uncaughtException and shut down an otherwise healthy server/TUI.
+    if (clickRegistration && typeof clickRegistration.catch === "function") {
+      clickRegistration.catch(() => {});
+    }
 
     if (isV2) {
-      // systray2 exposes a ready() promise instead of onReady/onError. Surface
-      // failures (binary crash, EACCES, etc.) so users can see why the icon
-      // didn't appear instead of getting a misleading "running in tray" log.
-      trayInstance.ready().catch((err) => {
-        process.stderr.write(`[switchboard] tray failed to start: ${err && err.message ? err.message : err}\n`);
-      });
+      // The caller awaits ready() and reports one contextual error. Observe the
+      // source promise here as defense-in-depth for any future direct caller.
+      trayInstance.ready().catch(() => {});
     } else {
       trayInstance.onReady(() => {});
       trayInstance.onError(() => {});
@@ -307,7 +324,9 @@ async function stopUnixTrayInstance(instance, options = {}) {
 }
 
 module.exports = {
+  describeTrayError,
   initTray,
+  initUnixTray,
   killTray,
   handleClick,
   handleQuit,
