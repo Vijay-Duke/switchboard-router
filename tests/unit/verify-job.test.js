@@ -1,0 +1,70 @@
+import { describe, expect, it, beforeEach } from "vitest";
+import {
+  startVerify,
+  getVerifyStatus,
+  cancelVerify,
+  __resetVerifyJobForTests,
+} from "../../src/lib/model-probe/verifyJob.js";
+
+// runBatch is real, but we inject fake probe fns + a fake batch runner via deps.
+function makeDeps(overrides = {}) {
+  const upserts = [];
+  return {
+    upserts,
+    upsertProbeResult: async (r) => { upserts.push(r); },
+    getProbesForScope: async () => [],
+    // fake runBatch: every model ok with latency 10
+    runBatch: async ({ models }) => ({
+      results: models.map((m) => ({
+        modelId: m.id, canonicalId: m.canonicalId, kind: m.kind,
+        latencyMs: 10, probeStatus: "ok", failureClass: null,
+        failureMessage: null, checkedAt: "2026-07-13T00:00:00.000Z",
+      })),
+      caps: {},
+    }),
+    ...overrides,
+  };
+}
+
+const MODELS = [
+  { id: "a", canonicalId: "a", kind: "llm" },
+  { id: "b", canonicalId: "b", kind: "llm" },
+  { id: "c", canonicalId: "c", kind: "llm" },
+];
+
+describe("verifyJob core", () => {
+  beforeEach(() => __resetVerifyJobForTests());
+
+  it("runs to completion and counts ok", async () => {
+    const deps = makeDeps();
+    await startVerify({
+      connectionId: "c1", scopeKey: "s1", providerId: "p", providerAlias: "p",
+      models: MODELS, opts: { concurrency: 2, batchSize: 2, timeoutMs: 1000 },
+      baseUrl: "http://x", deps,
+    });
+    // allow background loop to finish
+    await new Promise((r) => setTimeout(r, 50));
+    const s = getVerifyStatus("c1");
+    expect(s.status).toBe("done");
+    expect(s.ok).toBe(3);
+    expect(s.dead).toBe(0);
+    expect(s.total).toBe(3);
+    expect(deps.upserts).toHaveLength(3);
+  });
+
+  it("overlap guard returns the running job instead of starting a second", async () => {
+    let resolveBatch;
+    const gate = new Promise((r) => { resolveBatch = r; });
+    const deps = makeDeps({
+      runBatch: async ({ models }) => {
+        await gate;
+        return { results: models.map((m) => ({ modelId: m.id, canonicalId: m.canonicalId, kind: m.kind, latencyMs: 1, probeStatus: "ok", failureClass: null, failureMessage: null, checkedAt: "t" })), caps: {} };
+      },
+    });
+    const first = startVerify({ connectionId: "c1", scopeKey: "s", providerId: "p", providerAlias: "p", models: MODELS, opts: { concurrency: 1, batchSize: 1, timeoutMs: 1 }, baseUrl: "x", deps });
+    const second = await startVerify({ connectionId: "c1", scopeKey: "s", providerId: "p", providerAlias: "p", models: MODELS, opts: { concurrency: 1, batchSize: 1, timeoutMs: 1 }, baseUrl: "x", deps });
+    expect(second.status).toBe("running");
+    resolveBatch();
+    await first;
+  });
+});
