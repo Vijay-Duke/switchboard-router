@@ -55,17 +55,15 @@ export async function startVerify({ connectionId, scopeKey, providerId, provider
   const getProbesForScope = deps?.getProbesForScope || (async () => []);
   const clamped = clampProbeOptions(opts || {});
 
-  const probes = await getProbesForScope(providerId, scopeKey);
-  const prep = prepareProbeModels({ models, probes, providerAlias });
-  const eligible = prep.eligible;
-
-  const job = {
+  // Reserve the slot synchronously with a placeholder job BEFORE any await.
+  // This prevents concurrent calls from both passing the guard and starting two loops.
+  const placeholderJob = {
     connectionId, scopeKey, providerAlias,
     status: "running",
-    total: eligible.length,
+    total: 0,
     done: 0, ok: 0, dead: 0, retryable: 0,
-    skippedDead: prep.stats.skippedDead,
-    skippedDup: prep.stats.duplicates,
+    skippedDead: 0,
+    skippedDup: 0,
     currentRange: null,
     perModel: {},
     startedAt: new Date().toISOString(),
@@ -73,7 +71,17 @@ export async function startVerify({ connectionId, scopeKey, providerId, provider
     error: null,
     cancel: false,
   };
-  g.jobs.set(connectionId, job);
+  g.jobs.set(connectionId, placeholderJob);
+
+  const probes = await getProbesForScope(providerId, scopeKey);
+  const prep = prepareProbeModels({ models, probes, providerAlias });
+  const eligible = prep.eligible;
+
+  // Fill in the real fields on the same job object that's already in the map.
+  const job = placeholderJob;
+  job.total = eligible.length;
+  job.skippedDead = prep.stats.skippedDead;
+  job.skippedDup = prep.stats.duplicates;
 
   // Run loop in background — do NOT await here.
   (async () => {

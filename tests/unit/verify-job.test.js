@@ -66,5 +66,10 @@ describe("verifyJob core", () => {
     expect(second.status).toBe("running");
     resolveBatch();
     await first;
+    // Wait for the background loop to complete after resolving the gate.
+    await new Promise((r) => setTimeout(r, 50));
+    // Verify that exactly ONE loop's worth of upserts happened (3 models total).
+    // If two loops had run, we'd have 6 upserts (3 from each).
+    expect(deps.upserts).toHaveLength(3);
   });
 });
