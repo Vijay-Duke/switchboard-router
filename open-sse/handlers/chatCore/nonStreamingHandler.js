@@ -1,6 +1,6 @@
 import { FORMATS } from "../../translator/formats.js";
 import { ollamaBodyToOpenAI } from "../../translator/response/ollama-to-openai.js";
-import { projectCompletionToClientFormat } from "../../translator/response/completionProjector.js";
+import { projectCompletionToClientFormat, responsesApiToOpenAICompletion } from "../../translator/response/completionProjector.js";
 import { addBufferToUsage, filterUsageForFormat } from "../../utils/usageTracking.js";
 import { createErrorResult } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
@@ -17,6 +17,20 @@ import { extractThinkTags } from "../../utils/thinkExtractor.js";
  */
 export function translateNonStreamingResponse(responseBody, targetFormat) {
   if (targetFormat === FORMATS.OPENAI) return responseBody;
+
+  // OpenAI Responses API providers (apiType:"responses") return a native
+  // { output: [...] } envelope with no `choices`. Streaming is handled by the
+  // SSE→JSON converter; the non-stream JSON path must project it here or the
+  // response reaches the client with no choices (model-test shows a false
+  // "no completion choices" error, real clients get an empty completion).
+  // Skip if it's already OpenAI-shaped (e.g. body came from the SSE converter).
+  if (targetFormat === FORMATS.OPENAI_RESPONSES) {
+    if (responseBody?.choices) return responseBody;
+    if (Array.isArray(responseBody?.output)) {
+      return responsesApiToOpenAICompletion(responseBody, responseBody?.model);
+    }
+    return responseBody;
+  }
 
   // Gemini / Antigravity
   if (targetFormat === FORMATS.GEMINI || targetFormat === FORMATS.ANTIGRAVITY || targetFormat === FORMATS.GEMINI_CLI || targetFormat === FORMATS.VERTEX) {
