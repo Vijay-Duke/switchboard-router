@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels.js";
+import {
+  getProviderCustomModelRows,
+  getSelectableProviderModelRows,
+} from "@/shared/utils/providerCustomModels.js";
 
 describe("provider custom model rows", () => {
   it("keeps identical model IDs separate per provider", () => {
@@ -79,6 +82,68 @@ describe("provider custom model rows", () => {
         source: "custom",
         type: "llm",
       },
+    ]);
+  });
+});
+
+describe("selectable provider model rows", () => {
+  it("merges static, imported, legacy, and live models into one provider catalog", () => {
+    const rows = getSelectableProviderModelRows({
+      providerAlias: "kr",
+      builtInModels: [{ id: "claude-haiku-4.5", name: "Claude Haiku 4.5" }],
+      customModels: [{ providerAlias: "kr", id: "claude-sonnet-4.6", name: "Kiro Claude Sonnet 4.6", type: "llm" }],
+      modelAliases: { "old-opus": "kr/claude-opus-4.6" },
+      liveModels: [
+        { id: "kr/claude-haiku-4.5", capabilities: { thinking: false } },
+        { id: "kr/claude-sonnet-4.6" },
+        { id: "kr/claude-opus-4.6" },
+        { id: "kr/auto-thinking", capabilities: { thinking: true } },
+      ],
+      liveCatalogLoaded: true,
+    });
+
+    expect(rows.map((row) => row.value)).toEqual([
+      "kr/claude-haiku-4.5",
+      "kr/claude-sonnet-4.6",
+      "kr/claude-opus-4.6",
+      "kr/auto-thinking",
+    ]);
+    expect(rows.find((row) => row.value === "kr/claude-sonnet-4.6")?.name).toBe("Kiro Claude Sonnet 4.6");
+    expect(rows.find((row) => row.value === "kr/claude-opus-4.6")?.name).toBe("old-opus");
+    expect(rows.find((row) => row.value === "kr/auto-thinking")?.capabilities).toEqual({ thinking: true });
+  });
+
+  it("uses a successful live catalog as the availability source of truth", () => {
+    const rows = getSelectableProviderModelRows({
+      providerAlias: "kr",
+      builtInModels: [
+        { id: "available", name: "Available Static Name" },
+        { id: "stale", name: "Stale Static Model" },
+      ],
+      liveModels: [{ id: "kr/available", capabilities: { thinking: true } }],
+      liveCatalogLoaded: true,
+    });
+
+    expect(rows).toEqual([expect.objectContaining({
+      id: "available",
+      name: "Available Static Name",
+      value: "kr/available",
+      capabilities: { thinking: true },
+    })]);
+  });
+
+  it("falls back to registered metadata when live discovery fails", () => {
+    const rows = getSelectableProviderModelRows({
+      providerAlias: "kr",
+      builtInModels: [{ id: "static", name: "Static" }],
+      customModels: [{ providerAlias: "kr", id: "custom", name: "Custom", type: "llm" }],
+      modelAliases: { legacy: "kr/legacy-model" },
+    });
+
+    expect(rows.map((row) => row.value)).toEqual([
+      "kr/static",
+      "kr/custom",
+      "kr/legacy-model",
     ]);
   });
 });

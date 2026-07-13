@@ -25,7 +25,11 @@ async function runOne(model, options) {
   const start = Date.now();
 
   try {
-    const result = await options.ping(fullModel, kind, options.baseUrl, { timeoutMs: options.timeoutMs });
+    const result = await options.ping(fullModel, kind, options.baseUrl, {
+      timeoutMs: options.timeoutMs,
+      signal: options.signal,
+      connectionId: options.connectionId,
+    });
     const classified = classifyFailure(result);
     return {
       modelId: id,
@@ -43,6 +47,9 @@ async function runOne(model, options) {
       checkedAt,
     };
   } catch (error) {
+    // User cancellation is not a model failure. Let the job owner stop the
+    // batch without persisting an incorrect retryable result.
+    if (options.signal?.aborted) throw error;
     const classified = classifyFailure(error);
     return {
       modelId: id,
@@ -62,6 +69,12 @@ async function runOne(model, options) {
   }
 }
 
+async function runAndReport(model, options) {
+  const result = await runOne(model, options);
+  if (options.onResult) await options.onResult(result);
+  return result;
+}
+
 async function runPool(models, options) {
   const results = new Array(models.length);
   let next = 0;
@@ -70,7 +83,7 @@ async function runPool(models, options) {
     while (next < models.length) {
       const index = next;
       next += 1;
-      results[index] = await runOne(models[index], options);
+      results[index] = await runAndReport(models[index], options);
     }
   });
   await Promise.all(workers);
@@ -80,7 +93,7 @@ async function runPool(models, options) {
 /**
  * Run one clamped batch with bounded concurrency.
  *
- * @param {{ models: any[], providerAlias: string, concurrency?: number, batchSize?: number, timeoutMs?: number, baseUrl?: string, warmup?: boolean, ping?: typeof pingModelByKind }} options
+ * @param {{ models: any[], providerAlias: string, concurrency?: number, batchSize?: number, timeoutMs?: number, baseUrl?: string, warmup?: boolean, ping?: typeof pingModelByKind, onResult?: (result: any) => void|Promise<void>, signal?: AbortSignal, connectionId?: string }} options
  */
 export async function runBatch(options) {
   const clamped = clampProbeOptions(options || {});
@@ -90,13 +103,16 @@ export async function runBatch(options) {
     providerAlias: options.providerAlias,
     baseUrl: options.baseUrl,
     ping: options.ping || pingModelByKind,
+    onResult: options.onResult,
+    signal: options.signal,
+    connectionId: options.connectionId,
   };
   if (!runOptions.providerAlias) throw new Error("providerAlias required");
   if (models.length === 0) return { results: [], caps: clamped };
 
   if (options.warmup && models.length > 1) {
     const [first, ...rest] = models;
-    const firstResult = await runOne(first, runOptions);
+    const firstResult = await runAndReport(first, runOptions);
     const restResults = await runPool(rest, runOptions);
     return { results: [firstResult, ...restResults], caps: clamped };
   }

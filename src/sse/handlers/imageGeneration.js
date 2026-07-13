@@ -36,6 +36,7 @@ export async function handleImageGeneration(request) {
 
   const url = new URL(request.url);
   const preferredConnectionId = request.headers.get("x-connection-id") || null;
+  const strictPreferredConnection = request.headers.get("x-switchboard-strict-connection") === "1";
   const wantsStream = (request.headers.get("accept") || "").includes("text/event-stream");
   const binaryOutput = url.searchParams.get("response_format") === "binary";
   const modelStr = body.model;
@@ -60,7 +61,7 @@ export async function handleImageGeneration(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m, callOpts) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, signal: callOpts?.signal }),
+      handleSingleModel: (b, m, callOpts) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, signal: callOpts?.signal }),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -69,10 +70,10 @@ export async function handleImageGeneration(request) {
     });
   }
 
-  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, signal: request?.signal || null });
+  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, signal: request?.signal || null });
 }
 
-async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, signal = null } = {}) {
+async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, signal = null } = {}) {
   const modelInfo = await getModelInfo(modelStr);
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
@@ -97,7 +98,10 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { preferredConnectionId });
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
+      preferredConnectionId,
+      strictPreferredConnection,
+    });
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {

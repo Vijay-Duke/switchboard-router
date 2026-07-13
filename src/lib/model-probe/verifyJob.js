@@ -36,6 +36,7 @@ export function cancelVerify(connectionId) {
   const job = g.jobs.get(connectionId);
   if (!job || job.status !== "running") return false;
   job.cancel = true;
+  job.abortController?.abort(new Error("Verification cancelled"));
   return true;
 }
 
@@ -70,6 +71,7 @@ export async function startVerify({ connectionId, scopeKey, providerId, provider
     finishedAt: null,
     error: null,
     cancel: false,
+    abortController: new AbortController(),
   };
   g.jobs.set(connectionId, placeholderJob);
 
@@ -92,6 +94,24 @@ export async function startVerify({ connectionId, scopeKey, providerId, provider
   job.total = eligible.length;
   job.skippedDead = prep.stats.skippedDead;
   job.skippedDup = prep.stats.duplicates;
+  const recorded = new Set();
+
+  const recordResult = async (result) => {
+    const key = `${result.kind || "llm"}|${result.canonicalId}`;
+    if (recorded.has(key)) return;
+    recorded.add(key);
+    if (upsertProbeResult) {
+      await upsertProbeResult({
+        providerId, scopeKey, modelId: result.canonicalId, kind: result.kind,
+        status: result.probeStatus, latencyMs: result.latencyMs,
+        failureClass: result.failureClass, failureMessage: result.failureMessage, checkedAt: result.checkedAt,
+      });
+    }
+    if (result.probeStatus === "ok") { job.ok += 1; job.perModel[result.canonicalId] = "ok"; }
+    else if (result.probeStatus === "dead") { job.dead += 1; job.perModel[result.canonicalId] = "dead"; }
+    else { job.retryable += 1; job.perModel[result.canonicalId] = "retry"; }
+    job.done += 1;
+  };
 
   // Run loop in background — do NOT await here.
   (async () => {
@@ -106,21 +126,15 @@ export async function startVerify({ connectionId, scopeKey, providerId, provider
           models: chunk, providerAlias,
           concurrency: clamped.concurrency, batchSize: clamped.batchSize,
           timeoutMs: clamped.timeoutMs, warmup: i === 0, baseUrl,
+          connectionId,
+          signal: job.abortController.signal,
+          onResult: recordResult,
         });
 
-        for (const r of results) {
-          if (upsertProbeResult) {
-            await upsertProbeResult({
-              providerId, scopeKey, modelId: r.canonicalId, kind: r.kind,
-              status: r.probeStatus, latencyMs: r.latencyMs,
-              failureClass: r.failureClass, failureMessage: r.failureMessage, checkedAt: r.checkedAt,
-            });
-          }
-          if (r.probeStatus === "ok") { job.ok += 1; job.perModel[r.canonicalId] = "ok"; }
-          else if (r.probeStatus === "dead") { job.dead += 1; job.perModel[r.canonicalId] = "dead"; }
-          else { job.retryable += 1; job.perModel[r.canonicalId] = "retry"; }
-        }
-        job.done += results.length;
+        // Injected/legacy batch runners may not implement onResult yet. Record
+        // their returned results here; recordResult is idempotent.
+        await Promise.all(results.map(recordResult));
+        if (job.cancel) { job.status = "cancelled"; break; }
 
         // The batch was still executed, so persist and count its results before
         // stopping. Otherwise the UI reports 0 tested and leaves every row in
@@ -134,8 +148,12 @@ export async function startVerify({ connectionId, scopeKey, providerId, provider
       }
       if (job.status === "running") job.status = "done";
     } catch (e) {
-      job.status = "error";
-      job.error = e?.message || String(e);
+      if (job.cancel || job.abortController.signal.aborted) {
+        job.status = "cancelled";
+      } else {
+        job.status = "error";
+        job.error = e?.message || String(e);
+      }
     } finally {
       job.currentRange = null;
       job.finishedAt = new Date().toISOString();

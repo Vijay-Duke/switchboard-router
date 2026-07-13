@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import Modal from "./Modal";
 import ProviderIcon from "./ProviderIcon";
@@ -9,6 +10,7 @@ import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, AI_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
 import { reportClientError } from "@/shared/utils/clientFeedback";
+import { getSelectableProviderModelRows } from "@/shared/utils/providerCustomModels";
 
 // Provider order: OAuth first, then Free Tier, then API Key (matches dashboard/providers)
 const PROVIDER_ORDER = [
@@ -20,6 +22,8 @@ const PROVIDER_ORDER = [
 
 // Providers that need no auth — always show in model selector
 const NO_AUTH_PROVIDER_IDS = Object.keys(FREE_PROVIDERS).filter(id => FREE_PROVIDERS[id].noAuth);
+const EMPTY_ARRAY = Object.freeze([]);
+const EMPTY_OBJECT = Object.freeze({});
 
 export default function ModelSelectModal({
   isOpen,
@@ -27,15 +31,20 @@ export default function ModelSelectModal({
   onSelect,
   onDeselect,
   selectedModel,
-  activeProviders = [],
+  activeProviders = EMPTY_ARRAY,
   title = "Select Model",
-  modelAliases = {},
+  modelAliases = EMPTY_OBJECT,
   kindFilter = null,
-  addedModelValues = [],
+  addedModelValues = EMPTY_ARRAY,
   closeOnSelect = true,
   selectionHint,
   excludeCombo,
 }) {
+  const activeProviderKey = activeProviders
+    .map((provider) => provider?.id || provider?.connectionId || provider?.provider || "")
+    .filter(Boolean)
+    .sort()
+    .join("|");
   // Filter activeProviders by serviceKinds when kindFilter set (e.g. "webSearch", "webFetch")
   const filteredActiveProviders = useMemo(() => {
     if (!kindFilter) return activeProviders;
@@ -51,6 +60,31 @@ export default function ModelSelectModal({
   const [providerNodes, setProviderNodes] = useState([]);
   const [customModels, setCustomModels] = useState([]);
   const [disabledModels, setDisabledModels] = useState({});
+  const liveModelsQuery = useQuery({
+    queryKey: ["model-select", "live-models", activeProviderKey],
+    enabled: isOpen && !kindFilter,
+    staleTime: 15_000,
+    queryFn: async () => {
+      const res = await fetch("/api/v1/models", { cache: "no-store" });
+      if (!res.ok) throw new Error(`Failed to fetch live models: ${res.status}`);
+      const data = await res.json();
+      return Array.isArray(data.data) ? data.data : [];
+    },
+  });
+  const liveModels = liveModelsQuery.data || EMPTY_ARRAY;
+  const liveModelsByAlias = useMemo(() => {
+    const grouped = new Map();
+    for (const model of liveModels) {
+      if (typeof model?.id !== "string") continue;
+      const separator = model.id.indexOf("/");
+      if (separator <= 0) continue;
+      const alias = model.id.slice(0, separator);
+      const entries = grouped.get(alias);
+      if (entries) entries.push(model);
+      else grouped.set(alias, [model]);
+    }
+    return grouped;
+  }, [liveModels]);
 
   const fetchCombos = async () => {
     try {
@@ -284,39 +318,13 @@ export default function ModelSelectModal({
         };
       } else {
         const hardcodedModels = getModelsByProviderId(providerId);
-        const hardcodedIds = new Set(hardcodedModels.map((m) => m.id));
-
-        // Custom models: if no hardcoded models (e.g. openrouter), show all aliases for this provider
-        // Otherwise only show aliases where aliasName === modelId ("Add Model" button pattern)
-        const hasHardcoded = hardcodedModels.length > 0;
-        const customAliasModels = Object.entries(modelAliases)
-          .filter(([aliasName, fullModel]) =>
-            fullModel.startsWith(`${alias}/`) &&
-            (hasHardcoded ? aliasName === fullModel.replace(`${alias}/`, "") : true) &&
-            !hardcodedIds.has(fullModel.replace(`${alias}/`, ""))
-          )
-          .map(([aliasName, fullModel]) => {
-            const modelId = fullModel.replace(`${alias}/`, "");
-            return { id: modelId, name: aliasName, value: fullModel, isCustom: true };
-          });
-
-        // Custom models registered via /api/models/custom (provider "Add Model" button)
-        const customAliasIds = new Set(customAliasModels.map((m) => m.id));
-        const customRegisteredModels = customModels
-          .filter((m) => m.providerAlias === alias && !hardcodedIds.has(m.id) && !customAliasIds.has(m.id))
-          .map((m) => ({ id: m.id, name: m.name || m.id, value: `${alias}/${m.id}`, isCustom: true }));
-
-        const merged = [
-          ...hardcodedModels.map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) })),
-          ...customAliasModels,
-          ...customRegisteredModels,
-        ];
-        // Dedupe by value (alias may equal hardcoded id, causing React key collision)
-        const seen = new Set();
-        let allModels = filterByKind(merged.filter((m) => {
-          if (seen.has(m.value)) return false;
-          seen.add(m.value);
-          return true;
+        let allModels = filterByKind(getSelectableProviderModelRows({
+          providerAlias: alias,
+          builtInModels: hardcodedModels,
+          customModels,
+          modelAliases,
+          liveModels: liveModelsByAlias.get(alias) || EMPTY_ARRAY,
+          liveCatalogLoaded: liveModelsQuery.isSuccess,
         }));
 
         // Provider-as-model fallback: providers that support the kind but have no hardcoded models
@@ -352,7 +360,7 @@ export default function ModelSelectModal({
     });
 
     return groups;
-  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, activeProviders]);
+  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, liveModelsByAlias, liveModelsQuery.isSuccess, kindFilter, activeProviders]);
 
   // Filter combos by search query (and hide combos when kindFilter is set — combos are LLM-only by design)
   const filteredCombos = useMemo(() => {

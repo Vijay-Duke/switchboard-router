@@ -2,6 +2,7 @@
 import { getApiKeys } from "@/lib/db/index.js";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 import { CLI_TOKEN_HEADER, getCliToken } from "@/shared/utils/cliToken.js";
+import { mergeAbortSignals } from "open-sse/utils/abort.js";
 
 const DEFAULT_MODEL_TEST_TIMEOUT_MS = 60_000;
 
@@ -51,15 +52,20 @@ async function getInternalHeaders() {
   return headers;
 }
 
-function timeoutSignal(timeoutMs) {
+function timeoutSignal(timeoutMs, externalSignal = null) {
   const ms = Number.isFinite(Number(timeoutMs)) ? Number(timeoutMs) : DEFAULT_MODEL_TEST_TIMEOUT_MS;
-  return AbortSignal.timeout(Math.max(1, Math.floor(ms)));
+  const timeout = AbortSignal.timeout(Math.max(1, Math.floor(ms)));
+  return mergeAbortSignals(externalSignal, timeout);
 }
 
 export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`, options = {}) {
   const headers = await getInternalHeaders();
+  if (options.connectionId) {
+    headers["x-connection-id"] = options.connectionId;
+    headers["x-switchboard-strict-connection"] = "1";
+  }
   const start = Date.now();
-  const signal = timeoutSignal(options.timeoutMs || DEFAULT_MODEL_TEST_TIMEOUT_MS);
+  const signal = timeoutSignal(options.timeoutMs || DEFAULT_MODEL_TEST_TIMEOUT_MS, options.signal);
 
   if (kind === "embedding") {
     const res = await fetch(`${baseUrl}/api/v1/embeddings`, {

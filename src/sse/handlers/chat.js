@@ -258,6 +258,8 @@ export async function handleChat(request, clientRawRequest = null) {
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
   const userAgent = request?.headers?.get("user-agent") || "";
+  const preferredConnectionId = request?.headers?.get("x-connection-id") || null;
+  const strictPreferredConnection = request?.headers?.get("x-switchboard-strict-connection") === "1";
   const bypassResponse = handleBypassRequest(body, modelStr, userAgent, !!settings.ccFilterNaming);
   if (bypassResponse) return bypassResponse.response || bypassResponse;
 
@@ -447,13 +449,21 @@ export async function handleChat(request, clientRawRequest = null) {
   } catch {}
   const vaultActive = !!(settings.tokenSaver?.vault) && Array.isArray(body.tools) && body.tools.length > 0 && (wire === "openai" || wire === "claude");
   if (!vaultActive) {
-    return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, { signal: request?.signal || null });
+    return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, {
+      signal: request?.signal || null,
+      preferredConnectionId,
+      strictPreferredConnection,
+    });
   }
 
   try {
     const conversationId = vaultConversationId(body.messages, hashKey(apiKey));
     if (!conversationId) {
-      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, { signal: request?.signal || null });
+      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, {
+        signal: request?.signal || null,
+        preferredConnectionId,
+        strictPreferredConnection,
+      });
     }
     await repairInboundVaultResults(body, { conversationId });
     injectVaultTool(body, wire);
@@ -465,7 +475,7 @@ export async function handleChat(request, clientRawRequest = null) {
         clientRawRequest,
         request,
         apiKey,
-        { signal: request?.signal || null, vaultInternal: !!options?.vaultInternal, vaultStore: true, vaultConversationId: conversationId },
+        { signal: request?.signal || null, preferredConnectionId, strictPreferredConnection, vaultInternal: !!options?.vaultInternal, vaultStore: true, vaultConversationId: conversationId },
       ),
       body,
       wire,
@@ -474,7 +484,11 @@ export async function handleChat(request, clientRawRequest = null) {
       log,
     });
   } catch {
-    return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, { signal: request?.signal || null });
+    return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, {
+      signal: request?.signal || null,
+      preferredConnectionId,
+      strictPreferredConnection,
+    });
   }
 }
 
@@ -672,7 +686,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
+      preferredConnectionId: callOpts?.preferredConnectionId || null,
+      strictPreferredConnection: callOpts?.strictPreferredConnection === true,
+    });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {

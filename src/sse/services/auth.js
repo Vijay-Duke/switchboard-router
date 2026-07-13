@@ -33,6 +33,7 @@ function withProviderSelectionLock(providerId, fn) {
  * @param {string} provider - Provider name
  * @param {Set<string>|string|null} excludeConnectionIds - Connection ID(s) to exclude (for retry with next account)
  * @param {string|null} model - Model name for per-model rate limit filtering
+ * @param {{preferredConnectionId?: string|null, strictPreferredConnection?: boolean}} options
  */
 export async function getProviderCredentials(provider, excludeConnectionIds = null, model = null, options = {}) {
   // Normalize to Set for consistent handling
@@ -40,6 +41,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     ? excludeConnectionIds
     : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
   const preferredConnectionId = options?.preferredConnectionId || null;
+  const strictPreferredConnection = options?.strictPreferredConnection === true;
   // Resolve alias early so the lock is keyed by canonical provider id
   const providerId = resolveProviderId(provider);
 
@@ -73,15 +75,25 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       return null;
     }
 
+    // Internal verification can require one exact account. Normal requests
+    // retain the existing preferred-then-fallback behavior.
+    const candidateConnections = strictPreferredConnection && preferredConnectionId
+      ? connections.filter((connection) => connection.id === preferredConnectionId)
+      : connections;
+    if (candidateConnections.length === 0) {
+      log.warn("AUTH", `${provider} | requested connection is unavailable`);
+      return null;
+    }
+
     // Filter out model-locked and excluded connections
-    const availableConnections = connections.filter(c => {
+    const availableConnections = candidateConnections.filter(c => {
       if (excludeSet.has(c.id)) return false;
       if (isModelLockActive(c, model)) return false;
       return true;
     });
 
-    log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length}`);
-    connections.forEach(c => {
+    log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${candidateConnections.length}`);
+    candidateConnections.forEach(c => {
       const excluded = excludeSet.has(c.id);
       const locked = isModelLockActive(c, model);
       if (excluded || locked) {
@@ -92,12 +104,12 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     if (availableConnections.length === 0) {
       // Find earliest lock expiry across all connections for retry timing
-      const lockedConns = connections.filter(c => isModelLockActive(c, model));
+      const lockedConns = candidateConnections.filter(c => isModelLockActive(c, model));
       const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
       const earliest = expiries.sort()[0] || null;
       if (earliest) {
         const earliestConn = lockedConns[0];
-        log.warn("AUTH", `${provider} | all ${connections.length} accounts locked for ${model || "all"} (${formatRetryAfter(earliest)}) | lastError=${earliestConn?.lastError?.slice(0, 50)}`);
+        log.warn("AUTH", `${provider} | all ${candidateConnections.length} accounts locked for ${model || "all"} (${formatRetryAfter(earliest)}) | lastError=${earliestConn?.lastError?.slice(0, 50)}`);
         return {
           allRateLimited: true,
           retryAfter: earliest,
@@ -106,7 +118,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           lastErrorCode: earliestConn?.errorCode || null
         };
       }
-      log.warn("AUTH", `${provider} | all ${connections.length} accounts unavailable`);
+      log.warn("AUTH", `${provider} | all ${candidateConnections.length} accounts unavailable`);
       return null;
     }
 

@@ -83,6 +83,61 @@ describe("verifyJob core", () => {
     expect(s.done).toBeLessThanOrEqual(3);
   });
 
+  it("updates the snapshot as individual results finish inside a batch", async () => {
+    let releaseBatch;
+    const batchGate = new Promise((resolve) => { releaseBatch = resolve; });
+    const firstResult = {
+      modelId: "a", canonicalId: "a", kind: "llm", latencyMs: 1,
+      probeStatus: "ok", failureClass: null, failureMessage: null, checkedAt: "t",
+    };
+    const secondResult = { ...firstResult, modelId: "b", canonicalId: "b" };
+    const deps = makeDeps({
+      runBatch: async ({ onResult }) => {
+        await onResult(firstResult);
+        await batchGate;
+        await onResult(secondResult);
+        return { results: [firstResult, secondResult], caps: {} };
+      },
+    });
+
+    await startVerify({
+      connectionId: "incremental", scopeKey: "s", providerId: "p", providerAlias: "p",
+      models: MODELS.slice(0, 2), opts: { concurrency: 2, batchSize: 2, timeoutMs: 1000 },
+      baseUrl: "x", deps,
+    });
+
+    await vi.waitFor(() => expect(getVerifyStatus("incremental").done).toBe(1));
+    expect(getVerifyStatus("incremental").perModel).toEqual({ a: "ok", b: "testing" });
+
+    releaseBatch();
+    await vi.waitFor(() => expect(getVerifyStatus("incremental").status).toBe("done"));
+    expect(getVerifyStatus("incremental").done).toBe(2);
+  });
+
+  it("aborts the active batch immediately when cancelled", async () => {
+    let releaseBatch;
+    let observedSignal = null;
+    const batchGate = new Promise((resolve) => { releaseBatch = resolve; });
+    const deps = makeDeps({
+      runBatch: async ({ signal }) => {
+        observedSignal = signal;
+        await batchGate;
+        return { results: [], caps: {} };
+      },
+    });
+
+    await startVerify({
+      connectionId: "abort", scopeKey: "s", providerId: "p", providerAlias: "p",
+      models: MODELS, opts: { concurrency: 1, batchSize: 3, timeoutMs: 1000 },
+      baseUrl: "x", deps,
+    });
+    cancelVerify("abort");
+    expect(observedSignal?.aborted).toBe(true);
+
+    releaseBatch();
+    await vi.waitFor(() => expect(getVerifyStatus("abort").status).toBe("cancelled"));
+  });
+
   it("all-auth-failure batch sets status error", async () => {
     const deps = makeDeps({
       runBatch: async ({ models }) => ({

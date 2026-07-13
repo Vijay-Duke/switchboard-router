@@ -28,6 +28,8 @@ export async function handleStt(request) {
   }
 
   const modelStr = formData.get("model");
+  const preferredConnectionId = request.headers.get("x-connection-id") || null;
+  const strictPreferredConnection = request.headers.get("x-switchboard-strict-connection") === "1";
   log.request("POST", `/v1/audio/transcriptions | ${modelStr}`);
 
   const settings = await getSettings();
@@ -58,7 +60,10 @@ export async function handleStt(request) {
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
+      preferredConnectionId,
+      strictPreferredConnection,
+    });
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {

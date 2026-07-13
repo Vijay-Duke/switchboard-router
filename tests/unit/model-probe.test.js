@@ -157,6 +157,17 @@ describe("runBatch concurrency", () => {
     expect(ping).toHaveBeenCalledTimes(10);
   });
 
+  it("pins probe requests to the selected provider connection", async () => {
+    const ping = vi.fn(async () => ({ ok: true, latencyMs: 1, status: 200 }));
+    await runBatch({
+      models: [{ id: "m1" }],
+      providerAlias: "test",
+      connectionId: "connection-123",
+      ping,
+    });
+    expect(ping.mock.calls[0][3]).toMatchObject({ connectionId: "connection-123" });
+  });
+
   it("runBatches processes all models in chunks", async () => {
     const ping = vi.fn(async () => ({ ok: false, status: 404, error: "HTTP 404 model not found", latencyMs: 1 }));
     const models = Array.from({ length: 25 }, (_, i) => ({ id: `n${i}` }));
@@ -169,6 +180,62 @@ describe("runBatch concurrency", () => {
     });
     expect(results).toHaveLength(25);
     expect(results.every((r) => r.probeStatus === "dead")).toBe(true);
+  });
+
+  it("publishes each completed model before the rest of the batch finishes", async () => {
+    let releaseSlow;
+    const slowGate = new Promise((resolve) => { releaseSlow = resolve; });
+    const onResult = vi.fn();
+    const ping = vi.fn(async (fullModel) => {
+      if (!fullModel.endsWith("/fast")) await slowGate;
+      return { ok: true, latencyMs: 1, status: 200 };
+    });
+
+    let settled = false;
+    const batchPromise = runBatch({
+      models: [{ id: "fast" }, { id: "slow-a" }, { id: "slow-b" }],
+      providerAlias: "test",
+      concurrency: 3,
+      batchSize: 3,
+      timeoutMs: 5000,
+      ping,
+      onResult,
+    }).finally(() => { settled = true; });
+
+    await vi.waitFor(() => expect(onResult).toHaveBeenCalledTimes(1));
+    expect(onResult.mock.calls[0][0].canonicalId).toBe("fast");
+    expect(settled).toBe(false);
+
+    releaseSlow();
+    await batchPromise;
+    expect(onResult).toHaveBeenCalledTimes(3);
+  });
+
+  it("aborts in-flight probes without publishing cancelled results", async () => {
+    const controller = new AbortController();
+    const onResult = vi.fn();
+    const ping = vi.fn(async (_model, _kind, _baseUrl, options) => {
+      await new Promise((resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason || new Error("aborted")), { once: true });
+      });
+      return { ok: true, latencyMs: 1, status: 200 };
+    });
+
+    const batchPromise = runBatch({
+      models: [{ id: "slow" }],
+      providerAlias: "test",
+      concurrency: 1,
+      batchSize: 1,
+      timeoutMs: 5000,
+      ping,
+      onResult,
+      signal: controller.signal,
+    });
+
+    await vi.waitFor(() => expect(ping).toHaveBeenCalledTimes(1));
+    controller.abort(new Error("cancelled"));
+    await expect(batchPromise).rejects.toThrow("cancelled");
+    expect(onResult).not.toHaveBeenCalled();
   });
 });
 

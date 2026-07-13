@@ -36,6 +36,8 @@ export async function handleEmbeddings(request) {
   }
   const url = new URL(request.url);
   const modelStr = body.model;
+  const preferredConnectionId = request.headers.get("x-connection-id") || null;
+  const strictPreferredConnection = request.headers.get("x-switchboard-strict-connection") === "1";
 
   log.request("POST", `${url.pathname} | ${modelStr}`);
 
@@ -84,7 +86,10 @@ export async function handleEmbeddings(request) {
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
+      preferredConnectionId,
+      strictPreferredConnection,
+    });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
