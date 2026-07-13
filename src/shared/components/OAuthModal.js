@@ -189,6 +189,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
               _region: data._region,
               _authMethod: data._authMethod,
               _startUrl: data._startUrl,
+              _profileArn: idcConfig?.profileArn,
             }
           : provider === "qoder"
           ? {
@@ -700,5 +701,6 @@ OAuthModal.propTypes = {
   idcConfig: PropTypes.shape({
     startUrl: PropTypes.string,
     region: PropTypes.string,
+    profileArn: PropTypes.string,
   }),
 };

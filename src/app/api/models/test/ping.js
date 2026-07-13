@@ -3,6 +3,8 @@ import { getApiKeys } from "@/lib/db/index.js";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 import { CLI_TOKEN_HEADER, getCliToken } from "@/shared/utils/cliToken.js";
 
+const DEFAULT_MODEL_TEST_TIMEOUT_MS = 60_000;
+
 function createSilentWavFile() {
   const sampleRate = 16000;
   const channels = 1;
@@ -50,14 +52,14 @@ async function getInternalHeaders() {
 }
 
 function timeoutSignal(timeoutMs) {
-  const ms = Number.isFinite(Number(timeoutMs)) ? Number(timeoutMs) : 15000;
+  const ms = Number.isFinite(Number(timeoutMs)) ? Number(timeoutMs) : DEFAULT_MODEL_TEST_TIMEOUT_MS;
   return AbortSignal.timeout(Math.max(1, Math.floor(ms)));
 }
 
 export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`, options = {}) {
   const headers = await getInternalHeaders();
   const start = Date.now();
-  const signal = timeoutSignal(options.timeoutMs || 15000);
+  const signal = timeoutSignal(options.timeoutMs || DEFAULT_MODEL_TEST_TIMEOUT_MS);
 
   if (kind === "embedding") {
     const res = await fetch(`${baseUrl}/api/v1/embeddings`, {

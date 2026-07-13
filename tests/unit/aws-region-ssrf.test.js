@@ -41,4 +41,18 @@ describe("AWS region validation", () => {
     const urls = exec.getOrderedBaseUrls(creds("eu-west-2"));
     expect(urls.some((u) => u.includes("eu-west-2.amazonaws.com"))).toBe(true);
   });
+
+  it("kiro executor uses the profile region instead of the Identity Center region", () => {
+    const exec = new KiroExecutor();
+    const urls = exec.getOrderedBaseUrls({
+      providerSpecificData: {
+        authMethod: "idc",
+        region: "eu-west-1",
+        profileArn: "arn:aws:codewhisperer:eu-central-1:123456789012:profile/PROFILE",
+      },
+    });
+
+    expect(urls.some((u) => u.includes("eu-central-1.amazonaws.com"))).toBe(true);
+    expect(urls.some((u) => u.includes("eu-west-1.amazonaws.com"))).toBe(false);
+  });
 });

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import { Modal, Button, Input } from "@/shared/components";
+import { parseKiroProfileArn } from "open-sse/utils/kiroProfileArn.js";
 
 /**
  * Kiro Auth Method Selection Modal
@@ -12,6 +13,7 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
   const [selectedMethod, setSelectedMethod] = useState(null);
   const [idcStartUrl, setIdcStartUrl] = useState("");
   const [idcRegion, setIdcRegion] = useState("us-east-1");
+  const [idcProfileArn, setIdcProfileArn] = useState("");
   const [refreshToken, setRefreshToken] = useState("");
   const [cliProxyJson, setCliProxyJson] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -141,7 +143,16 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
       setError("Please enter your IDC start URL");
       return;
     }
-    onMethodSelect("idc", { startUrl: idcStartUrl.trim(), region: idcRegion });
+    const profile = parseKiroProfileArn(idcProfileArn);
+    if (!profile) {
+      setError("Please enter a valid Kiro profile ARN from `kiro-cli whoami`");
+      return;
+    }
+    onMethodSelect("idc", {
+      startUrl: idcStartUrl.trim(),
+      region: idcRegion,
+      profileArn: profile.profileArn,
+    });
   };
 
   const handleApiKeyImport = async () => {
@@ -336,6 +347,21 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
               />
               <p className="text-xs text-text-muted mt-1">
                 AWS region for your Identity Center (default: us-east-1)
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Kiro Profile ARN <span className="text-red-500">*</span>
+              </label>
+              <Input
+                value={idcProfileArn}
+                onChange={(e) => setIdcProfileArn(e.target.value)}
+                placeholder="arn:aws:codewhisperer:eu-central-1:123456789012:profile/PROFILE"
+                className="font-mono text-sm"
+              />
+              <p className="text-xs text-text-muted mt-1">
+                Run <code>kiro-cli whoami</code> to find this. Its region controls inference and may differ from Identity Center.
               </p>
             </div>
 

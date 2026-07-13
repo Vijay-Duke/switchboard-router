@@ -6,6 +6,7 @@ import { refreshKiroToken } from "../services/tokenRefresh.js";
 import { SSE_DONE, SSE_HEADERS } from "../utils/sseConstants.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { safeAwsRegion } from "../utils/awsRegion.js";
+import { parseKiroProfileArn } from "../utils/kiroProfileArn.js";
 
 /**
  * KiroExecutor - Executor for Kiro AI (AWS CodeWhisperer)
@@ -74,7 +75,9 @@ export class KiroExecutor extends BaseExecutor {
       authMethod === "api_key" || authMethod === "external_idp" || authMethod === "idc";
     if (!isCodeWhispererSurface) return baseUrls;
 
-    const region = safeAwsRegion((credentials?.providerSpecificData?.region || "").trim());
+    const profile = parseKiroProfileArn(credentials?.providerSpecificData?.profileArn);
+    const region = profile?.region
+      || safeAwsRegion((credentials?.providerSpecificData?.region || "").trim());
     const regionalize = (u) =>
       region && region !== "us-east-1" && u.includes("amazonaws.com")
         ? u.replace(/([a-z]+)\.[a-z0-9-]+\.amazonaws\.com/, `$1.${region}.amazonaws.com`)

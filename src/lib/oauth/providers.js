@@ -37,6 +37,7 @@ import {
   extractCodexAccountInfo,
   fetchKiroProfileArn,
 } from "./providerHelpers";
+import { parseKiroProfileArn } from "open-sse/utils/kiroProfileArn.js";
 
 export { extractCodexAccountInfo, fetchKiroProfileArn };
 
@@ -865,6 +866,10 @@ const PROVIDERS = {
     pollToken: async (config, deviceCode, codeVerifier, extraData) => {
       const region = extraData?._region || "us-east-1";
       assertValidAwsRegion(region);
+      const suppliedProfile = parseKiroProfileArn(extraData?._profileArn);
+      if (extraData?._authMethod === "idc" && !suppliedProfile) {
+        throw new Error("A valid Kiro profile ARN is required for IAM Identity Center");
+      }
       const tokenUrl = `https://oidc.${region}.amazonaws.com/token`;
       const response = await fetch(tokenUrl, {
         method: "POST",
@@ -896,7 +901,7 @@ const PROVIDERS = {
             access_token: data.accessToken,
             refresh_token: data.refreshToken,
             expires_in: data.expiresIn,
-            profile_arn: data?.profileArn || null,
+            profile_arn: data?.profileArn || suppliedProfile?.profileArn || null,
             // Store client credentials for refresh
             _clientId: extraData?._clientId,
             _clientSecret: extraData?._clientSecret,

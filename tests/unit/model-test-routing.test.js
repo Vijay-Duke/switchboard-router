@@ -191,4 +191,28 @@ describe("model test route kind routing", () => {
     expect(body.status).toBe(502);
     expect(body.error).toBe("HTTP 502: bad upstream");
   });
+
+  it("allows slow single-model checks up to 60 seconds", async () => {
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: "ok" } }],
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout")
+      .mockReturnValue(new AbortController().signal);
+    const { POST } = await import("../../src/app/api/models/test/route.js");
+    const req = new Request("http://localhost/api/models/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "kr/qwen3-coder-next" }),
+    });
+
+    const res = await POST(req);
+    const body = await res.json();
+
+    expect(body.ok).toBe(true);
+    expect(timeoutSpy).toHaveBeenCalledWith(60_000);
+    timeoutSpy.mockRestore();
+  });
 });
