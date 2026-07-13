@@ -612,6 +612,16 @@ export default function ProviderDetailPage() {
         return;
       }
 
+      let deadSet = new Set();
+      try {
+        const pr = await fetch(`/api/providers/${activeConnection.id}/model-probes`, { cache: "no-store" });
+        const pd = await pr.json().catch(() => ({}));
+        for (const p of pd.probes || []) {
+          if (p.status === "dead") deadSet.add(p.modelId);
+        }
+      } catch { /* no dead cache — import everything */ }
+      let skippedDead = 0;
+
       const builtInIds = new Set(models.map((m) => m.id));
       const toAdd = [];
       const toReenable = [];
@@ -621,6 +631,7 @@ export default function ProviderDetailPage() {
         const normalized = normalizeImportedModel(raw, providerStorageAlias);
         if (!normalized) continue;
         const { id, name, type } = normalized;
+        if (deadSet.has(canonicalModelId(id, providerStorageAlias))) { skippedDead += 1; continue; }
         const dedupeKey = `${type}|${id}`;
         if (seen.has(dedupeKey)) continue;
         seen.add(dedupeKey);
@@ -698,6 +709,20 @@ export default function ProviderDetailPage() {
         }
         if (data.warning) msg += ` · ${data.warning}`;
         setImportModelsMessage(msg);
+      }
+      if (skippedDead > 0) {
+        setImportModelsMessage((prev) => `${prev} · ${skippedDead} skipped (known dead)`);
+      }
+      // Auto-verify the freshly imported list.
+      if (added > 0) {
+        try {
+          const allModels = [...models, ...toAdd.map((m) => ({ id: m.id, name: m.name, kind: m.type }))];
+          await fetch(`/api/providers/${activeConnection.id}/model-probes/verify/start`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ models: allModels, providerAlias: providerStorageAlias }),
+          });
+        } catch { /* auto-verify best-effort */ }
       }
     } catch (error) {
       reportClientError("Error importing models:", error);
