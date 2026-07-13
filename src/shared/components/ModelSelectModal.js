@@ -34,6 +34,7 @@ export default function ModelSelectModal({
   addedModelValues = [],
   closeOnSelect = true,
   selectionHint,
+  excludeCombo,
 }) {
   // Filter activeProviders by serviceKinds when kindFilter set (e.g. "webSearch", "webFetch")
   const filteredActiveProviders = useMemo(() => {
@@ -356,10 +357,11 @@ export default function ModelSelectModal({
   // Filter combos by search query (and hide combos when kindFilter is set — combos are LLM-only by design)
   const filteredCombos = useMemo(() => {
     if (kindFilter) return [];
-    if (!searchQuery.trim()) return combos;
+    const availableCombos = combos.filter((combo) => combo.name !== excludeCombo);
+    if (!searchQuery.trim()) return availableCombos;
     const query = searchQuery.toLowerCase();
-    return combos.filter(c => c.name.toLowerCase().includes(query));
-  }, [combos, searchQuery, kindFilter]);
+    return availableCombos.filter((combo) => combo.name.toLowerCase().includes(query));
+  }, [combos, searchQuery, kindFilter, excludeCombo]);
 
   // Sort models alphabetically, with added models floated to top
   const sortModels = useCallback((models) => {
@@ -474,7 +476,7 @@ export default function ModelSelectModal({
                 return (
                   <button
                     key={combo.id}
-                    onClick={() => handleSelect({ id: combo.name, name: combo.name, value: combo.name })}
+                    onClick={() => handleSelect({ id: combo.name, name: combo.name, value: combo.name, kind: "combo" })}
                     className={`
                       px-2 py-1 rounded-xl text-xs font-medium transition-all border hover:cursor-pointer flex items-center gap-1
                       ${isSelected
@@ -489,6 +491,7 @@ export default function ModelSelectModal({
                       <span className="material-symbols-outlined leading-none" style={{ fontSize: "10px" }}>check</span>
                     )}
                     {combo.name}
+                    <span className="rounded bg-black/10 px-1 py-px text-[9px] font-normal opacity-70 dark:bg-white/10">combo</span>
                   </button>
                 );
               })}
@@ -596,4 +599,5 @@ ModelSelectModal.propTypes = {
   addedModelValues: PropTypes.arrayOf(PropTypes.string),
   closeOnSelect: PropTypes.bool,
   selectionHint: PropTypes.string,
+  excludeCombo: PropTypes.string,
 };

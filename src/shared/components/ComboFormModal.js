@@ -170,7 +170,7 @@ export default function ComboFormModal({ isOpen, combo, onClose, onSave, activeP
         onSelect={handleAddModel} onDeselect={handleDeselectModel}
         activeProviders={activeProviders} modelAliases={modelAliases}
         title="Add Model to Combo" kindFilter={kindFilter}
-        addedModelValues={models} closeOnSelect={false} />
+        addedModelValues={models} closeOnSelect={false} excludeCombo={combo?.name} />
     </>
   );
 }

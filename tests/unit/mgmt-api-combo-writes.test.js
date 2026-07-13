@@ -170,6 +170,22 @@ describe("management API combo writes", () => {
     });
   });
 
+  it("fails closed (503) when a member lookup errors during cycle validation", async () => {
+    // Name itself is available, but resolving the nested member throws — we must
+    // refuse rather than treat the unresolved member as a leaf and risk a cycle.
+    mocks.getComboByName.mockImplementation(async (name) => {
+      if (name === "nested-x") throw new Error("db read failed");
+      return null;
+    });
+    const response = await combosRoute.POST(request("http://localhost:20128/api/mgmt/v1/combos", {
+      name: "parent-combo",
+      models: ["nested-x"],
+    }));
+
+    expect(response.status).toBe(503);
+    expect(mocks.createCombo).not.toHaveBeenCalled();
+  });
+
   it("rejects a non-object strategy body", async () => {
     const response = await strategyRoute.PUT(
       request("http://localhost:20128/api/mgmt/v1/combos/combo-1/strategy", ["auto"], "PUT"),

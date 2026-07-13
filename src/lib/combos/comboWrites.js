@@ -9,6 +9,7 @@ import {
   updateCombo as updateComboRecord,
   updateSettings,
 } from "@/lib/db/index.js";
+import { MAX_COMBO_DEPTH } from "open-sse/config/runtimeConfig.js";
 import { resetComboRotation } from "open-sse/services/combo.js";
 
 /** Combo names are part of the public model identifier. */
@@ -57,6 +58,75 @@ export async function ensureComboNameAvailable(name, currentId) {
   if (existing && existing.id !== currentId) {
     throw new ComboWriteError(DUPLICATE_COMBO_NAME_ERROR);
   }
+}
+
+/**
+ * Reject combo cycles and nesting deeper than the router supports.
+ * This is an integrity gate, so it FAILS CLOSED: if a member lookup errors we
+ * cannot prove the absence of a cycle, so we refuse the write (503) rather than
+ * treat the unresolved member as a leaf and risk persisting a cycle.
+ * @param {string} comboName
+ * @param {unknown} models
+ * @returns {Promise<void>}
+ */
+export async function assertNoComboCycle(comboName, models) {
+  const proposedModels = Array.isArray(models) ? models : [];
+  if (proposedModels.includes(comboName)) {
+    throw new ComboWriteError(`Combo "${comboName}" cannot contain itself`, 400);
+  }
+
+  // Memoize the greatest depth each node was expanded at. Skipping is only safe
+  // when the node was already expanded at an equal-or-deeper position — a node
+  // first reached on a short branch must still be re-expanded when a LATER, longer
+  // branch reaches it, or a diamond whose deep branch exceeds MAX_COMBO_DEPTH would
+  // pass validation and only fail at runtime. Depths are bounded by the cap, so
+  // each node is re-expanded at most a handful of times.
+  const expandedDepth = new Map([[comboName, 1]]);
+
+  /**
+   * @param {unknown[]} memberModels
+   * @param {string[]} path
+   * @param {Set<string>} pathNames
+   * @returns {Promise<void>}
+   */
+  async function walk(memberModels, path, pathNames) {
+    if (!Array.isArray(memberModels)) return;
+
+    for (const model of memberModels) {
+      if (typeof model !== "string") continue;
+      if (pathNames.has(model)) {
+        throw new ComboWriteError(`Combo cycle detected: ${path.join(" → ")} → ${model}`, 400);
+      }
+      const modelDepth = path.length + 1;
+      const seenDepth = expandedDepth.get(model);
+      if (seenDepth !== undefined && seenDepth >= modelDepth) continue;
+
+      let nestedCombo;
+      try {
+        nestedCombo = await getComboByName(model);
+      } catch {
+        // Cannot resolve this member → cannot rule out a cycle → refuse the write.
+        throw new ComboWriteError(
+          `Combo validation unavailable (member lookup failed for "${model}") — please retry`,
+          503,
+        );
+      }
+      if (!nestedCombo) continue;
+
+      const nestedPath = [...path, model];
+      if (nestedPath.length > MAX_COMBO_DEPTH) {
+        throw new ComboWriteError(
+          `Combo nesting too deep (>${MAX_COMBO_DEPTH}): ${nestedPath.join(" → ")}`,
+          400,
+        );
+      }
+
+      expandedDepth.set(model, modelDepth);
+      await walk(nestedCombo.models, nestedPath, new Set([...pathNames, model]));
+    }
+  }
+
+  await walk(proposedModels, [comboName], new Set([comboName]));
 }
 
 /**
@@ -174,17 +244,35 @@ export async function rekeyComboStrategy(oldName, newName) {
   await updateSettings({ comboStrategies: strategies });
 }
 
+// Serialize combo validate+persist in-process. Two concurrent writes (A→B and
+// B→A) could otherwise each validate against the pre-write graph and jointly
+// persist a cycle. This lock closes that window for our single-instance
+// deployment; a multi-instance deploy would need DB-level serialization (out of
+// scope, consistent with our other in-memory coordination state). The runtime
+// depth cap stays the backstop regardless.
+let comboWriteChain = Promise.resolve();
+function withComboWriteLock(task) {
+  const run = comboWriteChain.then(task, task);
+  comboWriteChain = run.then(() => {}, () => {});
+  return run;
+}
+
 /**
  * Create a combo after applying the legacy name and uniqueness checks.
  * @param {{name: unknown, models?: unknown, kind?: unknown}} data
  * @returns {Promise<any>}
  */
 export async function createComboWrite(data) {
+  return withComboWriteLock(() => createComboWriteLocked(data));
+}
+
+async function createComboWriteLocked(data) {
   const { name, models, kind } = data;
   if (!name) throw new ComboWriteError(COMBO_NAME_REQUIRED_ERROR);
 
   validateComboName(name);
   await ensureComboNameAvailable(name, undefined);
+  await assertNoComboCycle(name, Array.isArray(models) ? models : []);
   return createComboRecord({ name, models: models || [], kind: kind || null });
 }
 
@@ -201,6 +289,10 @@ const COMBO_WRITABLE_FIELDS = ["name", "models", "kind"];
  * @returns {Promise<any|null>}
  */
 export async function updateComboWrite(id, data) {
+  return withComboWriteLock(() => updateComboWriteLocked(id, data));
+}
+
+async function updateComboWriteLocked(id, data) {
   /** @type {Record<string, any>} */
   const safeData = {};
   for (const field of COMBO_WRITABLE_FIELDS) {
@@ -209,12 +301,23 @@ export async function updateComboWrite(id, data) {
     }
   }
 
+  const previous = await getComboById(id);
+
   if (safeData.name) {
     validateComboName(safeData.name);
     await ensureComboNameAvailable(safeData.name, id);
   }
 
-  const previous = await getComboById(id);
+  // Revalidate on a models change AND on a rename: renaming a combo to a name
+  // other combos already reference can introduce a cycle without touching models.
+  const modelsChanged = Object.prototype.hasOwnProperty.call(safeData, "models");
+  const nameChanged = !!safeData.name && safeData.name !== previous?.name;
+  if (previous && (modelsChanged || nameChanged)) {
+    const effectiveName = safeData.name || previous.name;
+    const effectiveModels = modelsChanged ? safeData.models : previous.models;
+    await assertNoComboCycle(effectiveName, effectiveModels);
+  }
+
   const combo = await updateComboRecord(id, safeData);
   if (!combo) return null;
 
