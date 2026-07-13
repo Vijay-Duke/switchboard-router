@@ -108,13 +108,6 @@ export async function startVerify({ connectionId, scopeKey, providerId, provider
           timeoutMs: clamped.timeoutMs, warmup: i === 0, baseUrl,
         });
 
-        const authFailure = results.length > 0 && results.every((r) => r.failureClass === "auth");
-        if (authFailure) {
-          job.status = "error";
-          job.error = "Provider authentication failed for every probed model. Check this connection before retrying.";
-          break;
-        }
-
         for (const r of results) {
           if (upsertProbeResult) {
             await upsertProbeResult({
@@ -128,6 +121,16 @@ export async function startVerify({ connectionId, scopeKey, providerId, provider
           else { job.retryable += 1; job.perModel[r.canonicalId] = "retry"; }
         }
         job.done += results.length;
+
+        // The batch was still executed, so persist and count its results before
+        // stopping. Otherwise the UI reports 0 tested and leaves every row in
+        // "testing" even though the provider returned an auth failure for each.
+        const authFailure = results.length > 0 && results.every((r) => r.failureClass === "auth");
+        if (authFailure) {
+          job.status = "error";
+          job.error = "Provider authentication failed for every probed model. Check this connection before retrying.";
+          break;
+        }
       }
       if (job.status === "running") job.status = "done";
     } catch (e) {

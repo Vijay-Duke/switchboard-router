@@ -79,7 +79,9 @@ export default function ProviderDetailPage() {
   const [oneByOneResults, setOneByOneResults] = useState({});
   const [oneByOneSummary, setOneByOneSummary] = useState(null);
   const stopOneByOneRef = useRef(false);
-  const verifyIntervalRef = useRef(/** @type {ReturnType<typeof setInterval>|null} */ (null));
+  const verifyIntervalRef = useRef(/** @type {ReturnType<typeof setTimeout>|null} */ (null));
+  const verifyPollGenerationRef = useRef(0);
+  const probeFetchGenerationRef = useRef(0);
   const [importingModels, setImportingModels] = useState(false);
   const [importModelsMessage, setImportModelsMessage] = useState("");
   const [showVerifyPanel, setShowVerifyPanel] = useState(false);
@@ -335,11 +337,20 @@ export default function ProviderDetailPage() {
     }
   }, [providerId, isCompatible]);
 
-  const fetchProbes = useCallback(async () => {
-    const activeConn = connections.find((c) => c.isActive !== false);
-    if (!activeConn) return;
+  const fetchProbes = useCallback(async (connectionId = null) => {
+    const generation = ++probeFetchGenerationRef.current;
+    const activeConn = connectionId
+      ? connections.find((c) => c.id === connectionId && c.isActive !== false)
+      : connections.find((c) => selectedConnectionIds.includes(c.id) && c.isActive !== false)
+        || connections.find((c) => c.isActive !== false);
+    if (!activeConn) {
+      setProbeByModel({});
+      setProbeLatencies({});
+      return;
+    }
     try {
       const r = await fetch(`/api/providers/${activeConn.id}/model-probes`, { cache: "no-store" });
+      if (!r.ok) return;
       const data = await r.json().catch(() => ({}));
       const statusMap = {};
       const latencyMap = {};
@@ -347,10 +358,11 @@ export default function ProviderDetailPage() {
         statusMap[p.modelId] = p.status === "ok" ? "ok" : p.status === "dead" ? "dead" : "retry";
         if (p.latencyMs != null) latencyMap[p.modelId] = p.latencyMs;
       }
+      if (generation !== probeFetchGenerationRef.current) return;
       setProbeByModel(statusMap);
-      setProbeLatencies((prev) => ({ ...prev, ...latencyMap }));
+      setProbeLatencies(latencyMap);
     } catch { /* ignore */ }
-  }, [connections]);
+  }, [connections, selectedConnectionIds]);
 
   const handleUpdateNode = async (formData) => {
     try {
@@ -502,21 +514,18 @@ export default function ProviderDetailPage() {
   }, [providerId]);
 
   /**
-   * Start (or restart) the page-level verify-status polling interval.
-   * Clears any existing interval first so there is exactly ONE at a time.
+   * Start (or restart) the page-level verify-status polling loop.
+   * Clears any existing timer first so there is exactly ONE request at a time.
    * Stops automatically when the job reaches a terminal/idle state.
-   * The returned cleanup stops the interval early (used by the unmount effect).
+   * The effect cleanup stops the timer early on connection changes or unmount.
    *
-   * Design choice (Option A simplified): page.js owns the single authoritative
-   * page-level poller via verifyIntervalRef. The panel keeps its own internal
-   * poller only for its progress-bar UI. This way a run started on an already-
-   * loaded page (no `connections` change) still drives the toggle button and
-   * per-row live badges, and navigate-away-and-back resumes polling correctly.
+   * page.js owns the authoritative snapshot used by the toggle, model rows, and
+   * panel. Recursive timeouts prevent overlapping status requests.
    */
   const startVerifyStatusPolling = useCallback((activeConnId) => {
-    // Clear any existing interval first.
+    const generation = ++verifyPollGenerationRef.current;
     if (verifyIntervalRef.current) {
-      clearInterval(verifyIntervalRef.current);
+      clearTimeout(verifyIntervalRef.current);
       verifyIntervalRef.current = null;
     }
 
@@ -524,35 +533,45 @@ export default function ProviderDetailPage() {
       try {
         const r = await fetch(`/api/providers/${activeConnId}/model-probes/verify/status`, { cache: "no-store" });
         const snap = await r.json().catch(() => null);
+        if (generation !== verifyPollGenerationRef.current) return;
+        if (!r.ok || !snap?.status) throw new Error("Verify status temporarily unavailable");
         setVerifyStatus(snap && snap.status ? snap : null);
         const isRunning = snap?.status === "running";
-        if (!isRunning && verifyIntervalRef.current) {
-          clearInterval(verifyIntervalRef.current);
+        if (isRunning) {
+          verifyIntervalRef.current = setTimeout(pollOnce, 1500);
+        } else {
           verifyIntervalRef.current = null;
+          await fetchProbes(activeConnId);
         }
-      } catch { /* ignore */ }
+      } catch {
+        if (generation === verifyPollGenerationRef.current) {
+          verifyIntervalRef.current = setTimeout(pollOnce, 1500);
+        }
+      }
     };
 
-    // Immediate first fetch.
-    pollOnce();
-
-    // Set up the interval; it self-cancels when the job is no longer running.
-    verifyIntervalRef.current = setInterval(pollOnce, 1500);
-  }, []);
+    verifyIntervalRef.current = setTimeout(pollOnce, 0);
+  }, [fetchProbes]);
 
   // On mount (or when connections change): check whether a verify run is already
   // in progress and, if so, start polling immediately.
   useEffect(() => {
-    const activeConn = connections.find((c) => c.isActive !== false);
-    if (!activeConn) return;
+    const activeConn =
+      connections.find((c) => selectedConnectionIds.includes(c.id) && c.isActive !== false)
+      || connections.find((c) => c.isActive !== false);
+    if (!activeConn) {
+      setVerifyStatus(null);
+      return;
+    }
     startVerifyStatusPolling(activeConn.id);
     return () => {
+      verifyPollGenerationRef.current += 1;
       if (verifyIntervalRef.current) {
-        clearInterval(verifyIntervalRef.current);
+        clearTimeout(verifyIntervalRef.current);
         verifyIntervalRef.current = null;
       }
     };
-  }, [connections, startVerifyStatusPolling]);
+  }, [connections, selectedConnectionIds, startVerifyStatusPolling]);
 
   const handleSetAlias = async (modelId, alias, providerAliasOverride = providerAlias) => {
     const fullModel = `${providerAliasOverride}/${modelId}`;
@@ -749,16 +768,23 @@ export default function ProviderDetailPage() {
       if (skippedDead > 0) {
         setImportModelsMessage((prev) => `${prev} · ${skippedDead} skipped (known dead)`);
       }
-      // Auto-verify the freshly imported list.
-      if (added > 0) {
+      // Auto-verify the freshly imported or re-enabled list and attach the
+      // page observer immediately; connections state does not change here.
+      if (added > 0 || reenabled > 0) {
         try {
           const allModels = [...models, ...toAdd.map((m) => ({ id: m.id, name: m.name, kind: m.type }))];
-          await fetch(`/api/providers/${activeConnection.id}/model-probes/verify/start`, {
+          const verifyRes = await fetch(`/api/providers/${activeConnection.id}/model-probes/verify/start`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ models: allModels, providerAlias: providerStorageAlias }),
           });
-        } catch { /* auto-verify best-effort */ }
+          const snap = await verifyRes.json().catch(() => ({}));
+          if (!verifyRes.ok) throw new Error(snap.error || "Failed to start auto-verify");
+          setVerifyStatus(snap && snap.status ? snap : null);
+          startVerifyStatusPolling(activeConnection.id);
+        } catch (error) {
+          setImportModelsMessage((prev) => `${prev} · auto-verify failed: ${error?.message || error}`);
+        }
       }
     } catch (error) {
       reportClientError("Error importing models:", error);
@@ -1787,15 +1813,16 @@ export default function ProviderDetailPage() {
               connectionId={activeConnection?.id}
               providerAlias={providerStorageAlias}
               models={verifyList}
+              jobSnapshot={verifyStatus}
               onClose={() => setShowVerifyPanel(false)}
               onStarted={(snap) => {
                 setVerifyStatus(snap && snap.status ? snap : null);
-                if (activeConnection?.id) startVerifyStatusPolling(activeConnection.id);
+                const startedConnectionId = snap?.connectionId || activeConnection?.id;
+                if (startedConnectionId) startVerifyStatusPolling(startedConnectionId);
               }}
-              onLatencyMap={(map) => setProbeLatencies((prev) => ({ ...prev, ...map }))}
               onComplete={async (s) => {
                 if (s?.removed > 0) await fetchCustomModels();
-                await fetchProbes();
+                if (s?.removed > 0 || s?.cacheCleared) await fetchProbes(activeConnection?.id);
               }}
             />
           );

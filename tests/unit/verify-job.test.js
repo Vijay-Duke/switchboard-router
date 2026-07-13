@@ -95,6 +95,10 @@ describe("verifyJob core", () => {
     const s = getVerifyStatus("c3");
     expect(s.status).toBe("error");
     expect(s.error).toMatch(/auth/i);
+    expect(s.done).toBe(3);
+    expect(s.retryable).toBe(3);
+    expect(s.perModel).toEqual({ a: "retry", b: "retry", c: "retry" });
+    expect(deps.upserts).toHaveLength(3);
   });
 
   it("prep failure (getProbesForScope throws) marks job as error, not running", async () => {

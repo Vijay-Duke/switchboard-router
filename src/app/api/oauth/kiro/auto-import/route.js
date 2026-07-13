@@ -104,7 +104,7 @@ export async function GET() {
       try {
         const profileContent = await readFile(profilePath, "utf-8");
         const profileData = JSON.parse(profileContent);
-        const profile = parseKiroProfileArn(profileData.arn);
+        const profile = parseKiroProfileArn(profileData.arn || profileData.profileArn);
         if (profile) {
           profileArn = profile.profileArn;
           break;

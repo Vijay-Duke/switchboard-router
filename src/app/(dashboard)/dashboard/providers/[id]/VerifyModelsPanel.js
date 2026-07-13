@@ -13,22 +13,20 @@ import { MODEL_PROBE_CAPS } from "@/lib/model-probe/caps.js";
  *   connectionId: string,
  *   providerAlias: string,
  *   models: Array<{ id: string, name?: string, kind?: string, type?: string }>,
+ *   jobSnapshot?: Record<string, any>|null,
  *   onComplete?: (summary: object) => void,
- *   onLatencyMap?: (map: Record<string, number>) => void,
  *   onStarted?: (snapshot: object) => void,
  *   onClose?: () => void,
- *   pollMs?: number,
  * }} props
  */
 export default function VerifyModelsPanel({
   connectionId,
   providerAlias,
   models,
+  jobSnapshot,
   onComplete,
-  onLatencyMap,
   onStarted,
   onClose,
-  pollMs = 1000,
 }) {
   const [concurrency, setConcurrency] = useState(MODEL_PROBE_CAPS.defaultConcurrency);
   const [batchSize, setBatchSize] = useState(MODEL_PROBE_CAPS.defaultBatchSize);
@@ -38,8 +36,10 @@ export default function VerifyModelsPanel({
   const [summary, setSummary] = useState(/** @type {null|Record<string, any>} */ (null));
   const [error, setError] = useState("");
   const [logLine, setLogLine] = useState("");
-  const pollRef = useRef(/** @type {any} */ (null));
-  const cbRef = useRef({ onComplete, onLatencyMap, onStarted });
+  const cbRef = useRef({ onComplete, onStarted });
+  const terminalKeyRef = useRef(/** @type {string|null} */ (null));
+  const connectionIdRef = useRef(connectionId);
+  const activeJobConnectionRef = useRef(/** @type {string|null} */ (null));
 
   const modelCount = models?.length || 0;
   const capsLabel = useMemo(
@@ -48,9 +48,10 @@ export default function VerifyModelsPanel({
     [],
   );
 
-  // Keep callbacks current to avoid stale closures in interval callbacks
+  // Keep callbacks current to avoid stale closures in async snapshot handlers.
   useEffect(() => {
-    cbRef.current = { onComplete, onLatencyMap, onStarted };
+    cbRef.current = { onComplete, onStarted };
+    connectionIdRef.current = connectionId;
   });
 
   function clampLocal() {
@@ -63,6 +64,11 @@ export default function VerifyModelsPanel({
 
   function applySnapshot(snap) {
     if (!snap) return;
+    if (snap.status === "idle") {
+      activeJobConnectionRef.current = null;
+      setRunning(false);
+      return;
+    }
     setProgress({
       done: snap.done || 0,
       total: snap.total || 0,
@@ -72,13 +78,18 @@ export default function VerifyModelsPanel({
       skippedDead: snap.skippedDead || 0,
       skippedDup: snap.skippedDup || 0,
     });
+    if (snap.status === "running") {
+      activeJobConnectionRef.current = snap.connectionId || connectionIdRef.current;
+      terminalKeyRef.current = null;
+      setRunning(true);
+    }
     if (snap.currentRange) {
       setLogLine(`Probing ${snap.currentRange.from}–${snap.currentRange.to} of ${snap.total}…`);
     }
     if (snap.error) setError(snap.error);
     const terminal = snap.status === "done" || snap.status === "cancelled" || snap.status === "error";
     if (terminal) {
-      stopPolling();
+      activeJobConnectionRef.current = null;
       setRunning(false);
       const finalSummary = {
         ok: snap.ok || 0, dead: snap.dead || 0, retryable: snap.retryable || 0,
@@ -87,40 +98,19 @@ export default function VerifyModelsPanel({
       };
       setSummary(finalSummary);
       setLogLine(snap.status === "cancelled" ? "Cancelled (partial results saved)." : snap.status === "error" ? "Stopped." : "Done.");
-      cbRef.current.onComplete?.(finalSummary);
-      // Latency values are populated by page.js via fetchProbes after onComplete triggers.
-      // No need to push an empty map up here.
+      const terminalKey = `${snap.startedAt || "unknown"}:${snap.status}`;
+      if (terminalKeyRef.current !== terminalKey) {
+        terminalKeyRef.current = terminalKey;
+        cbRef.current.onComplete?.(finalSummary);
+      }
     }
   }
 
-  function startPolling() {
-    stopPolling();
-    pollRef.current = setInterval(async () => {
-      try {
-        const r = await fetch(`/api/providers/${connectionId}/model-probes/verify/status`, { cache: "no-store" });
-        const snap = await r.json().catch(() => null);
-        applySnapshot(snap);
-      } catch { /* transient poll error — keep polling */ }
-    }, pollMs);
-  }
-
-  function stopPolling() {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  }
-
+  // page.js owns the only status poller. The panel is a pure observer of that
+  // snapshot, so hiding/reopening it cannot create duplicate or stale requests.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch(`/api/providers/${connectionId}/model-probes/verify/status`, { cache: "no-store" });
-        const snap = await r.json().catch(() => null);
-        if (cancelled || !snap) return;
-        if (snap.status === "running") { setRunning(true); applySnapshot(snap); startPolling(); }
-      } catch { /* ignore */ }
-    })();
-    return () => { cancelled = true; stopPolling(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectionId]);
+    applySnapshot(jobSnapshot);
+  }, [jobSnapshot]);
 
   async function handleStart() {
     if (running || !connectionId || modelCount === 0) return;
@@ -129,6 +119,8 @@ export default function VerifyModelsPanel({
     setSummary(null);
     setLogLine("Starting…");
     const opts = clampLocal();
+    const startedConnectionId = connectionId;
+    activeJobConnectionRef.current = startedConnectionId;
     try {
       const res = await fetch(`/api/providers/${connectionId}/model-probes/verify/start`, {
         method: "POST",
@@ -136,20 +128,31 @@ export default function VerifyModelsPanel({
         body: JSON.stringify({ models, providerAlias, ...opts, timeoutMs: opts.timeoutMs }),
       });
       const snap = await res.json().catch(() => ({}));
-      if (!res.ok) { setError(snap.error || "Failed to start"); setRunning(false); return; }
+      if (connectionIdRef.current !== startedConnectionId) {
+        activeJobConnectionRef.current = null;
+        setRunning(false);
+        return;
+      }
+      if (!res.ok) {
+        activeJobConnectionRef.current = null;
+        setError(snap.error || "Failed to start");
+        setRunning(false);
+        return;
+      }
       // Notify parent so it can set its verifyStatus and start its own page-level poller.
       cbRef.current.onStarted?.(snap);
       applySnapshot(snap);
-      if (snap.status === "running") startPolling();
-      else setRunning(false);
+      if (snap.status !== "running") setRunning(false);
     } catch (e) {
+      activeJobConnectionRef.current = null;
       setError(e?.message || "Verify failed");
       setRunning(false);
     }
   }
 
   async function handleCancel() {
-    await fetch(`/api/providers/${connectionId}/model-probes/verify/cancel`, { method: "POST" }).catch(() => {});
+    const targetConnectionId = activeJobConnectionRef.current || connectionId;
+    await fetch(`/api/providers/${targetConnectionId}/model-probes/verify/cancel`, { method: "POST" }).catch(() => {});
   }
 
   async function handleRemoveUnavailable() {
@@ -166,7 +169,7 @@ export default function VerifyModelsPanel({
       return;
     }
     setLogLine(`Removed ${data.removed || 0} unavailable custom model(s).`);
-    onComplete?.({ ...(summary || {}), removed: data.removed || 0 });
+    cbRef.current.onComplete?.({ ...(summary || {}), removed: data.removed || 0 });
   }
 
   async function handleClearCache() {
@@ -180,6 +183,7 @@ export default function VerifyModelsPanel({
     setLogLine(`Cleared probe cache (${data.cleared || 0} rows). Next verify will re-test everything.`);
     setSummary(null);
     setProgress(null);
+    cbRef.current.onComplete?.({ cacheCleared: true, cleared: data.cleared || 0 });
   }
 
   const pct = progress?.total
@@ -297,9 +301,8 @@ VerifyModelsPanel.propTypes = {
   connectionId: PropTypes.string,
   providerAlias: PropTypes.string,
   models: PropTypes.arrayOf(PropTypes.object),
+  jobSnapshot: PropTypes.object,
   onComplete: PropTypes.func,
-  onLatencyMap: PropTypes.func,
   onStarted: PropTypes.func,
   onClose: PropTypes.func,
-  pollMs: PropTypes.number,
 };
