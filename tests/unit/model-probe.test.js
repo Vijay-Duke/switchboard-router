@@ -37,6 +37,22 @@ describe("model-probe classifier", () => {
   it("marks 401 as retryable auth", () => {
     expect(classifyFailure({ ok: false, status: 401, error: "HTTP 401" }).status).toBe("retryable");
   });
+  it.each([
+    ["The provided model identifier is invalid.", "not_found"],
+    ["Model is deprecated", "not_found"],
+    ["Model Blocked", "access_denied"],
+  ])("marks permanent provider model errors as dead: %s", (error, failureClass) => {
+    expect(classifyFailure({ ok: false, status: 400, error })).toEqual({
+      status: "dead",
+      failureClass,
+    });
+  });
+  it("keeps unrelated HTTP 400 failures retryable", () => {
+    expect(classifyFailure({ ok: false, status: 400, error: "Invalid request payload" })).toEqual({
+      status: "retryable",
+      failureClass: "unknown",
+    });
+  });
 });
 
 describe("canonicalModelId", () => {

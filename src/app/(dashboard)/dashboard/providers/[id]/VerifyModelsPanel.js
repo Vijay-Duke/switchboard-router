@@ -196,7 +196,7 @@ export default function VerifyModelsPanel({
         <div>
           <h3 className="text-sm font-semibold text-text-main">Verify models</h3>
           <p className="text-[11px] text-text-muted mt-0.5">
-            Batch-ping availability and latency. Dead = permanently unavailable (404/403) and can be removed;
+            Batch-ping availability and latency. Dead = permanently unavailable (missing, blocked, or deprecated) and can be removed;
             retry = transient (timeout/429/5xx). Known-dead models are skipped until you Clear cache. Caps: {capsLabel}.
           </p>
         </div>
@@ -268,7 +268,7 @@ export default function VerifyModelsPanel({
           <p className="text-[11px] text-text-muted flex flex-wrap gap-x-2">
             <span title="Models probed this run">{progress.done}/{progress.total} tested</span>
             <span title="Reachable">· ok {progress.ok}</span>
-            <span title="Permanently unavailable this run (404 not found / 403 access denied)">· dead {progress.dead}</span>
+            <span title="Permanently unavailable this run (missing, blocked, or deprecated)">· dead {progress.dead}</span>
             <span title="Transient failure this run (timeout / 429 / 5xx / network); re-testable">· retry {progress.retryable}</span>
             {progress.skippedDead ? <span title="Not probed — cache already marks them dead. Clear cache to re-test.">· skipped known-dead {progress.skippedDead}</span> : null}
             {progress.skippedDup ? <span title="Duplicate ids collapsed">· dupes {progress.skippedDup}</span> : null}

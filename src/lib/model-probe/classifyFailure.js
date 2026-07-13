@@ -58,7 +58,11 @@ export function classifyFailure(input) {
     lower.includes("unknown model") ||
     lower.includes("does not exist") ||
     lower.includes("not a valid model") ||
-    lower.includes("invalid model")
+    lower.includes("invalid model") ||
+    lower.includes("model identifier is invalid") ||
+    lower.includes("model is deprecated") ||
+    lower.includes("model is no longer supported") ||
+    lower.includes("error_model_no_longer_supported")
   ) {
     return { status: "dead", failureClass: "not_found" };
   }
@@ -69,7 +73,10 @@ export function classifyFailure(input) {
     lower.includes("permission denied") ||
     lower.includes("forbidden") ||
     lower.includes("not permitted") ||
-    lower.includes("not authorized for model")
+    lower.includes("not authorized for model") ||
+    lower.includes("model blocked") ||
+    lower.includes("model is blocked") ||
+    lower.includes("error_model_blocked")
   ) {
     return { status: "dead", failureClass: "access_denied" };
   }
