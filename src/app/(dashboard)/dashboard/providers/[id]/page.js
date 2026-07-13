@@ -85,6 +85,7 @@ export default function ProviderDetailPage() {
   const [verifyStatus, setVerifyStatus] = useState(/** @type {null|{status:string,done:number,total:number}} */ (null));
   const [probeLatencies, setProbeLatencies] = useState(/** @type {Record<string, number>} */ ({}));
   const [probeByModel, setProbeByModel] = useState(/** @type {Record<string,string>} */ ({}));
+  const [modelFilter, setModelFilter] = useState("all"); // all | ok | dead | retry
   const { copied, copy } = useCopyToClipboard();
 
   const AG_RISK_STORAGE_KEY = "ag_risk_confirmed";
@@ -1080,10 +1081,39 @@ export default function ProviderDetailPage() {
       type: "llm",
     });
 
+    // Apply filter to custom models
+    const filteredCustomModelRows = customModelRows.filter((model) => {
+      if (modelFilter === "all") return true;
+      const modelCanonicalId = canonicalModelId(model.id, providerStorageAlias);
+      return (probeByModel[modelCanonicalId] || null) === modelFilter;
+    });
+
+    // Apply filter to display models
+    const filteredDisplayModels = displayModels.filter((model) => {
+      if (modelFilter === "all") return true;
+      const modelCanonicalId = canonicalModelId(model.id, providerStorageAlias);
+      return (probeByModel[modelCanonicalId] || null) === modelFilter;
+    });
+
     return (
-      <div className="flex flex-wrap gap-3">
-        {/* Custom models first */}
-        {customModelRows.map((model) => {
+      <div className="flex flex-col gap-3">
+        {/* Filter control */}
+        <div className="mb-2 flex gap-1 text-xs">
+          {["all", "ok", "dead", "retry"].map((f) => (
+            <button
+              key={f}
+              onClick={() => setModelFilter(f)}
+              className={`rounded px-2 py-0.5 ${modelFilter === f ? "bg-primary text-white" : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5"}`}
+            >
+              {f === "all" ? "All" : f === "ok" ? "OK" : f === "dead" ? "Dead" : "Retry"}
+            </button>
+          ))}
+        </div>
+
+        {/* Models wrapper - flex wrap for the filtered results */}
+        <div className="flex flex-wrap gap-3">
+          {/* Custom models first */}
+          {filteredCustomModelRows.map((model) => {
           const modelCanonicalId = canonicalModelId(model.id, providerStorageAlias);
           return (
             <ModelRow
@@ -1116,9 +1146,9 @@ export default function ProviderDetailPage() {
               }
             />
           );
-        })}
+          })}
 
-        {displayModels.map((model) => {
+          {filteredDisplayModels.map((model) => {
           const fullModel = `${providerStorageAlias}/${model.id}`;
           const oldFormatModel = `${providerId}/${model.id}`;
           const existingAlias = Object.entries(modelAliases).find(
@@ -1213,6 +1243,7 @@ export default function ProviderDetailPage() {
             </div>
           </div>
         )}
+        </div>
       </div>
     );
   };
