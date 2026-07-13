@@ -19,8 +19,8 @@ const moduleDefault = {
     baseUrl: "https://openrouter.ai/api/v1/chat/completions",
     thinkingFormat: "openai",
     headers: {
-      "HTTP-Referer": "https://endpoint-proxy.local",
-      "X-Title": "Endpoint Proxy",
+      "HTTP-Referer": "https://github.com/Vijay-Duke/switchboard-router",
+      "X-Title": "Switchboard",
     },
   },
   models: [
@@ -43,17 +43,17 @@ const moduleDefault = {
   ttsConfig: {
     baseUrl: "https://openrouter.ai/api/v1/chat/completions",
     defaultModel: "openai/gpt-4o-mini-tts",
-    headers: {"HTTP-Referer":"https://endpoint-proxy.local","X-Title":"Endpoint Proxy"},
+    headers: {"HTTP-Referer":"https://github.com/Vijay-Duke/switchboard-router","X-Title":"Switchboard"},
   },
   embeddingConfig: {
     baseUrl: "https://openrouter.ai/api/v1/embeddings",
     authType: "apikey",
     authHeader: "bearer",
-    headers: {"HTTP-Referer":"https://endpoint-proxy.local","X-Title":"Endpoint Proxy"},
+    headers: {"HTTP-Referer":"https://github.com/Vijay-Duke/switchboard-router","X-Title":"Switchboard"},
   },
   imageConfig: {
     baseUrl: "https://openrouter.ai/api/v1/images/generations",
-    headers: {"HTTP-Referer":"https://endpoint-proxy.local","X-Title":"Endpoint Proxy"},
+    headers: {"HTTP-Referer":"https://github.com/Vijay-Duke/switchboard-router","X-Title":"Switchboard"},
   },
   modelsFetcher: { url: "https://openrouter.ai/api/v1/models", type: "openrouter-free" },
   passthroughModels: true,

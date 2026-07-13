@@ -42,7 +42,7 @@ switchboard
 <details>
 <summary>Other install options</summary>
 
-**npm (once published):**
+**npm:**
 ```bash
 npm i -g switchboard-router && switchboard
 ```
@@ -67,6 +67,34 @@ docker run -d --name switchboard -p 127.0.0.1:20128:20128 \
 > Package name is **`switchboard-router`**. The bare npm name `switchboard` is a different project.
 
 </details>
+
+### Update
+
+```bash
+npm i -g switchboard-router@latest --prefer-online
+```
+
+The dashboard sidebar shows an **Update now** badge whenever a newer version is
+available; re-running the install script does the same thing. Docker users:
+`docker pull ghcr.io/vijay-duke/switchboard-router:latest` and recreate the
+container. Your data in `~/.switchboard` is untouched by updates.
+
+### Uninstall
+
+```bash
+npm rm -g switchboard-router
+```
+
+That removes the CLI and server. Optional cleanup:
+
+```bash
+rm -rf ~/.switchboard        # all data: provider connections, keys, usage history
+```
+
+If you enabled **start on boot** from the tray menu, disable it there first — or
+remove the artifact by hand: `~/Library/LaunchAgents/com.switchboard.autostart.plist`
+(macOS), the `switchboard.vbs` shortcut in your Startup folder (Windows), or the
+autostart desktop entry (Linux).
 
 ---
 

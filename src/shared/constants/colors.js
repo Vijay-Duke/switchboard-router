@@ -1,4 +1,4 @@
-// Claude-inspired color palette for Endpoint Proxy
+// Claude-inspired color palette for Switchboard
 // Light theme: Warm beige/cream tones
 // Dark theme: Deep charcoal/brown tones
 

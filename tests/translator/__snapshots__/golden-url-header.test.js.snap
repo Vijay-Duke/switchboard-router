@@ -858,21 +858,21 @@ exports[`GOLDEN buildHeaders (default executor providers) > openrouter → heade
     "Accept": "text/event-stream",
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
-    "HTTP-Referer": "https://endpoint-proxy.local",
-    "X-Title": "Endpoint Proxy",
+    "HTTP-Referer": "https://github.com/Vijay-Duke/switchboard-router",
+    "X-Title": "Switchboard",
   },
   "nonStream": {
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
-    "HTTP-Referer": "https://endpoint-proxy.local",
-    "X-Title": "Endpoint Proxy",
+    "HTTP-Referer": "https://github.com/Vijay-Duke/switchboard-router",
+    "X-Title": "Switchboard",
   },
   "oauth": {
     "Accept": "text/event-stream",
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
-    "HTTP-Referer": "https://endpoint-proxy.local",
-    "X-Title": "Endpoint Proxy",
+    "HTTP-Referer": "https://github.com/Vijay-Duke/switchboard-router",
+    "X-Title": "Switchboard",
   },
 }
 `;

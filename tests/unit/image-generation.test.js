@@ -262,8 +262,8 @@ describe("handleImageGenerationCore", () => {
       "https://openrouter.ai/api/v1/images/generations",
       expect.objectContaining({
         headers: expect.objectContaining({
-          "HTTP-Referer": "https://endpoint-proxy.local",
-          "X-Title": "Endpoint Proxy",
+          "HTTP-Referer": "https://github.com/Vijay-Duke/switchboard-router",
+          "X-Title": "Switchboard",
         }),
       })
     );
