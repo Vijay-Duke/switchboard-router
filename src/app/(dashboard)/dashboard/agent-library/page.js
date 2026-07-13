@@ -40,6 +40,11 @@ export default function AgentLibraryPage() {
   const [manualId, setManualId] = useState("");
   const [manualMd, setManualMd] = useState("");
 
+  // Skill updates (url-sourced skills)
+  const [updates, setUpdates] = useState(/** @type {Record<string,{status:string,message?:string}>} */ ({}));
+  const [updPreview, setUpdPreview] = useState(/** @type {null|{id:string,markdown:string,contentHash:string}} */ (null));
+  const [updConfirm, setUpdConfirm] = useState(false);
+
   // Export path
   const [exportPath, setExportPath] = useState("");
 
@@ -57,13 +62,28 @@ export default function AgentLibraryPage() {
     }
   }, []);
 
+  const checkUpdates = useCallback(async () => {
+    try {
+      const r = await fetch("/api/agent-library/updates", { cache: "no-store" });
+      const j = await r.json();
+      if (!r.ok) return;
+      /** @type {Record<string,{status:string,message?:string}>} */
+      const map = {};
+      for (const res of j.results || []) map[res.id] = res;
+      setUpdates(map);
+    } catch {
+      /* badge-only feature — never block the page */
+    }
+  }, []);
+
   useEffect(() => {
     load();
+    checkUpdates();
     fetch("/api/agent-library/catalog")
       .then((r) => r.json())
       .then((j) => setPresets(j.presets || []))
       .catch(() => {});
-  }, [load]);
+  }, [load, checkUpdates]);
 
   const settings = data?.settings || {};
   const agents = data?.agents || {};
@@ -214,6 +234,7 @@ export default function AgentLibraryPage() {
       if (!r.ok) throw new Error(j.error);
       setMessage({ type: "success", text: "Skill removed from library" });
       await load();
+      await checkUpdates();
     } catch (e) {
       setMessage({ type: "error", text: e.message });
     } finally {
@@ -235,6 +256,53 @@ export default function AgentLibraryPage() {
       setManualId("");
       setManualMd("");
       await load();
+    } catch (e) {
+      setMessage({ type: "error", text: e.message });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function previewUpdate(id) {
+    setBusy("upd-preview");
+    setUpdConfirm(false);
+    try {
+      const r = await fetch("/api/agent-library/updates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "preview", skillId: id }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.message || j.error || "Preview failed");
+      setUpdPreview({ id, markdown: j.markdown, contentHash: j.contentHash });
+    } catch (e) {
+      setMessage({ type: "error", text: e.message });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function applyUpdate() {
+    if (!updPreview) return;
+    setBusy("upd-apply");
+    try {
+      const r = await fetch("/api/agent-library/updates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update",
+          skillId: updPreview.id,
+          confirmed: updConfirm,
+          expectedHash: updPreview.contentHash,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.message || j.error || "Update failed");
+      setMessage({ type: "success", text: j.warning || `Updated ${j.id}` });
+      setUpdPreview(null);
+      setUpdConfirm(false);
+      await load();
+      await checkUpdates();
     } catch (e) {
       setMessage({ type: "error", text: e.message });
     } finally {
@@ -279,6 +347,7 @@ export default function AgentLibraryPage() {
       setMessage({ type: "success", text: j.warning || `Installed ${j.id}` });
       setCatalogConfirm(false);
       await load();
+      await checkUpdates();
     } catch (e) {
       setMessage({ type: "error", text: e.message });
     } finally {
@@ -645,6 +714,23 @@ export default function AgentLibraryPage() {
           <Card padding="md">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-semibold text-text-main">Library skills</h2>
+              <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={!!busy}
+                onClick={async () => {
+                  setBusy("upd-check");
+                  try {
+                    await checkUpdates();
+                    setMessage({ type: "success", text: "Update check complete" });
+                  } finally {
+                    setBusy("");
+                  }
+                }}
+              >
+                Check updates
+              </Button>
               <Button
                 size="sm"
                 variant="secondary"
@@ -666,6 +752,7 @@ export default function AgentLibraryPage() {
               >
                 Refresh product skills
               </Button>
+              </div>
             </div>
             <div className="space-y-2">
               {(data?.skills || []).map((s) => (
@@ -679,19 +766,43 @@ export default function AgentLibraryPage() {
                       <Badge size="sm" variant="default">
                         <code className="text-[10px]">sb-{s.id}</code>
                       </Badge>
+                      {updates[s.id]?.status === "update" && (
+                        <Badge size="sm" variant="warning">update available</Badge>
+                      )}
+                      {updates[s.id]?.status === "error" && (
+                        <span
+                          className="text-[10px] text-text-subtle"
+                          title={updates[s.id]?.message || "check failed"}
+                        >
+                          check failed
+                        </span>
+                      )}
                     </div>
                     <p className="text-[11px] text-text-muted mt-0.5 line-clamp-2">
                       {s.description || "—"}
                     </p>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={!!busy}
-                    onClick={() => deleteSkill(s.id)}
-                  >
-                    Remove
-                  </Button>
+                  <div className="flex gap-1 shrink-0">
+                    {updates[s.id]?.status === "update" && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={!!busy}
+                        loading={busy === "upd-preview" && updPreview?.id !== s.id}
+                        onClick={() => previewUpdate(s.id)}
+                      >
+                        Update
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={!!busy}
+                      onClick={() => deleteSkill(s.id)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
                 </div>
               ))}
               {!data?.skills?.length && (
@@ -699,6 +810,51 @@ export default function AgentLibraryPage() {
               )}
             </div>
           </Card>
+
+          {updPreview && (
+            <Card padding="md">
+              <h2 className="text-sm font-semibold text-text-main mb-2">
+                Update preview — <code className="text-[12px]">{updPreview.id}</code>
+              </h2>
+              <p className="text-[11px] text-text-subtle mb-2">
+                Full incoming SKILL.md shown below. Exactly these bytes are installed on
+                confirm — if upstream changes in between, the update is refused and you
+                preview again.
+              </p>
+              <pre className="text-[10px] font-mono max-h-64 overflow-auto bg-surface-2 p-2 rounded border border-border-subtle whitespace-pre-wrap">
+                {updPreview.markdown}
+              </pre>
+              <label className="flex items-start gap-2 text-xs text-text-muted cursor-pointer mt-2">
+                <input
+                  type="checkbox"
+                  checked={updConfirm}
+                  onChange={(e) => setUpdConfirm(e.target.checked)}
+                />
+                I reviewed this skill and understand it may instruct agents to run tools/shell commands.
+              </label>
+              <div className="flex gap-2 mt-2">
+                <Button
+                  size="sm"
+                  disabled={!updConfirm || !!busy}
+                  loading={busy === "upd-apply"}
+                  onClick={applyUpdate}
+                >
+                  Apply update
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={!!busy}
+                  onClick={() => {
+                    setUpdPreview(null);
+                    setUpdConfirm(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </Card>
+          )}
 
           <Card padding="md">
             <h2 className="text-sm font-semibold text-text-main mb-2">Add skill (paste SKILL.md)</h2>

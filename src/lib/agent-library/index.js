@@ -23,6 +23,11 @@ import {
 } from "./mcp-store.js";
 import { applySync, cleanSync, runDoctor } from "./sync.js";
 import { CATALOG_PRESETS, installFromUrl, previewUrl } from "./catalog.js";
+import {
+  checkSkillUpdates,
+  previewSkillUpdate,
+  updateSkillFromSource,
+} from "./updates.js";
 import { exportAgentSyncLayout } from "./export-agentsync.js";
 import { isPathInside } from "./markers.js";
 
@@ -43,6 +48,9 @@ export {
   CATALOG_PRESETS,
   installFromUrl,
   previewUrl,
+  checkSkillUpdates,
+  previewSkillUpdate,
+  updateSkillFromSource,
   exportAgentSyncLayout,
   isPathInside,
 };

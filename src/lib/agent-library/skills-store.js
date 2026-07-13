@@ -86,7 +86,7 @@ export async function ensureProductSkillsInLibrary(libraryRoot, opts = {}) {
 /**
  * Install a skill from raw markdown text.
  * @param {string} libraryRoot
- * @param {{ id: string, markdown: string, source?: string }} args
+ * @param {{ id: string, markdown: string, source?: string, contentHash?: string|null, etag?: string|null }} args
  */
 export async function installSkillMarkdown(libraryRoot, args) {
   ensureLibraryDirs(libraryRoot);
@@ -95,13 +95,15 @@ export async function installSkillMarkdown(libraryRoot, args) {
   const dest = path.join(getSkillsDir(libraryRoot), id);
   await fs.mkdir(dest, { recursive: true });
   await fs.writeFile(path.join(dest, "SKILL.md"), args.markdown, "utf-8");
-  // provenance
+  // provenance (contentHash always reflects the installed file)
   await fs.writeFile(
     path.join(dest, ".source.json"),
     JSON.stringify(
       {
         source: args.source || "manual",
         installedAt: new Date().toISOString(),
+        ...(args.contentHash ? { contentHash: args.contentHash } : {}),
+        ...(args.etag ? { etag: args.etag } : {}),
       },
       null,
       2

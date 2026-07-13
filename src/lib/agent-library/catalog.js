@@ -3,6 +3,15 @@ import { installSkillMarkdown } from "./skills-store.js";
 import { librarySkillDirName } from "./paths.js";
 import dns from "node:dns/promises";
 import net from "node:net";
+import crypto from "node:crypto";
+
+/** Hard cap on remote SKILL.md size — anything bigger is not a skill file. */
+export const MAX_SKILL_BYTES = 512 * 1024;
+
+/** @param {string} text */
+export function sha256Hex(text) {
+  return crypto.createHash("sha256").update(text, "utf-8").digest("hex");
+}
 
 /**
  * Known safe catalog sources (user still must confirm install).
@@ -73,7 +82,7 @@ function isPrivateIp(ip) {
  * @param {string} urlStr
  * @returns {Promise<{ ok: true, url: URL }|{ ok: false, error: string, message: string }>}
  */
-async function assertSafeCatalogUrl(urlStr) {
+export async function assertSafeCatalogUrl(urlStr) {
   let url;
   try {
     url = new URL(urlStr);
@@ -136,37 +145,29 @@ async function assertSafeCatalogUrl(urlStr) {
 }
 
 /**
- * @param {string} libraryRoot
- * @param {{
- *   skillId: string,
- *   url: string,
- *   confirmed: boolean,
- *   requireConfirm: boolean,
- * }} args
+ * Fetch + validate a remote SKILL.md through the SSRF guard and size cap.
+ * Shared by install, update-check, preview, and update paths.
+ * @param {string} urlStr
+ * @param {{ timeoutMs?: number, etag?: string|null }} [opts]
+ * @returns {Promise<
+ *   | { ok: true, notModified: true }
+ *   | { ok: true, notModified?: false, markdown: string, etag: string|null }
+ *   | { ok: false, error: string, message: string }
+ * >}
  */
-export async function installFromUrl(libraryRoot, args) {
-  if (args.requireConfirm && !args.confirmed) {
-    return {
-      ok: false,
-      error: "confirmation_required",
-      message:
-        "Catalog installs require explicit confirmation. Remote content can instruct agents to run shell commands — review the markdown first.",
-    };
-  }
-
-  const skillId = librarySkillDirName(args.skillId);
-  if (!skillId) {
-    return { ok: false, error: "invalid_id", message: "Invalid skill id" };
-  }
-
-  const safe = await assertSafeCatalogUrl(args.url);
+export async function fetchSkillMarkdown(urlStr, opts = {}) {
+  const safe = await assertSafeCatalogUrl(urlStr);
   if (!safe.ok) return safe;
+
+  /** @type {Record<string,string>} */
+  const headers = { Accept: "text/plain, text/markdown, */*" };
+  if (opts.etag) headers["If-None-Match"] = opts.etag;
 
   let res;
   try {
     res = await fetch(safe.url.toString(), {
-      headers: { Accept: "text/plain, text/markdown, */*" },
-      signal: AbortSignal.timeout(30_000),
+      headers,
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
       redirect: "error", // no open redirects to private hosts
     });
   } catch (e) {
@@ -177,6 +178,8 @@ export async function installFromUrl(libraryRoot, args) {
     };
   }
 
+  if (res.status === 304) return { ok: true, notModified: true };
+
   if (!res.ok) {
     return {
       ok: false,
@@ -185,7 +188,23 @@ export async function installFromUrl(libraryRoot, args) {
     };
   }
 
+  const contentLength = Number(res.headers.get("content-length") || 0);
+  if (contentLength > MAX_SKILL_BYTES) {
+    return {
+      ok: false,
+      error: "too_large",
+      message: `Skill exceeds ${MAX_SKILL_BYTES} byte limit`,
+    };
+  }
+
   const markdown = await res.text();
+  if (markdown.length > MAX_SKILL_BYTES) {
+    return {
+      ok: false,
+      error: "too_large",
+      message: `Skill exceeds ${MAX_SKILL_BYTES} byte limit`,
+    };
+  }
   if (!markdown || markdown.length < 20) {
     return { ok: false, error: "empty", message: "Remote skill content empty" };
   }
@@ -204,10 +223,47 @@ export async function installFromUrl(libraryRoot, args) {
     };
   }
 
+  return { ok: true, markdown, etag: res.headers.get("etag") };
+}
+
+/**
+ * @param {string} libraryRoot
+ * @param {{
+ *   skillId: string,
+ *   url: string,
+ *   confirmed: boolean,
+ *   requireConfirm: boolean,
+ * }} args
+ */
+export async function installFromUrl(libraryRoot, args) {
+  if (args.requireConfirm && args.confirmed !== true) {
+    return {
+      ok: false,
+      error: "confirmation_required",
+      message:
+        "Catalog installs require explicit confirmation. Remote content can instruct agents to run shell commands — review the markdown first.",
+    };
+  }
+
+  const skillId = librarySkillDirName(args.skillId);
+  if (!skillId) {
+    return { ok: false, error: "invalid_id", message: "Invalid skill id" };
+  }
+
+  const fetched = await fetchSkillMarkdown(args.url);
+  if (!fetched.ok) return fetched;
+  if (fetched.notModified || !("markdown" in fetched)) {
+    // Unconditional fetch never yields 304; guard for type safety.
+    return { ok: false, error: "fetch_failed", message: "Unexpected empty response" };
+  }
+  const { markdown, etag } = fetched;
+
   const installed = await installSkillMarkdown(libraryRoot, {
     id: skillId,
     markdown,
     source: `url:${args.url}`,
+    contentHash: sha256Hex(markdown),
+    etag: etag || null,
   });
 
   return {
