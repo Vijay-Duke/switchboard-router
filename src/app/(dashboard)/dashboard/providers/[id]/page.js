@@ -84,6 +84,7 @@ export default function ProviderDetailPage() {
   const [showVerifyPanel, setShowVerifyPanel] = useState(false);
   const [verifyStatus, setVerifyStatus] = useState(/** @type {null|{status:string,done:number,total:number}} */ (null));
   const [probeLatencies, setProbeLatencies] = useState(/** @type {Record<string, number>} */ ({}));
+  const [probeByModel, setProbeByModel] = useState(/** @type {Record<string,string>} */ ({}));
   const { copied, copy } = useCopyToClipboard();
 
   const AG_RISK_STORAGE_KEY = "ag_risk_confirmed";
@@ -332,6 +333,20 @@ export default function ProviderDetailPage() {
     }
   }, [providerId, isCompatible]);
 
+  const fetchProbes = useCallback(async () => {
+    const activeConn = connections.find((c) => c.isActive !== false);
+    if (!activeConn) return;
+    try {
+      const r = await fetch(`/api/providers/${activeConn.id}/model-probes`, { cache: "no-store" });
+      const data = await r.json().catch(() => ({}));
+      const map = {};
+      for (const p of data.probes || []) {
+        map[p.modelId] = p.status === "ok" ? "ok" : p.status === "dead" ? "dead" : "retry";
+      }
+      setProbeByModel(map);
+    } catch { /* ignore */ }
+  }, [connections]);
+
   const handleUpdateNode = async (formData) => {
     try {
       const res = await fetch(`/api/provider-nodes/${providerId}`, {
@@ -445,6 +460,8 @@ export default function ProviderDetailPage() {
     fetchCustomModels();
     fetchDisabledModels();
   }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
+
+  useEffect(() => { fetchProbes(); }, [fetchProbes]);
 
   // Keep the visible catalog current for every provider. The API route uses
   // the provider's live endpoint when available and returns the static
@@ -1668,6 +1685,7 @@ export default function ProviderDetailPage() {
               onLatencyMap={(map) => setProbeLatencies((prev) => ({ ...prev, ...map }))}
               onComplete={async (s) => {
                 if (s?.removed > 0) await fetchCustomModels();
+                await fetchProbes();
               }}
             />
           );
