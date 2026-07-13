@@ -1083,32 +1083,40 @@ export default function ProviderDetailPage() {
     return (
       <div className="flex flex-wrap gap-3">
         {/* Custom models first */}
-        {customModelRows.map((model) => (
-          <ModelRow
-            key={`${model.source}-${model.fullModel}`}
-            model={{ id: model.id, name: model.name }}
-            fullModel={`${providerDisplayAlias}/${model.id}`}
-            alias={model.alias}
-            copied={copied}
-            onCopy={copy}
-            onSetAlias={() => {}}
-            onDeleteAlias={() => {
-              if (model.source === "custom") {
-                handleDeleteCustomModel(model.id, "llm", providerStorageAlias);
-              } else {
-                handleDeleteAlias(model.alias);
+        {customModelRows.map((model) => {
+          const modelCanonicalId = canonicalModelId(model.id, providerStorageAlias);
+          return (
+            <ModelRow
+              key={`${model.source}-${model.fullModel}`}
+              model={{ id: model.id, name: model.name }}
+              fullModel={`${providerDisplayAlias}/${model.id}`}
+              alias={model.alias}
+              copied={copied}
+              onCopy={copy}
+              onSetAlias={() => {}}
+              onDeleteAlias={() => {
+                if (model.source === "custom") {
+                  handleDeleteCustomModel(model.id, "llm", providerStorageAlias);
+                } else {
+                  handleDeleteAlias(model.alias);
+                }
+              }}
+              testStatus={modelTestResults[model.id]}
+              onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
+              isTesting={testingModelIds.has(model.id)}
+              isCustom
+              isFree={false}
+              caps={getCaps(`${providerId}/${model.id}`)}
+              thinkingSuffix={resolveThinkingSuffix(model.id)}
+              latencyMs={probeLatencies[model.id] ?? probeLatencies[modelCanonicalId]}
+              probeState={
+                (verifyStatus?.status === "running" && verifyStatus?.perModel?.[modelCanonicalId])
+                  ? verifyStatus.perModel[modelCanonicalId]
+                  : probeByModel[modelCanonicalId] || null
               }
-            }}
-            testStatus={modelTestResults[model.id]}
-            onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
-            isTesting={testingModelIds.has(model.id)}
-            isCustom
-            isFree={false}
-            caps={getCaps(`${providerId}/${model.id}`)}
-            thinkingSuffix={resolveThinkingSuffix(model.id)}
-            latencyMs={probeLatencies[model.id] ?? probeLatencies[canonicalModelId(model.id, providerStorageAlias)]}
-          />
-        ))}
+            />
+          );
+        })}
 
         {displayModels.map((model) => {
           const fullModel = `${providerStorageAlias}/${model.id}`;
@@ -1116,6 +1124,7 @@ export default function ProviderDetailPage() {
           const existingAlias = Object.entries(modelAliases).find(
             ([, m]) => m === fullModel || m === oldFormatModel
           )?.[0];
+          const modelCanonicalId = canonicalModelId(model.id, providerStorageAlias);
           return (
             <ModelRow
               key={model.id}
@@ -1133,7 +1142,12 @@ export default function ProviderDetailPage() {
               onDisable={() => handleDisableModel(model.id)}
               caps={getCaps(`${providerId}/${model.id}`)}
               thinkingSuffix={resolveThinkingSuffix(model.id)}
-              latencyMs={probeLatencies[model.id] ?? probeLatencies[canonicalModelId(model.id, providerStorageAlias)]}
+              latencyMs={probeLatencies[model.id] ?? probeLatencies[modelCanonicalId]}
+              probeState={
+                (verifyStatus?.status === "running" && verifyStatus?.perModel?.[modelCanonicalId])
+                  ? verifyStatus.perModel[modelCanonicalId]
+                  : probeByModel[modelCanonicalId] || null
+              }
             />
           );
         })}
