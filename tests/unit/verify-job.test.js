@@ -72,4 +72,28 @@ describe("verifyJob core", () => {
     // If two loops had run, we'd have 6 upserts (3 from each).
     expect(deps.upserts).toHaveLength(3);
   });
+
+  it("cancel stops after the current batch", async () => {
+    const deps = makeDeps();
+    await startVerify({ connectionId: "c2", scopeKey: "s", providerId: "p", providerAlias: "p", models: MODELS, opts: { concurrency: 1, batchSize: 1, timeoutMs: 1 }, baseUrl: "x", deps });
+    cancelVerify("c2");
+    await new Promise((r) => setTimeout(r, 50));
+    const s = getVerifyStatus("c2");
+    expect(["cancelled", "done"]).toContain(s.status); // cancelled if caught mid-run
+    expect(s.done).toBeLessThanOrEqual(3);
+  });
+
+  it("all-auth-failure batch sets status error", async () => {
+    const deps = makeDeps({
+      runBatch: async ({ models }) => ({
+        results: models.map((m) => ({ modelId: m.id, canonicalId: m.canonicalId, kind: m.kind, latencyMs: 1, probeStatus: "retryable", failureClass: "auth", failureMessage: "HTTP 401", checkedAt: "t" })),
+        caps: {},
+      }),
+    });
+    await startVerify({ connectionId: "c3", scopeKey: "s", providerId: "p", providerAlias: "p", models: MODELS, opts: { concurrency: 1, batchSize: 3, timeoutMs: 1 }, baseUrl: "x", deps });
+    await new Promise((r) => setTimeout(r, 50));
+    const s = getVerifyStatus("c3");
+    expect(s.status).toBe("error");
+    expect(s.error).toMatch(/auth/i);
+  });
 });

@@ -98,6 +98,13 @@ export async function startVerify({ connectionId, scopeKey, providerId, provider
           timeoutMs: clamped.timeoutMs, warmup: i === 0, baseUrl,
         });
 
+        const authFailure = results.length > 0 && results.every((r) => r.failureClass === "auth");
+        if (authFailure) {
+          job.status = "error";
+          job.error = "Provider authentication failed for every probed model. Check this connection before retrying.";
+          break;
+        }
+
         for (const r of results) {
           if (upsertProbeResult) {
             await upsertProbeResult({
