@@ -8,6 +8,7 @@ import {
 } from "@/shared/constants/providers";
 import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/db/index.js";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
+import { isModelCatalogDiscoveryRequest, MODEL_CATALOG_HEADER } from "@/lib/modelCatalogDiscovery";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
@@ -82,9 +83,6 @@ const parseOpenAIStyleModels = (data) => {
   return data?.data || data?.models || data?.results || [];
 };
 
-// Matches provider IDs that are upstream/cross-instance connections (contain a UUID suffix)
-const UPSTREAM_CONNECTION_RE = /[-_][0-9a-f]{8,}$/i;
-
 // LLM kind sentinel — combos/models with no explicit kind default to LLM
 const LLM_KIND = "llm";
 
@@ -126,6 +124,7 @@ async function fetchCompatibleModelIds(connection, externalSignal = null) {
   let url = `${baseUrl}/models`;
   const headers = {
     "Content-Type": "application/json",
+    [MODEL_CATALOG_HEADER]: "1",
   };
 
   if (isOpenAICompatibleProvider(connection.provider)) {
@@ -205,7 +204,7 @@ function comboMatchesKinds(combo, kindFilter) {
  * Build OpenAI-format models list filtered by service kinds.
  * @param {string[]} kindFilter - List of service kinds to include (e.g. ["llm"], ["webSearch","webFetch"]).
  */
-export async function buildModelsList(kindFilter, { signal = null } = {}) {
+export async function buildModelsList(kindFilter, { signal = null, skipCompatibleDiscovery = false } = {}) {
   let connections = [];
   try {
     connections = await getProviderConnections();
@@ -337,7 +336,7 @@ export async function buildModelsList(kindFilter, { signal = null } = {}) {
           )
         : providerModels.map((model) => model.id);
 
-      if (isCompatibleProvider && rawModelIds.length === 0 && !UPSTREAM_CONNECTION_RE.test(providerId)) {
+      if (isCompatibleProvider && rawModelIds.length === 0 && !skipCompatibleDiscovery) {
         rawModelIds = await fetchCompatibleModelIds(conn, signal);
       }
 
@@ -520,7 +519,10 @@ export async function OPTIONS() {
  */
 export async function GET(request) {
   try {
-    const data = await buildModelsList([LLM_KIND], { signal: request?.signal });
+    const data = await buildModelsList([LLM_KIND], {
+      signal: request?.signal,
+      skipCompatibleDiscovery: isModelCatalogDiscoveryRequest(request),
+    });
     return Response.json({ object: "list", data }, {
     });
   } catch (error) {

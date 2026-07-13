@@ -11,6 +11,7 @@ import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveProviderModels } from "open-sse/services/providerModels.js";
 import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
+import { MODEL_CATALOG_HEADER } from "@/lib/modelCatalogDiscovery";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -443,6 +444,7 @@ export async function GET(request, { params }) {
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${connection.apiKey}`,
+          [MODEL_CATALOG_HEADER]: "1",
         },
       });
 
@@ -483,7 +485,8 @@ export async function GET(request, { params }) {
           "Content-Type": "application/json",
           "x-api-key": connection.apiKey,
           "anthropic-version": "2023-06-01",
-          "Authorization": `Bearer ${connection.apiKey}`
+          "Authorization": `Bearer ${connection.apiKey}`,
+          [MODEL_CATALOG_HEADER]: "1",
         },
       });
 

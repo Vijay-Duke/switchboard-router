@@ -1,6 +1,5 @@
 import REGISTRY from "../providers/registry/index.js";
-import { buildCursorHeaders } from "../utils/cursorChecksum.js";
-import { decodeMessage, parseConnectRPCFrame } from "../utils/cursorProtobuf.js";
+import { decodeMessage } from "../utils/cursorProtobuf.js";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10 * 1000;
@@ -68,8 +67,8 @@ function getDiscoveryConfig(entry) {
     return {
       url: `${entry.oauth.apiEndpoint.replace(/\/$/, "")}${entry.oauth.modelsEndpoint}`,
       method: "POST",
-      type: "cursor-protobuf",
-      body: new Uint8Array([0, 0, 0, 0, 0]),
+      type: "cursor-unary-protobuf",
+      body: new Uint8Array(0),
     };
   }
 
@@ -91,10 +90,13 @@ function authToken(connection) {
 
 function buildHeaders(entry, connection, type) {
   const token = authToken(connection);
-  if (type === "cursor-protobuf") {
-    return token
-      ? buildCursorHeaders(token, connection?.providerSpecificData?.machineId, connection?.providerSpecificData?.ghostMode !== false)
-      : { "Content-Type": "application/connect+proto" };
+  if (type === "cursor-unary-protobuf") {
+    return {
+      "Content-Type": "application/proto",
+      "Connect-Protocol-Version": "1",
+      "x-ghost-mode": connection?.providerSpecificData?.ghostMode === false ? "false" : "true",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
   }
 
   const headers = {
@@ -142,19 +144,19 @@ function parseJsonModels(data) {
 
 function parseCursorModels(buffer) {
   const models = [];
-  let offset = 0;
-  while (offset < buffer.length) {
-    const frame = parseConnectRPCFrame(buffer.slice(offset));
-    if (!frame) break;
-    offset += frame.consumed;
-    const fields = decodeMessage(frame.payload);
-    // GetDefaultModelNudgeData currently returns model ids as repeated field 3.
-    // Only read that field so timestamps and other metadata cannot become models.
-    for (const field of fields.get(3) || []) {
-      if (field.wireType !== 2) continue;
-      const value = Buffer.from(field.value).toString("utf8").trim();
-      if (value && /^[a-z0-9][a-z0-9._:/+~-]{1,}$/i.test(value)) models.push(value);
-    }
+  const fields = decodeMessage(buffer);
+  for (const field of fields.get(1) || []) {
+    if (field.wireType !== 2) continue;
+    const details = decodeMessage(field.value);
+    const readString = (fieldNumber) => {
+      const value = details.get(fieldNumber)?.find((entry) => entry.wireType === 2)?.value;
+      return value ? Buffer.from(value).toString("utf8").trim() : "";
+    };
+    const id = readString(1);
+    if (!id || !/^[a-z0-9][a-z0-9._:/+~-]{1,}$/i.test(id)) continue;
+    const displayModelId = readString(3);
+    const name = readString(4) || readString(5) || displayModelId || id;
+    models.push({ id, name, ...(displayModelId ? { displayModelId } : {}) });
   }
   return normalizeModels(models);
 }
@@ -180,7 +182,7 @@ async function fetchCatalog(connection, entry, config, options) {
       return null;
     }
 
-    if (config.type === "cursor-protobuf") {
+    if (config.type === "cursor-unary-protobuf") {
       return parseCursorModels(Buffer.from(await response.arrayBuffer()));
     }
     return normalizeModels(parseJsonModels(await response.json()));

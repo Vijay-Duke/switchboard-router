@@ -8,7 +8,7 @@ import {
   parseCursorModels,
   resolveProviderModels,
 } from "../../open-sse/services/providerModels.js";
-import { encodeField, wrapConnectRPCFrame } from "../../open-sse/utils/cursorProtobuf.js";
+import { encodeField } from "../../open-sse/utils/cursorProtobuf.js";
 import { fetchSuggestedModels } from "../../src/shared/utils/providerModelsFetcher.js";
 
 const originalFetch = global.fetch;
@@ -87,28 +87,41 @@ describe("provider model discovery", () => {
     expect(modelsUrlFromBase("not a URL")).toBeNull();
   });
 
-  it("parses Cursor's repeated model-id field from ConnectRPC frames", () => {
+  it("parses Cursor's unary usable-model response with display metadata", () => {
     const payload = Buffer.concat([
-      Buffer.from(encodeField(1, 0, 1749756077)),
-      Buffer.from(encodeField(3, 2, "composer-2.5")),
-      Buffer.from(encodeField(3, 2, "composer-2.5-fast")),
+      Buffer.from(encodeField(1, 2, Buffer.concat([
+        Buffer.from(encodeField(1, 2, "composer-2.5")),
+        Buffer.from(encodeField(3, 2, "composer-2.5")),
+        Buffer.from(encodeField(4, 2, "Composer 2.5")),
+      ]))),
+      Buffer.from(encodeField(1, 2, Buffer.concat([
+        Buffer.from(encodeField(1, 2, "gpt-5.6-sol-high")),
+        Buffer.from(encodeField(3, 2, "gpt-5.6-sol-high")),
+        Buffer.from(encodeField(4, 2, "GPT-5.6 Sol 1M High")),
+      ]))),
     ]);
-    const models = parseCursorModels(Buffer.from(wrapConnectRPCFrame(payload)));
+    const models = parseCursorModels(payload);
 
     expect(models).toEqual([
-      { id: "composer-2.5", name: "composer-2.5" },
-      { id: "composer-2.5-fast", name: "composer-2.5-fast" },
+      { id: "composer-2.5", name: "Composer 2.5", displayModelId: "composer-2.5" },
+      { id: "gpt-5.6-sol-high", name: "GPT-5.6 Sol 1M High", displayModelId: "gpt-5.6-sol-high" },
     ]);
   });
 
-  it("discovers Cursor models using its declared OAuth discovery endpoint", async () => {
+  it("discovers Cursor models using its current unary usable-model endpoint", async () => {
     const responsePayload = Buffer.concat([
-      Buffer.from(encodeField(3, 2, "composer-2.5")),
-      Buffer.from(encodeField(3, 2, "composer-2.5-fast")),
+      Buffer.from(encodeField(1, 2, Buffer.concat([
+        Buffer.from(encodeField(1, 2, "composer-2.5")),
+        Buffer.from(encodeField(4, 2, "Composer 2.5")),
+      ]))),
+      Buffer.from(encodeField(1, 2, Buffer.concat([
+        Buffer.from(encodeField(1, 2, "gpt-5.6-sol-high")),
+        Buffer.from(encodeField(4, 2, "GPT-5.6 Sol 1M High")),
+      ]))),
     ]);
     global.fetch = vi.fn().mockResolvedValue(new Response(
-      Buffer.from(wrapConnectRPCFrame(responsePayload)),
-      { status: 200 },
+      responsePayload,
+      { status: 200, headers: { "content-type": "application/proto" } },
     ));
 
     const result = await resolveProviderModels({
@@ -120,12 +133,23 @@ describe("provider model discovery", () => {
 
     expect(result.models.map((model) => model.id)).toEqual([
       "composer-2.5",
-      "composer-2.5-fast",
+      "gpt-5.6-sol-high",
     ]);
     expect(global.fetch).toHaveBeenCalledWith(
-      "https://api2.cursor.sh/aiserver.v1.AiService/GetDefaultModelNudgeData",
-      expect.objectContaining({ method: "POST", redirect: "error" }),
+      "https://api2.cursor.sh/aiserver.v1.AiService/GetUsableModels",
+      expect.objectContaining({
+        method: "POST",
+        redirect: "error",
+        body: expect.any(Uint8Array),
+        headers: expect.objectContaining({
+          Authorization: "Bearer cursor-token",
+          "Content-Type": "application/proto",
+          "Connect-Protocol-Version": "1",
+        }),
+      }),
     );
+    expect(global.fetch.mock.calls[0][1].body).toHaveLength(0);
+    expect(global.fetch.mock.calls[0][1].headers).not.toHaveProperty("x-cursor-checksum");
   });
 
   it("does not cache ephemeral calls across credential values", async () => {

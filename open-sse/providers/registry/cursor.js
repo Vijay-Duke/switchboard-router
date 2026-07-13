@@ -46,7 +46,7 @@ const moduleDefault = {
   oauth: {
     apiEndpoint: "https://api2.cursor.sh",
     chatEndpoint: "/aiserver.v1.ChatService/StreamUnifiedChatWithTools",
-    modelsEndpoint: "/aiserver.v1.AiService/GetDefaultModelNudgeData",
+    modelsEndpoint: "/aiserver.v1.AiService/GetUsableModels",
     api3Endpoint: "https://api3.cursor.sh",
     agentEndpoint: "https://agent.api5.cursor.sh",
     agentNonPrivacyEndpoint: "https://agentn.api5.cursor.sh",
