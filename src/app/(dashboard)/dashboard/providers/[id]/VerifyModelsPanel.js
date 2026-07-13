@@ -279,8 +279,8 @@ export default function VerifyModelsPanel({
             {summary.cancelled ? " · cancelled" : ""}
           </span>
           {summary.dead > 0 && (
-            <Button size="sm" variant="secondary" icon="delete" onClick={handleRemoveUnavailable} disabled={running}>
-              Remove unavailable custom
+            <Button size="sm" variant="primary" icon="delete_sweep" onClick={handleRemoveUnavailable} disabled={running}>
+              Remove {summary.dead} dead
             </Button>
           )}
         </div>
