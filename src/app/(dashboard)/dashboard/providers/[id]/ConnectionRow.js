@@ -7,7 +7,10 @@ import PropTypes from "prop-types";
 import { Badge, Toggle, Tooltip } from "@/shared/components";
 import CooldownTimer from "./CooldownTimer";
 
-export default function ConnectionRow({ connection, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onEdit, onDelete, oneByOneStatus = null, autoPing = null }) {
+export default function ConnectionRow({ connection, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onEdit, onDelete, onAllowlistHost = null, oneByOneStatus = null, autoPing = null }) {
+  // An SSRF block is the one error the user can self-resolve: the gateway is
+  // reachable but resolves to a private/VPN IP the guard rejects by default.
+  const isSsrfBlocked = /SSRF blocked|Blocked URL: (private IP|internal host)/i.test(connection.lastError || "");
   const hasLegacyProxy = connection.providerSpecificData?.connectionProxyEnabled === true && !!connection.providerSpecificData?.connectionProxyUrl;
   const hasAnyProxy = hasLegacyProxy;
   const proxyDisplayText = hasLegacyProxy
@@ -143,6 +146,16 @@ export default function ConnectionRow({ connection, isOAuth, isFirst, isLast, on
                 {connection.lastError}
               </span>
             )}
+            {isSsrfBlocked && connection.isActive !== false && onAllowlistHost && (
+              <button
+                onClick={onAllowlistHost}
+                title="Trust this host past the SSRF guard and retry"
+                className="inline-flex items-center gap-1 rounded border border-amber-500/40 px-1.5 py-0.5 text-xs text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+              >
+                <span className="material-symbols-outlined text-[14px]">verified_user</span>
+                Add to allow list
+              </button>
+            )}
             <span className="text-xs text-text-muted">#{connection.priority}</span>
             {connection.globalPriority && (
               <span className="text-xs text-text-muted">Auto: {connection.globalPriority}</span>
@@ -217,6 +230,7 @@ ConnectionRow.propTypes = {
     lastError: PropTypes.string,
     priority: PropTypes.number,
     globalPriority: PropTypes.number,
+    providerSpecificData: PropTypes.object,
   }).isRequired,
   isOAuth: PropTypes.bool.isRequired,
   isFirst: PropTypes.bool.isRequired,
@@ -226,6 +240,7 @@ ConnectionRow.propTypes = {
   onToggleActive: PropTypes.func.isRequired,
   onEdit: PropTypes.func.isRequired,
   onDelete: PropTypes.func.isRequired,
+  onAllowlistHost: PropTypes.func,
   oneByOneStatus: PropTypes.shape({
     state: PropTypes.string,
     error: PropTypes.string,

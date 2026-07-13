@@ -116,6 +116,25 @@ export async function PATCH(request) {
     for (const key of PROTECTED_SETTING_KEYS) delete body[key];
     for (const key of IGNORED_SETTING_KEYS) delete body[key];
 
+    // Normalize the SSRF trust list: array of non-empty lowercased hosts, deduped.
+    if (Object.prototype.hasOwnProperty.call(body, "ssrfAllowHosts")) {
+      const raw = body.ssrfAllowHosts;
+      if (!Array.isArray(raw)) {
+        return NextResponse.json(
+          { error: "ssrfAllowHosts must be an array of host strings." },
+          { status: 400, headers: SETTINGS_RESPONSE_HEADERS }
+        );
+      }
+      body.ssrfAllowHosts = [
+        ...new Set(
+          raw
+            .filter((h) => typeof h === "string")
+            .map((h) => h.trim().toLowerCase().replace(/^\[|\]$/g, ""))
+            .filter(Boolean)
+        ),
+      ];
+    }
+
     // Auto combos require an explicit routerModel — there is no default.
     if (Object.prototype.hasOwnProperty.call(body, "comboStrategies")) {
       const invalidAuto = findAutoComboMissingRouter(body.comboStrategies);

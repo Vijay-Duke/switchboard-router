@@ -5,6 +5,7 @@ import { refreshWithRetry } from "../services/tokenRefresh.js";
 import { withCredentialRefreshLock } from "../services/oauthCredentialManager.js";
 import { getEmbeddingAdapter } from "./embeddingProviders/index.js";
 import { assertPublicUrlResolved } from "../utils/ssrfGuard.js";
+import { getOpenSseDeps } from "../runtimeDeps.js";
 
 /**
  * Core embeddings handler — orchestrator only. Provider-specific URL/headers/body/normalize
@@ -50,9 +51,16 @@ export async function handleEmbeddingsCore({
 
   log?.debug?.("EMBEDDINGS", `${provider.toUpperCase()} | ${model} | input_type=${Array.isArray(input) ? `array[${input.length}]` : "string"}`);
 
+  let ssrfAllowHosts = null;
+  try {
+    ssrfAllowHosts = (await getOpenSseDeps().getSettings?.())?.ssrfAllowHosts || null;
+  } catch {
+    // settings unavailable — fall back to default-deny
+  }
+
   let providerResponse;
   try {
-    await assertPublicUrlResolved(url);
+    await assertPublicUrlResolved(url, ssrfAllowHosts);
     providerResponse = await fetch(url, {
       method: "POST",
       headers,
@@ -86,7 +94,7 @@ export async function handleEmbeddingsCore({
       try {
         const retryHeaders = adapter.buildHeaders(credentials, ctx);
         const retryUrl = adapter.buildUrl(model, credentials, ctx);
-        await assertPublicUrlResolved(retryUrl);
+        await assertPublicUrlResolved(retryUrl, ssrfAllowHosts);
         await providerResponse.body?.cancel?.().catch?.(() => {});
         providerResponse = await fetch(retryUrl, {
           method: "POST",

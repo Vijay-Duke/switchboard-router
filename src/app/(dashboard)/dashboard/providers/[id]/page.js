@@ -875,6 +875,36 @@ export default function ProviderDetailPage() {
     }
   };
 
+  // SSRF: user trusts this connection's host past the guard (e.g. an internal
+  // gateway on a private/VPN IP). Adds the host to settings.ssrfAllowHosts, then
+  // reloads so the next request goes through and lastError clears.
+  const handleAllowlistHost = async (conn) => {
+    const rawBase = conn?.providerSpecificData?.baseUrl;
+    if (!rawBase) return;
+    let host;
+    try {
+      host = new URL(rawBase).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    } catch {
+      reportClientError("Cannot allow-list: invalid base URL", rawBase);
+      return;
+    }
+    try {
+      const cur = await fetch("/api/settings", { cache: "no-store" });
+      if (!cur.ok) throw new Error(`Failed to load settings (${cur.status})`);
+      const settings = await cur.json();
+      const next = [...new Set([...(settings.ssrfAllowHosts || []), host])];
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ssrfAllowHosts: next }),
+      });
+      if (!res.ok) throw new Error(`Failed to update allow list (${res.status})`);
+      await fetchConnections();
+    } catch (error) {
+      reportClientError("Error adding host to allow list:", error);
+    }
+  };
+
   const handleSwapPriority = async (index1, index2) => {
     // Optimistic update state
     const newConnections = [...connections];
@@ -945,6 +975,7 @@ export default function ProviderDetailPage() {
                 setShowEditModal(true);
               }}
               onDelete={() => handleDelete(conn.id)}
+              onAllowlistHost={() => handleAllowlistHost(conn)}
               oneByOneStatus={oneByOneResults[conn.id] || null}
             />
           </div>

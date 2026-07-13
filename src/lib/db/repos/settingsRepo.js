@@ -30,6 +30,10 @@ const DEFAULT_SETTINGS = {
   ponytailLevel: "full",
   // C1: non-loopback /v1 requires an API key by default (LAN-open was the prior insecure default)
   requireApiKey: true,
+  // Hosts the user has explicitly trusted past the SSRF guard (e.g. an internal
+  // LLM gateway on a private/VPN IP). Populated via the provider card's
+  // "Add to allow list" button when an SSRF block is reported. Lowercased hosts.
+  ssrfAllowHosts: [],
 };
 
 /** Env OVERRIDE_API_KEY / REQUIRE_API_KEY can force the gate without editing settings. */

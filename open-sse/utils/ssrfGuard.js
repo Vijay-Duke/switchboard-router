@@ -7,6 +7,24 @@ import { isIP } from "node:net";
 const BLOCKED_HOSTNAMES = new Set(["localhost", "ip6-localhost", "ip6-loopback", "metadata.google.internal"]);
 const BLOCKED_SUFFIXES = [".internal", ".local", ".localhost"];
 
+// Normalize a user-supplied host (or resolved IP) for allowlist comparison:
+// lowercase and strip IPv6 brackets so "[::1]" and "::1" compare equal.
+function normalizeHost(host) {
+  return String(host).toLowerCase().replace(/^\[|\]$/g, "");
+}
+
+// Build a Set from the operator's trusted-host allowlist. These are hosts that
+// resolve to private/internal IPs but are trusted anyway (e.g. an internal LLM
+// gateway reached over VPN). The allowlist is persisted in settings and passed
+// in at fetch time — the user opts a host in via the dashboard's
+// "Add to allow list" button when an SSRF block is reported.
+function toAllowSet(allowHosts) {
+  if (!allowHosts) return null;
+  const list = Array.isArray(allowHosts) ? allowHosts : [allowHosts];
+  const set = new Set(list.map(normalizeHost).filter(Boolean));
+  return set.size ? set : null;
+}
+
 // Parse dotted IPv4 to 32-bit integer, or null if not a valid IPv4 literal.
 function ipv4ToInt(host) {
   const parts = host.split(".");
@@ -100,9 +118,10 @@ function decodeWeirdIpv4(host) {
   return null;
 }
 
-function assertHostSafe(host) {
-  const h = host.toLowerCase().replace(/^\[|\]$/g, "");
+function assertHostSafe(host, allowSet = null) {
+  const h = normalizeHost(host);
 
+  if (allowSet?.has(h)) return; // user-trusted host
   if (BLOCKED_HOSTNAMES.has(h)) throw new Error("Blocked URL: internal host");
   if (BLOCKED_SUFFIXES.some((s) => h.endsWith(s))) throw new Error("Blocked URL: internal host");
 
@@ -116,7 +135,8 @@ function assertHostSafe(host) {
 }
 
 // Sync check: hostnames + IP literals / encodings. Caller maps to 400.
-export function assertPublicUrl(rawUrl) {
+// allowHosts (array or string) opts specific trusted hosts past the guard.
+export function assertPublicUrl(rawUrl, allowHosts = null) {
   let parsed;
   try {
     parsed = new URL(rawUrl);
@@ -126,17 +146,22 @@ export function assertPublicUrl(rawUrl) {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error("Blocked URL: unsupported scheme");
   }
-  assertHostSafe(parsed.hostname);
+  assertHostSafe(parsed.hostname, toAllowSet(allowHosts));
 }
 
 /**
  * Async: DNS-resolve hostname and re-check all A/AAAA addresses (anti DNS-rebind).
  * Use at fetch time for user-configured baseUrl.
+ * allowHosts (array or string) opts specific trusted hosts past the guard —
+ * an allowlisted hostname skips the resolved-IP recheck so an internal gateway
+ * (e.g. one resolving to a private/VPN IP) can be reached once trusted.
  */
-export async function assertPublicUrlResolved(rawUrl) {
-  assertPublicUrl(rawUrl);
+export async function assertPublicUrlResolved(rawUrl, allowHosts = null) {
+  const allowSet = toAllowSet(allowHosts);
+  assertPublicUrl(rawUrl, allowHosts);
   const parsed = new URL(rawUrl);
-  const host = parsed.hostname.replace(/^\[|\]$/g, "");
+  const host = normalizeHost(parsed.hostname);
+  if (allowSet?.has(host)) return; // trusted host: skip resolved-IP recheck
   if (isIP(host)) return;
   let records;
   try {
@@ -146,6 +171,6 @@ export async function assertPublicUrlResolved(rawUrl) {
   }
   if (!records?.length) throw new Error("Blocked URL: DNS resolution failed");
   for (const rec of records) {
-    assertHostSafe(rec.address);
+    assertHostSafe(rec.address, allowSet);
   }
 }

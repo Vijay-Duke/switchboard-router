@@ -5,6 +5,7 @@ import { dbg } from "../utils/debugLog.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
 import { assertPublicUrlResolved } from "../utils/ssrfGuard.js";
+import { getOpenSseDeps } from "../runtimeDeps.js";
 
 // Google Gemini and Vertex select SSE with their request URL, not a JSON field.
 // Sending the generic OpenAI-style `stream` property makes those APIs reject the
@@ -190,10 +191,18 @@ export class BaseExecutor {
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 
-      // H5: SSRF guard for user-configured / compatible base URLs (DNS-resolved)
+      // H5: SSRF guard for user-configured / compatible base URLs (DNS-resolved).
+      // ssrfAllowHosts is the user-managed trust list (dashboard "Add to allow
+      // list" button) that lets an internal gateway on a private/VPN IP through.
       if (this.isUserConfiguredBase(credentials)) {
+        let allowHosts = null;
         try {
-          await assertPublicUrlResolved(url);
+          allowHosts = (await getOpenSseDeps().getSettings?.())?.ssrfAllowHosts || null;
+        } catch {
+          // settings unavailable — fall back to default-deny (allowHosts null)
+        }
+        try {
+          await assertPublicUrlResolved(url, allowHosts);
         } catch (ssrfErr) {
           throw new Error(`SSRF blocked: ${ssrfErr.message}`);
         }
