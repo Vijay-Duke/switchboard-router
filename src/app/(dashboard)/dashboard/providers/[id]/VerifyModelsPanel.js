@@ -37,6 +37,7 @@ export default function VerifyModelsPanel({
   const [error, setError] = useState("");
   const [logLine, setLogLine] = useState("");
   const pollRef = useRef(/** @type {any} */ (null));
+  const cbRef = useRef({ onComplete, onLatencyMap });
 
   const modelCount = models?.length || 0;
   const capsLabel = useMemo(
@@ -44,6 +45,11 @@ export default function VerifyModelsPanel({
       `max concurrency ${MODEL_PROBE_CAPS.maxConcurrency} · batch ${MODEL_PROBE_CAPS.maxBatchSize} · timeout ${MODEL_PROBE_CAPS.maxTimeoutMs / 1000}s`,
     [],
   );
+
+  // Keep callbacks current to avoid stale closures in interval callbacks
+  useEffect(() => {
+    cbRef.current = { onComplete, onLatencyMap };
+  });
 
   function clampLocal() {
     return {
@@ -79,9 +85,9 @@ export default function VerifyModelsPanel({
       };
       setSummary(finalSummary);
       setLogLine(snap.status === "cancelled" ? "Cancelled (partial results saved)." : snap.status === "error" ? "Stopped." : "Done.");
-      onComplete?.(finalSummary);
+      cbRef.current.onComplete?.(finalSummary);
       // Latency map is derived by the parent from the probe cache reload; no per-run map needed.
-      onLatencyMap?.({});
+      cbRef.current.onLatencyMap?.({});
     }
   }
 
@@ -130,7 +136,8 @@ export default function VerifyModelsPanel({
       const snap = await res.json().catch(() => ({}));
       if (!res.ok) { setError(snap.error || "Failed to start"); setRunning(false); return; }
       applySnapshot(snap);
-      startPolling();
+      if (snap.status === "running") startPolling();
+      else setRunning(false);
     } catch (e) {
       setError(e?.message || "Verify failed");
       setRunning(false);
