@@ -24,7 +24,7 @@ Most tools need these values:
 
 ```text
 Base URL: http://localhost:20128/v1
-API Key:  sk-...
+API Key:  sk_switchboard
 Model(s): one or more model IDs or combo names, depending on the client
 ```
 

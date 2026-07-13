@@ -1,57 +1,56 @@
 # Quick Start
 
-## 1. Install
+## 1. Install And Run
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Vijay-Duke/switchboard-router/master/install.sh | bash
-```
-
-You can also install from the release package:
-
-```bash
-npm i -g https://github.com/Vijay-Duke/switchboard-router/releases/latest/download/switchboard-router.tgz
-```
-
-## 2. Run
-
-```bash
 switchboard
 ```
 
-Open the dashboard:
+Open `http://127.0.0.1:20128/dashboard` if the dashboard does not open automatically.
 
-```text
-http://localhost:20128/dashboard
-```
+## 2. Connect A Provider
 
-The API base URL is:
+Open **Providers**, choose a provider, and follow its OAuth or API-key flow. Use the connection test before moving on. The available model catalog is built from your active connections.
 
-```text
-http://localhost:20128/v1
-```
+## 3. Create A Gateway Key
 
-## 3. Add A Provider
+Open **Endpoint & keys** and create an API key. The complete generated key is shown only once, so copy it before closing the dialog.
 
-Go to **Providers** and add an OAuth provider or an API key provider. The model list is built from the providers you have connected.
+Examples in this guide use `sk_switchboard` as a placeholder. Replace it with the generated key.
 
-## 4. Create A Key
+## 4. Configure A Client
 
-Go to **Endpoint & Keys** and create an API key. Copy it when it appears; the full key is shown only once.
+The easiest path is **CLI tools**, which generates settings for supported clients using your actual endpoint, key, and selected models.
 
-## 5. Point A Client At Switchboard
+For a generic OpenAI-compatible client:
 
 ```bash
-export OPENAI_BASE_URL="http://localhost:20128/v1"
-export OPENAI_API_KEY="sk-..."
+export OPENAI_BASE_URL="http://127.0.0.1:20128/v1"
+export OPENAI_API_KEY="sk_switchboard"
 ```
 
-Then choose a model from the dashboard or from:
+## 5. List Models
 
 ```bash
 curl "$OPENAI_BASE_URL/models" \
   -H "Authorization: Bearer $OPENAI_API_KEY"
 ```
 
-## 6. Optional: Create A Combo
+Copy a model ID from this response or from the dashboard. Provider prefixes are part of the model ID.
 
-Go to **Combos** if you want one model name that can route across several models.
+## 6. Send A Request
+
+```bash
+curl "$OPENAI_BASE_URL/chat/completions" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "your-provider/your-model",
+    "messages": [{"role": "user", "content": "Say hello"}]
+  }'
+```
+
+## 7. Optional: Create A Combo
+
+Open **Combos** when you want one stable model name backed by several models. Start with fallback; add round-robin, fusion, or Auto only when their routing behavior matches your use case.

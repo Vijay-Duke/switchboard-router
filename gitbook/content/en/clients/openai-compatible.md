@@ -6,7 +6,7 @@ Any client that accepts a custom OpenAI base URL can usually talk to Switchboard
 
 ```text
 Base URL: http://localhost:20128/v1
-API Key:  sk-...
+API Key:  sk_switchboard
 Model:    pick from /v1/models or use a combo name
 ```
 
@@ -35,7 +35,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:20128/v1",
-    api_key="sk-...",
+    api_key="sk_switchboard",
 )
 
 response = client.chat.completions.create(

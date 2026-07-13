@@ -16,7 +16,10 @@ const NAV_STRUCTURE = [
       { key: "endpoint", slug: "using/endpoint" },
       { key: "providers", slug: "using/providers" },
       { key: "combos", slug: "using/combos" },
-      { key: "usage", slug: "using/usage" }
+      { key: "usage", slug: "using/usage" },
+      { key: "tokenSaver", slug: "using/token-saver" },
+      { key: "media", slug: "using/media" },
+      { key: "skillsAgentLibrary", slug: "using/skills-agent-library" }
     ]
   },
   {
@@ -54,6 +57,9 @@ const TRANSLATIONS = {
     providers: "Providers",
     combos: "Combos",
     usage: "Usage & Quota",
+    tokenSaver: "Token Saver",
+    media: "Media",
+    skillsAgentLibrary: "Skills & Agent Library",
     clients: "Clients",
     cliTools: "CLI Tools",
     openaiCompatible: "OpenAI-Compatible Clients",
@@ -77,6 +83,9 @@ const TRANSLATIONS = {
     providers: "Nhà cung cấp",
     combos: "Combo",
     usage: "Sử dụng & quota",
+    tokenSaver: "Token Saver",
+    media: "Media",
+    skillsAgentLibrary: "Skills & thư viện agent",
     clients: "Ứng dụng khách",
     cliTools: "Công cụ CLI",
     openaiCompatible: "Ứng dụng tương thích OpenAI",
@@ -100,6 +109,9 @@ const TRANSLATIONS = {
     providers: "提供商",
     combos: "组合",
     usage: "用量与配额",
+    tokenSaver: "Token Saver",
+    media: "媒体",
+    skillsAgentLibrary: "技能与 Agent 库",
     clients: "客户端",
     cliTools: "CLI 工具",
     openaiCompatible: "OpenAI 兼容客户端",
@@ -123,6 +135,9 @@ const TRANSLATIONS = {
     providers: "Proveedores",
     combos: "Combos",
     usage: "Uso y cuota",
+    tokenSaver: "Ahorro de tokens",
+    media: "Multimedia",
+    skillsAgentLibrary: "Skills y biblioteca de agentes",
     clients: "Clientes",
     cliTools: "Herramientas CLI",
     openaiCompatible: "Clientes compatibles con OpenAI",
@@ -146,6 +161,9 @@ const TRANSLATIONS = {
     providers: "プロバイダー",
     combos: "コンボ",
     usage: "使用量とクォータ",
+    tokenSaver: "Token Saver",
+    media: "メディア",
+    skillsAgentLibrary: "スキルとエージェントライブラリ",
     clients: "クライアント",
     cliTools: "CLI ツール",
     openaiCompatible: "OpenAI 互換クライアント",
@@ -182,9 +200,9 @@ export function getNavigation(lang) {
 // Static config (logo, urls, default English nav for backward compatibility).
 export const DOCS_CONFIG = {
   title: "Switchboard Documentation",
-  description: "Local AI model routing gateway",
+  description: "One local endpoint for every AI model you use",
   logo: "Switchboard",
-  appUrl: "",
-  githubUrl: "",
+  appUrl: "http://127.0.0.1:20128/dashboard",
+  githubUrl: "https://github.com/Vijay-Duke/switchboard-router",
   navigation: getNavigation(DEFAULT_LANG)
 };

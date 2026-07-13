@@ -1,30 +1,54 @@
 # Switchboard
 
-Switchboard gives your AI tools one local endpoint:
+One local endpoint for every AI model you use.
 
 ```text
-http://localhost:20128/v1
+http://127.0.0.1:20128/v1
 ```
 
-Add provider accounts in the dashboard, create API keys, and point clients at Switchboard instead of wiring every tool to every provider.
+Connect provider accounts once, create a Switchboard API key, then point Claude Code, Codex, Cursor, Cline, or any OpenAI-compatible client at the gateway. Switchboard handles format translation, account fallback, model routing, quota visibility, and usage tracking locally.
 
-## What It Does
+## Start Here
 
-- Serves OpenAI-compatible `/v1` endpoints for chat, responses, models, embeddings, images, audio, search, and fetch.
-- Stores provider connections, API keys, combos, usage, and request details locally.
-- Lets you group models into combos with fallback, round-robin, fusion, or Auto routing.
-- Includes dashboard helpers for CLI tools such as Claude Code, Codex, Cursor, Cline, Roo, Continue, OpenCode, Aider, Gemini CLI, and others.
+1. [Install Switchboard](getting-started/installation).
+2. Open `http://127.0.0.1:20128/dashboard`.
+3. Add at least one account under **Providers**.
+4. Create a key under **Endpoint & keys**.
+5. Configure a client from **CLI tools**, or use the `/v1` endpoint directly.
 
-## What It Is Not
+The [Quick Start](getting-started/quick-start) walks through the complete flow.
 
-Switchboard is local-first. The current app does not ship a hosted cloud endpoint, public tunnel service, team billing system, or fixed pricing tiers. If you expose it yourself, secure it like any other local service.
+## Routing
 
-## First Steps
+- **Direct models** send a request to the provider and account represented by that model ID.
+- **Fallback combos** try models in order until one succeeds.
+- **Round-robin combos** spread requests across a pool.
+- **Fusion combos** ask several models and use a judge model to synthesize the result.
+- **Auto combos** use a router model to select a worker for each request and can learn from outcomes over time.
 
-1. Install and run Switchboard.
-2. Open `http://localhost:20128/dashboard`.
-3. Add at least one provider.
-4. Create an API key in **Endpoint & Keys**.
-5. Use `http://localhost:20128/v1` as your client base URL.
+Switchboard also falls back across multiple accounts for the same provider and refreshes supported OAuth credentials automatically.
 
-Start with [Quick Start](getting-started/quick-start).
+## Dashboard
+
+| Area | Purpose |
+|---|---|
+| Overview | Recent requests, provider state, and gateway health |
+| Combos | Fallback, round-robin, fusion, and Auto routing |
+| Usage | Request history, tokens, cached tokens, and estimated cost |
+| Quota | Provider quota and reset information when available |
+| Providers | OAuth, API-key, compatible, local, and free provider connections |
+| Endpoint & keys | Base URL, gateway authentication, and API-key management |
+| Token saver | Fail-open compression and token diagnostics |
+| Media | Image, TTS, STT, embedding, search, and fetch providers |
+| Skills | Agent-readable Switchboard product skills |
+| Agent library | Sync namespaced skills and MCP servers into supported agents |
+| CLI tools | Generate or apply client-specific configuration |
+| Settings | Runtime preferences, logs, data, updates, and diagnostics |
+
+## API Surface
+
+Switchboard exposes OpenAI-compatible routes for models, chat completions, Responses, embeddings, image generation, speech, transcription, search, and web fetch. Provider and model capabilities vary; use the dashboard or `/v1/models` as the source of truth.
+
+## Local-First Security
+
+The dashboard and credential-management routes are local-only. The `/v1` gateway requires an API key by default when reached from outside loopback. Switchboard does not provide a hosted cloud endpoint or public tunnel; if you expose it through your own proxy, secure it with TLS and keep gateway authentication enabled.

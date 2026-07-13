@@ -1,7 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import rehypeSlug from "rehype-slug";
 import { BookOpen, Rocket, Terminal, Monitor, FolderOpen, HelpCircle, MessageCircle, Mouse, Folder, Lock, Zap, Smartphone, Lightbulb, AlertTriangle, CheckCircle, ArrowRight, Layers, Plug, Cloud, Wallet, Gift, GitBranch, BarChart3, Code2, Sparkles, Server, PartyPopper, Siren, Link2, Target, Heart, Check, Home, Package, Wrench, OctagonX, Search, Globe, Container } from "lucide-react";
 
 const PAGE_ICONS = {
@@ -58,33 +57,33 @@ const EMOJI_ICON_MAP = {
   "🚨": { Icon: Siren, color: "text-red-500" },
   "🛑": { Icon: OctagonX, color: "text-red-500" },
   "💡": { Icon: Lightbulb, color: "text-yellow-500" },
-  "🔄": { Icon: GitBranch, color: "text-[#E68A6E]" },
-  "🚀": { Icon: Rocket, color: "text-[#E68A6E]" },
+  "🔄": { Icon: GitBranch, color: "text-teal-600" },
+  "🚀": { Icon: Rocket, color: "text-teal-600" },
   "⚡": { Icon: Zap, color: "text-yellow-500" },
-  "🔌": { Icon: Plug, color: "text-[#E68A6E]" },
+  "🔌": { Icon: Plug, color: "text-teal-600" },
   "☁️": { Icon: Cloud, color: "text-blue-500" },
   "☁": { Icon: Cloud, color: "text-blue-500" },
-  "📦": { Icon: Package, color: "text-[#E68A6E]" },
+  "📦": { Icon: Package, color: "text-teal-600" },
   "💰": { Icon: Wallet, color: "text-green-600" },
   "🎁": { Icon: Gift, color: "text-pink-500" },
-  "📊": { Icon: BarChart3, color: "text-[#E68A6E]" },
+  "📊": { Icon: BarChart3, color: "text-teal-600" },
   "💻": { Icon: Code2, color: "text-gray-700" },
-  "✨": { Icon: Sparkles, color: "text-[#E68A6E]" },
+  "✨": { Icon: Sparkles, color: "text-teal-600" },
   "🖥️": { Icon: Server, color: "text-gray-700" },
   "🖥": { Icon: Server, color: "text-gray-700" },
-  "📖": { Icon: BookOpen, color: "text-[#E68A6E]" },
+  "📖": { Icon: BookOpen, color: "text-teal-600" },
   "🔒": { Icon: Lock, color: "text-gray-700" },
-  "➡️": { Icon: ArrowRight, color: "text-[#E68A6E]" },
-  "📱": { Icon: Smartphone, color: "text-[#E68A6E]" },
-  "📂": { Icon: Folder, color: "text-[#E68A6E]" },
-  "📁": { Icon: Folder, color: "text-[#E68A6E]" },
-  "🖱️": { Icon: Mouse, color: "text-[#E68A6E]" },
+  "➡️": { Icon: ArrowRight, color: "text-teal-600" },
+  "📱": { Icon: Smartphone, color: "text-teal-600" },
+  "📂": { Icon: Folder, color: "text-teal-600" },
+  "📁": { Icon: Folder, color: "text-teal-600" },
+  "🖱️": { Icon: Mouse, color: "text-teal-600" },
   "🎉": { Icon: PartyPopper, color: "text-pink-500" },
   "🔗": { Icon: Link2, color: "text-blue-500" },
   "🎯": { Icon: Target, color: "text-red-500" },
   "❤": { Icon: Heart, color: "text-red-500" },
   "❤️": { Icon: Heart, color: "text-red-500" },
-  "🏠": { Icon: Home, color: "text-[#E68A6E]" },
+  "🏠": { Icon: Home, color: "text-teal-600" },
   "🔧": { Icon: Wrench, color: "text-gray-700" },
   "🔍": { Icon: Search, color: "text-gray-700" },
   "🌐": { Icon: Globe, color: "text-blue-500" },
@@ -131,12 +130,12 @@ function renderHeadingWithEmoji(tag, children, props) {
 
 export function MarkdownRenderer({ content }) {
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeHighlight]}
-      skipHtml
-      className="markdown-content"
-      components={{
+    <div className="markdown-content">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
+        skipHtml
+        components={{
         h1: ({ node, children, ...props }) => {
           const text = children?.toString() || "";
           const IconComponent = PAGE_ICONS[text];
@@ -170,7 +169,7 @@ export function MarkdownRenderer({ content }) {
             
             return (
               <li {...props}>
-                {IconComponent && <IconComponent className="inline-block mr-2 w-4 h-4 text-[#E68A6E]" />}
+                {IconComponent && <IconComponent className="inline-block mr-2 w-4 h-4 text-teal-600" />}
                 {restText}
               </li>
             );
@@ -191,10 +190,11 @@ export function MarkdownRenderer({ content }) {
           
           return <li {...props}>{children}</li>;
         },
-      }}
-    >
-      {content}
-    </ReactMarkdown>
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
   );
 }
 

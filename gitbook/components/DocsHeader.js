@@ -1,76 +1,139 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { DOCS_CONFIG, t } from "@/constants/docsConfig";
 import { DEFAULT_LANG } from "@/constants/languages";
 import { ExternalLink, Menu, X } from "lucide-react";
 import DocsSidebar from "./DocsSidebar";
-import LanguageSwitcher from "./LanguageSwitcher";
+
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
 
 export default function DocsHeader({ lang = DEFAULT_LANG }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const menuButtonRef = useRef(null);
+  const drawerRef = useRef(null);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const drawer = drawerRef.current;
+    const focusable = drawer?.querySelectorAll(
+      'button, [href], [tabindex]:not([tabindex="-1"])'
+    );
+    const first = focusable?.[0];
+    const last = focusable?.[focusable.length - 1];
+
+    document.body.style.overflow = "hidden";
+    first?.focus();
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setMobileMenuOpen(false);
+        return;
+      }
+      if (event.key !== "Tab" || !first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+      menuButtonRef.current?.focus();
+    };
+  }, [mobileMenuOpen]);
 
   return (
     <>
-      <header className="sticky top-0 z-50 w-full border-b bg-white/80 backdrop-blur-sm border-gray-200">
-        <div className=" mx-auto px-4 h-16 flex items-center justify-between">
-          {/* Mobile menu button */}
+      <header className="docs-header">
+        <div className="docs-header-inner">
           <button
+            ref={menuButtonRef}
+            type="button"
             onClick={() => setMobileMenuOpen(true)}
-            className="lg:hidden p-2 rounded-lg hover:bg-gray-100 transition-colors"
+            className="docs-icon-button docs-mobile-menu-trigger"
             aria-label="Open menu"
+            aria-expanded={mobileMenuOpen}
+            aria-controls="mobile-docs-navigation"
           >
-            <Menu className="w-6 h-6 text-gray-600" />
+            <Menu className="w-5 h-5" aria-hidden="true" />
           </button>
 
-          {/* Logo */}
-          <Link href={`/${lang}`} className="flex items-center gap-2 font-bold text-2xl text-black hover:opacity-80 transition-opacity">
-            <span>9</span>
-            <span className="text-[#E68A6E]">{DOCS_CONFIG.logo} Docs</span>
+          <Link
+            href={`/${lang}`}
+            className="docs-brand"
+            aria-label="Switchboard documentation home"
+          >
+            <img
+              className="docs-brand-icon"
+              src={`${basePath}/favicon.svg`}
+              alt=""
+              width={32}
+              height={32}
+            />
+            <span>{DOCS_CONFIG.logo}</span>
+            <span className="docs-brand-suffix">Docs</span>
           </Link>
 
-          {/* Right side */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            <LanguageSwitcher currentLang={lang} />
-
-            {/* Go to App */}
-            <Link
-              href={DOCS_CONFIG.appUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-[#E68A6E] text-white rounded-lg font-medium hover:bg-[#d67a5e] transition-colors text-sm"
-            >
-              <span className="hidden sm:inline">{t(lang, "goToApp")}</span>
-              <ExternalLink className="w-4 h-4" />
-            </Link>
-          </div>
+          <a
+            href={DOCS_CONFIG.appUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="docs-app-link"
+            aria-label={`${t(lang, "goToApp")} (opens in a new tab)`}
+          >
+            <span className="hidden sm:inline">{t(lang, "goToApp")}</span>
+            <ExternalLink className="w-4 h-4" aria-hidden="true" />
+          </a>
         </div>
       </header>
 
-      {/* Mobile menu */}
       {mobileMenuOpen && (
         <>
-          <div
+          <button
+            type="button"
             className="mobile-menu-overlay lg:hidden"
             onClick={() => setMobileMenuOpen(false)}
+            aria-label="Close menu"
           />
-          
-          <div className="mobile-menu-drawer lg:hidden">
-            <div className="flex items-center justify-between p-4 border-b border-gray-200">
-              <span className="font-bold text-lg text-black">
-                <span className="text-[#E68A6E]">9</span>{DOCS_CONFIG.logo} Docs
+          <aside
+            ref={drawerRef}
+            id="mobile-docs-navigation"
+            className="mobile-menu-drawer lg:hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mobile-docs-title"
+          >
+            <div className="mobile-menu-heading">
+              <span id="mobile-docs-title" className="docs-brand docs-brand-mobile">
+                <img
+                  className="docs-brand-icon"
+                  src={`${basePath}/favicon.svg`}
+                  alt=""
+                  width={32}
+                  height={32}
+                />
+                {DOCS_CONFIG.logo} Docs
               </span>
               <button
+                type="button"
                 onClick={() => setMobileMenuOpen(false)}
-                className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+                className="docs-icon-button"
                 aria-label="Close menu"
               >
-                <X className="w-5 h-5 text-gray-600" />
+                <X className="w-5 h-5" aria-hidden="true" />
               </button>
             </div>
             <DocsSidebar isMobile onClose={() => setMobileMenuOpen(false)} lang={lang} />
-          </div>
+          </aside>
         </>
       )}
     </>

@@ -22,7 +22,7 @@ Your client did not send a valid key.
 
 1. Open **Endpoint & Keys**.
 2. Create or copy an active key.
-3. Send `Authorization: Bearer sk-...`.
+3. Send `Authorization: Bearer sk_switchboard`, replacing the example with your generated key.
 
 If you intentionally disabled **Require API key**, remember that only local clients should be able to reach the service.
 
@@ -32,7 +32,7 @@ Use the dashboard model picker or call:
 
 ```bash
 curl http://localhost:20128/v1/models \
-  -H "Authorization: Bearer sk-..."
+  -H "Authorization: Bearer sk_switchboard"
 ```
 
 If a provider was just added, test the provider connection and refresh the model list.

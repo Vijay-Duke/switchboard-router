@@ -1,67 +1,56 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { getNavigation } from "@/constants/docsConfig";
 import { DEFAULT_LANG } from "@/constants/languages";
-import { ChevronDown, ChevronRight, BookOpen, Rocket, Terminal, Monitor, HelpCircle, MessageCircle, Layers, Plug, Cloud, Zap, Wallet, Gift, GitBranch, BarChart3, Code2, Sparkles, Server } from "lucide-react";
+import {
+  BarChart3,
+  BookOpen,
+  Cloud,
+  Code2,
+  HelpCircle,
+  Image,
+  Layers,
+  Library,
+  MessageCircle,
+  Monitor,
+  Plug,
+  Rocket,
+  Terminal,
+  Zap,
+} from "lucide-react";
 
-// Icons keyed by structural key (language-independent)
 const SECTION_ICONS = {
   gettingStarted: Rocket,
-  providers: Layers,
-  features: Zap,
-  integration: Plug,
+  usingSwitchboard: Layers,
+  clients: Plug,
   deployment: Cloud,
-  help: HelpCircle
+  help: HelpCircle,
 };
 
 const ITEM_ICONS = {
   introduction: BookOpen,
   quickStart: Rocket,
   installation: Terminal,
-  subscription: Sparkles,
-  cheap: Wallet,
-  free: Gift,
-  smartRouting: GitBranch,
+  endpoint: Plug,
+  providers: Layers,
   combos: Layers,
-  quotaTracking: BarChart3,
-  claudeCode: Code2,
-  codex: Code2,
-  cursor: Code2,
-  cline: Code2,
-  roo: Code2,
-  continue: Code2,
-  otherTools: Plug,
-  localhost: Monitor,
-  cloud: Server,
+  usage: BarChart3,
+  tokenSaver: Zap,
+  media: Image,
+  skillsAgentLibrary: Library,
+  cliTools: Code2,
+  openaiCompatible: Plug,
+  local: Monitor,
+  docker: Cloud,
   troubleshooting: HelpCircle,
-  faq: MessageCircle
+  faq: MessageCircle,
 };
 
 export default function DocsSidebar({ isMobile = false, onClose, lang = DEFAULT_LANG }) {
   const pathname = usePathname();
   const navigation = getNavigation(lang);
-  const [openSections, setOpenSections] = useState(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      return JSON.parse(sessionStorage.getItem("sidebarOpen") || "[]");
-    } catch { return []; }
-  });
-
-  useEffect(() => {
-    sessionStorage.setItem("sidebarOpen", JSON.stringify(openSections));
-  }, [openSections]);
-
-  const toggleSection = (index) => {
-    setOpenSections(prev =>
-      prev.includes(index)
-        ? prev.filter(i => i !== index)
-        : [...prev, index]
-    );
-  };
-
   const buildHref = (slug) => (slug ? `/${lang}/${slug}` : `/${lang}`);
   const isActive = (slug) => pathname === buildHref(slug);
 
@@ -70,53 +59,38 @@ export default function DocsSidebar({ isMobile = false, onClose, lang = DEFAULT_
   };
 
   return (
-    <aside className={`${isMobile ? 'w-full' : 'w-64'} border-r bg-white border-gray-200 ${isMobile ? 'h-full' : 'h-[calc(100vh-4rem)] sticky top-16'} overflow-y-auto`}>
-      <nav className="p-4 space-y-6">
-        {navigation.map((section, sectionIndex) => {
+    <aside className={isMobile ? "docs-sidebar docs-sidebar-mobile" : "docs-sidebar"}>
+      <nav className="docs-sidebar-nav" aria-label="Documentation">
+        {navigation.map((section) => {
           const SectionIcon = SECTION_ICONS[section.key] || BookOpen;
 
           return (
-            <div key={section.key}>
-              <button
-                onClick={() => toggleSection(sectionIndex)}
-                className="flex items-center justify-between w-full text-sm font-semibold text-gray-900 mb-2 hover:text-[#E68A6E] transition-colors"
-              >
-                <span className="flex items-center gap-2">
-                  <SectionIcon className="w-4 h-4" />
-                  {section.title}
-                </span>
-                {openSections.includes(sectionIndex) ? (
-                  <ChevronDown className="w-4 h-4" />
-                ) : (
-                  <ChevronRight className="w-4 h-4" />
-                )}
-              </button>
+            <section key={section.key} className="docs-nav-section">
+              <h2 className="docs-nav-heading">
+                <SectionIcon className="w-4 h-4" aria-hidden="true" />
+                {section.title}
+              </h2>
+              <ul className="docs-nav-list">
+                {section.items.map((item) => {
+                  const ItemIcon = ITEM_ICONS[item.key] || BookOpen;
+                  const active = isActive(item.slug);
 
-              {openSections.includes(sectionIndex) && (
-                <ul className="space-y-1">
-                  {section.items.map((item) => {
-                    const ItemIcon = ITEM_ICONS[item.key] || BookOpen;
-
-                    return (
-                      <li key={item.key}>
-                        <Link
-                          href={buildHref(item.slug)}
-                          onClick={handleLinkClick}
-                          className={`flex items-center gap-2 px-3 py-2 text-sm rounded-lg transition-colors ${
-                            isActive(item.slug)
-                              ? "bg-[#E68A6E]/10 text-[#E68A6E] font-medium"
-                              : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-                          }`}
-                        >
-                          <ItemIcon className="w-4 h-4" />
-                          {item.title}
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
+                  return (
+                    <li key={item.key}>
+                      <Link
+                        href={buildHref(item.slug)}
+                        onClick={handleLinkClick}
+                        className={active ? "docs-nav-link docs-nav-link-active" : "docs-nav-link"}
+                        aria-current={active ? "page" : undefined}
+                      >
+                        <ItemIcon className="w-4 h-4" aria-hidden="true" />
+                        <span>{item.title}</span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
           );
         })}
       </nav>

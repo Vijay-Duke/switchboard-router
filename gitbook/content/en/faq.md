@@ -27,7 +27,7 @@ Do not copy model names from old examples. Use the dashboard model picker or cal
 
 ```bash
 curl http://localhost:20128/v1/models \
-  -H "Authorization: Bearer sk-..."
+  -H "Authorization: Bearer sk_switchboard"
 ```
 
 ## What are combos?

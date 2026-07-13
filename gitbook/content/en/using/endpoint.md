@@ -15,7 +15,7 @@ Open **Endpoint & Keys** to create, pause, resume, or delete keys.
 When **Require API key** is on, `/v1` requests must include:
 
 ```text
-Authorization: Bearer sk-...
+Authorization: Bearer sk_switchboard
 ```
 
 New keys are shown once. Store the key before closing the dialog.
@@ -28,7 +28,7 @@ Switchboard is local-only by default. The current app does not provide a built-i
 
 ```bash
 export OPENAI_BASE_URL="http://localhost:20128/v1"
-export OPENAI_API_KEY="sk-..."
+export OPENAI_API_KEY="sk_switchboard"
 ```
 
 Some clients use different names, but the values are the same: base URL plus API key.
