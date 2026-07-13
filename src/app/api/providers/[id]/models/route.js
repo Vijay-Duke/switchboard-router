@@ -3,7 +3,11 @@ import { NextResponse } from "next/server";
 import { getProviderConnectionById } from "@/models";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { GEMINI_CONFIG } from "@/lib/oauth/constants/oauth";
-import { refreshGoogleToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
+import {
+  refreshGoogleToken,
+  refreshImportedCursorCredentials,
+  updateProviderCredentials,
+} from "@/sse/services/tokenRefresh";
 import { resolveOllamaLocalHost } from "open-sse/config/providers.js";
 import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
@@ -412,11 +416,14 @@ const PROVIDER_MODELS_CONFIG = {
     }
   },
   cursor: {
-    customResolver: async (connection) => withStaticFallback(
-      connection.provider,
-      await resolveProviderModels(connection),
-      "Cursor model discovery failed",
-    ),
+    customResolver: async (connection) => {
+      const current = await refreshImportedCursorCredentials(connection, { force: true });
+      return withStaticFallback(
+        connection.provider,
+        await resolveProviderModels(current, { forceRefresh: true, log: console }),
+        "Cursor model discovery failed",
+      );
+    },
   }
 };
 

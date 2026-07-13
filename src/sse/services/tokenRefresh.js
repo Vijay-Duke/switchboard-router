@@ -5,6 +5,7 @@
 import "../initOpenSseDeps.js";
 import * as log from "../utils/logger.js";
 import { updateProviderConnection } from "../../lib/db/index.js";
+import { readLocalCursorCredentials } from "../../lib/oauth/cursorLocalCredentials.js";
 import {
   getProjectIdForConnection,
   invalidateProjectId,
@@ -77,6 +78,61 @@ export const getAllAccessTokens = (userInfo) =>
 
 export const shouldRefreshCredentials = (provider, credentials) =>
   _shouldRefreshCredentials(provider, credentials);
+
+/**
+ * Refresh a Cursor connection imported from the local IDE. Cursor does not
+ * issue Switchboard a refresh token; the IDE rotates its access token in
+ * state.vscdb, so re-reading that database is the supported refresh path.
+ *
+ * @param {object} credentials
+ * @param {{ force?: boolean }} [options]
+ * @returns {Promise<object>}
+ */
+export async function refreshImportedCursorCredentials(credentials, options = {}) {
+  if (credentials?.providerSpecificData?.authMethod !== "imported") return credentials;
+  if (!options.force && !_shouldRefreshCredentials("cursor", credentials)) return credentials;
+
+  try {
+    const local = await readLocalCursorCredentials();
+    if (!local.found || !local.accessToken || !local.machineId) return credentials;
+
+    const providerSpecificData = {
+      ...(credentials.providerSpecificData || {}),
+      machineId: local.machineId,
+      authMethod: "imported",
+    };
+    const expiresIn = 86400;
+    const expiresAt = toExpiresAt(expiresIn);
+    const refreshed = {
+      ...credentials,
+      accessToken: local.accessToken,
+      expiresIn,
+      expiresAt,
+      providerSpecificData,
+    };
+
+    const changed =
+      local.accessToken !== credentials.accessToken ||
+      local.machineId !== credentials.providerSpecificData?.machineId ||
+      _shouldRefreshCredentials("cursor", credentials);
+    const connectionId = credentials.connectionId || credentials.id;
+    if (changed && connectionId) {
+      await updateProviderCredentials(connectionId, {
+        accessToken: local.accessToken,
+        expiresIn,
+        providerSpecificData: { machineId: local.machineId, authMethod: "imported" },
+        existingProviderSpecificData: credentials.providerSpecificData || {},
+      });
+    }
+    return refreshed;
+  } catch (error) {
+    log.warn("TOKEN_REFRESH", "Could not reload imported Cursor credentials", {
+      connectionId: credentials.connectionId || credentials.id || null,
+      error: error?.message || String(error),
+    });
+    return credentials;
+  }
+}
 
 // ─── Lifecycle hook ───────────────────────────────────────────────────────────
 
@@ -226,6 +282,10 @@ export async function checkAndRefreshToken(provider, credentials) {
   let creds = { ...credentials };
   if (!creds.connectionId && creds.id) {
     creds.connectionId = creds.id;
+  }
+
+  if (provider === "cursor") {
+    creds = await refreshImportedCursorCredentials(creds);
   }
 
   // ── 1. Regular access-token expiry ────────────────────────────────────────

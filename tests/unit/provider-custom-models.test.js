@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getCompatibleProviderModelRows,
   getProviderCustomModelRows,
   getSelectableProviderModelRows,
 } from "@/shared/utils/providerCustomModels.js";
@@ -82,6 +83,43 @@ describe("provider custom model rows", () => {
         source: "custom",
         type: "llm",
       },
+    ]);
+  });
+});
+
+describe("compatible provider model rows", () => {
+  it("merges a UUID provider's live catalog into its display-prefix picker group", () => {
+    const providerId = "openai-compatible-responses-5f69ccc9-f1e2-4faa-acf6-d5551eab7cce";
+    const rows = getCompatibleProviderModelRows({
+      providerId,
+      providerAlias: "lite-llm",
+      customModels: [{ providerAlias: providerId, id: "openai/gpt-5.5", name: "Old GPT" }],
+      modelAliases: { legacy: `${providerId}/vertex_ai/gemini-old` },
+      liveModels: [
+        { id: "lite-llm/openai/gpt-5.6-sol" },
+        { id: "lite-llm/vertex_ai/gemini-3.1-flash-lite" },
+      ],
+      liveCatalogLoaded: true,
+    });
+
+    expect(rows.map((row) => row.value)).toEqual([
+      "lite-llm/openai/gpt-5.6-sol",
+      "lite-llm/vertex_ai/gemini-3.1-flash-lite",
+    ]);
+  });
+
+  it("falls back to stored models before live discovery completes", () => {
+    const providerId = "openai-compatible-chat-provider-id";
+    const rows = getCompatibleProviderModelRows({
+      providerId,
+      providerAlias: "custom",
+      customModels: [{ providerAlias: providerId, id: "manual", name: "Manual" }],
+      modelAliases: { legacy: `${providerId}/legacy-model` },
+    });
+
+    expect(rows.map((row) => row.value)).toEqual([
+      "custom/legacy-model",
+      "custom/manual",
     ]);
   });
 });

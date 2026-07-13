@@ -93,6 +93,9 @@ function buildHeaders(entry, connection, type) {
   if (type === "cursor-unary-protobuf") {
     return {
       "Content-Type": "application/proto",
+      // Next's server fetch omits framing for a zero-byte typed-array body
+      // unless the length is explicit; Cursor otherwise sees premature EOF.
+      "Content-Length": "0",
       "Connect-Protocol-Version": "1",
       "x-ghost-mode": connection?.providerSpecificData?.ghostMode === false ? "false" : "true",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -161,6 +164,24 @@ function parseCursorModels(buffer) {
   return normalizeModels(models);
 }
 
+async function readBinaryResponse(response) {
+  if (typeof response.bytes === "function") {
+    return Buffer.from(await response.bytes());
+  }
+  if (typeof response.arrayBuffer === "function") {
+    return Buffer.from(await response.arrayBuffer());
+  }
+  if (typeof response.buffer === "function") {
+    return Buffer.from(await response.buffer());
+  }
+  if (response.body) {
+    const chunks = [];
+    for await (const chunk of response.body) chunks.push(Buffer.from(chunk));
+    return Buffer.concat(chunks);
+  }
+  throw new Error("Provider response does not expose a binary body reader");
+}
+
 async function fetchCatalog(connection, entry, config, options) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -178,12 +199,17 @@ async function fetchCatalog(connection, entry, config, options) {
       signal,
     });
     if (!response.ok) {
+      options.log?.warn?.("Provider model discovery request failed", {
+        provider: connection?.provider,
+        status: response.status,
+        statusText: response.statusText,
+      });
       try { await response.body?.cancel?.(); } catch {}
       return null;
     }
 
     if (config.type === "cursor-unary-protobuf") {
-      return parseCursorModels(Buffer.from(await response.arrayBuffer()));
+      return parseCursorModels(await readBinaryResponse(response));
     }
     return normalizeModels(parseJsonModels(await response.json()));
   } finally {
@@ -230,7 +256,13 @@ export async function resolveProviderModels(connection, options = {}) {
       }
       return { models };
     })
-    .catch(() => null)
+    .catch((error) => {
+      options.log?.warn?.("Provider model discovery failed", {
+        provider: providerId,
+        error: error?.message || String(error),
+      });
+      return null;
+    })
     .finally(() => {
       if (inFlight.get(key) === request) inFlight.delete(key);
     });

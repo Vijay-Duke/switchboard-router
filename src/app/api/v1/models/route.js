@@ -15,7 +15,10 @@ import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveCopilotModels } from "open-sse/services/copilotModels.js";
 import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
 import { resolveProviderModels } from "open-sse/services/providerModels.js";
-import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
+import {
+  refreshImportedCursorCredentials,
+  updateProviderCredentials,
+} from "@/sse/services/tokenRefresh";
 import { capabilitiesFromServiceKind } from "open-sse/providers/capabilities.js";
 
 // Per-provider live model resolvers. Each receives a connection record and
@@ -249,6 +252,45 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
       activeConnectionByProvider.set(conn.provider, conn);
     }
   }
+  const cursorConnection = activeConnectionByProvider.get("cursor");
+  if (cursorConnection) {
+    activeConnectionByProvider.set(
+      "cursor",
+      await refreshImportedCursorCredentials(cursorConnection, { force: true }),
+    );
+  }
+  const compatibleModelIdsByProvider = new Map();
+  if (!skipCompatibleDiscovery) {
+    const compatibleConnections = Array.from(activeConnectionByProvider.entries())
+      .filter(([providerId]) =>
+        isOpenAICompatibleProvider(providerId) || isAnthropicCompatibleProvider(providerId));
+    await Promise.all(compatibleConnections.map(async ([providerId, connection]) => {
+      compatibleModelIdsByProvider.set(
+        providerId,
+        await fetchCompatibleModelIds(connection, signal),
+      );
+    }));
+  }
+  const liveCatalogByProvider = new Map();
+  const liveCatalogConnections = Array.from(activeConnectionByProvider.entries())
+    .filter(([providerId]) =>
+      providerMatchesKinds(providerId, kindFilter) &&
+      !isOpenAICompatibleProvider(providerId) &&
+      !isAnthropicCompatibleProvider(providerId));
+  await Promise.all(liveCatalogConnections.map(async ([providerId, connection]) => {
+    const liveResolver = LIVE_MODEL_RESOLVERS[providerId];
+    try {
+      const live = liveResolver
+        ? await liveResolver(connection, { signal })
+        : await resolveProviderModels(connection, {
+            signal,
+            ...(providerId === "cursor" ? { log: console } : {}),
+          });
+      if (live?.models?.length) liveCatalogByProvider.set(providerId, live);
+    } catch (error) {
+      console.log(`Live model fetch failed for ${providerId}: ${error?.message || error}`);
+    }
+  }));
 
   const models = [];
 
@@ -336,59 +378,26 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
           )
         : providerModels.map((model) => model.id);
 
-      if (isCompatibleProvider && rawModelIds.length === 0 && !skipCompatibleDiscovery) {
-        rawModelIds = await fetchCompatibleModelIds(conn, signal);
+      if (isCompatibleProvider && !skipCompatibleDiscovery) {
+        const discoveredIds = compatibleModelIdsByProvider.get(providerId) || [];
+        if (discoveredIds.length > 0) rawModelIds = discoveredIds;
       }
 
-      // Config-driven live catalog override (e.g. Kiro returns dynamic
-      // -thinking/-agentic variants per account). On failure, fall back to
-      // whatever rawModelIds already holds.
-      const liveResolver = LIVE_MODEL_RESOLVERS[providerId];
-      if (liveResolver && !hasExplicitEnabledModels) {
-        try {
-          const live = await liveResolver(conn, { signal });
-          if (live?.models?.length) {
-            rawModelIds = live.models.map((m) => m.id);
-            liveModelKindById = new Map(
-              live.models
-                .filter((m) => m?.id)
-                .map((m) => [m.id, modelKind(m)])
-            );
-            liveCapabilitiesById = new Map(
-              live.models
-                .filter((m) => m?.id && m.capabilities)
-                .map((m) => [m.id, m.capabilities])
-            );
-          }
-        } catch (err) {
-          console.log(`Live model fetch failed for ${providerId}: ${err?.message || err}`);
-        }
-      }
-
-      // Every registry provider gets a best-effort live discovery attempt.
-      // Provider-specific resolvers above remain authoritative where an API
-      // needs custom authentication or response expansion; all other
-      // providers use their registry transport/models endpoint. Static models
-      // remain in rawModelIds when discovery is unavailable.
-      if (!liveResolver && !hasExplicitEnabledModels) {
-        try {
-          const live = await resolveProviderModels(conn, { signal });
-          if (live?.models?.length) {
-            rawModelIds = live.models.map((m) => m.id);
-            liveModelKindById = new Map(
-              live.models
-                .filter((m) => m?.id)
-                .map((m) => [m.id, modelKind(m)])
-            );
-            liveCapabilitiesById = new Map(
-              live.models
-                .filter((m) => m?.id && m.capabilities)
-                .map((m) => [m.id, m.capabilities])
-            );
-          }
-        } catch (err) {
-          console.log(`Generic live model fetch failed for ${providerId}: ${err?.message || err}`);
-        }
+      // Live catalogs are fetched concurrently above. Dynamic results replace
+      // stored/static snapshots; discovery failure retains the fallback IDs.
+      const live = liveCatalogByProvider.get(providerId);
+      if (live?.models?.length) {
+        rawModelIds = live.models.map((m) => m.id);
+        liveModelKindById = new Map(
+          live.models
+            .filter((m) => m?.id)
+            .map((m) => [m.id, modelKind(m)])
+        );
+        liveCapabilitiesById = new Map(
+          live.models
+            .filter((m) => m?.id && m.capabilities)
+            .map((m) => [m.id, m.capabilities])
+        );
       }
 
       const modelIds = rawModelIds

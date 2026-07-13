@@ -124,3 +124,64 @@ export function getSelectableProviderModelRows({
 
   return rows;
 }
+
+/**
+ * Build picker rows for UUID-backed compatible providers. Their display prefix
+ * differs from the provider ID used to store aliases/custom models, so the
+ * normal provider helper cannot join the two catalogs directly.
+ */
+export function getCompatibleProviderModelRows({
+  providerId,
+  providerAlias,
+  customModels = [],
+  modelAliases = {},
+  liveModels = [],
+  liveCatalogLoaded = false,
+}) {
+  const metadataByValue = new Map();
+  const fallbackRows = [];
+  const addFallback = (row) => {
+    if (!row?.id || !row?.value || metadataByValue.has(row.value)) return;
+    metadataByValue.set(row.value, row);
+    fallbackRows.push(row);
+  };
+
+  for (const [aliasName, fullModel] of Object.entries(modelAliases || {})) {
+    const storagePrefix = `${providerId}/`;
+    if (typeof fullModel !== "string" || !fullModel.startsWith(storagePrefix)) continue;
+    const id = fullModel.slice(storagePrefix.length);
+    addFallback({ id, name: aliasName, value: `${providerAlias}/${id}` });
+  }
+  for (const model of customModels) {
+    if (!model?.id || model.providerAlias !== providerId) continue;
+    addFallback({
+      id: model.id,
+      name: model.name || model.id,
+      value: `${providerAlias}/${model.id}`,
+      isCustom: true,
+    });
+  }
+
+  if (!liveCatalogLoaded) return fallbackRows;
+
+  const prefix = `${providerAlias}/`;
+  const rows = [];
+  const seen = new Set();
+  for (const model of liveModels) {
+    if (typeof model?.id !== "string" || !model.id.startsWith(prefix) || seen.has(model.id)) continue;
+    const id = model.id.slice(prefix.length);
+    if (!id) continue;
+    seen.add(model.id);
+    const metadata = metadataByValue.get(model.id);
+    rows.push({
+      ...(metadata || {}),
+      id,
+      name: model.name || metadata?.name || id,
+      value: model.id,
+      kind: model.kind || metadata?.kind,
+      capabilities: model.capabilities || metadata?.capabilities,
+      isCustom: metadata?.isCustom || !metadata,
+    });
+  }
+  return rows.length > 0 ? rows : fallbackRows;
+}

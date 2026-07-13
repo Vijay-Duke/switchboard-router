@@ -10,7 +10,10 @@ import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, AI_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
 import { reportClientError } from "@/shared/utils/clientFeedback";
-import { getSelectableProviderModelRows } from "@/shared/utils/providerCustomModels";
+import {
+  getCompatibleProviderModelRows,
+  getSelectableProviderModelRows,
+} from "@/shared/utils/providerCustomModels";
 
 // Provider order: OAuth first, then Free Tier, then API Key (matches dashboard/providers)
 const PROVIDER_ORDER = [
@@ -278,26 +281,14 @@ export default function ModelSelectModal({
 
         // Aliases are stored using the raw providerId as key (e.g. "openai-compatible-chat-<uuid>/glm-4.7"),
         // so we must filter by providerId, not by the display prefix.
-        const nodeModels = Object.entries(modelAliases)
-          .filter(([, fullModel]) => fullModel.startsWith(`${providerId}/`))
-          .map(([aliasName, fullModel]) => ({
-            id: fullModel.replace(`${providerId}/`, ""),
-            name: aliasName,
-            value: `${nodePrefix}/${fullModel.replace(`${providerId}/`, "")}`,
-          }));
-
-        // Merge custom models registered via /api/models/custom for this provider
-        // providerAlias in DB uses the raw providerId, not the display prefix
-        const registeredCustom = customModels
-          .filter((m) => m.providerAlias === providerId)
-          .map((m) => ({
-            id: m.id,
-            name: m.name || m.id,
-            value: `${nodePrefix}/${m.id}`,
-            isCustom: true,
-          }));
-        const seen = new Set(nodeModels.map((m) => m.value));
-        const mergedModels = [...nodeModels, ...registeredCustom.filter((m) => !seen.has(m.value))];
+        const mergedModels = getCompatibleProviderModelRows({
+          providerId,
+          providerAlias: nodePrefix,
+          customModels,
+          modelAliases,
+          liveModels: liveModelsByAlias.get(nodePrefix) || EMPTY_ARRAY,
+          liveCatalogLoaded: liveModelsQuery.isSuccess,
+        });
 
         // Always show compatible providers that are connected, even with no aliases.
         // When no aliases exist, show a placeholder so users know it's available.

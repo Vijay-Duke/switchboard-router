@@ -144,12 +144,35 @@ describe("provider model discovery", () => {
         headers: expect.objectContaining({
           Authorization: "Bearer cursor-token",
           "Content-Type": "application/proto",
+          "Content-Length": "0",
           "Connect-Protocol-Version": "1",
         }),
       }),
     );
     expect(global.fetch.mock.calls[0][1].body).toHaveLength(0);
     expect(global.fetch.mock.calls[0][1].headers).not.toHaveProperty("x-cursor-checksum");
+  });
+
+  it("reads Cursor protobuf from Node-fetch-style responses used by the packaged server", async () => {
+    const responsePayload = Buffer.from(encodeField(1, 2, Buffer.concat([
+      Buffer.from(encodeField(1, 2, "gpt-5.6-sol-high")),
+      Buffer.from(encodeField(4, 2, "GPT-5.6 Sol 1M High")),
+    ])));
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      buffer: vi.fn().mockResolvedValue(responsePayload),
+    });
+
+    const result = await resolveProviderModels({
+      id: "cursor-packaged-response",
+      provider: "cursor",
+      accessToken: "cursor-token",
+    });
+
+    expect(result.models).toEqual([
+      { id: "gpt-5.6-sol-high", name: "GPT-5.6 Sol 1M High" },
+    ]);
   });
 
   it("does not cache ephemeral calls across credential values", async () => {
