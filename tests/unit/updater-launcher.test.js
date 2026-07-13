@@ -152,6 +152,43 @@ describe("detached updater lifecycle", () => {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("contains asynchronous relaunch spawn failures", async () => {
+    const statusProbe = net.createServer();
+    const statusPort = await listen(statusProbe);
+    await new Promise((resolve) => statusProbe.close(resolve));
+    const appProbe = net.createServer();
+    const appPort = await listen(appProbe);
+    await new Promise((resolve) => appProbe.close(resolve));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-updater-relaunch-error-"));
+    const child = spawnProcess(process.execPath, [updaterPath], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: "",
+        DATA_DIR: dataDir,
+        UPDATER_PORT: String(statusPort),
+        UPDATER_APP_PORT: String(appPort),
+        UPDATER_RETRIES: "1",
+        UPDATER_WAIT_MIN_MS: "0",
+        UPDATER_WAIT_MAX_MS: "0",
+        UPDATER_LINGER_MS: "250",
+        UPDATER_RELAUNCH: "1",
+        UPDATER_RELAUNCH_CMD: "/definitely/missing/switchboard-launcher",
+        UPDATER_RELAUNCH_ARGS: "[]",
+      },
+      stdio: "ignore",
+    });
+
+    try {
+      const result = await waitForExit(child);
+      const log = fs.readFileSync(path.join(dataDir, "update", "install.log"), "utf8");
+      expect(result.code).toBe(1);
+      expect(log).toContain("relaunch failed");
+    } finally {
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("application updater ownership and relaunch settings", () => {

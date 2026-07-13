@@ -6,7 +6,7 @@ const { getBrowserCommand, openBrowser } = require("../../cli/src/shared/openBro
 
 describe("CLI browser launcher", () => {
   it.each([
-    ["darwin", "open", []],
+    ["darwin", "/usr/bin/open", []],
     ["linux", "xdg-open", []],
     ["win32", "rundll32.exe", ["url.dll,FileProtocolHandler"]],
   ])("passes hostile URL text as one argument on %s", (platform, command, prefix) => {
@@ -19,7 +19,7 @@ describe("CLI browser launcher", () => {
     expect(execFileImpl).toHaveBeenCalledWith(
       command,
       [...prefix, url],
-      { windowsHide: true },
+      { windowsHide: true, timeout: 3000 },
       expect.any(Function),
     );
   });
@@ -35,4 +35,33 @@ describe("CLI browser launcher", () => {
       expect(getBrowserCommand(url, "darwin")).toBeNull();
     },
   );
+
+  it("falls back without throwing when the platform launcher fails synchronously", () => {
+    const error = Object.assign(new Error("spawn Unknown system error -86"), { code: -86 });
+    const onError = vi.fn();
+    const execFileImpl = vi.fn(() => { throw error; });
+
+    expect(openBrowser("http://localhost:20128/dashboard", {
+      platform: "darwin",
+      execFileImpl,
+      onError,
+    })).toBe(false);
+    expect(onError).toHaveBeenCalledWith(error);
+  });
+
+  it("reports asynchronous launcher failures through the same fallback", async () => {
+    const error = new Error("browser application could not be opened");
+    let reportError;
+    const reported = new Promise((resolve) => { reportError = resolve; });
+    const onError = vi.fn(reportError);
+    const execFileImpl = vi.fn((_command, _args, _options, callback) => setImmediate(() => callback(error)));
+
+    expect(openBrowser("http://localhost:20128/dashboard", {
+      platform: "darwin",
+      execFileImpl,
+      onError,
+    })).toBe(true);
+    await expect(reported).resolves.toBe(error);
+    expect(onError).toHaveBeenCalledWith(error);
+  });
 });

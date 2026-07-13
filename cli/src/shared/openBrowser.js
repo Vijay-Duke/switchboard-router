@@ -14,7 +14,7 @@ function getBrowserCommand(url, platform = process.platform) {
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
 
-  if (platform === "darwin") return { command: "open", args: [url] };
+  if (platform === "darwin") return { command: "/usr/bin/open", args: [url] };
   if (platform === "win32") {
     return {
       command: "rundll32.exe",
@@ -31,12 +31,17 @@ function openBrowser(url, { platform = process.platform, execFileImpl = execFile
     if (onError) onError(new Error("Unsupported browser URL or platform"));
     return false;
   }
-  execFileImpl(
-    launcher.command,
-    launcher.args,
-    { windowsHide: true },
-    (error) => { if (error && onError) onError(error); },
-  );
+  try {
+    execFileImpl(
+      launcher.command,
+      launcher.args,
+      { windowsHide: true, timeout: 3000 },
+      (error) => { if (error && onError) onError(error); },
+    );
+  } catch (error) {
+    if (onError) onError(error);
+    return false;
+  }
   return true;
 }
 

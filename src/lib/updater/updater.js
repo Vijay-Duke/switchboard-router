@@ -2,7 +2,7 @@
 // Spawns `npm i -g <pkg>@latest`, exposes progress via tiny HTTP server.
 // Survives after parent Next server exits (detached + unref by spawner).
 
-const { spawn } = require("child_process");
+const { execFile, spawn } = require("child_process");
 const http = require("http");
 const net = require("net");
 const path = require("path");
@@ -249,18 +249,21 @@ function runInstall() {
 function openBrowser(url) {
   const platform = process.platform;
   const launcher = platform === "darwin"
-    ? { command: "open", args: [url] }
+    ? { command: "/usr/bin/open", args: [url] }
     : platform === "win32"
       ? { command: "rundll32.exe", args: ["url.dll,FileProtocolHandler", url] }
       : { command: "xdg-open", args: [url] };
-  try {
-    spawn(launcher.command, launcher.args, {
-      shell: false,
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    }).unref();
-  } catch { /* ignore */ }
+  return new Promise((resolve) => {
+    try {
+      execFile(launcher.command, launcher.args, { windowsHide: true, timeout: 3000 }, (error) => {
+        if (error) pushLog(`[updater] browser launch failed: ${error.message}`);
+        resolve(!error);
+      });
+    } catch (error) {
+      pushLog(`[updater] browser launch failed: ${error.message}`);
+      resolve(false);
+    }
+  });
 }
 
 // Wait until app port is listening (server alive again), then open dashboard
@@ -269,8 +272,11 @@ async function waitForAppAndOpenBrowser() {
   while (Date.now() < deadline) {
     const busy = await isAppPortBusy();
     if (busy) {
-      openBrowser(`http://localhost:${appPort}/dashboard`);
-      pushLog(`[updater] app ready, opened dashboard`);
+      const dashboardUrl = `http://localhost:${appPort}/dashboard`;
+      const opened = await openBrowser(dashboardUrl);
+      pushLog(opened
+        ? `[updater] app ready, opened dashboard`
+        : `[updater] app ready; open dashboard manually: ${dashboardUrl}`);
       return;
     }
     await sleep(1000);
@@ -293,10 +299,15 @@ function relaunchApp() {
       shell: isWin,
       env: { ...process.env, UPDATER_RELAUNCH: "", UPDATER_RELAUNCH_CMD: "", UPDATER_RELAUNCH_ARGS: "" },
     });
+    child.once("error", (error) => {
+      pushLog(`[updater] relaunch failed: ${error.message}`);
+    });
+    child.once("spawn", () => {
+      pushLog(`[updater] relaunched: ${cmd} ${args.join(" ")} (pid=${child.pid})`);
+      // Wait for new app to come up, then auto-open browser so user sees the result
+      waitForAppAndOpenBrowser();
+    });
     child.unref();
-    pushLog(`[updater] relaunched: ${cmd} ${args.join(" ")} (pid=${child.pid})`);
-    // Wait for new app to come up, then auto-open browser so user sees the result
-    waitForAppAndOpenBrowser();
   } catch (e) {
     pushLog(`[updater] relaunch failed: ${e.message}`);
   }
