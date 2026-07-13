@@ -79,10 +79,14 @@ export default function ProviderDetailPage() {
   const [oneByOneResults, setOneByOneResults] = useState({});
   const [oneByOneSummary, setOneByOneSummary] = useState(null);
   const stopOneByOneRef = useRef(false);
+  const verifyIntervalRef = useRef(/** @type {ReturnType<typeof setInterval>|null} */ (null));
   const [importingModels, setImportingModels] = useState(false);
   const [importModelsMessage, setImportModelsMessage] = useState("");
   const [showVerifyPanel, setShowVerifyPanel] = useState(false);
+  const [verifyStatus, setVerifyStatus] = useState(/** @type {null|{status:string,done:number,total:number}} */ (null));
   const [probeLatencies, setProbeLatencies] = useState(/** @type {Record<string, number>} */ ({}));
+  const [probeByModel, setProbeByModel] = useState(/** @type {Record<string,string>} */ ({}));
+  const [modelFilter, setModelFilter] = useState("all"); // all | ok | dead | retry
   const { copied, copy } = useCopyToClipboard();
 
   const AG_RISK_STORAGE_KEY = "ag_risk_confirmed";
@@ -331,6 +335,23 @@ export default function ProviderDetailPage() {
     }
   }, [providerId, isCompatible]);
 
+  const fetchProbes = useCallback(async () => {
+    const activeConn = connections.find((c) => c.isActive !== false);
+    if (!activeConn) return;
+    try {
+      const r = await fetch(`/api/providers/${activeConn.id}/model-probes`, { cache: "no-store" });
+      const data = await r.json().catch(() => ({}));
+      const statusMap = {};
+      const latencyMap = {};
+      for (const p of data.probes || []) {
+        statusMap[p.modelId] = p.status === "ok" ? "ok" : p.status === "dead" ? "dead" : "retry";
+        if (p.latencyMs != null) latencyMap[p.modelId] = p.latencyMs;
+      }
+      setProbeByModel(statusMap);
+      setProbeLatencies((prev) => ({ ...prev, ...latencyMap }));
+    } catch { /* ignore */ }
+  }, [connections]);
+
   const handleUpdateNode = async (formData) => {
     try {
       const res = await fetch(`/api/provider-nodes/${providerId}`, {
@@ -445,6 +466,8 @@ export default function ProviderDetailPage() {
     fetchDisabledModels();
   }, [fetchConnections, fetchAliases, fetchCustomModels, fetchDisabledModels]);
 
+  useEffect(() => { fetchProbes(); }, [fetchProbes]);
+
   // Keep the visible catalog current for every provider. The API route uses
   // the provider's live endpoint when available and returns the static
   // registry catalog when discovery is unavailable.
@@ -477,6 +500,59 @@ export default function ProviderDetailPage() {
     if (!fetcher) return;
     fetchSuggestedModels(fetcher).then(setSuggestedModels);
   }, [providerId]);
+
+  /**
+   * Start (or restart) the page-level verify-status polling interval.
+   * Clears any existing interval first so there is exactly ONE at a time.
+   * Stops automatically when the job reaches a terminal/idle state.
+   * The returned cleanup stops the interval early (used by the unmount effect).
+   *
+   * Design choice (Option A simplified): page.js owns the single authoritative
+   * page-level poller via verifyIntervalRef. The panel keeps its own internal
+   * poller only for its progress-bar UI. This way a run started on an already-
+   * loaded page (no `connections` change) still drives the toggle button and
+   * per-row live badges, and navigate-away-and-back resumes polling correctly.
+   */
+  const startVerifyStatusPolling = useCallback((activeConnId) => {
+    // Clear any existing interval first.
+    if (verifyIntervalRef.current) {
+      clearInterval(verifyIntervalRef.current);
+      verifyIntervalRef.current = null;
+    }
+
+    const pollOnce = async () => {
+      try {
+        const r = await fetch(`/api/providers/${activeConnId}/model-probes/verify/status`, { cache: "no-store" });
+        const snap = await r.json().catch(() => null);
+        setVerifyStatus(snap && snap.status ? snap : null);
+        const isRunning = snap?.status === "running";
+        if (!isRunning && verifyIntervalRef.current) {
+          clearInterval(verifyIntervalRef.current);
+          verifyIntervalRef.current = null;
+        }
+      } catch { /* ignore */ }
+    };
+
+    // Immediate first fetch.
+    pollOnce();
+
+    // Set up the interval; it self-cancels when the job is no longer running.
+    verifyIntervalRef.current = setInterval(pollOnce, 1500);
+  }, []);
+
+  // On mount (or when connections change): check whether a verify run is already
+  // in progress and, if so, start polling immediately.
+  useEffect(() => {
+    const activeConn = connections.find((c) => c.isActive !== false);
+    if (!activeConn) return;
+    startVerifyStatusPolling(activeConn.id);
+    return () => {
+      if (verifyIntervalRef.current) {
+        clearInterval(verifyIntervalRef.current);
+        verifyIntervalRef.current = null;
+      }
+    };
+  }, [connections, startVerifyStatusPolling]);
 
   const handleSetAlias = async (modelId, alias, providerAliasOverride = providerAlias) => {
     const fullModel = `${providerAliasOverride}/${modelId}`;
@@ -572,6 +648,16 @@ export default function ProviderDetailPage() {
         return;
       }
 
+      let deadSet = new Set();
+      try {
+        const pr = await fetch(`/api/providers/${activeConnection.id}/model-probes`, { cache: "no-store" });
+        const pd = await pr.json().catch(() => ({}));
+        for (const p of pd.probes || []) {
+          if (p.status === "dead") deadSet.add(p.modelId);
+        }
+      } catch { /* no dead cache — import everything */ }
+      let skippedDead = 0;
+
       const builtInIds = new Set(models.map((m) => m.id));
       const toAdd = [];
       const toReenable = [];
@@ -581,6 +667,7 @@ export default function ProviderDetailPage() {
         const normalized = normalizeImportedModel(raw, providerStorageAlias);
         if (!normalized) continue;
         const { id, name, type } = normalized;
+        if (deadSet.has(canonicalModelId(id, providerStorageAlias))) { skippedDead += 1; continue; }
         const dedupeKey = `${type}|${id}`;
         if (seen.has(dedupeKey)) continue;
         seen.add(dedupeKey);
@@ -658,6 +745,20 @@ export default function ProviderDetailPage() {
         }
         if (data.warning) msg += ` · ${data.warning}`;
         setImportModelsMessage(msg);
+      }
+      if (skippedDead > 0) {
+        setImportModelsMessage((prev) => `${prev} · ${skippedDead} skipped (known dead)`);
+      }
+      // Auto-verify the freshly imported list.
+      if (added > 0) {
+        try {
+          const allModels = [...models, ...toAdd.map((m) => ({ id: m.id, name: m.name, kind: m.type }))];
+          await fetch(`/api/providers/${activeConnection.id}/model-probes/verify/start`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ models: allModels, providerAlias: providerStorageAlias }),
+          });
+        } catch { /* auto-verify best-effort */ }
       }
     } catch (error) {
       reportClientError("Error importing models:", error);
@@ -1041,42 +1142,80 @@ export default function ProviderDetailPage() {
       type: "llm",
     });
 
-    return (
-      <div className="flex flex-wrap gap-3">
-        {/* Custom models first */}
-        {customModelRows.map((model) => (
-          <ModelRow
-            key={`${model.source}-${model.fullModel}`}
-            model={{ id: model.id, name: model.name }}
-            fullModel={`${providerDisplayAlias}/${model.id}`}
-            alias={model.alias}
-            copied={copied}
-            onCopy={copy}
-            onSetAlias={() => {}}
-            onDeleteAlias={() => {
-              if (model.source === "custom") {
-                handleDeleteCustomModel(model.id, "llm", providerStorageAlias);
-              } else {
-                handleDeleteAlias(model.alias);
-              }
-            }}
-            testStatus={modelTestResults[model.id]}
-            onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
-            isTesting={testingModelIds.has(model.id)}
-            isCustom
-            isFree={false}
-            caps={getCaps(`${providerId}/${model.id}`)}
-            thinkingSuffix={resolveThinkingSuffix(model.id)}
-            latencyMs={probeLatencies[model.id] ?? probeLatencies[canonicalModelId(model.id, providerStorageAlias)]}
-          />
-        ))}
+    // Apply filter to custom models
+    const filteredCustomModelRows = customModelRows.filter((model) => {
+      if (modelFilter === "all") return true;
+      const modelCanonicalId = canonicalModelId(model.id, providerStorageAlias);
+      return (probeByModel[modelCanonicalId] || null) === modelFilter;
+    });
 
-        {displayModels.map((model) => {
+    // Apply filter to display models
+    const filteredDisplayModels = displayModels.filter((model) => {
+      if (modelFilter === "all") return true;
+      const modelCanonicalId = canonicalModelId(model.id, providerStorageAlias);
+      return (probeByModel[modelCanonicalId] || null) === modelFilter;
+    });
+
+    return (
+      <div className="flex flex-col gap-3">
+        {/* Filter control */}
+        <div className="mb-2 flex gap-1 text-xs">
+          {["all", "ok", "dead", "retry"].map((f) => (
+            <button
+              key={f}
+              onClick={() => setModelFilter(f)}
+              className={`rounded px-2 py-0.5 ${modelFilter === f ? "bg-primary text-white" : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5"}`}
+            >
+              {f === "all" ? "All" : f === "ok" ? "OK" : f === "dead" ? "Dead" : "Retry"}
+            </button>
+          ))}
+        </div>
+
+        {/* Models wrapper - flex wrap for the filtered results */}
+        <div className="flex flex-wrap gap-3">
+          {/* Custom models first */}
+          {filteredCustomModelRows.map((model) => {
+          const modelCanonicalId = canonicalModelId(model.id, providerStorageAlias);
+          return (
+            <ModelRow
+              key={`${model.source}-${model.fullModel}`}
+              model={{ id: model.id, name: model.name }}
+              fullModel={`${providerDisplayAlias}/${model.id}`}
+              alias={model.alias}
+              copied={copied}
+              onCopy={copy}
+              onSetAlias={() => {}}
+              onDeleteAlias={() => {
+                if (model.source === "custom") {
+                  handleDeleteCustomModel(model.id, "llm", providerStorageAlias);
+                } else {
+                  handleDeleteAlias(model.alias);
+                }
+              }}
+              testStatus={modelTestResults[model.id]}
+              onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
+              isTesting={testingModelIds.has(model.id)}
+              isCustom
+              isFree={false}
+              caps={getCaps(`${providerId}/${model.id}`)}
+              thinkingSuffix={resolveThinkingSuffix(model.id)}
+              latencyMs={probeLatencies[model.id] ?? probeLatencies[modelCanonicalId]}
+              probeState={
+                (verifyStatus?.status === "running" && verifyStatus?.perModel?.[modelCanonicalId])
+                  ? verifyStatus.perModel[modelCanonicalId]
+                  : probeByModel[modelCanonicalId] || null
+              }
+            />
+          );
+          })}
+
+          {filteredDisplayModels.map((model) => {
           const fullModel = `${providerStorageAlias}/${model.id}`;
           const oldFormatModel = `${providerId}/${model.id}`;
           const existingAlias = Object.entries(modelAliases).find(
             ([, m]) => m === fullModel || m === oldFormatModel
           )?.[0];
+          const modelCanonicalId = canonicalModelId(model.id, providerStorageAlias);
           return (
             <ModelRow
               key={model.id}
@@ -1094,7 +1233,12 @@ export default function ProviderDetailPage() {
               onDisable={() => handleDisableModel(model.id)}
               caps={getCaps(`${providerId}/${model.id}`)}
               thinkingSuffix={resolveThinkingSuffix(model.id)}
-              latencyMs={probeLatencies[model.id] ?? probeLatencies[canonicalModelId(model.id, providerStorageAlias)]}
+              latencyMs={probeLatencies[model.id] ?? probeLatencies[modelCanonicalId]}
+              probeState={
+                (verifyStatus?.status === "running" && verifyStatus?.perModel?.[modelCanonicalId])
+                  ? verifyStatus.perModel[modelCanonicalId]
+                  : probeByModel[modelCanonicalId] || null
+              }
             />
           );
         })}
@@ -1160,6 +1304,7 @@ export default function ProviderDetailPage() {
             </div>
           </div>
         )}
+        </div>
       </div>
     );
   };
@@ -1589,10 +1734,12 @@ export default function ProviderDetailPage() {
                   <Button
                     size="sm"
                     variant="secondary"
-                    icon="science"
+                    icon={verifyStatus?.status === "running" ? "progress_activity" : "science"}
                     onClick={() => setShowVerifyPanel((v) => !v)}
                   >
-                    {showVerifyPanel ? "Hide verify" : "Verify models"}
+                    {verifyStatus?.status === "running"
+                      ? `Verifying ${verifyStatus.done}/${verifyStatus.total}`
+                      : showVerifyPanel ? "Hide verify" : "Verify models"}
                   </Button>
                 )}
                 {modelToolbarActions.showBulkControls && disabledModelIds.length > 0 && (
@@ -1641,9 +1788,14 @@ export default function ProviderDetailPage() {
               providerAlias={providerStorageAlias}
               models={verifyList}
               onClose={() => setShowVerifyPanel(false)}
+              onStarted={(snap) => {
+                setVerifyStatus(snap && snap.status ? snap : null);
+                if (activeConnection?.id) startVerifyStatusPolling(activeConnection.id);
+              }}
               onLatencyMap={(map) => setProbeLatencies((prev) => ({ ...prev, ...map }))}
               onComplete={async (s) => {
                 if (s?.removed > 0) await fetchCustomModels();
+                await fetchProbes();
               }}
             />
           );
