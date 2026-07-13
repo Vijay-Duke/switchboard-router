@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Button } from "@/shared/components";
 import { MODEL_PROBE_CAPS } from "@/lib/model-probe/caps.js";
+import { requestConfirmation } from "@/store/confirmationStore";
 
 /**
  * Batch model verification UI: post start job → poll status → summary/actions.
@@ -36,6 +37,7 @@ export default function VerifyModelsPanel({
   const [summary, setSummary] = useState(/** @type {null|Record<string, any>} */ (null));
   const [error, setError] = useState("");
   const [logLine, setLogLine] = useState("");
+  const [removingStatus, setRemovingStatus] = useState("");
   const cbRef = useRef({ onComplete, onStarted });
   const terminalKeyRef = useRef(/** @type {string|null} */ (null));
   const connectionIdRef = useRef(connectionId);
@@ -155,21 +157,42 @@ export default function VerifyModelsPanel({
     await fetch(`/api/providers/${targetConnectionId}/model-probes/verify/cancel`, { method: "POST" }).catch(() => {});
   }
 
-  async function handleRemoveUnavailable() {
+  async function handleRemoveUnavailable(status) {
     if (!connectionId) return;
-    setLogLine("Removing unavailable custom models…");
-    const res = await fetch(`/api/providers/${connectionId}/model-probes/remove-unavailable`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ providerAlias, kind: "llm" }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setError(data.error || "Remove failed");
-      return;
+    const isRetryable = status === "retryable";
+    const count = isRetryable ? Number(summary?.retryable || 0) : Number(summary?.dead || 0);
+    if (isRetryable) {
+      const confirmed = await requestConfirmation({
+        title: "Remove retry-failed models?",
+        message: `Remove ${count} custom model(s) that failed with a retryable error? Timeouts, rate limits, network failures, and provider errors may be temporary. Credential failures are kept. Removed models can be imported again later.`,
+        confirmText: `Remove ${count}`,
+      });
+      if (!confirmed) return;
     }
-    setLogLine(`Removed ${data.removed || 0} unavailable custom model(s).`);
-    cbRef.current.onComplete?.({ ...(summary || {}), removed: data.removed || 0 });
+    setRemovingStatus(status);
+    setError("");
+    setLogLine(`Removing ${isRetryable ? "retry-failed" : "dead"} custom models…`);
+    try {
+      const res = await fetch(`/api/providers/${connectionId}/model-probes/remove-unavailable`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerAlias, kind: "llm", status }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || "Remove failed");
+        return;
+      }
+      const removed = Number(data.removed || 0);
+      const summaryKey = isRetryable ? "retryable" : "dead";
+      setSummary(summary ? { ...summary, [summaryKey]: 0 } : summary);
+      setLogLine(`Removed ${removed} ${isRetryable ? "retry-failed" : "dead"} custom model(s).`);
+      cbRef.current.onComplete?.({ ...(summary || {}), removed, removedStatus: status });
+    } catch (removeError) {
+      setError(removeError?.message || "Remove failed");
+    } finally {
+      setRemovingStatus("");
+    }
   }
 
   async function handleClearCache() {
@@ -287,8 +310,13 @@ export default function VerifyModelsPanel({
             {summary.cancelled ? " · cancelled" : ""}
           </span>
           {summary.dead > 0 && (
-            <Button size="sm" variant="primary" icon="delete_sweep" onClick={handleRemoveUnavailable} disabled={running}>
+            <Button size="sm" variant="primary" icon="delete_sweep" onClick={() => handleRemoveUnavailable("dead")} disabled={running || Boolean(removingStatus)} loading={removingStatus === "dead"}>
               Remove {summary.dead} dead
+            </Button>
+          )}
+          {summary.retryable > 0 && (
+            <Button size="sm" variant="danger" icon="delete_sweep" onClick={() => handleRemoveUnavailable("retryable")} disabled={running || Boolean(removingStatus)} loading={removingStatus === "retryable"}>
+              Remove {summary.retryable} retry failures
             </Button>
           )}
         </div>

@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import {
   deleteCustomModel,
   getCustomModels,
-  getDeadModelIds,
+  getModelIdsByStatus,
   getProviderConnectionById,
 } from "@/lib/db/index.js";
 import { buildModelProbeScopeKey, canonicalModelId } from "@/lib/model-probe/index.js";
@@ -26,19 +26,31 @@ export async function POST(request, { params }) {
     const body = await request.json().catch(() => ({}));
     const providerAlias = providerAliasFor(connection, body.providerAlias);
     const kind = body.kind || "llm";
-    const scopeKey = buildModelProbeScopeKey(connection);
-    const dead = new Set(await getDeadModelIds(connection.provider, scopeKey, kind));
-    const customModels = await getCustomModels();
-    const removedModels = [];
-
-    for (const model of customModels) {
-      const modelKind = model.kind || model.type || "llm";
-      if (model.providerAlias !== providerAlias || modelKind !== kind) continue;
-      const canonicalId = canonicalModelId(model.id, providerAlias);
-      if (!dead.has(canonicalId)) continue;
-      await deleteCustomModel({ providerAlias, id: model.id, type: modelKind });
-      removedModels.push({ id: model.id, kind: modelKind, name: model.name || model.id });
+    const status = body.status || "dead";
+    if (!["dead", "retryable"].includes(status)) {
+      return NextResponse.json({ error: "Status must be dead or retryable" }, { status: 400 });
     }
+    const scopeKey = buildModelProbeScopeKey(connection);
+    const excludeFailureClasses = status === "retryable" ? ["auth"] : [];
+    const unavailable = new Set(await getModelIdsByStatus(
+      connection.provider,
+      scopeKey,
+      status,
+      kind,
+      { excludeFailureClasses },
+    ));
+    const customModels = await getCustomModels();
+    const removableModels = customModels.filter((model) => {
+      const modelKind = model.kind || model.type || "llm";
+      if (model.providerAlias !== providerAlias || modelKind !== kind) return false;
+      const canonicalId = canonicalModelId(model.id, providerAlias);
+      return unavailable.has(canonicalId);
+    });
+    const removedModels = await Promise.all(removableModels.map(async (model) => {
+      const modelKind = model.kind || model.type || "llm";
+      await deleteCustomModel({ providerAlias, id: model.id, type: modelKind });
+      return { id: model.id, kind: modelKind, name: model.name || model.id };
+    }));
 
     return NextResponse.json({
       success: true,
@@ -46,6 +58,7 @@ export async function POST(request, { params }) {
       connectionId: connection.id,
       scopeKey,
       providerAlias,
+      status,
       removed: removedModels.length,
       removedModels,
     });

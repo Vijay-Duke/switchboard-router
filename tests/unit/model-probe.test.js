@@ -9,6 +9,7 @@ import { runBatch, runBatches } from "@/lib/model-probe/runBatch.js";
 import {
   upsertProbeResult,
   getDeadModelIds,
+  getModelIdsByStatus,
   getProbesForScope,
   clearProbes,
 } from "@/lib/db/repos/modelProbeRepo.js";
@@ -276,13 +277,32 @@ describe("modelProbeRepo", () => {
       status: "ok",
       latencyMs: 42,
     });
+    await upsertProbeResult({
+      providerId,
+      scopeKey,
+      modelId: "retry-1",
+      kind: "llm",
+      status: "retryable",
+      failureClass: "timeout",
+    });
+    await upsertProbeResult({
+      providerId,
+      scopeKey,
+      modelId: "retry-auth",
+      kind: "llm",
+      status: "retryable",
+      failureClass: "auth",
+    });
     const dead = await getDeadModelIds(providerId, scopeKey, "llm");
     expect(dead).toContain("dead-1");
     expect(dead).not.toContain("ok-1");
+    expect(await getModelIdsByStatus(providerId, scopeKey, "retryable", "llm", {
+      excludeFailureClasses: ["auth"],
+    })).toEqual(["retry-1"]);
     const all = await getProbesForScope(providerId, scopeKey);
-    expect(all.length).toBeGreaterThanOrEqual(2);
+    expect(all.length).toBeGreaterThanOrEqual(4);
     const cleared = await clearProbes(providerId, scopeKey);
-    expect(cleared).toBeGreaterThanOrEqual(2);
+    expect(cleared).toBeGreaterThanOrEqual(4);
     expect(await getDeadModelIds(providerId, scopeKey)).toEqual([]);
   });
 });

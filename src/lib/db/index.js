@@ -57,6 +57,7 @@ export {
 export {
   upsertProbeResult,
   getProbesForScope,
+  getModelIdsByStatus,
   getDeadModelIds,
   clearProbes,
   clearProbesForProvider,

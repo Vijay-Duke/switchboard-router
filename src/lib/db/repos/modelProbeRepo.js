@@ -68,15 +68,39 @@ export async function getProbesForScope(providerId, scopeKey) {
   return rows.map(rowToProbe).filter(Boolean);
 }
 
-export async function getDeadModelIds(providerId, scopeKey, kind = null) {
+/**
+ * @param {string} providerId
+ * @param {string} scopeKey
+ * @param {string} status
+ * @param {string|null} [kind]
+ * @param {{ excludeFailureClasses?: string[] }} [options]
+ */
+export async function getModelIdsByStatus(providerId, scopeKey, status, kind = null, options = {}) {
+  const normalizedStatus = String(status || "").trim();
+  if (!["ok", "dead", "retryable"].includes(normalizedStatus)) {
+    throw new Error("Invalid probe status");
+  }
+  const excludedFailureClasses = [...new Set(
+    (Array.isArray(options.excludeFailureClasses) ? options.excludeFailureClasses : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean),
+  )];
   const db = await getAdapter();
-  const params = [providerId, scopeKey];
-  let sql = `SELECT model_id FROM provider_model_probe WHERE provider_id = ? AND scope_key = ? AND status = 'dead'`;
+  const params = [providerId, scopeKey, normalizedStatus];
+  let sql = `SELECT model_id FROM provider_model_probe WHERE provider_id = ? AND scope_key = ? AND status = ?`;
   if (kind) {
     sql += ` AND kind = ?`;
     params.push(kind);
   }
+  if (excludedFailureClasses.length > 0) {
+    sql += ` AND (failure_class IS NULL OR failure_class NOT IN (${excludedFailureClasses.map(() => "?").join(", ")}))`;
+    params.push(...excludedFailureClasses);
+  }
   return db.all(sql, params).map((row) => row.model_id);
+}
+
+export async function getDeadModelIds(providerId, scopeKey, kind = null) {
+  return getModelIdsByStatus(providerId, scopeKey, "dead", kind);
 }
 
 export async function clearProbes(providerId, scopeKey) {
