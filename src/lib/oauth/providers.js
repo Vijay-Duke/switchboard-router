@@ -867,7 +867,7 @@ const PROVIDERS = {
       const region = extraData?._region || "us-east-1";
       assertValidAwsRegion(region);
       const suppliedProfile = parseKiroProfileArn(extraData?._profileArn);
-      if (extraData?._authMethod === "idc" && !suppliedProfile) {
+      if (extraData?._profileArn && !suppliedProfile) {
         throw new Error("A valid Kiro profile ARN is required for IAM Identity Center");
       }
       const tokenUrl = `https://oidc.${region}.amazonaws.com/token`;
@@ -895,13 +895,22 @@ const PROVIDERS = {
 
       // AWS SSO OIDC returns camelCase
       if (data.accessToken) {
+        const returnedProfile = parseKiroProfileArn(data.profileArn);
+        const discoveredProfileArn = returnedProfile?.profileArn
+          || suppliedProfile?.profileArn
+          || await fetchKiroProfileArn(data.accessToken, region);
+        if (extraData?._authMethod === "idc" && !discoveredProfileArn) {
+          throw new Error(
+            "Kiro did not return an enterprise profile. Check that the subscription is active, or enter a profile ARN from `kiro-cli whoami`.",
+          );
+        }
         return {
           ok: true,
           data: {
             access_token: data.accessToken,
             refresh_token: data.refreshToken,
             expires_in: data.expiresIn,
-            profile_arn: data?.profileArn || suppliedProfile?.profileArn || null,
+            profile_arn: discoveredProfileArn,
             // Store client credentials for refresh
             _clientId: extraData?._clientId,
             _clientSecret: extraData?._clientSecret,
@@ -1499,7 +1508,10 @@ export async function pollForToken(providerName, deviceCode, codeVerifier, extra
       const tokens = provider.mapTokens(result.data, extra);
       // Kiro IDC/Builder-ID tokens lack profileArn; resolve it to avoid 403
       if (providerName === "kiro" && !tokens.providerSpecificData?.profileArn) {
-        const profileArn = await fetchKiroProfileArn(tokens.accessToken);
+        const profileArn = await fetchKiroProfileArn(
+          tokens.accessToken,
+          tokens.providerSpecificData?.region,
+        );
         if (profileArn) tokens.providerSpecificData.profileArn = profileArn;
       }
       return { success: true, tokens };

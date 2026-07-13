@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { readFile, readdir } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
+import { parseKiroProfileArn } from "open-sse/utils/kiroProfileArn.js";
 
 /**
  * GET /api/oauth/kiro/auto-import
@@ -91,21 +92,21 @@ export async function GET() {
       }
     }
 
-    // Read profileArn from Kiro IDE's profile.json.
-    // Important: the runtime gateway requires us-east-1 in the ARN regardless
-    // of the IDC region, so we normalize the region in the ARN to us-east-1.
+    // Read profileArn from Kiro IDE's profile.json. Preserve its region: that is
+    // the Kiro profile/inference region and may differ from the IDC login region.
     let profileArn = null;
     const kiroProfilePaths = [
       join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "Kiro", "User", "globalStorage", "kiro.kiroagent", "profile.json"),
+      join(homedir(), "Library", "Application Support", "Kiro", "User", "globalStorage", "kiro.kiroagent", "profile.json"),
       join(homedir(), ".config", "Kiro", "User", "globalStorage", "kiro.kiroagent", "profile.json"),
     ];
     for (const profilePath of kiroProfilePaths) {
       try {
         const profileContent = await readFile(profilePath, "utf-8");
         const profileData = JSON.parse(profileContent);
-        if (profileData.arn) {
-          // Normalize region to us-east-1 for the runtime gateway
-          profileArn = profileData.arn.replace(/arn:aws:codewhisperer:[^:]+:/, "arn:aws:codewhisperer:us-east-1:");
+        const profile = parseKiroProfileArn(profileData.arn);
+        if (profile) {
+          profileArn = profile.profileArn;
           break;
         }
       } catch (error) {

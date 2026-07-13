@@ -68,9 +68,8 @@ export class KiroExecutor extends BaseExecutor {
     const authMethod = credentials?.providerSpecificData?.authMethod;
     // IAM Identity Center (idc) tokens are AWS SSO access tokens — the same
     // family as external_idp/api_key. The kiro.dev gateway rejects them with
-    // 403 "bearer token invalid", so they must hit the CodeWhisperer
-    // *.amazonaws.com surface, and in the region the token was minted in
-    // (the baseUrls are hardcoded us-east-1).
+    // 403 "bearer token invalid", so they must hit the Amazon Q surface in the
+    // Kiro profile's region, which may differ from the IDC login region.
     const isCodeWhispererSurface =
       authMethod === "api_key" || authMethod === "external_idp" || authMethod === "idc";
     if (!isCodeWhispererSurface) return baseUrls;
@@ -78,14 +77,19 @@ export class KiroExecutor extends BaseExecutor {
     const profile = parseKiroProfileArn(credentials?.providerSpecificData?.profileArn);
     const region = profile?.region
       || safeAwsRegion((credentials?.providerSpecificData?.region || "").trim());
-    const regionalize = (u) =>
-      region && region !== "us-east-1" && u.includes("amazonaws.com")
-        ? u.replace(/([a-z]+)\.[a-z0-9-]+\.amazonaws\.com/, `$1.${region}.amazonaws.com`)
-        : u;
-
-    const amazon = baseUrls.filter((u) => u.includes("amazonaws.com")).map(regionalize);
+    const amazon = baseUrls.filter((u) => u.includes("amazonaws.com"));
     const others = baseUrls.filter((u) => !u.includes("amazonaws.com"));
-    return amazon.length > 0 ? [...amazon, ...others] : baseUrls;
+    if (amazon.length === 0 || region === "us-east-1") {
+      return amazon.length > 0 ? [...amazon, ...others] : baseUrls;
+    }
+
+    const qBaseUrl = amazon.find((url) => url.includes("://q."));
+    if (!qBaseUrl) return [...amazon, ...others];
+    const qHost = region.startsWith("us-gov-")
+      ? `q-fips.${region}.amazonaws.com`
+      : `q.${region}.amazonaws.com`;
+    const regionalQUrl = qBaseUrl.replace(/q\.[a-z0-9-]+\.amazonaws\.com/, qHost);
+    return [regionalQUrl, ...amazon.filter((url) => url !== qBaseUrl), ...others];
   }
 
   buildUrl(model, stream, urlIndex = 0, credentials = null) {

@@ -9,7 +9,7 @@ import { KiroExecutor } from "../../open-sse/executors/kiro.js";
  */
 describe("AWS region validation", () => {
   it("accepts real regions and rejects host-injecting ones", () => {
-    for (const good of ["us-east-1", "eu-west-2", "ap-southeast-1"]) {
+    for (const good of ["us-east-1", "eu-west-2", "ap-southeast-1", "us-gov-west-1"]) {
       expect(isValidAwsRegion(good)).toBe(true);
     }
     for (const bad of [
@@ -52,7 +52,21 @@ describe("AWS region validation", () => {
       },
     });
 
-    expect(urls.some((u) => u.includes("eu-central-1.amazonaws.com"))).toBe(true);
+    expect(urls[0]).toContain("q.eu-central-1.amazonaws.com");
     expect(urls.some((u) => u.includes("eu-west-1.amazonaws.com"))).toBe(false);
+  });
+
+  it("kiro executor uses the GovCloud FIPS endpoint for a GovCloud profile", () => {
+    const exec = new KiroExecutor();
+    const urls = exec.getOrderedBaseUrls({
+      providerSpecificData: {
+        authMethod: "idc",
+        region: "us-gov-east-1",
+        profileArn:
+          "arn:aws-us-gov:codewhisperer:us-gov-west-1:123456789012:profile/PROFILE",
+      },
+    });
+
+    expect(urls[0]).toContain("q-fips.us-gov-west-1.amazonaws.com");
   });
 });

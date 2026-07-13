@@ -68,7 +68,7 @@ export const GITHUB_CONFIG = { ...PROVIDER_OAUTH["github"] };
 export const KIRO_CONFIG = { ...PROVIDER_OAUTH["kiro"] };
 
 // AWS region allowlist pattern — prevents SSRF via region injection into upstream URLs (GHSA-6mwv-4mrm-5p3m)
-export const AWS_REGION_PATTERN = /^[a-z]{2}-[a-z]+-\d{1,2}$/;
+export const AWS_REGION_PATTERN = /^[a-z]{2}(?:-[a-z0-9]+)+-\d{1,2}$/;
 
 // Reject any region that is not a valid AWS region before interpolating it into a URL
 export function assertValidAwsRegion(region) {

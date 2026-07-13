@@ -1,4 +1,8 @@
+import { parseKiroProfileArn } from "open-sse/utils/kiroProfileArn.js";
+
 const BASE64_BLOCK_SIZE = 4;
+const KIRO_PROFILE_DISCOVERY_TIMEOUT_MS = 10_000;
+const KIRO_COMMERCIAL_PROFILE_REGIONS = ["us-east-1", "eu-central-1"];
 
 function validateXaiOAuthEndpoint(rawUrl, field) {
   const value = String(rawUrl || "").trim();
@@ -50,24 +54,56 @@ function extractEmailFromAccessToken(accessToken) {
   return payload.email || payload.preferred_username || payload.sub || undefined;
 }
 
-export async function fetchKiroProfileArn(accessToken) {
-  if (!accessToken) return null;
-  try {
-    const response = await fetch("https://codewhisperer.us-east-1.amazonaws.com/ListAvailableProfiles", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({ maxResults: 10 }),
-    });
-    if (!response.ok) return null;
-    const data = await response.json();
-    return data.profiles?.find((p) => p.arn?.trim())?.arn?.trim() || null;
-  } catch {
-    return null;
+function kiroProfileDiscoveryEndpoints(preferredRegion) {
+  const region = typeof preferredRegion === "string"
+    ? preferredRegion.trim().toLowerCase()
+    : "";
+  if (region === "us-gov-east-1" || region === "us-gov-west-1") {
+    const regions = [region, "us-gov-east-1", "us-gov-west-1"];
+    return [...new Set(regions)].map((candidate) => `https://q-fips.${candidate}.amazonaws.com`);
   }
+
+  const regions = KIRO_COMMERCIAL_PROFILE_REGIONS.includes(region)
+    ? [region, ...KIRO_COMMERCIAL_PROFILE_REGIONS]
+    : KIRO_COMMERCIAL_PROFILE_REGIONS;
+  return [
+    ...[...new Set(regions)].map((candidate) => `https://q.${candidate}.amazonaws.com`),
+    "https://codewhisperer.us-east-1.amazonaws.com",
+  ];
+}
+
+export async function fetchKiroProfileArn(accessToken, preferredRegion) {
+  if (!accessToken) return null;
+  const normalizedPreferredRegion = typeof preferredRegion === "string"
+    ? preferredRegion.trim().toLowerCase()
+    : "";
+  for (const endpoint of kiroProfileDiscoveryEndpoints(preferredRegion)) {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-amz-json-1.0",
+          "x-amz-target": "AmazonCodeWhispererService.ListAvailableProfiles",
+          Accept: "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ maxResults: 10 }),
+        signal: AbortSignal.timeout(KIRO_PROFILE_DISCOVERY_TIMEOUT_MS),
+      });
+      if (!response.ok) continue;
+      const data = await response.json();
+      const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
+      const parsedProfiles = profiles
+        .map((profile) => parseKiroProfileArn(profile?.arn || profile?.profileArn))
+        .filter(Boolean);
+      const preferred = parsedProfiles.find((profile) => profile.region === normalizedPreferredRegion);
+      if (preferred) return preferred.profileArn;
+      if (parsedProfiles[0]) return parsedProfiles[0].profileArn;
+    } catch {
+      // Try the next supported Kiro profile region.
+    }
+  }
+  return null;
 }
 
 export function extractCodexAccountInfo(idToken) {

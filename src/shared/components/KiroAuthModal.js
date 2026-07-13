@@ -143,15 +143,16 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
       setError("Please enter your IDC start URL");
       return;
     }
-    const profile = parseKiroProfileArn(idcProfileArn);
-    if (!profile) {
+    const rawProfileArn = idcProfileArn.trim();
+    const profile = rawProfileArn ? parseKiroProfileArn(rawProfileArn) : null;
+    if (rawProfileArn && !profile) {
       setError("Please enter a valid Kiro profile ARN from `kiro-cli whoami`");
       return;
     }
     onMethodSelect("idc", {
       startUrl: idcStartUrl.trim(),
       region: idcRegion,
-      profileArn: profile.profileArn,
+      ...(profile ? { profileArn: profile.profileArn } : {}),
     });
   };
 
@@ -352,7 +353,7 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
 
             <div>
               <label className="block text-sm font-medium mb-2">
-                Kiro Profile ARN <span className="text-red-500">*</span>
+                Kiro Profile ARN <span className="text-text-muted">(optional)</span>
               </label>
               <Input
                 value={idcProfileArn}
@@ -361,7 +362,7 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
                 className="font-mono text-sm"
               />
               <p className="text-xs text-text-muted mt-1">
-                Run <code>kiro-cli whoami</code> to find this. Its region controls inference and may differ from Identity Center.
+                Discovered automatically after login. If discovery fails, run <code>kiro-cli whoami</code> and paste it here.
               </p>
             </div>
 

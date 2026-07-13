@@ -315,7 +315,7 @@ async function resolveKiroProfileArnPatch(providerSpecificData, accessToken, ref
   let profileArn = refreshedArn?.trim?.() || null;
   if (!profileArn) {
     const fetchArn = getOpenSseDeps().fetchKiroProfileArn;
-    if (fetchArn) profileArn = await fetchArn(accessToken);
+    if (fetchArn) profileArn = await fetchArn(accessToken, providerSpecificData?.region);
   }
   return profileArn ? { providerSpecificData: { profileArn } } : {};
 }
