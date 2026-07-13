@@ -58,6 +58,7 @@ function initWinTray(options) {
   });
 
   psProcess.on("error", () => {});
+  psProcess.on("exit", () => { psProcess = null; });
   psProcess.stderr.on("data", () => {});
 
   // Send initial menu items
@@ -73,15 +74,28 @@ function initWinTray(options) {
       sendCommand({ action: "set-tooltip", text });
     },
     kill() {
-      try {
-        sendCommand({ action: "kill" });
-      } catch (e) {}
-      setTimeout(() => {
-        if (psProcess && !psProcess.killed) {
-          try { psProcess.kill(); } catch (e) {}
-        }
-        psProcess = null;
-      }, 300);
+      const target = psProcess;
+      if (!target) return Promise.resolve();
+      return new Promise((resolve) => {
+        let done = false;
+        let fallback;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          if (fallback) clearTimeout(fallback);
+          target.removeListener("exit", finish);
+          resolve();
+        };
+        target.once("exit", finish);
+        try { sendCommand({ action: "kill" }); } catch (e) {}
+        fallback = setTimeout(() => {
+          if (psProcess === target && !target.killed) {
+            try { target.kill(); } catch (e) {}
+          }
+          if (psProcess === target) psProcess = null;
+          finish();
+        }, 1000);
+      });
     }
   };
 }

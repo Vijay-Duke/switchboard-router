@@ -2,7 +2,9 @@ import { spawn, execSync, execFileSync } from "child_process";
 import path from "path";
 import fs from "fs";
 import os from "os";
+import crypto from "crypto";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
+import { matchesRecordedProcess } from "@/lib/processIdentity";
 
 const PROCESS_WAIT_MS = 2000;
 
@@ -16,7 +18,22 @@ function processMatchesRecordedPath(pid, expectedPath) {
     const command = process.platform === "win32"
       ? execFileSync("powershell", ["-NonInteractive", "-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${Number(pid)}').CommandLine`], { encoding: "utf8", windowsHide: true, timeout: 3000 })
       : execFileSync("ps", ["-p", String(Number(pid)), "-o", "command="], { encoding: "utf8", timeout: 3000 });
-    return command.includes(expectedPath);
+    if (matchesRecordedProcess({ command, cwd: "", expectedPath })) return true;
+    let cwd = "";
+    if (process.platform === "linux") {
+      try { cwd = fs.readlinkSync(`/proc/${Number(pid)}/cwd`); } catch { /* fail closed below */ }
+    } else if (process.platform !== "win32") {
+      try {
+        const output = execFileSync("lsof", ["-a", "-p", String(Number(pid)), "-d", "cwd", "-Fn"], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 3000,
+        });
+        const line = output.split(/\r?\n/).find((entry) => entry.startsWith("n"));
+        cwd = line ? line.slice(1) : "";
+      } catch { /* fail closed below */ }
+    }
+    return matchesRecordedProcess({ command, cwd, expectedPath });
   } catch {
     // PID reuse is worse than leaving an old process behind: fail closed when
     // the recorded command identity cannot be checked.
@@ -59,6 +76,11 @@ function killMitmByPidFile() {
     if (!fs.existsSync(mitmPidFile)) return;
     const pid = parseInt(fs.readFileSync(mitmPidFile, "utf8").trim(), 10);
     if (!pid) return;
+    const command = process.platform === "win32"
+      ? execFileSync("powershell", ["-NonInteractive", "-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${Number(pid)}').CommandLine`], { encoding: "utf8", windowsHide: true, timeout: 3000 })
+      : execFileSync("ps", ["-p", String(Number(pid)), "-o", "command="], { encoding: "utf8", timeout: 3000 });
+    const normalized = String(command).toLowerCase();
+    if (!normalized.includes("mitm") || !normalized.includes("server")) return;
 
     if (process.platform === "win32") {
       try { execSync(`taskkill /T /PID ${pid}`, { stdio: "ignore", windowsHide: true, timeout: 3000 }); } catch {
@@ -157,7 +179,20 @@ function resolveRelaunchSettings() {
 }
 
 // Spawn detached headless updater (Node process) then exit current server
-export function spawnUpdaterAndExit(packageName = UPDATER_CONFIG.npmPackageName) {
+async function waitForUpdaterReady(file, token, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      // The file is a tiny one-line token; synchronous reads keep polling
+      // deterministic across shutdown and fake-timer environments.
+      if (fs.readFileSync(file, "utf8").trim() === token) return true;
+    } catch { /* not ready yet */ }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
+export async function spawnUpdaterAndExit(packageName = UPDATER_CONFIG.npmPackageName) {
   const updaterPath = ensureRuntimeUpdater(resolveBundledUpdaterPath());
   const isTray = process.env.TRAY_MODE === "1";
   const relaunch = resolveRelaunchCommand();
@@ -171,28 +206,66 @@ export function spawnUpdaterAndExit(packageName = UPDATER_CONFIG.npmPackageName)
     "--skip-update",
   ];
 
-  spawn(process.execPath, [updaterPath], {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-    env: {
-      ...process.env,
-      UPDATER_PKG_NAME: packageName,
-      UPDATER_PORT: String(UPDATER_CONFIG.statusPort),
-      UPDATER_TAIL_LINES: String(UPDATER_CONFIG.statusLogTailLines),
-      UPDATER_RETRIES: String(UPDATER_CONFIG.installRetries),
-      UPDATER_RETRY_DELAY_MS: String(UPDATER_CONFIG.installRetryDelayMs),
-      UPDATER_LINGER_MS: String(UPDATER_CONFIG.lingerAfterDoneMs),
-      UPDATER_WAIT_MIN_MS: String(UPDATER_CONFIG.waitForExitMinMs),
-      UPDATER_WAIT_MAX_MS: String(UPDATER_CONFIG.waitForExitMaxMs),
-      UPDATER_WAIT_CHECK_MS: String(UPDATER_CONFIG.waitForExitCheckMs),
-      UPDATER_STARTUP_TIMEOUT_MS: String(UPDATER_CONFIG.statusStartupTimeoutMs),
-      UPDATER_APP_PORT: String(relaunchSettings.port),
-      UPDATER_RELAUNCH: "1",
-      UPDATER_RELAUNCH_CMD: relaunch.cmd,
-      UPDATER_RELAUNCH_ARGS: JSON.stringify(relaunchArgs),
-    },
-  }).unref();
+  const readyToken = crypto.randomBytes(24).toString("hex");
+  const readyFile = path.join(getDataDir(), "update", `ready-${process.pid}-${Date.now()}-${readyToken.slice(0, 12)}.token`);
 
-  setTimeout(() => process.exit(0), UPDATER_CONFIG.exitDelayMs);
+  let updater;
+  try {
+    updater = spawn(process.execPath, [updaterPath], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+      env: {
+        ...process.env,
+        UPDATER_PKG_NAME: packageName,
+        UPDATER_PORT: String(UPDATER_CONFIG.statusPort),
+        UPDATER_TAIL_LINES: String(UPDATER_CONFIG.statusLogTailLines),
+        UPDATER_RETRIES: String(UPDATER_CONFIG.installRetries),
+        UPDATER_RETRY_DELAY_MS: String(UPDATER_CONFIG.installRetryDelayMs),
+        UPDATER_LINGER_MS: String(UPDATER_CONFIG.lingerAfterDoneMs),
+        UPDATER_WAIT_MIN_MS: String(UPDATER_CONFIG.waitForExitMinMs),
+        UPDATER_WAIT_MAX_MS: String(UPDATER_CONFIG.waitForExitMaxMs),
+        UPDATER_WAIT_CHECK_MS: String(UPDATER_CONFIG.waitForExitCheckMs),
+        UPDATER_STARTUP_TIMEOUT_MS: String(UPDATER_CONFIG.statusStartupTimeoutMs),
+        UPDATER_READY_FILE: readyFile,
+        UPDATER_READY_TOKEN: readyToken,
+        UPDATER_APP_PORT: String(relaunchSettings.port),
+        UPDATER_RELAUNCH: "1",
+        UPDATER_RELAUNCH_CMD: relaunch.cmd,
+        UPDATER_RELAUNCH_ARGS: JSON.stringify(relaunchArgs),
+      },
+    });
+  } catch (error) {
+    return { started: false, error: `Could not start updater: ${error.message}` };
+  }
+  let updaterFailed = false;
+  const updaterFailure = new Promise((resolve) => {
+    updater.on("error", () => {
+      updaterFailed = true;
+      resolve(false);
+    });
+  });
+  updater.unref();
+
+  const ready = await Promise.race([
+    waitForUpdaterReady(readyFile, readyToken, UPDATER_CONFIG.statusStartupTimeoutMs + 1000),
+    updaterFailure,
+  ]);
+  try { fs.unlinkSync(readyFile); } catch { /* updater may already have exited */ }
+  if (!ready) {
+    try { updater.kill(); } catch { /* already stopped */ }
+    return {
+      started: false,
+      error: updaterFailed
+        ? "Updater process failed before readiness."
+        : "Updater did not become ready; Switchboard is still running.",
+    };
+  }
+
+  setTimeout(() => {
+    killAppProcesses()
+      .catch(() => {})
+      .finally(() => process.exit(0));
+  }, UPDATER_CONFIG.exitDelayMs);
+  return { started: true };
 }

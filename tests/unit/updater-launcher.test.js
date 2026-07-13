@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn as spawnProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 
 const childProcessMock = {
   spawn: vi.fn(),
@@ -39,7 +40,51 @@ function waitForExit(child, timeoutMs = 2500) {
   });
 }
 
+async function waitForFile(file, timeoutMs = 2500) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file)) return fs.readFileSync(file, "utf8").trim();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`file did not appear within ${timeoutMs}ms: ${file}`);
+}
+
 describe("detached updater lifecycle", () => {
+  it("publishes a per-launch readiness token only after the status server binds", async () => {
+    const app = net.createServer();
+    const appPort = await listen(app);
+    const statusProbe = net.createServer();
+    const statusPort = await listen(statusProbe);
+    await new Promise((resolve) => statusProbe.close(resolve));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-updater-ready-"));
+    const readyFile = path.join(dataDir, "update", "ready-token");
+    const token = "expected-ready-token";
+    const child = spawnProcess(process.execPath, [updaterPath], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        DATA_DIR: dataDir,
+        UPDATER_PORT: String(statusPort),
+        UPDATER_APP_PORT: String(appPort),
+        UPDATER_READY_FILE: readyFile,
+        UPDATER_READY_TOKEN: token,
+        UPDATER_WAIT_MIN_MS: "10000",
+        UPDATER_WAIT_MAX_MS: "11000",
+        UPDATER_LINGER_MS: "0",
+      },
+      stdio: "ignore",
+    });
+
+    try {
+      await expect(waitForFile(readyFile)).resolves.toBe(token);
+    } finally {
+      child.kill("SIGTERM");
+      await waitForExit(child).catch(() => {});
+      await new Promise((resolve) => app.close(resolve));
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("exits promptly when its status port is already occupied", async () => {
     const occupied = net.createServer();
     const port = await listen(occupied);
@@ -70,6 +115,43 @@ describe("detached updater lifecycle", () => {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
   });
+
+  it("settles each failed npm spawn once before retrying", async () => {
+    const statusProbe = net.createServer();
+    const statusPort = await listen(statusProbe);
+    await new Promise((resolve) => statusProbe.close(resolve));
+    const appProbe = net.createServer();
+    const appPort = await listen(appProbe);
+    await new Promise((resolve) => appProbe.close(resolve));
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-updater-spawn-error-"));
+    const child = spawnProcess(process.execPath, [updaterPath], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: "",
+        DATA_DIR: dataDir,
+        UPDATER_PORT: String(statusPort),
+        UPDATER_APP_PORT: String(appPort),
+        UPDATER_RETRIES: "2",
+        UPDATER_RETRY_DELAY_MS: "0",
+        UPDATER_WAIT_MIN_MS: "0",
+        UPDATER_WAIT_MAX_MS: "0",
+        UPDATER_LINGER_MS: "0",
+      },
+      stdio: "ignore",
+    });
+
+    try {
+      const result = await waitForExit(child);
+      const status = JSON.parse(fs.readFileSync(path.join(dataDir, "update", "status.json"), "utf8"));
+      expect(result.code).toBe(1);
+      expect(status.attempt).toBe(2);
+      expect(status.done).toBe(true);
+      expect(status.error).toContain("ENOENT");
+    } finally {
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("application updater ownership and relaunch settings", () => {
@@ -92,7 +174,11 @@ describe("application updater ownership and relaunch settings", () => {
     appUpdater = await import("../../src/lib/appUpdater.js");
     mockedSpawn = childProcessMock.spawn;
     vi.clearAllMocks();
-    mockedSpawn.mockReturnValue({ pid: 321, unref: vi.fn() });
+    mockedSpawn.mockImplementation(() => Object.assign(new EventEmitter(), {
+      pid: 321,
+      unref: vi.fn(),
+      kill: vi.fn(),
+    }));
     vi.spyOn(process, "exit").mockImplementation(() => undefined);
     vi.useFakeTimers();
   });
@@ -108,8 +194,8 @@ describe("application updater ownership and relaunch settings", () => {
     Object.assign(process.env, originalEnv);
   });
 
-  it("passes custom PORT and HOST to the post-update CLI relaunch", () => {
-    appUpdater.spawnUpdaterAndExit("switchboard-router-test");
+  it("passes custom PORT and HOST to the post-update CLI relaunch", async () => {
+    const startup = appUpdater.spawnUpdaterAndExit("switchboard-router-test");
 
     const [, , options] = mockedSpawn.mock.calls[0];
     const relaunchArgs = JSON.parse(options.env.UPDATER_RELAUNCH_ARGS);
@@ -122,16 +208,57 @@ describe("application updater ownership and relaunch settings", () => {
       "--skip-update",
     ]);
     expect(options.env.UPDATER_PKG_NAME).toBe("switchboard-router-test");
+    fs.mkdirSync(path.dirname(options.env.UPDATER_READY_FILE), { recursive: true });
+    fs.writeFileSync(options.env.UPDATER_READY_FILE, options.env.UPDATER_READY_TOKEN);
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(startup).resolves.toEqual({ started: true });
   });
 
-  it("reads the MITM PID file from DATA_DIR", async () => {
+  it("keeps the current app alive when the updater never becomes ready", async () => {
+    const exit = vi.mocked(process.exit);
+    const startup = appUpdater.spawnUpdaterAndExit("switchboard-router-test");
+    const updater = mockedSpawn.mock.results[0].value;
+
+    await vi.advanceTimersByTimeAsync(3100);
+
+    await expect(startup).resolves.toMatchObject({ started: false });
+    expect(updater.kill).toHaveBeenCalledOnce();
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("reports updater spawn failures without exiting the current app", async () => {
+    mockedSpawn.mockImplementationOnce(() => { throw new Error("spawn unavailable"); });
+
+    await expect(appUpdater.spawnUpdaterAndExit("switchboard-router-test")).resolves.toEqual({
+      started: false,
+      error: "Could not start updater: spawn unavailable",
+    });
+    expect(process.exit).not.toHaveBeenCalled();
+  });
+
+  it("handles asynchronous updater process errors without crashing", async () => {
+    const updater = Object.assign(new EventEmitter(), { pid: undefined, unref: vi.fn(), kill: vi.fn() });
+    mockedSpawn.mockReturnValueOnce(updater);
+    const startup = appUpdater.spawnUpdaterAndExit("switchboard-router-test");
+
+    updater.emit("error", new Error("node executable unavailable"));
+    await vi.advanceTimersByTimeAsync(50);
+
+    await expect(startup).resolves.toEqual({
+      started: false,
+      error: "Updater process failed before readiness.",
+    });
+    expect(process.exit).not.toHaveBeenCalled();
+  });
+
+  it("preserves an unverifiable MITM PID file instead of signalling a reused PID", async () => {
     const pidFile = path.join(dataDir, "mitm", ".mitm.pid");
     fs.mkdirSync(path.dirname(pidFile), { recursive: true });
     fs.writeFileSync(pidFile, "987654");
 
     await appUpdater.killAppProcesses();
 
-    expect(fs.existsSync(pidFile)).toBe(false);
+    expect(fs.existsSync(pidFile)).toBe(true);
   });
 });
 
@@ -146,7 +273,7 @@ describe("CLI lifecycle safety", () => {
   it("filters port listeners through recorded ownership before signalling", () => {
     const source = fs.readFileSync(cliPath, "utf8");
 
-    expect(source).toContain("findListeningPids(port).filter((pid) => ownedPids.has(pid))");
+    expect(source).toContain("const pids = listeningPids.filter((pid) => ownedPids.has(pid));");
     expect(source).not.toContain("execSync(`kill -9 ${pid}");
   });
 });

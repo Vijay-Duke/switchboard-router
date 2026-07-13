@@ -18,9 +18,10 @@ const COLORS = {
 let cachedHeader = "";
 let fetchingHeader = false;
 
-function renderHeader(port, keys) {
+function renderHeader(port, keys, { networkExposed = false } = {}) {
   const lines = [];
-  lines.push(`Endpoint: http://localhost:${port}/v1 ${COLORS.dim}(local only)${COLORS.reset}`);
+  const exposure = networkExposed ? "network-exposed" : "local only";
+  lines.push(`Endpoint: http://localhost:${port}/v1 ${COLORS.dim}(${exposure})${COLORS.reset}`);
   if (!keys || keys.length === 0) {
     lines.push(`Key:      ${COLORS.dim}No API keys yet${COLORS.reset}`);
   } else {
@@ -30,21 +31,21 @@ function renderHeader(port, keys) {
   return lines.join("\n");
 }
 
-async function refreshHeaderBg(port) {
+async function refreshHeaderBg(port, networkExposed) {
   if (fetchingHeader) return;
   fetchingHeader = true;
   try {
     const keysResult = await api.getApiKeys();
     const keys = keysResult.success ? (keysResult.data.keys || []) : [];
-    cachedHeader = renderHeader(port, keys);
+    cachedHeader = renderHeader(port, keys, { networkExposed });
   } finally {
     fetchingHeader = false;
   }
 }
 
-function getHeader(port) {
+function getHeader(port, networkExposed) {
   // Kick off background refresh; return cache (or placeholder on first call).
-  refreshHeaderBg(port);
+  refreshHeaderBg(port, networkExposed);
   return cachedHeader || `Endpoint: http://localhost:${port}/v1\nKey:      ${COLORS.dim}...${COLORS.reset}`;
 }
 
@@ -52,20 +53,20 @@ function getHeader(port) {
  * Start Terminal UI
  * @param {number} port - Server port number
  */
-async function startTerminalUI(port) {
+async function startTerminalUI(port, { networkExposed = false } = {}) {
   // Configure API client
   api.configure({ port });
 
   const basePath = ["Switchboard"];
 
   // Prime header cache before first render
-  await refreshHeaderBg(port);
+  await refreshHeaderBg(port, networkExposed);
 
   // Main menu
   await showMenuWithBack({
     title: "📡 Switchboard Terminal UI",
     breadcrumb: basePath,
-    headerContent: () => getHeader(port),
+    headerContent: () => getHeader(port, networkExposed),
     items: [
       {
         label: "Providers",
@@ -98,7 +99,7 @@ async function startTerminalUI(port) {
       {
         label: "Settings",
         action: async () => {
-          await showSettingsMenu([...basePath, "Settings"]);
+          await showSettingsMenu([...basePath, "Settings"], { port, networkExposed });
           return true;
         }
       }
@@ -107,4 +108,4 @@ async function startTerminalUI(port) {
   });
 }
 
-module.exports = { startTerminalUI };
+module.exports = { renderHeader, startTerminalUI };

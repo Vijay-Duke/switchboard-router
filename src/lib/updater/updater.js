@@ -20,6 +20,8 @@ const waitMaxMs = parseInt(process.env.UPDATER_WAIT_MAX_MS || "15000", 10);
 const waitCheckMs = parseInt(process.env.UPDATER_WAIT_CHECK_MS || "500", 10);
 const statusStartupTimeoutMs = parseInt(process.env.UPDATER_STARTUP_TIMEOUT_MS || "2000", 10);
 const appPort = parseInt(process.env.UPDATER_APP_PORT || "20128", 10);
+const readyFile = process.env.UPDATER_READY_FILE || "";
+const readyToken = process.env.UPDATER_READY_TOKEN || "";
 const allowedStatusOrigins = new Set([
   `http://127.0.0.1:${appPort}`,
   `http://localhost:${appPort}`,
@@ -70,6 +72,14 @@ function setPhase(phase) {
   persistStatus();
 }
 
+function publishReady() {
+  if (!readyFile || !readyToken) return;
+  const tmp = `${readyFile}.tmp-${process.pid}`;
+  fs.mkdirSync(path.dirname(readyFile), { recursive: true });
+  fs.writeFileSync(tmp, readyToken, { mode: 0o600 });
+  fs.renameSync(tmp, readyFile);
+}
+
 // HTTP server exposing status (browser polls this while Next server is dead)
 const server = http.createServer((req, res) => {
   const origin = req.headers.origin;
@@ -88,6 +98,7 @@ const server = http.createServer((req, res) => {
 });
 
 let statusServerReady = false;
+let finalized = false;
 let statusServerFailed = false;
 let statusServerStartupTimer = null;
 
@@ -124,8 +135,14 @@ statusServerStartupTimer = setTimeout(() => {
 
 try {
   server.listen(port, "127.0.0.1", () => {
-    statusServerReady = true;
     if (statusServerStartupTimer) clearTimeout(statusServerStartupTimer);
+    try {
+      publishReady();
+    } catch (error) {
+      failStatusServer(new Error(`could not publish readiness: ${error.message}`));
+      return;
+    }
+    statusServerReady = true;
     persistStatus();
     waitForAppExit().then(runInstall).catch((error) => {
       pushLog(`[updater] wait failed: ${error.message}`);
@@ -178,6 +195,7 @@ function sleep(ms) {
 }
 
 function runInstall() {
+  if (finalized) return;
   state.attempt += 1;
   setPhase("installing");
   pushLog(`[updater] attempt ${state.attempt}/${maxRetries} — npm i -g ${packageName} --prefer-online`);
@@ -201,23 +219,30 @@ function runInstall() {
     persistStatus();
   });
 
-  child.on("error", (e) => {
-    pushLog(`[updater] spawn error: ${e.message}`);
-    finalize(false, null, e.message);
-  });
-
-  child.on("close", (code) => {
-    pushLog(`[updater] npm exited with code ${code}`);
-    if (code === 0) {
+  let attemptSettled = false;
+  const settleAttempt = (code, spawnError = null) => {
+    if (attemptSettled || finalized) return;
+    attemptSettled = true;
+    if (spawnError) pushLog(`[updater] spawn error: ${spawnError}`);
+    else pushLog(`[updater] npm exited with code ${code}`);
+    if (!spawnError && code === 0) {
       finalize(true, code, null);
       return;
     }
     if (state.attempt < maxRetries) {
       pushLog(`[updater] retrying in ${Math.round(retryDelayMs / 1000)}s...`);
-      setTimeout(runInstall, retryDelayMs);
+      setTimeout(() => { if (!finalized) runInstall(); }, retryDelayMs);
       return;
     }
-    finalize(false, code, `Install failed after ${maxRetries} attempts`);
+    finalize(false, code, spawnError || `Install failed after ${maxRetries} attempts`);
+  };
+
+  child.on("error", (e) => {
+    settleAttempt(null, e.message);
+  });
+
+  child.on("close", (code) => {
+    settleAttempt(code);
   });
 }
 
@@ -278,13 +303,17 @@ function relaunchApp() {
 }
 
 function finalize(success, exitCode, error) {
+  if (finalized) return;
+  finalized = true;
   state.done = true;
   state.success = success;
   state.exitCode = exitCode;
   state.error = error;
   state.finishedAt = Date.now();
   setPhase(success ? "done" : "error");
-  if (success) relaunchApp();
+  // Restore service even when installation fails; the previously installed
+  // package is still the safest recovery target.
+  relaunchApp();
   // Linger so browser can poll final status, then exit & close the port
   setTimeout(() => {
     try { server.close(); } catch { /* ignore */ }

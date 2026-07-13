@@ -148,7 +148,17 @@ Shutdown is ordered:
 
 CLI and updater process control uses `${DATA_DIR}/runtime/owned-processes.json`.
 Only owned PIDs are signalled: `SIGTERM`, an approximately two-second wait, then
-`SIGKILL` if necessary. Process-name substring matching is intentionally banned.
+`SIGKILL` if necessary. Identity verification accepts the recorded command path;
+for bundled Next servers, which replace their process title with `next-server`,
+it additionally requires the recorded standalone working directory. Broad
+process-name matching is intentionally banned. The ownership record is written
+with an atomic rename and also stores the effective port and host so lifecycle
+commands can preserve non-default settings.
+
+The CLI exposes `status`, `stop`, and `restart`. Terminal `Ctrl+C`, OS signals,
+tray Quit, explicit Exit, and fatal launcher errors converge on one idempotent
+async shutdown coordinator that awaits tray and server cleanup before exiting.
+Startup claims readiness only after the local health/management endpoint responds.
 
 ## Security boundaries
 

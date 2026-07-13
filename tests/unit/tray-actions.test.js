@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
@@ -43,5 +44,26 @@ describe("tray actions", () => {
     finishTray();
     await quit;
     expect(order).toEqual(["tray-stop-started", "tray-stopped", "app-cleanup"]);
+  });
+
+  it("stops systray without allowing the library to exit the CLI process", async () => {
+    const trayProcess = new EventEmitter();
+    trayProcess.pid = 4242;
+    trayProcess.kill = vi.fn();
+    const instance = {
+      _process: trayProcess,
+      kill: vi.fn(async (exitNode) => {
+        expect(exitNode).toBe(false);
+        trayProcess.emit("exit", 0, null);
+      }),
+    };
+
+    await tray.stopUnixTrayInstance(instance, {
+      isAlive: () => false,
+      signal: vi.fn(),
+    });
+
+    expect(instance.kill).toHaveBeenCalledOnce();
+    expect(instance.kill).toHaveBeenCalledWith(false);
   });
 });

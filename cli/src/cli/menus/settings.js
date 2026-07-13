@@ -18,14 +18,14 @@ const COLORS = {
  * there is no dashboard login, password or OIDC to manage here.
  * @param {Array<string>} breadcrumb - Breadcrumb path
  */
-async function showSettingsMenu(breadcrumb = []) {
+async function showSettingsMenu(breadcrumb = [], { port = 20128, networkExposed = false } = {}) {
   await showMenuWithBack({
     title: "⚙️  Settings",
     breadcrumb,
     headerContent: async (data) => {
       const lines = [];
 
-      lines.push(`  Endpoint: http://localhost:20128/v1 ${COLORS.dim}(local only)${COLORS.reset}`);
+      lines.push(`  Endpoint: http://localhost:${port}/v1 ${COLORS.dim}(${networkExposed ? "network-exposed" : "local only"})${COLORS.reset}`);
 
       // RTK section
       const rtkOn = data?.settings?.rtkEnabled !== false;

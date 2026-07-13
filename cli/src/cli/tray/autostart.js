@@ -44,16 +44,16 @@ function getCliJsPath(cliPath) {
  * @param {string} cliPath - Optional path to cli.js (defaults to auto-detect)
  * @returns {boolean} success
  */
-function enableAutoStart(cliPath) {
+function enableAutoStart(cliPath, launchOptions = {}) {
   const platform = process.platform;
 
   if (!["darwin", "win32", "linux"].includes(platform)) return false;
   if (platform === "linux" && !process.env.DISPLAY) return false;
 
   try {
-    if (platform === "darwin") return enableMacOS(cliPath);
-    if (platform === "win32") return enableWindows(cliPath);
-    if (platform === "linux") return enableLinux(cliPath);
+    if (platform === "darwin") return enableMacOS(cliPath, launchOptions);
+    if (platform === "win32") return enableWindows(cliPath, launchOptions);
+    if (platform === "linux") return enableLinux(cliPath, launchOptions);
   } catch (err) {
     // Silent fail — autostart is optional
   }
@@ -138,7 +138,19 @@ function isAgentSelfMacOS() {
   }
 }
 
-function enableMacOS(cliPath) {
+function getLaunchArgs({ port = 20128, host = "127.0.0.1" } = {}) {
+  return ["--tray", "--skip-update", "--port", String(port), "--host", String(host)];
+}
+
+function xmlEscape(value) {
+  return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+function quoteDesktopArg(value) {
+  return `"${String(value).replace(/(["\\$])/g, "\\$1")}"`;
+}
+
+function enableMacOS(cliPath, launchOptions) {
   const launchAgentsDir = path.join(os.homedir(), "Library", "LaunchAgents");
   const plistPath = path.join(launchAgentsDir, `${APP_LABEL}.plist`);
 
@@ -158,6 +170,10 @@ function enableMacOS(cliPath) {
   // EnvironmentVariables.PATH explicitly includes node's bin dir so child
   // processes spawned by cli.js (npm install at runtime, etc.) resolve.
   const launchPath = `${path.dirname(nodePath)}:/usr/local/bin:/usr/bin:/bin`;
+  const launchArgs = getLaunchArgs(launchOptions);
+  const plistArgs = [nodePath, routerScript, ...launchArgs]
+    .map((arg) => `        <string>${xmlEscape(arg)}</string>`)
+    .join("\n");
 
   const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -167,10 +183,7 @@ function enableMacOS(cliPath) {
     <string>${APP_LABEL}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>${nodePath}</string>
-        <string>${routerScript}</string>
-        <string>--tray</string>
-        <string>--skip-update</string>
+${plistArgs}
     </array>
     <key>EnvironmentVariables</key>
     <dict>
@@ -236,7 +249,7 @@ function disableMacOS() {
 
 // ============ Windows ============
 
-function enableWindows(cliPath) {
+function enableWindows(cliPath, launchOptions) {
   const startupDir = path.join(process.env.APPDATA || "", "Microsoft", "Windows", "Start Menu", "Programs", "Startup");
   const vbsPath = path.join(startupDir, `${APP_NAME}.vbs`);
 
@@ -245,11 +258,16 @@ function enableWindows(cliPath) {
   const nodePath = process.execPath;
   const routerScript = getCliJsPath(cliPath);
   if (!routerScript) return false;
+  const launchArgs = getLaunchArgs(launchOptions);
+  const vbsCommand = [nodePath, routerScript, ...launchArgs]
+    .map((arg) => `"${String(arg).replace(/"/g, '""')}"`)
+    .join(" ")
+    .replace(/"/g, '""');
 
   // Run node + cli.js directly, hidden window. Avoids the fragile
   // `switchboard.cmd` lookup that depended on the npm prefix path.
   const vbsContent = `Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run """${nodePath}"" ""${routerScript}"" --tray --skip-update", 0, False
+WshShell.Run "${vbsCommand}", 0, False
 `;
   fs.writeFileSync(vbsPath, vbsContent);
   return true;
@@ -265,7 +283,7 @@ function disableWindows() {
 
 // ============ Linux ============
 
-function enableLinux(cliPath) {
+function enableLinux(cliPath, launchOptions) {
   const autostartDir = path.join(os.homedir(), ".config", "autostart");
   const desktopPath = path.join(autostartDir, `${APP_NAME}.desktop`);
 
@@ -277,12 +295,14 @@ function enableLinux(cliPath) {
   const nodePath = process.execPath;
   const routerScript = getCliJsPath(cliPath);
   if (!routerScript) return false;
+  const launchArgs = getLaunchArgs(launchOptions);
+  const execCommand = [nodePath, routerScript, ...launchArgs].map(quoteDesktopArg).join(" ");
 
   const desktopContent = `[Desktop Entry]
 Type=Application
 Name=Switchboard
 Comment=Switchboard API Proxy
-Exec=${nodePath} ${routerScript} --tray --skip-update
+Exec=${execCommand}
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
@@ -302,5 +322,6 @@ function disableLinux() {
 module.exports = {
   enableAutoStart,
   disableAutoStart,
-  isAutoStartEnabled
+  isAutoStartEnabled,
+  getLaunchArgs,
 };

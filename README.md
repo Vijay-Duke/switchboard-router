@@ -39,6 +39,20 @@ switchboard
 | **Dashboard** | http://localhost:20128/dashboard |
 | **API** | http://localhost:20128/v1 |
 
+Manage the local process from any terminal:
+
+```bash
+switchboard status          # URL, versions, PID, ownership, and start time
+switchboard stop            # graceful shutdown
+switchboard restart         # graceful stop followed by start
+switchboard --help          # all commands and launch options
+```
+
+`Ctrl+C` and the tray menu's **Quit** action also shut down gracefully. If the
+tray icon is unavailable, `switchboard stop` is the reliable fallback. A second
+start recovers verified stale Switchboard processes but never kills an unrelated
+listener on the configured port.
+
 <details>
 <summary>Other install options</summary>
 

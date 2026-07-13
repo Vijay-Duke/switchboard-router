@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { openBrowser } = require("../../shared/openBrowser");
+const { isPidAlive } = require("../processManager");
 
 let trayInstance = null;
 let isWinTray = false;
@@ -88,7 +89,7 @@ function getAutostartEnabled() {
  * Handle menu item click (shared logic)
  */
 function handleClick(index, options, onAutostartToggle) {
-  const { onQuit, onOpenDashboard, port } = options;
+  const { onQuit, onOpenDashboard, port, host } = options;
   if (index === MENU_INDEX.DASHBOARD) {
     if (onOpenDashboard) onOpenDashboard();
     else openBrowser(`http://localhost:${port}/dashboard`);
@@ -96,7 +97,7 @@ function handleClick(index, options, onAutostartToggle) {
     const enabled = getAutostartEnabled();
     try {
       const { enableAutoStart, disableAutoStart } = require("./autostart");
-      const changed = enabled ? disableAutoStart() : enableAutoStart();
+      const changed = enabled ? disableAutoStart() : enableAutoStart(undefined, { port, host });
       if (changed) onAutostartToggle(!enabled);
     } catch (e) {}
   } else if (index === MENU_INDEX.QUIT) {
@@ -111,7 +112,7 @@ async function handleQuit(onQuit, killTrayImpl = killTray, exitImpl = process.ex
   } catch (error) {
     process.stderr.write(`[switchboard] tray cleanup error: ${error?.message || error}\n`);
   }
-  if (onQuit) onQuit();
+  if (onQuit) await onQuit();
   else exitImpl(0);
 }
 
@@ -263,45 +264,45 @@ function killTray() {
   if (!instance) return Promise.resolve();
 
   if (wasWin) {
-    try { instance.kill(); } catch (e) {}
-    return Promise.resolve();
+    try { return Promise.resolve(instance.kill()); } catch (e) { return Promise.resolve(); }
   }
 
-  // Unix: get the Go tray child process handle.
-  let proc = null;
-  try {
-    proc = instance._process || (typeof instance.process === "function" ? instance.process() : null);
-  } catch (e) {}
+  return stopUnixTrayInstance(instance);
+}
 
-  // Graceful shutdown: send {type:"exit"} via IPC so the Go binary can call
-  // systray.Quit() and release NSStatusItem. SIGKILL leaves a ghost icon on
-  // the macOS menubar until logout, causing duplicate icons after re-spawn.
-  const gracefulQuit = () => { try { instance.kill(true); } catch (e) {} };
-  const closeIpc = () => { try { instance.kill(false); } catch (e) {} };
+async function stopUnixTrayInstance(instance, options = {}) {
+  const proc = options.proc || (() => {
+    try { return instance._process || (typeof instance.process === "function" ? instance.process() : null); }
+    catch { return null; }
+  })();
+  const isAlive = options.isAlive || isPidAlive;
+  const signal = options.signal || ((target, name) => target.kill(name));
 
   if (!proc || !proc.pid) {
-    gracefulQuit();
-    closeIpc();
-    return Promise.resolve();
+    try { await instance.kill(false); } catch (e) {}
+    return;
   }
 
-  return new Promise((resolve) => {
+  await new Promise((resolve) => {
     let done = false;
-    const finish = () => { if (done) return; done = true; closeIpc(); resolve(); };
+    const timers = [];
+    const finish = () => {
+      if (done) return;
+      done = true;
+      timers.forEach(clearTimeout);
+      proc.removeListener("exit", finish);
+      resolve();
+    };
 
     proc.once("exit", finish);
-    gracefulQuit();
-
-    // Escalate: SIGTERM after 800ms, SIGKILL after 1600ms if still alive.
-    setTimeout(() => { try { process.kill(proc.pid, 0); proc.kill("SIGTERM"); } catch (e) {} }, 800);
-    setTimeout(() => { try { process.kill(proc.pid, 0); proc.kill("SIGKILL"); } catch (e) {} }, 1600);
-
-    // Fallback poll in case "exit" never fires (detached child, pipe closed)
-    const deadline = Date.now() + 3000;
-    const poll = setInterval(() => {
-      try { process.kill(proc.pid, 0); } catch { clearInterval(poll); finish(); return; }
-      if (Date.now() > deadline) { clearInterval(poll); finish(); }
-    }, 50);
+    // SIGKILL can leave a ghost icon, so give IPC and SIGTERM time first.
+    timers.push(setTimeout(() => { if (isAlive(proc.pid)) { try { signal(proc, "SIGTERM"); } catch (e) {} } }, 800));
+    timers.push(setTimeout(() => { if (isAlive(proc.pid)) { try { signal(proc, "SIGKILL"); } catch (e) {} } }, 1600));
+    timers.push(setTimeout(finish, 3000));
+    try {
+      const result = instance.kill(false);
+      if (result && typeof result.catch === "function") result.catch(() => {});
+    } catch (e) {}
   });
 }
 
@@ -310,5 +311,6 @@ module.exports = {
   killTray,
   handleClick,
   handleQuit,
+  stopUnixTrayInstance,
   MENU_INDEX,
 };

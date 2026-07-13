@@ -1,6 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { killAppProcesses, spawnUpdaterAndExit } from "@/lib/appUpdater";
+import { spawnUpdaterAndExit } from "@/lib/appUpdater";
 
 export async function POST() {
   if (process.env.NODE_ENV !== "production") {
@@ -13,8 +13,13 @@ export async function POST() {
   // Start the detached updater before stopping the launcher. Killing the CLI
   // parent also terminates this server, so awaiting cleanup here can prevent
   // the updater from ever being spawned.
-  spawnUpdaterAndExit();
-  setTimeout(() => { killAppProcesses().catch(() => {}); }, 100);
+  const startup = await spawnUpdaterAndExit();
+  if (!startup.started) {
+    return NextResponse.json(
+      { success: false, message: startup.error || "Updater failed to start" },
+      { status: 503 }
+    );
+  }
 
   return NextResponse.json({ success: true, message: "Updater started. This app will exit shortly." });
 }

@@ -21,6 +21,14 @@ const COLORS = {
 // Prime stdin once globally. Toggling raw mode between menus adds latency on
 // macOS, so we keep raw mode on for the whole TUI session.
 let rawPrimed = false;
+
+function requestGracefulInterrupt(processLike = process) {
+  if (processLike.listenerCount("SIGINT") > 0) {
+    processLike.emit("SIGINT");
+    return;
+  }
+  processLike.exit(130);
+}
 function primeRawOnce() {
   if (rawPrimed || !process.stdin.isTTY) return;
   try {
@@ -138,7 +146,7 @@ async function selectMenu(title, items, defaultIndex = 0, subtitle = "", headerC
       if (key.name === "down") return move(1);
       if (key.name === "return") { cleanup(); resolve(selectedIndex); return; }
       if (key.name === "escape") { cleanup(); resolve(-1); return; }
-      if (key.ctrl && key.name === "c") { cleanup(); process.exit(0); }
+      if (key.ctrl && key.name === "c") { cleanup(); requestGracefulInterrupt(); }
     };
 
     process.stdin.on("keypress", onKeypress);
@@ -152,5 +160,6 @@ module.exports = {
   confirm,
   pause,
   selectMenu,
+  requestGracefulInterrupt,
   COLORS
 };
