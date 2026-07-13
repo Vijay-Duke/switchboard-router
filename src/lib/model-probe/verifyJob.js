@@ -73,9 +73,19 @@ export async function startVerify({ connectionId, scopeKey, providerId, provider
   };
   g.jobs.set(connectionId, placeholderJob);
 
-  const probes = await getProbesForScope(providerId, scopeKey);
-  const prep = prepareProbeModels({ models, probes, providerAlias });
-  const eligible = prep.eligible;
+  // Prep phase: if either of these throws, mark job error so the overlap guard
+  // doesn't permanently block future startVerify calls for this connectionId.
+  let probes, prep, eligible;
+  try {
+    probes = await getProbesForScope(providerId, scopeKey);
+    prep = prepareProbeModels({ models, probes, providerAlias });
+    eligible = prep.eligible;
+  } catch (e) {
+    placeholderJob.status = "error";
+    placeholderJob.error = e?.message || String(e);
+    placeholderJob.finishedAt = new Date().toISOString();
+    return snapshot(placeholderJob);
+  }
 
   // Fill in the real fields on the same job object that's already in the map.
   const job = placeholderJob;

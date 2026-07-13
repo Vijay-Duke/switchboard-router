@@ -15,6 +15,7 @@ import { MODEL_PROBE_CAPS } from "@/lib/model-probe/caps.js";
  *   models: Array<{ id: string, name?: string, kind?: string, type?: string }>,
  *   onComplete?: (summary: object) => void,
  *   onLatencyMap?: (map: Record<string, number>) => void,
+ *   onStarted?: (snapshot: object) => void,
  *   onClose?: () => void,
  *   pollMs?: number,
  * }} props
@@ -25,6 +26,7 @@ export default function VerifyModelsPanel({
   models,
   onComplete,
   onLatencyMap,
+  onStarted,
   onClose,
   pollMs = 1000,
 }) {
@@ -37,7 +39,7 @@ export default function VerifyModelsPanel({
   const [error, setError] = useState("");
   const [logLine, setLogLine] = useState("");
   const pollRef = useRef(/** @type {any} */ (null));
-  const cbRef = useRef({ onComplete, onLatencyMap });
+  const cbRef = useRef({ onComplete, onLatencyMap, onStarted });
 
   const modelCount = models?.length || 0;
   const capsLabel = useMemo(
@@ -48,7 +50,7 @@ export default function VerifyModelsPanel({
 
   // Keep callbacks current to avoid stale closures in interval callbacks
   useEffect(() => {
-    cbRef.current = { onComplete, onLatencyMap };
+    cbRef.current = { onComplete, onLatencyMap, onStarted };
   });
 
   function clampLocal() {
@@ -86,8 +88,8 @@ export default function VerifyModelsPanel({
       setSummary(finalSummary);
       setLogLine(snap.status === "cancelled" ? "Cancelled (partial results saved)." : snap.status === "error" ? "Stopped." : "Done.");
       cbRef.current.onComplete?.(finalSummary);
-      // Latency map is derived by the parent from the probe cache reload; no per-run map needed.
-      cbRef.current.onLatencyMap?.({});
+      // Latency values are populated by page.js via fetchProbes after onComplete triggers.
+      // No need to push an empty map up here.
     }
   }
 
@@ -135,6 +137,8 @@ export default function VerifyModelsPanel({
       });
       const snap = await res.json().catch(() => ({}));
       if (!res.ok) { setError(snap.error || "Failed to start"); setRunning(false); return; }
+      // Notify parent so it can set its verifyStatus and start its own page-level poller.
+      cbRef.current.onStarted?.(snap);
       applySnapshot(snap);
       if (snap.status === "running") startPolling();
       else setRunning(false);
@@ -295,6 +299,7 @@ VerifyModelsPanel.propTypes = {
   models: PropTypes.arrayOf(PropTypes.object),
   onComplete: PropTypes.func,
   onLatencyMap: PropTypes.func,
+  onStarted: PropTypes.func,
   onClose: PropTypes.func,
   pollMs: PropTypes.number,
 };

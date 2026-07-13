@@ -79,6 +79,7 @@ export default function ProviderDetailPage() {
   const [oneByOneResults, setOneByOneResults] = useState({});
   const [oneByOneSummary, setOneByOneSummary] = useState(null);
   const stopOneByOneRef = useRef(false);
+  const verifyIntervalRef = useRef(/** @type {ReturnType<typeof setInterval>|null} */ (null));
   const [importingModels, setImportingModels] = useState(false);
   const [importModelsMessage, setImportModelsMessage] = useState("");
   const [showVerifyPanel, setShowVerifyPanel] = useState(false);
@@ -340,11 +341,14 @@ export default function ProviderDetailPage() {
     try {
       const r = await fetch(`/api/providers/${activeConn.id}/model-probes`, { cache: "no-store" });
       const data = await r.json().catch(() => ({}));
-      const map = {};
+      const statusMap = {};
+      const latencyMap = {};
       for (const p of data.probes || []) {
-        map[p.modelId] = p.status === "ok" ? "ok" : p.status === "dead" ? "dead" : "retry";
+        statusMap[p.modelId] = p.status === "ok" ? "ok" : p.status === "dead" ? "dead" : "retry";
+        if (p.latencyMs != null) latencyMap[p.modelId] = p.latencyMs;
       }
-      setProbeByModel(map);
+      setProbeByModel(statusMap);
+      setProbeLatencies((prev) => ({ ...prev, ...latencyMap }));
     } catch { /* ignore */ }
   }, [connections]);
 
@@ -497,26 +501,58 @@ export default function ProviderDetailPage() {
     fetchSuggestedModels(fetcher).then(setSuggestedModels);
   }, [providerId]);
 
-  // Poll verify status while running
+  /**
+   * Start (or restart) the page-level verify-status polling interval.
+   * Clears any existing interval first so there is exactly ONE at a time.
+   * Stops automatically when the job reaches a terminal/idle state.
+   * The returned cleanup stops the interval early (used by the unmount effect).
+   *
+   * Design choice (Option A simplified): page.js owns the single authoritative
+   * page-level poller via verifyIntervalRef. The panel keeps its own internal
+   * poller only for its progress-bar UI. This way a run started on an already-
+   * loaded page (no `connections` change) still drives the toggle button and
+   * per-row live badges, and navigate-away-and-back resumes polling correctly.
+   */
+  const startVerifyStatusPolling = useCallback((activeConnId) => {
+    // Clear any existing interval first.
+    if (verifyIntervalRef.current) {
+      clearInterval(verifyIntervalRef.current);
+      verifyIntervalRef.current = null;
+    }
+
+    const pollOnce = async () => {
+      try {
+        const r = await fetch(`/api/providers/${activeConnId}/model-probes/verify/status`, { cache: "no-store" });
+        const snap = await r.json().catch(() => null);
+        setVerifyStatus(snap && snap.status ? snap : null);
+        const isRunning = snap?.status === "running";
+        if (!isRunning && verifyIntervalRef.current) {
+          clearInterval(verifyIntervalRef.current);
+          verifyIntervalRef.current = null;
+        }
+      } catch { /* ignore */ }
+    };
+
+    // Immediate first fetch.
+    pollOnce();
+
+    // Set up the interval; it self-cancels when the job is no longer running.
+    verifyIntervalRef.current = setInterval(pollOnce, 1500);
+  }, []);
+
+  // On mount (or when connections change): check whether a verify run is already
+  // in progress and, if so, start polling immediately.
   useEffect(() => {
     const activeConn = connections.find((c) => c.isActive !== false);
     if (!activeConn) return;
-    let stop = false;
-    let interval = null;
-    const poll = async () => {
-      try {
-        const r = await fetch(`/api/providers/${activeConn.id}/model-probes/verify/status`, { cache: "no-store" });
-        const snap = await r.json().catch(() => null);
-        if (stop) return;
-        setVerifyStatus(snap && snap.status ? snap : null);
-        const isRunning = snap?.status === "running";
-        if (!isRunning && interval) { clearInterval(interval); interval = null; }
-        if (isRunning && !interval) { interval = setInterval(poll, 1500); }
-      } catch { /* ignore */ }
+    startVerifyStatusPolling(activeConn.id);
+    return () => {
+      if (verifyIntervalRef.current) {
+        clearInterval(verifyIntervalRef.current);
+        verifyIntervalRef.current = null;
+      }
     };
-    poll();
-    return () => { stop = true; if (interval) clearInterval(interval); };
-  }, [connections]);
+  }, [connections, startVerifyStatusPolling]);
 
   const handleSetAlias = async (modelId, alias, providerAliasOverride = providerAlias) => {
     const fullModel = `${providerAliasOverride}/${modelId}`;
@@ -1752,6 +1788,10 @@ export default function ProviderDetailPage() {
               providerAlias={providerStorageAlias}
               models={verifyList}
               onClose={() => setShowVerifyPanel(false)}
+              onStarted={(snap) => {
+                setVerifyStatus(snap && snap.status ? snap : null);
+                if (activeConnection?.id) startVerifyStatusPolling(activeConnection.id);
+              }}
               onLatencyMap={(map) => setProbeLatencies((prev) => ({ ...prev, ...map }))}
               onComplete={async (s) => {
                 if (s?.removed > 0) await fetchCustomModels();

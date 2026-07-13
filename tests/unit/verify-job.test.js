@@ -96,4 +96,43 @@ describe("verifyJob core", () => {
     expect(s.status).toBe("error");
     expect(s.error).toMatch(/auth/i);
   });
+
+  it("prep failure (getProbesForScope throws) marks job as error, not running", async () => {
+    const deps = makeDeps({
+      getProbesForScope: async () => { throw new Error("DB connection failed"); },
+    });
+    const snap = await startVerify({
+      connectionId: "c4", scopeKey: "s", providerId: "p", providerAlias: "p",
+      models: MODELS, opts: { concurrency: 1, batchSize: 1, timeoutMs: 1 }, baseUrl: "x", deps,
+    });
+    // The returned snapshot must reflect the error immediately (no waiting needed).
+    expect(snap.status).toBe("error");
+    expect(snap.error).toMatch(/DB connection failed/);
+    expect(snap.finishedAt).toBeTruthy();
+  });
+
+  it("after prep failure, subsequent startVerify for same connectionId is not blocked", async () => {
+    // First call: prep throws → status becomes "error".
+    const failDeps = makeDeps({
+      getProbesForScope: async () => { throw new Error("transient failure"); },
+    });
+    await startVerify({
+      connectionId: "c5", scopeKey: "s", providerId: "p", providerAlias: "p",
+      models: MODELS, opts: { concurrency: 1, batchSize: 1, timeoutMs: 1 }, baseUrl: "x", deps: failDeps,
+    });
+
+    // Second call: uses good deps — must NOT be blocked by the previous error job.
+    const goodDeps = makeDeps();
+    await startVerify({
+      connectionId: "c5", scopeKey: "s", providerId: "p", providerAlias: "p",
+      models: MODELS, opts: { concurrency: 1, batchSize: 3, timeoutMs: 1 }, baseUrl: "x", deps: goodDeps,
+    });
+    // Wait for the background loop to finish.
+    await new Promise((r) => setTimeout(r, 50));
+    const s = getVerifyStatus("c5");
+    expect(s.status).toBe("done");
+    expect(s.ok).toBe(3);
+    // The good run's upserts must have happened (loop was not blocked).
+    expect(goodDeps.upserts).toHaveLength(3);
+  });
 });
