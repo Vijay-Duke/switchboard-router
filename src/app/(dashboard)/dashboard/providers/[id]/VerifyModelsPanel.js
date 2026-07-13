@@ -188,8 +188,8 @@ export default function VerifyModelsPanel({
         <div>
           <h3 className="text-sm font-semibold text-text-main">Verify models</h3>
           <p className="text-[11px] text-text-muted mt-0.5">
-            Batch-ping availability and latency. Known-dead models are skipped until you clear the cache.
-            Caps: {capsLabel}.
+            Batch-ping availability and latency. Dead = permanently unavailable (404/403) and can be removed;
+            retry = transient (timeout/429/5xx). Known-dead models are skipped until you Clear cache. Caps: {capsLabel}.
           </p>
         </div>
         {onClose && (
@@ -257,10 +257,13 @@ export default function VerifyModelsPanel({
           <div className="h-1.5 w-full rounded-full bg-border overflow-hidden">
             <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
           </div>
-          <p className="text-[11px] text-text-muted">
-            {progress.done}/{progress.total} tested · ok {progress.ok} · dead {progress.dead} · retry {progress.retryable}
-            {progress.skippedDead ? ` · skipped dead ${progress.skippedDead}` : ""}
-            {progress.skippedDup ? ` · dupes ${progress.skippedDup}` : ""}
+          <p className="text-[11px] text-text-muted flex flex-wrap gap-x-2">
+            <span title="Models probed this run">{progress.done}/{progress.total} tested</span>
+            <span title="Reachable">· ok {progress.ok}</span>
+            <span title="Permanently unavailable this run (404 not found / 403 access denied)">· dead {progress.dead}</span>
+            <span title="Transient failure this run (timeout / 429 / 5xx / network); re-testable">· retry {progress.retryable}</span>
+            {progress.skippedDead ? <span title="Not probed — cache already marks them dead. Clear cache to re-test.">· skipped known-dead {progress.skippedDead}</span> : null}
+            {progress.skippedDup ? <span title="Duplicate ids collapsed">· dupes {progress.skippedDup}</span> : null}
           </p>
         </div>
       )}
@@ -271,8 +274,8 @@ export default function VerifyModelsPanel({
       {summary && (
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <span className="text-xs text-text-main">
-            Summary: {summary.ok} ok · {summary.dead} unavailable · {summary.retryable} retry later
-            {summary.skippedDead ? ` · ${summary.skippedDead} skipped (known dead)` : ""}
+            Summary: {summary.ok} ok · {summary.dead} dead · {summary.retryable} retry
+            {summary.skippedDead ? ` · ${summary.skippedDead} skipped known-dead` : ""}
             {summary.cancelled ? " · cancelled" : ""}
           </span>
           {summary.dead > 0 && (
