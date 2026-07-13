@@ -1,13 +1,13 @@
 // @ts-check
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Button } from "@/shared/components";
 import { MODEL_PROBE_CAPS } from "@/lib/model-probe/caps.js";
 
 /**
- * Batch model verification UI: prepare → batched probes → summary/actions.
+ * Batch model verification UI: post start job → poll status → summary/actions.
  *
  * @param {{
  *   connectionId: string,
@@ -16,6 +16,7 @@ import { MODEL_PROBE_CAPS } from "@/lib/model-probe/caps.js";
  *   onComplete?: (summary: object) => void,
  *   onLatencyMap?: (map: Record<string, number>) => void,
  *   onClose?: () => void,
+ *   pollMs?: number,
  * }} props
  */
 export default function VerifyModelsPanel({
@@ -25,6 +26,7 @@ export default function VerifyModelsPanel({
   onComplete,
   onLatencyMap,
   onClose,
+  pollMs = 1000,
 }) {
   const [concurrency, setConcurrency] = useState(MODEL_PROBE_CAPS.defaultConcurrency);
   const [batchSize, setBatchSize] = useState(MODEL_PROBE_CAPS.defaultBatchSize);
@@ -34,8 +36,7 @@ export default function VerifyModelsPanel({
   const [summary, setSummary] = useState(/** @type {null|Record<string, any>} */ (null));
   const [error, setError] = useState("");
   const [logLine, setLogLine] = useState("");
-  const cancelRef = useRef(false);
-  const abortRef = useRef(/** @type {AbortController|null} */ (null));
+  const pollRef = useRef(/** @type {any} */ (null));
 
   const modelCount = models?.length || 0;
   const capsLabel = useMemo(
@@ -52,147 +53,92 @@ export default function VerifyModelsPanel({
     };
   }
 
-  async function handleStart() {
-    if (running || !connectionId || modelCount === 0) return;
-    cancelRef.current = false;
-    setRunning(true);
-    setError("");
-    setSummary(null);
-    setLogLine("Preparing…");
-
-    const opts = clampLocal();
-    const latencyMap = {};
-
-    try {
-      const prepRes = await fetch(`/api/providers/${connectionId}/model-probes/prepare`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          models,
-          providerAlias,
-          concurrency: opts.concurrency,
-          batchSize: opts.batchSize,
-          timeoutMs: opts.timeoutMs,
-        }),
-      });
-      const prep = await prepRes.json().catch(() => ({}));
-      if (!prepRes.ok) {
-        setError(prep.error || "Prepare failed");
-        return;
-      }
-
-      const eligible = prep.eligible || [];
-      const skippedDead = prep.stats?.skippedDead || 0;
-      const skippedDup = prep.stats?.duplicates || 0;
-
-      setProgress({
-        done: 0,
-        total: eligible.length,
-        ok: 0,
-        dead: 0,
-        retryable: 0,
-        skippedDead,
-        skippedDup,
-      });
-
-      if (eligible.length === 0) {
-        const emptySummary = {
-          ok: 0,
-          dead: 0,
-          retryable: 0,
-          tested: 0,
-          skippedDead,
-          skippedDup,
-          removed: 0,
-        };
-        setSummary(emptySummary);
-        setLogLine("Nothing to test (all skipped as known-unavailable or empty).");
-        onComplete?.(emptySummary);
-        return;
-      }
-
-      let ok = 0;
-      let dead = 0;
-      let retryable = 0;
-      let done = 0;
-
-      for (let i = 0; i < eligible.length; i += opts.batchSize) {
-        if (cancelRef.current) break;
-        const chunk = eligible.slice(i, i + opts.batchSize);
-        setLogLine(`Probing ${done + 1}–${Math.min(done + chunk.length, eligible.length)} of ${eligible.length}…`);
-
-        abortRef.current = new AbortController();
-        const batchRes = await fetch(`/api/providers/${connectionId}/model-probes/batch`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: abortRef.current.signal,
-          body: JSON.stringify({
-            models: chunk,
-            providerAlias,
-            concurrency: opts.concurrency,
-            batchSize: opts.batchSize,
-            timeoutMs: opts.timeoutMs,
-            warmup: i === 0,
-          }),
-        });
-        const batch = await batchRes.json().catch(() => ({}));
-        if (batch.providerError) {
-          setError(batch.error || "Provider authentication failed");
-          break;
-        }
-        if (!batchRes.ok) {
-          setError(batch.error || "Batch failed");
-          break;
-        }
-
-        for (const r of batch.results || []) {
-          if (r.probeStatus === "ok") {
-            ok += 1;
-            if (r.modelId && Number.isFinite(r.latencyMs)) latencyMap[r.modelId] = r.latencyMs;
-            if (r.canonicalId && Number.isFinite(r.latencyMs)) latencyMap[r.canonicalId] = r.latencyMs;
-          } else if (r.probeStatus === "dead") dead += 1;
-          else retryable += 1;
-        }
-        done += (batch.results || []).length;
-        setProgress({
-          done,
-          total: eligible.length,
-          ok,
-          dead,
-          retryable,
-          skippedDead,
-          skippedDup,
-        });
-      }
-
-      onLatencyMap?.(latencyMap);
+  function applySnapshot(snap) {
+    if (!snap) return;
+    setProgress({
+      done: snap.done || 0,
+      total: snap.total || 0,
+      ok: snap.ok || 0,
+      dead: snap.dead || 0,
+      retryable: snap.retryable || 0,
+      skippedDead: snap.skippedDead || 0,
+      skippedDup: snap.skippedDup || 0,
+    });
+    if (snap.currentRange) {
+      setLogLine(`Probing ${snap.currentRange.from}–${snap.currentRange.to} of ${snap.total}…`);
+    }
+    if (snap.error) setError(snap.error);
+    const terminal = snap.status === "done" || snap.status === "cancelled" || snap.status === "error";
+    if (terminal) {
+      stopPolling();
+      setRunning(false);
       const finalSummary = {
-        ok,
-        dead,
-        retryable,
-        tested: done,
-        skippedDead,
-        skippedDup,
-        cancelled: cancelRef.current,
+        ok: snap.ok || 0, dead: snap.dead || 0, retryable: snap.retryable || 0,
+        tested: snap.done || 0, skippedDead: snap.skippedDead || 0, skippedDup: snap.skippedDup || 0,
+        cancelled: snap.status === "cancelled",
       };
       setSummary(finalSummary);
-      setLogLine(cancelRef.current ? "Cancelled (partial results saved)." : "Done.");
+      setLogLine(snap.status === "cancelled" ? "Cancelled (partial results saved)." : snap.status === "error" ? "Stopped." : "Done.");
       onComplete?.(finalSummary);
-    } catch (e) {
-      if (e?.name === "AbortError") {
-        setLogLine("Cancelled.");
-      } else {
-        setError(e?.message || "Verify failed");
-      }
-    } finally {
-      setRunning(false);
-      abortRef.current = null;
+      // Latency map is derived by the parent from the probe cache reload; no per-run map needed.
+      onLatencyMap?.({});
     }
   }
 
-  function handleCancel() {
-    cancelRef.current = true;
-    abortRef.current?.abort();
+  function startPolling() {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/providers/${connectionId}/model-probes/verify/status`, { cache: "no-store" });
+        const snap = await r.json().catch(() => null);
+        applySnapshot(snap);
+      } catch { /* transient poll error — keep polling */ }
+    }, pollMs);
+  }
+
+  function stopPolling() {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/providers/${connectionId}/model-probes/verify/status`, { cache: "no-store" });
+        const snap = await r.json().catch(() => null);
+        if (cancelled || !snap) return;
+        if (snap.status === "running") { setRunning(true); applySnapshot(snap); startPolling(); }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; stopPolling(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionId]);
+
+  async function handleStart() {
+    if (running || !connectionId || modelCount === 0) return;
+    setRunning(true);
+    setError("");
+    setSummary(null);
+    setLogLine("Starting…");
+    const opts = clampLocal();
+    try {
+      const res = await fetch(`/api/providers/${connectionId}/model-probes/verify/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ models, providerAlias, ...opts, timeoutMs: opts.timeoutMs }),
+      });
+      const snap = await res.json().catch(() => ({}));
+      if (!res.ok) { setError(snap.error || "Failed to start"); setRunning(false); return; }
+      applySnapshot(snap);
+      startPolling();
+    } catch (e) {
+      setError(e?.message || "Verify failed");
+      setRunning(false);
+    }
+  }
+
+  async function handleCancel() {
+    await fetch(`/api/providers/${connectionId}/model-probes/verify/cancel`, { method: "POST" }).catch(() => {});
   }
 
   async function handleRemoveUnavailable() {
@@ -340,4 +286,5 @@ VerifyModelsPanel.propTypes = {
   onComplete: PropTypes.func,
   onLatencyMap: PropTypes.func,
   onClose: PropTypes.func,
+  pollMs: PropTypes.number,
 };
