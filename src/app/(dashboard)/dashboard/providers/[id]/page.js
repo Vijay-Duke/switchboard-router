@@ -82,6 +82,7 @@ export default function ProviderDetailPage() {
   const [importingModels, setImportingModels] = useState(false);
   const [importModelsMessage, setImportModelsMessage] = useState("");
   const [showVerifyPanel, setShowVerifyPanel] = useState(false);
+  const [verifyStatus, setVerifyStatus] = useState(/** @type {null|{status:string,done:number,total:number}} */ (null));
   const [probeLatencies, setProbeLatencies] = useState(/** @type {Record<string, number>} */ ({}));
   const { copied, copy } = useCopyToClipboard();
 
@@ -477,6 +478,27 @@ export default function ProviderDetailPage() {
     if (!fetcher) return;
     fetchSuggestedModels(fetcher).then(setSuggestedModels);
   }, [providerId]);
+
+  // Poll verify status while running
+  useEffect(() => {
+    const activeConn = connections.find((c) => c.isActive !== false);
+    if (!activeConn) return;
+    let stop = false;
+    let interval = null;
+    const poll = async () => {
+      try {
+        const r = await fetch(`/api/providers/${activeConn.id}/model-probes/verify/status`, { cache: "no-store" });
+        const snap = await r.json().catch(() => null);
+        if (stop) return;
+        setVerifyStatus(snap && snap.status ? snap : null);
+        const isRunning = snap?.status === "running";
+        if (!isRunning && interval) { clearInterval(interval); interval = null; }
+        if (isRunning && !interval) { interval = setInterval(poll, 1500); }
+      } catch { /* ignore */ }
+    };
+    poll();
+    return () => { stop = true; if (interval) clearInterval(interval); };
+  }, [connections]);
 
   const handleSetAlias = async (modelId, alias, providerAliasOverride = providerAlias) => {
     const fullModel = `${providerAliasOverride}/${modelId}`;
@@ -1589,10 +1611,12 @@ export default function ProviderDetailPage() {
                   <Button
                     size="sm"
                     variant="secondary"
-                    icon="science"
+                    icon={verifyStatus?.status === "running" ? "progress_activity" : "science"}
                     onClick={() => setShowVerifyPanel((v) => !v)}
                   >
-                    {showVerifyPanel ? "Hide verify" : "Verify models"}
+                    {verifyStatus?.status === "running"
+                      ? `Verifying ${verifyStatus.done}/${verifyStatus.total}`
+                      : showVerifyPanel ? "Hide verify" : "Verify models"}
                   </Button>
                 )}
                 {modelToolbarActions.showBulkControls && disabledModelIds.length > 0 && (
