@@ -1,23 +1,124 @@
 // @ts-check
-"use server";
-
 import { NextResponse } from "next/server";
 import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import {
+  replaceCliFiles,
+  restoreObjectKeys,
+  snapshotObjectKeys,
+} from "@/lib/cli/fileIo.js";
 
 const execAsync = promisify(exec);
+const BACKUP_VERSION = 1;
 
-// Get claude settings path based on OS
-const getClaudeSettingsPath = () => {
-  const homeDir = os.homedir();
-  return path.join(homeDir, ".claude", "settings.json");
+const MANAGED_ENV_KEYS = [
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+  "API_TIMEOUT_MS",
+];
+
+// The settings file and backup must move through Apply/Disconnect as one
+// generation. Serialize mutations so concurrent clicks cannot overwrite the
+// original snapshot or restore a partially applied configuration.
+let mutationTail = Promise.resolve();
+
+const withMutationLock = (operation) => {
+  const next = mutationTail.then(operation, operation);
+  mutationTail = next.catch(() => {});
+  return next;
 };
 
+const getClaudeDir = () => path.join(os.homedir(), ".claude");
+const getClaudeSettingsPath = () => path.join(getClaudeDir(), "settings.json");
+const getBackupPath = () => path.join(getClaudeDir(), "switchboard-backup.json");
 
-// Check if claude CLI is installed (via which/where or config file exists)
+const isObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
+const isSnapshot = (value) => isObject(value) && typeof value.exists === "boolean";
+
+const parseSettings = (content) => {
+  // Claude settings are commonly edited as JSON with trailing commas.
+  const parsed = JSON.parse(content.replace(/,(\s*[}\]])/g, "$1"));
+  if (!isObject(parsed)) throw new TypeError("Claude settings must contain a JSON object");
+  return parsed;
+};
+
+const readSettingsFile = async () => {
+  try {
+    const raw = await fs.readFile(getClaudeSettingsPath(), "utf-8");
+    return { exists: true, raw, settings: parseSettings(raw) };
+  } catch (error) {
+    if (error?.code === "ENOENT") return { exists: false, raw: null, settings: {} };
+    throw error;
+  }
+};
+
+const readBackup = async () => {
+  try {
+    const raw = await fs.readFile(getBackupPath(), "utf-8");
+    return JSON.parse(raw);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+};
+
+const validateBackup = (backup) => {
+  if (backup == null) return null;
+  if (backup.version === BACKUP_VERSION && backup.state === "restored") return backup;
+  if (backup.version !== BACKUP_VERSION
+    || backup.state !== "active"
+    || typeof backup.settingsFileExisted !== "boolean"
+    || typeof backup.canRestoreExact !== "boolean"
+    || (backup.originalContent !== null && typeof backup.originalContent !== "string")
+    || !isSnapshot(backup.hasCompletedOnboarding)
+    || !isObject(backup.env)
+    || !Array.isArray(backup.managedEnvKeys)
+    || !backup.managedEnvKeys.every((key) => typeof key === "string" && isSnapshot(backup.env[key]))
+    || !isObject(backup.managedSettings)) {
+    throw new Error("Unsupported or invalid Claude Code Switchboard backup file");
+  }
+  return backup;
+};
+
+const sameJson = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+
+const snapshotMatches = (object, key, snapshot) => (
+  Object.hasOwn(object, key) === snapshot.exists
+  && (!snapshot.exists || sameJson(object[key], snapshot.value))
+);
+
+const restoreIfStillManaged = (object, key, managedSnapshot, originalSnapshot) => {
+  if (snapshotMatches(object, key, managedSnapshot)) {
+    restoreObjectKeys(object, { [key]: originalSnapshot });
+  }
+};
+
+const isLocalBaseUrl = (value) => {
+  try {
+    const hostname = new URL(String(value || "")).hostname.toLowerCase();
+    return hostname === "localhost"
+      || hostname === "0.0.0.0"
+      || /^127(?:\.\d{1,3}){3}$/.test(hostname);
+  } catch {
+    return false;
+  }
+};
+
+const looksLikeLegacySwitchboard = (settings) => {
+  const env = isObject(settings?.env) ? settings.env : {};
+  return env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY === "1"
+    || env.ANTHROPIC_AUTH_TOKEN === "sk_switchboard"
+    || isLocalBaseUrl(env.ANTHROPIC_BASE_URL);
+};
+
 const checkClaudeInstalled = async () => {
   try {
     const isWindows = os.platform() === "win32";
@@ -37,25 +138,9 @@ const checkClaudeInstalled = async () => {
   }
 };
 
-// Read current settings
-const readSettings = async () => {
-  try {
-    const settingsPath = getClaudeSettingsPath();
-    const content = await fs.readFile(settingsPath, "utf-8");
-    // Tolerate JSONC (trailing commas) and treat unparseable files as "no config"
-    // rather than throwing a 500 that the UI misreads as "tool not installed".
-    const stripped = content.replace(/,(\s*[}\]])/g, "$1");
-    return JSON.parse(stripped);
-  } catch (error) {
-    return null;
-  }
-};
-
-// GET - Check claude CLI and read current settings
-export async function GET() {
+async function getClaudeSettings() {
   try {
     const isInstalled = await checkClaudeInstalled();
-    
     if (!isInstalled) {
       return NextResponse.json({
         installed: false,
@@ -64,142 +149,212 @@ export async function GET() {
       });
     }
 
-    const settings = await readSettings();
-    const hasSwitchboard = !!(settings?.env?.ANTHROPIC_BASE_URL);
+    const [{ settings }, rawBackup] = await Promise.all([readSettingsFile(), readBackup()]);
+    const backup = validateBackup(rawBackup);
+    const hasBackup = backup?.state === "active";
+    const hasSwitchboard = hasBackup || looksLikeLegacySwitchboard(settings);
 
     return NextResponse.json({
       installed: true,
-      settings: settings,
-      hasSwitchboard: hasSwitchboard,
+      settings,
+      hasSwitchboard,
+      hasBackup,
       settingsPath: getClaudeSettingsPath(),
     });
   } catch (error) {
     console.log("Error checking claude settings:", error);
-    return NextResponse.json(
-      { error: "Failed to check claude settings" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to check claude settings" }, { status: 500 });
   }
 }
 
-// POST - Backup old fields and write new settings
-export async function POST(request) {
+export async function GET() {
+  return withMutationLock(getClaudeSettings);
+}
+
+async function postClaudeSettings(request) {
   try {
-    const { env } = await request.json();
-    
-    if (!env || typeof env !== "object") {
-      return NextResponse.json(
-        { error: "Invalid env object" },
-        { status: 400 }
-      );
+    const body = await request.json();
+    const requestedEnv = body?.env;
+    if (!isObject(requestedEnv)) {
+      return NextResponse.json({ error: "Invalid env object" }, { status: 400 });
     }
 
-    const settingsPath = getClaudeSettingsPath();
-    const claudeDir = path.dirname(settingsPath);
-
-    // Ensure .claude directory exists
-    await fs.mkdir(claudeDir, { recursive: true });
-
-    // Read current settings
-    let currentSettings = {};
-    try {
-      const content = await fs.readFile(settingsPath, "utf-8");
-      currentSettings = JSON.parse(content);
-    } catch (error) {
-      if (error.code !== "ENOENT") {
-        throw error;
-      }
-    }
-
-    // Normalize ANTHROPIC_BASE_URL to ensure /v1 suffix
+    const [{ exists, raw, settings: currentSettings }, rawBackup] = await Promise.all([
+      readSettingsFile(),
+      readBackup(),
+    ]);
+    const validatedBackup = validateBackup(rawBackup);
+    const storedBackup = validatedBackup?.state === "active" ? validatedBackup : null;
+    const env = { ...requestedEnv };
     if (env.ANTHROPIC_BASE_URL) {
-      env.ANTHROPIC_BASE_URL = env.ANTHROPIC_BASE_URL.endsWith("/v1") 
-        ? env.ANTHROPIC_BASE_URL 
-        : `${env.ANTHROPIC_BASE_URL}/v1`;
+      const baseUrl = String(env.ANTHROPIC_BASE_URL).replace(/\/+$/, "");
+      env.ANTHROPIC_BASE_URL = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
     }
 
-    // Merge new env with existing settings
     const newSettings = {
       ...currentSettings,
       hasCompletedOnboarding: true,
       env: {
-        ...(currentSettings.env || {}),
+        ...(isObject(currentSettings.env) ? currentSettings.env : {}),
         ...env,
       },
     };
+    const currentEnv = isObject(currentSettings.env) ? currentSettings.env : {};
+    const requestedKeys = Object.keys(env);
+    const backup = storedBackup || {
+      version: BACKUP_VERSION,
+      state: "active",
+      settingsFileExisted: exists,
+      canRestoreExact: true,
+      originalContent: raw,
+      hasCompletedOnboarding: snapshotObjectKeys(currentSettings, ["hasCompletedOnboarding"]).hasCompletedOnboarding,
+      managedEnvKeys: requestedKeys,
+      env: snapshotObjectKeys(currentEnv, requestedKeys),
+    };
+    if (storedBackup) {
+      backup.canRestoreExact = backup.canRestoreExact
+        && sameJson(currentSettings, backup.managedSettings);
+      const managedKeySet = new Set(backup.managedEnvKeys);
+      const newManagedKeys = requestedKeys.filter((key) => !managedKeySet.has(key));
+      Object.assign(backup.env, snapshotObjectKeys(currentEnv, newManagedKeys));
+      backup.managedEnvKeys.push(...newManagedKeys);
+    }
+    backup.managedSettings = newSettings;
 
-    // Write new settings
-    await fs.writeFile(settingsPath, JSON.stringify(newSettings, null, 2));
+    await fs.mkdir(getClaudeDir(), { recursive: true });
+    await replaceCliFiles([
+      {
+        filePath: getBackupPath(),
+        content: JSON.stringify(backup, null, 2),
+        secret: true,
+      },
+      {
+        filePath: getClaudeSettingsPath(),
+        content: JSON.stringify(newSettings, null, 2),
+        secret: true,
+      },
+    ]);
 
     return NextResponse.json({
       success: true,
-      message: "Settings updated successfully",
+      hasBackup: true,
+      message: "Claude Code connected to Switchboard",
     });
   } catch (error) {
     console.log("Error updating claude settings:", error);
-    return NextResponse.json(
-      { error: "Failed to update claude settings" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to update claude settings" }, { status: 500 });
   }
 }
 
-// Fields to remove when resetting
-const RESET_ENV_KEYS = [
-  "ANTHROPIC_BASE_URL",
-  "ANTHROPIC_AUTH_TOKEN",
-  "ANTHROPIC_DEFAULT_OPUS_MODEL",
-  "ANTHROPIC_DEFAULT_SONNET_MODEL",
-  "ANTHROPIC_DEFAULT_FABLE_MODEL",
-  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-  "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
-  "API_TIMEOUT_MS",
-];
+export async function POST(request) {
+  return withMutationLock(() => postClaudeSettings(request));
+}
 
-// DELETE - Reset settings (remove env fields)
-export async function DELETE() {
+async function deleteClaudeSettings() {
   try {
-    const settingsPath = getClaudeSettingsPath();
-
-    // Read current settings
-    let currentSettings = {};
-    try {
-      const content = await fs.readFile(settingsPath, "utf-8");
-      currentSettings = JSON.parse(content);
-    } catch (error) {
-      if (error.code === "ENOENT") {
-        return NextResponse.json({
-          success: true,
-          message: "No settings file to reset",
-        });
-      }
-      throw error;
-    }
-
-    // Remove specified env fields
-    if (currentSettings.env) {
-      RESET_ENV_KEYS.forEach((key) => {
-        delete currentSettings.env[key];
+    const [settingsFile, rawBackup] = await Promise.all([readSettingsFile(), readBackup()]);
+    const validatedBackup = validateBackup(rawBackup);
+    const hasLegacySettings = looksLikeLegacySwitchboard(settingsFile.settings);
+    const backup = validatedBackup?.state === "active" ? validatedBackup : null;
+    if (validatedBackup?.state === "restored" && !hasLegacySettings) {
+      return NextResponse.json({
+        success: true,
+        restored: true,
+        message: "Claude Code is already disconnected",
       });
-      
-      // Clean up empty env object
-      if (Object.keys(currentSettings.env).length === 0) {
-        delete currentSettings.env;
-      }
+    }
+    if (!settingsFile.exists && !backup) {
+      return NextResponse.json({
+        success: true,
+        restored: false,
+        message: "No Claude Code settings to disconnect",
+      });
+    }
+    if (!backup && !hasLegacySettings) {
+      return NextResponse.json({
+        success: true,
+        restored: false,
+        message: "Claude Code is not connected to Switchboard",
+      });
     }
 
-    // Write updated settings
-    await fs.writeFile(settingsPath, JSON.stringify(currentSettings, null, 2));
+    let settingsContent;
+    let restored = false;
+    let legacyCleanup = false;
+    if (backup?.state === "active") {
+      restored = true;
+      if (backup.canRestoreExact
+        && (!settingsFile.exists || sameJson(settingsFile.settings, backup.managedSettings))) {
+        // The file was untouched after Apply, so restore its exact original
+        // bytes (including formatting and trailing commas).
+        settingsContent = backup.settingsFileExisted ? backup.originalContent : null;
+      } else {
+        // Preserve edits made while connected and restore only fields that
+        // still equal the values last written by Switchboard.
+        const current = settingsFile.settings;
+        const currentEnv = isObject(current.env) ? current.env : {};
+        const managedEnv = isObject(backup.managedSettings.env) ? backup.managedSettings.env : {};
+        for (const key of backup.managedEnvKeys) {
+          restoreIfStillManaged(
+            currentEnv,
+            key,
+            snapshotObjectKeys(managedEnv, [key])[key],
+            backup.env[key],
+          );
+        }
+        if (Object.keys(currentEnv).length > 0) current.env = currentEnv;
+        else delete current.env;
+        restoreIfStillManaged(
+          current,
+          "hasCompletedOnboarding",
+          snapshotObjectKeys(backup.managedSettings, ["hasCompletedOnboarding"]).hasCompletedOnboarding,
+          backup.hasCompletedOnboarding,
+        );
+        settingsContent = !backup.settingsFileExisted && Object.keys(current).length === 0
+          ? null
+          : JSON.stringify(current, null, 2);
+      }
+    } else {
+      // Versions through v0.6.16 did not create the backup promised by the
+      // UI. We cannot recover overwritten values, but we can remove only the
+      // known Switchboard fields and preserve every unrelated setting.
+      legacyCleanup = true;
+      const current = settingsFile.settings;
+      if (isObject(current.env)) {
+        for (const key of MANAGED_ENV_KEYS) delete current.env[key];
+        if (Object.keys(current.env).length === 0) delete current.env;
+      }
+      settingsContent = JSON.stringify(current, null, 2);
+    }
+
+    await fs.mkdir(getClaudeDir(), { recursive: true });
+    await replaceCliFiles([
+      {
+        filePath: getBackupPath(),
+        content: JSON.stringify({ version: BACKUP_VERSION, state: "restored" }, null, 2),
+        secret: true,
+      },
+      {
+        filePath: getClaudeSettingsPath(),
+        content: settingsContent,
+        secret: true,
+      },
+    ]);
 
     return NextResponse.json({
       success: true,
-      message: "Settings reset successfully",
+      restored,
+      legacyCleanup,
+      message: restored
+        ? "Switchboard disconnected and previous Claude Code settings restored"
+        : "Switchboard disconnected; no Switchboard backup was available for overwritten values",
     });
   } catch (error) {
-    console.log("Error resetting claude settings:", error);
-    return NextResponse.json(
-      { error: "Failed to reset claude settings" },
-      { status: 500 }
-    );
+    console.log("Error disconnecting claude settings:", error);
+    return NextResponse.json({ error: "Failed to disconnect Claude Code" }, { status: 500 });
   }
+}
+
+export async function DELETE() {
+  return withMutationLock(deleteClaudeSettings);
 }

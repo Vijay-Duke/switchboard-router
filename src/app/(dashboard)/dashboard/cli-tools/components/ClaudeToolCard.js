@@ -7,6 +7,7 @@ import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import { readClaudeModelMappings } from "./claudeSettingsForm";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 
 const CLOUD_URL = process.env.NEXT_PUBLIC_CLOUD_URL;
@@ -31,7 +32,7 @@ export default function ClaudeToolCard({
   const [claudeStatus, setClaudeStatus] = useState(initialStatus || null);
   const [checkingClaude, setCheckingClaude] = useState(false);
   const [applying, setApplying] = useState(false);
-  const [restoring, setRestoring] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [message, setMessage] = useState(null);
   const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -101,16 +102,8 @@ export default function ClaudeToolCard({
     if (claudeStatus?.installed && !hasInitializedModels.current) {
       hasInitializedModels.current = true;
       const env = claudeStatus.settings?.env || {};
-
-      tool.defaultModels.forEach((model) => {
-        if (model.envKey) {
-          const value = env[model.envKey] || model.defaultValue || "";
-          // Only sync initial values from file once
-          if (value) {
-            onModelMappingChange(model.alias, value);
-          }
-        }
-      });
+      const mappings = readClaudeModelMappings(tool.defaultModels, claudeStatus.settings);
+      Object.entries(mappings).forEach(([alias, value]) => onModelMappingChange(alias, value));
       // Only set selectedApiKey if it exists in apiKeys list
       const tokenFromFile = env.ANTHROPIC_AUTH_TOKEN;
       if (tokenFromFile && apiKeys?.some(k => k.key === tokenFromFile)) {
@@ -124,9 +117,12 @@ export default function ClaudeToolCard({
     try {
       const res = await fetch("/api/cli-tools/claude-settings");
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to read Claude Code settings");
       setClaudeStatus(data);
+      return data;
     } catch (error) {
       setClaudeStatus({ installed: false, error: error.message });
+      throw error;
     } finally {
       setCheckingClaude(false);
     }
@@ -171,8 +167,8 @@ export default function ClaudeToolCard({
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: "success", text: "Settings applied successfully!" });
-        setClaudeStatus(prev => ({ ...prev, hasBackup: true, settings: { ...prev?.settings, env } }));
+        await checkClaudeStatus();
+        setMessage({ type: "success", text: data.message || "Claude Code connected to Switchboard." });
       } else {
         setMessage({ type: "error", text: data.error || "Failed to apply settings" });
       }
@@ -183,23 +179,34 @@ export default function ClaudeToolCard({
     }
   };
 
-  const handleResetSettings = async () => {
-    setRestoring(true);
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
     setMessage(null);
     try {
       const res = await fetch("/api/cli-tools/claude-settings", { method: "DELETE" });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: "success", text: "Settings reset successfully!" });
-        tool.defaultModels.forEach((model) => onModelMappingChange(model.alias, model.defaultValue || ""));
-        setSelectedApiKey("");
+        const status = await checkClaudeStatus();
+        const restoredEnv = status.settings?.env || {};
+        const restoredMappings = readClaudeModelMappings(tool.defaultModels, status.settings);
+        Object.entries(restoredMappings).forEach(([alias, value]) => onModelMappingChange(alias, value));
+        const restoredToken = restoredEnv.ANTHROPIC_AUTH_TOKEN;
+        setSelectedApiKey(
+          restoredToken && apiKeys?.some((key) => key.key === restoredToken)
+            ? restoredToken
+            : "",
+        );
+        setMessage({
+          type: data.restored ? "success" : "warning",
+          text: data.message || "Claude Code disconnected from Switchboard.",
+        });
       } else {
-        setMessage({ type: "error", text: data.error || "Failed to reset settings" });
+        setMessage({ type: "error", text: data.error || "Failed to disconnect Claude Code" });
       }
     } catch (error) {
       setMessage({ type: "error", text: error.message });
     } finally {
-      setRestoring(false);
+      setDisconnecting(false);
     }
   };
 
@@ -343,9 +350,9 @@ export default function ClaudeToolCard({
                     <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
                     <div className="relative w-full min-w-0">
                       <input type="text" value={modelMappings[model.alias] || ""} onChange={(e) => onModelMappingChange(model.alias, e.target.value)} placeholder="provider/model-id" className="w-full min-w-0 pl-2 pr-7 py-2 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5" />
-                      {modelMappings[model.alias] && <button onClick={() => onModelMappingChange(model.alias, "")} className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-red-500 rounded transition-colors" title="Clear"><span className="material-symbols-outlined text-[14px]">close</span></button>}
+                      {modelMappings[model.alias] && <button type="button" onClick={() => onModelMappingChange(model.alias, "")} className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-red-500 rounded transition-colors" title="Clear"><span className="material-symbols-outlined text-[14px]">close</span></button>}
                     </div>
-                    <button onClick={() => openModelSelector(model.alias)} disabled={!hasActiveProviders} className={`w-full sm:w-auto rounded border px-2 py-2 text-xs transition-colors sm:py-1.5 whitespace-nowrap sm:shrink-0 ${hasActiveProviders ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Select Model</button>
+                    <button type="button" onClick={() => openModelSelector(model.alias)} disabled={!hasActiveProviders} className={`w-full sm:w-auto rounded border px-2 py-2 text-xs transition-colors sm:py-1.5 whitespace-nowrap sm:shrink-0 ${hasActiveProviders ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Select Model</button>
                   </div>
                 ))}
 
@@ -364,8 +371,8 @@ export default function ClaudeToolCard({
               </div>
 
               {message && (
-                <div className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${message.type === "success" ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
-                  <span className="material-symbols-outlined text-[14px]">{message.type === "success" ? "check_circle" : "error"}</span>
+                <div className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${message.type === "success" ? "bg-green-500/10 text-green-600" : message.type === "warning" ? "bg-amber-500/10 text-amber-600" : "bg-red-500/10 text-red-600"}`}>
+                  <span className="material-symbols-outlined text-[14px]">{message.type === "success" ? "check_circle" : message.type === "warning" ? "warning" : "error"}</span>
                   <span>{message.text}</span>
                 </div>
               )}
@@ -374,8 +381,8 @@ export default function ClaudeToolCard({
                 <Button variant="primary" size="sm" onClick={handleApplySettings} disabled={!hasActiveProviders} loading={applying}>
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>Apply
                 </Button>
-                <Button variant="outline" size="sm" onClick={handleResetSettings} disabled={!claudeStatus?.hasSwitchboard} loading={restoring}>
-                  <span className="material-symbols-outlined text-[14px] mr-1">restore</span>Reset
+                <Button variant="outline" size="sm" onClick={handleDisconnect} disabled={!claudeStatus?.hasSwitchboard} loading={disconnecting} title={claudeStatus?.hasBackup ? "Restore the pre-Switchboard Claude Code settings" : "Remove Switchboard settings from Claude Code"}>
+                  <span className="material-symbols-outlined text-[14px] mr-1">link_off</span>Disconnect
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => setShowManualConfigModal(true)}>
                   <span className="material-symbols-outlined text-[14px] mr-1">content_copy</span>Manual Config

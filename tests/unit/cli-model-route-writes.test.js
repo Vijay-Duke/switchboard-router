@@ -39,6 +39,190 @@ afterAll(async () => {
 });
 
 describe("CLI catalog routes write native client schemas", () => {
+  it("disconnects Claude Code by restoring the pre-Switchboard settings", async () => {
+    const claudeDir = path.join(home, ".claude");
+    const settingsPath = path.join(claudeDir, "settings.json");
+    const backupPath = path.join(claudeDir, "switchboard-backup.json");
+    const original = {
+      env: {
+        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
+        ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+        ANTHROPIC_AUTH_TOKEN: "original-token",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "original-opus",
+      },
+      permissions: { allow: ["Read"] },
+      theme: "dark",
+    };
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.rm(backupPath, { force: true });
+    await fs.writeFile(settingsPath, JSON.stringify(original, null, 2));
+
+    const { GET, POST, DELETE } = await import("../../src/app/api/cli-tools/claude-settings/route.js");
+    const response = await POST(post({
+      env: {
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:20128/v1",
+        ANTHROPIC_AUTH_TOKEN: "sk-test",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "cc/claude-opus-4-8",
+        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+      },
+    }));
+    expect(response.status).toBe(200);
+    expect(JSON.parse(await fs.readFile(backupPath, "utf8"))).toMatchObject({
+      version: 1,
+      state: "active",
+      settingsFileExisted: true,
+    });
+    expect(await (await GET()).json()).toMatchObject({
+      hasSwitchboard: true,
+      hasBackup: true,
+    });
+
+    expect((await DELETE()).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(settingsPath, "utf8"))).toEqual(original);
+    expect(JSON.parse(await fs.readFile(backupPath, "utf8"))).toEqual({
+      version: 1,
+      state: "restored",
+    });
+
+    // Disconnect is idempotent and cannot delete restored Anthropic settings.
+    expect((await DELETE()).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(settingsPath, "utf8"))).toEqual(original);
+
+    // A later manual connection must not be hidden by the restored marker.
+    await fs.writeFile(settingsPath, JSON.stringify({
+      ...original,
+      env: {
+        ...original.env,
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:20128/v1",
+        ANTHROPIC_AUTH_TOKEN: "sk_switchboard",
+        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+      },
+    }, null, 2));
+    expect((await DELETE()).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(settingsPath, "utf8")).env).toEqual({
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
+    });
+  });
+
+  it("preserves Claude settings edited after Switchboard was connected", async () => {
+    const claudeDir = path.join(home, ".claude");
+    const settingsPath = path.join(claudeDir, "settings.json");
+    const backupPath = path.join(claudeDir, "switchboard-backup.json");
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.rm(backupPath, { force: true });
+    await fs.writeFile(settingsPath, JSON.stringify({
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "original-opus",
+      },
+      theme: "dark",
+    }, null, 2));
+
+    const { POST, DELETE } = await import("../../src/app/api/cli-tools/claude-settings/route.js");
+    expect((await POST(post({
+      env: {
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:20128/v1",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "cc/claude-opus-4-8",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "cc/claude-sonnet-5",
+        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+      },
+    }))).status).toBe(200);
+
+    const edited = JSON.parse(await fs.readFile(settingsPath, "utf8"));
+    edited.theme = "light";
+    edited.env.ANTHROPIC_DEFAULT_SONNET_MODEL = "user/changed-while-connected";
+    await fs.writeFile(settingsPath, JSON.stringify(edited, null, 2));
+
+    expect((await DELETE()).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(settingsPath, "utf8"))).toEqual({
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "original-opus",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "user/changed-while-connected",
+      },
+      theme: "light",
+    });
+  });
+
+  it("keeps unrelated Claude edits made before a repeated Apply", async () => {
+    const claudeDir = path.join(home, ".claude");
+    const settingsPath = path.join(claudeDir, "settings.json");
+    const backupPath = path.join(claudeDir, "switchboard-backup.json");
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.rm(backupPath, { force: true });
+    await fs.writeFile(settingsPath, JSON.stringify({ theme: "dark" }, null, 2));
+
+    const { POST, DELETE } = await import("../../src/app/api/cli-tools/claude-settings/route.js");
+    const switchboardEnv = {
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:20128/v1",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "cc/claude-opus-4-8",
+      CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+    };
+    expect((await POST(post({ env: switchboardEnv }))).status).toBe(200);
+
+    const edited = JSON.parse(await fs.readFile(settingsPath, "utf8"));
+    edited.theme = "light";
+    await fs.writeFile(settingsPath, JSON.stringify(edited, null, 2));
+    expect((await POST(post({
+      env: { ...switchboardEnv, ANTHROPIC_DEFAULT_OPUS_MODEL: "cc/claude-opus-4-7" },
+    }))).status).toBe(200);
+
+    expect((await DELETE()).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(settingsPath, "utf8"))).toEqual({ theme: "light" });
+  });
+
+  it("safely disconnects legacy Claude settings when no backup exists", async () => {
+    const claudeDir = path.join(home, ".claude");
+    const settingsPath = path.join(claudeDir, "settings.json");
+    const backupPath = path.join(claudeDir, "switchboard-backup.json");
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.rm(backupPath, { force: true });
+    await fs.writeFile(settingsPath, JSON.stringify({
+      env: {
+        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:20128/v1",
+        ANTHROPIC_AUTH_TOKEN: "sk_switchboard",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "cc/claude-sonnet-5",
+        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+      },
+      permissions: { allow: ["Read"] },
+      hasCompletedOnboarding: true,
+    }, null, 2));
+
+    const { DELETE } = await import("../../src/app/api/cli-tools/claude-settings/route.js");
+    const response = await DELETE();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ restored: false, legacyCleanup: true });
+    expect(JSON.parse(await fs.readFile(settingsPath, "utf8"))).toEqual({
+      env: { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" },
+      permissions: { allow: ["Read"] },
+      hasCompletedOnboarding: true,
+    });
+  });
+
+  it("does not remove non-Switchboard Claude provider settings", async () => {
+    const claudeDir = path.join(home, ".claude");
+    const settingsPath = path.join(claudeDir, "settings.json");
+    const backupPath = path.join(claudeDir, "switchboard-backup.json");
+    const external = {
+      env: {
+        ANTHROPIC_BASE_URL: "https://gateway.example.com/v1",
+        ANTHROPIC_AUTH_TOKEN: "external-token",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "external-sonnet",
+      },
+      theme: "dark",
+    };
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.rm(backupPath, { force: true });
+    await fs.writeFile(settingsPath, JSON.stringify(external, null, 2));
+
+    const { GET, DELETE } = await import("../../src/app/api/cli-tools/claude-settings/route.js");
+    expect(await (await GET()).json()).toMatchObject({ hasSwitchboard: false });
+    expect((await DELETE()).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(settingsPath, "utf8"))).toEqual(external);
+    await expect(fs.access(backupPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("returns a client error for malformed scalar fields", async () => {
     const { POST } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
     expect((await POST(post({ ...payload, baseUrl: [] }))).status).toBe(400);
