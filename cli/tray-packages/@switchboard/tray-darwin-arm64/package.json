@@ -1,0 +1,14 @@
+{
+  "name": "switchboard-tray-darwin-arm64",
+  "version": "1.0.0",
+  "description": "Switchboard system tray binary for macOS (Apple Silicon)",
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["bin/switchboard-tray"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vijay-Duke/switchboard-router.git",
+    "directory": "cli/tray-packages/@switchboard/tray-darwin-arm64"
+  }
+}

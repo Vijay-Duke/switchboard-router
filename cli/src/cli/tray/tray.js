@@ -156,80 +156,132 @@ function initWindowsTray(options) {
 }
 
 /**
- * macOS/Linux tray via systray binary
+ * macOS/Linux tray via our own switchboard-tray binary.
  *
- * Prefers `systray2` (active fork of `systray`, ships newer
- * getlantern/systray-portable binaries that work on macOS 14+ and Apple
- * Silicon under Rosetta). Falls back to legacy `systray@1.0.5` if systray2
- * is not available, though that binary's Mach-O headers are rejected by
- * modern dyld and the icon will not appear.
+ * Spawns the Go binary directly (no systray2 dependency).
+ * Binary communicates via JSON-per-line on stdin/stdout.
+ * Installed as optionalDependencies per platform (esbuild pattern).
  */
-function resolveSystray() {
-  let runtimeDir = null;
+function resolveTrayBinPath() {
   try {
-    const { getRuntimeNodeModules } = require("../../../hooks/sqliteRuntime");
-    runtimeDir = getRuntimeNodeModules();
-  } catch (e) {}
-
-  // 1) systray2 in runtime dir (where ensureTrayRuntime installs it)
-  if (runtimeDir) {
-    try { return { mod: require(path.join(runtimeDir, "systray2")).default, isV2: true }; } catch (e) {}
+    const { getTrayBinPath, downloadBinaryFallback } = require("../../../hooks/trayRuntime");
+    return { binPath: getTrayBinPath(), downloadBinaryFallback };
+  } catch {
+    return { binPath: null, downloadBinaryFallback: null };
   }
-  // 2) systray2 resolvable from the package's own node_modules / NODE_PATH
-  try { return { mod: require("systray2").default, isV2: true }; } catch (e) {}
-  // 3) Legacy systray fallback (unlikely to render on modern macOS)
-  try { return { mod: require("systray").default, isV2: false }; } catch (e) {}
-  if (runtimeDir) {
-    try { return { mod: require(path.join(runtimeDir, "systray")).default, isV2: false }; } catch (e) {}
-  }
-  return null;
 }
 
-function chmodTrayBin(pkgName) {
-  // systray2's npm tarball occasionally lands without +x on the bundled Go
-  // binary (observed on macOS). spawn() then fails with EACCES. Best-effort
-  // chmod on every init avoids a hard-to-diagnose silent tray failure.
-  try {
-    const { getRuntimeNodeModules } = require("../../../hooks/sqliteRuntime");
-    const binName = process.platform === "darwin" ? "tray_darwin_release" : "tray_linux_release";
-    const candidates = [
-      path.join(getRuntimeNodeModules(), pkgName, "traybin", binName),
-      path.join(__dirname, "..", "..", "..", "node_modules", pkgName, "traybin", binName)
-    ];
-    for (const p of candidates) {
-      if (fs.existsSync(p)) fs.chmodSync(p, 0o755);
+/**
+ * Lightweight tray wrapper — spawns our binary and provides the same interface
+ * that the old systray2 SysTray class exposed (.onClick, .sendAction, .ready, .kill, ._process).
+ */
+class SwitchboardTray {
+  constructor({ menu, binPath }) {
+    this._binPath = binPath;
+    this._menu = menu;
+    this._process = null;
+    this._rl = null;
+    this._onClickListeners = [];
+    this._readyPromise = this._start();
+  }
+
+  async _start() {
+    const { spawn } = require("child_process");
+    const { createInterface } = require("readline");
+
+    this._process = spawn(this._binPath, [], { windowsHide: true });
+
+    this._rl = createInterface({ input: this._process.stdout });
+
+    return new Promise((resolve, reject) => {
+      this._process.on("error", reject);
+
+      const onLine = (line) => {
+        try {
+          const msg = JSON.parse(line);
+          if (msg.type === "ready") {
+            // Send menu config
+            this._write(JSON.stringify(this._menu));
+            resolve();
+          } else if (msg.type === "clicked") {
+            for (const listener of this._onClickListeners) {
+              listener(msg);
+            }
+          }
+        } catch {}
+      };
+
+      this._rl.on("line", onLine);
+    });
+  }
+
+  _write(line) {
+    if (this._process && this._process.stdin && !this._process.stdin.destroyed) {
+      this._process.stdin.write(line.trim() + "\n");
     }
-  } catch (e) {}
+  }
+
+  ready() {
+    return this._readyPromise;
+  }
+
+  onClick(listener) {
+    this._onClickListeners.push(listener);
+    return this._readyPromise;
+  }
+
+  sendAction(action) {
+    this._write(JSON.stringify(action));
+    return this;
+  }
+
+  kill(exitNode = false) {
+    if (this._process) {
+      this._write(JSON.stringify({ type: "exit" }));
+      setTimeout(() => {
+        try { this._process.kill("SIGTERM"); } catch {}
+      }, 500);
+    }
+    if (exitNode) process.exit(0);
+  }
 }
 
 function initUnixTray(options, {
-  resolveSystrayImpl = resolveSystray,
-  chmodTrayBinImpl = chmodTrayBin,
+  resolveTrayBinPathImpl = resolveTrayBinPath,
   getAutostartEnabledImpl = getAutostartEnabled,
 } = {}) {
   const { port } = options;
   try {
-    const resolved = resolveSystrayImpl();
-    if (!resolved) return null;
-    const { mod: SysTray, isV2 } = resolved;
+    const { binPath, downloadBinaryFallback } = resolveTrayBinPathImpl();
 
-    chmodTrayBinImpl(isV2 ? "systray2" : "systray");
+    if (!binPath) {
+      // Try async download fallback
+      if (downloadBinaryFallback) {
+        downloadBinaryFallback({ silent: true }).then((downloaded) => {
+          if (downloaded) {
+            // Binary now available — caller can retry via interface menu
+            process.stderr.write("[switchboard] tray binary downloaded; restart to enable tray icon\n");
+          }
+        }).catch(() => {});
+      }
+      return null;
+    }
+
+    // Ensure executable
+    try { fs.chmodSync(binPath, 0o755); } catch {}
 
     const autostartEnabled = getAutostartEnabledImpl();
     const items = buildMenuItems(port, autostartEnabled);
 
     const menu = {
       icon: getIconBase64(),
-      // The bundled icon.png is a full-color RGBA logo. Don't mark it as a
-      // template icon: macOS would then render it as a solid white square
-      // because template mode only uses the alpha channel.
       isTemplateIcon: false,
       title: "",
       tooltip: `Switchboard - Port ${port}`,
       items
     };
 
-    trayInstance = new SysTray({ menu, debug: false, copyDir: true });
+    trayInstance = new SwitchboardTray({ menu, binPath });
     isWinTray = false;
 
     const clickRegistration = trayInstance.onClick((action) => {
@@ -245,22 +297,11 @@ function initUnixTray(options, {
         });
       });
     });
-    // systray2 waits for ready() inside onClick(). If its bundled executable
-    // cannot run (for example x86_64 on ARM without Rosetta), this separate
-    // promise rejects too. Observe it so Node does not promote the rejection
-    // to uncaughtException and shut down an otherwise healthy server/TUI.
     if (clickRegistration && typeof clickRegistration.catch === "function") {
       clickRegistration.catch(() => {});
     }
 
-    if (isV2) {
-      // The caller awaits ready() and reports one contextual error. Observe the
-      // source promise here as defense-in-depth for any future direct caller.
-      trayInstance.ready().catch(() => {});
-    } else {
-      trayInstance.onReady(() => {});
-      trayInstance.onError(() => {});
-    }
+    trayInstance.ready().catch(() => {});
 
     return trayInstance;
   } catch (err) {

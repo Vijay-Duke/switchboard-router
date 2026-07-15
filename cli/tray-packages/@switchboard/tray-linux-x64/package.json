@@ -1,0 +1,14 @@
+{
+  "name": "switchboard-tray-linux-x64",
+  "version": "1.0.0",
+  "description": "Switchboard system tray binary for Linux (x86_64)",
+  "license": "MIT",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "files": ["bin/switchboard-tray"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vijay-Duke/switchboard-router.git",
+    "directory": "cli/tray-packages/@switchboard/tray-linux-x64"
+  }
+}

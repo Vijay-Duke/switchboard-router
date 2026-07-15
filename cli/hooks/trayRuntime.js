@@ -1,107 +1,183 @@
-// Lazy install systray2 for macOS/Linux into USER_DATA_DIR/runtime/node_modules.
-// Windows uses PowerShell NotifyIcon (no binary) → no systray needed.
-// This keeps the published npm tarball free of unsigned Go binaries that
-// trigger antivirus false positives (e.g. Kaspersky flagging tray_windows.exe).
-//
-// We use the maintained `systray2` fork. The original `systray@1.0.5` package
-// bundles a 2017 x86_64 Go binary whose Mach-O headers are rejected by modern
-// dyld (macOS 14+), so the tray silently fails to register on Apple Silicon.
-const { spawnSync } = require("child_process");
+// Switchboard tray binary resolver.
+// Uses platform-specific optionalDependencies (esbuild/swc pattern).
+// Each platform has its own npm package containing only that architecture's binary.
+// Falls back to downloading from GitHub releases if optionalDeps are missing.
 const fs = require("fs");
 const path = require("path");
-const { getRuntimeDir, getRuntimeNodeModules, runNpmInstall, summarizeNpmError } = require("./sqliteRuntime");
+const https = require("https");
+const zlib = require("zlib");
 
-const SYSTRAY_PKG = "systray2";
-const SYSTRAY_VERSION = "2.1.4";
-const LEGACY_SYSTRAY_PKG = "systray";
+const BINARY_NAME = "switchboard-tray";
+const TRAY_VERSION = "1.0.0";
+const GITHUB_REPO = "Vijay-Duke/switchboard-router";
 
-function hasSystray() {
-  return fs.existsSync(path.join(getRuntimeNodeModules(), SYSTRAY_PKG, "package.json"));
+// Platform → package name mapping
+const PLATFORM_PACKAGES = {
+  "darwin-arm64": "switchboard-tray-darwin-arm64",
+  "darwin-x64": "switchboard-tray-darwin-x64",
+  "linux-x64": "switchboard-tray-linux-x64",
+};
+
+/**
+ * Get the platform-specific package name for the current system.
+ */
+function getPlatformPackage() {
+  const key = `${process.platform}-${process.arch}`;
+  return PLATFORM_PACKAGES[key] || null;
 }
 
-// Remove the legacy `systray` package from all known locations.
-// On Windows it was an AV false-positive risk; on macOS/Linux its bundled
-// binary is broken on modern OS versions.
+/**
+ * Try to resolve the tray binary from the optionalDependency package.
+ * Returns the binary path if found, null otherwise.
+ */
+function resolveBinaryFromPackage() {
+  const pkg = getPlatformPackage();
+  if (!pkg) return null;
+
+  try {
+    // resolve from the installed optionalDependency
+    const pkgDir = path.dirname(require.resolve(`${pkg}/package.json`));
+    const binPath = path.join(pkgDir, "bin", BINARY_NAME);
+    if (fs.existsSync(binPath)) {
+      return binPath;
+    }
+  } catch {
+    // Package not installed (--ignore-optional or install failure)
+  }
+  return null;
+}
+
+/**
+ * Fallback: check if the binary was downloaded by postinstall into ~/.switchboard/runtime/bin/
+ */
+function resolveBinaryFromCache() {
+  const cacheDir = path.join(
+    process.env.SWITCHBOARD_DATA_DIR || path.join(require("os").homedir(), ".switchboard"),
+    "runtime", "bin"
+  );
+  const binPath = path.join(cacheDir, BINARY_NAME);
+  if (fs.existsSync(binPath)) {
+    return binPath;
+  }
+  return null;
+}
+
+/**
+ * Download the tray binary from GitHub releases as a last resort.
+ * Stores it in ~/.switchboard/runtime/bin/
+ */
+async function downloadBinaryFallback({ silent = false } = {}) {
+  const pkg = getPlatformPackage();
+  if (!pkg) return null;
+
+  const cacheDir = path.join(
+    process.env.SWITCHBOARD_DATA_DIR || path.join(require("os").homedir(), ".switchboard"),
+    "runtime", "bin"
+  );
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const destPath = path.join(cacheDir, BINARY_NAME);
+
+  // Download the platform package tarball from npm and extract the binary
+  const tarballUrl = `https://registry.npmjs.org/${pkg}/-/${pkg}-${TRAY_VERSION}.tgz`;
+  if (!silent) console.log(`⏳ Downloading tray binary from npm (${pkg})...`);
+
+  try {
+    const tarball = await httpGet(tarballUrl);
+    const extracted = extractFileFromTarball(zlib.gunzipSync(tarball), `package/bin/${BINARY_NAME}`);
+    if (!extracted) {
+      if (!silent) console.warn("⚠️  Failed to extract tray binary from tarball");
+      return null;
+    }
+    fs.writeFileSync(destPath, extracted, { mode: 0o755 });
+    if (!silent) console.log("✅ Tray binary downloaded");
+    return destPath;
+  } catch (err) {
+    if (!silent) console.warn(`⚠️  Tray binary download failed: ${err.message}`);
+    return null;
+  }
+}
+
+function httpGet(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return httpGet(res.headers.location).then(resolve, reject);
+      }
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        return reject(new Error(`HTTP ${res.statusCode}`));
+      }
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => resolve(Buffer.concat(chunks)));
+      res.on("error", reject);
+    }).on("error", reject);
+  });
+}
+
+function extractFileFromTarball(tarBuffer, filepath) {
+  let offset = 0;
+  while (offset < tarBuffer.length) {
+    const header = tarBuffer.subarray(offset, offset + 512);
+    offset += 512;
+    const fileName = header.toString("utf-8", 0, 100).replace(/\0.*/g, "");
+    const fileSize = parseInt(header.toString("utf-8", 124, 136).replace(/\0.*/g, ""), 8);
+    if (isNaN(fileSize)) break;
+    if (fileName === filepath) {
+      return tarBuffer.subarray(offset, offset + fileSize);
+    }
+    offset = (offset + fileSize + 511) & ~511;
+  }
+  return null;
+}
+
+// Remove legacy systray/systray2 from runtime dir if present
 function cleanupLegacySystray({ silent = false } = {}) {
-  // 1) Runtime dir: ~/.switchboard/runtime/node_modules/systray (or %APPDATA% on Win)
-  // 2) npm global nested: <npm_prefix>/node_modules/switchboard/node_modules/systray
-  //    __dirname here = <pkg root>/hooks → up 1 = pkg root
+  const { getRuntimeNodeModules } = require("./sqliteRuntime");
   const targets = [
-    path.join(getRuntimeNodeModules(), LEGACY_SYSTRAY_PKG),
-    path.join(__dirname, "..", "node_modules", LEGACY_SYSTRAY_PKG)
+    path.join(getRuntimeNodeModules(), "systray"),
+    path.join(getRuntimeNodeModules(), "systray2"),
   ];
   for (const dir of targets) {
     if (fs.existsSync(dir)) {
       try {
         fs.rmSync(dir, { recursive: true, force: true });
-        if (!silent) console.log(`[switchboard][runtime] removed legacy systray: ${dir}`);
-      } catch (e) {
-        if (!silent) console.warn(`[switchboard][runtime] failed to remove ${dir}: ${e.message}`);
-      }
+        if (!silent) console.log(`[switchboard] removed legacy tray package: ${path.basename(dir)}`);
+      } catch {}
     }
   }
 }
 
-// systray2's npm tarball sometimes ships the bundled Go binary without the
-// executable bit set on macOS, causing spawn() to fail with EACCES. Set +x
-// best-effort so the tray actually starts.
-function chmodSystrayBin({ silent = false } = {}) {
-  if (process.platform === "win32") return;
-  const binName = process.platform === "darwin" ? "tray_darwin_release" : "tray_linux_release";
-  const binPath = path.join(getRuntimeNodeModules(), SYSTRAY_PKG, "traybin", binName);
-  if (!fs.existsSync(binPath)) return;
-  try {
-    fs.chmodSync(binPath, 0o755);
-  } catch (e) {
-    if (!silent) console.warn(`[switchboard][runtime] chmod tray bin failed: ${e.message}`);
-  }
+/**
+ * Resolve the tray binary path. Tries in order:
+ * 1. optionalDependency package (installed by npm)
+ * 2. Cached binary from previous download
+ * 3. null (caller can trigger async download fallback)
+ */
+function getTrayBinPath() {
+  return resolveBinaryFromPackage() || resolveBinaryFromCache() || null;
 }
 
-function ensureRuntimeDir() {
-  const dir = getRuntimeDir();
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  const pkgPath = path.join(dir, "package.json");
-  if (!fs.existsSync(pkgPath)) {
-    fs.writeFileSync(pkgPath, JSON.stringify({
-      name: "switchboard-runtime",
-      version: "1.0.0",
-      private: true
-    }, null, 2));
-  }
-  return dir;
-}
-
-function npmInstall(pkgs, { silent = false } = {}) {
-  const cwd = ensureRuntimeDir();
-  if (!silent) console.log("⏳ Installing system tray (first run)...");
-  const res = runNpmInstall({ cwd, pkgs, extraArgs: ["--no-save"], timeout: 120000 });
-  if (!res.ok && !silent) {
-    const reason = summarizeNpmError(res.stderr);
-    console.warn("⚠️  System tray install failed — tray disabled");
-    console.warn(`   Reason: ${reason}`);
-    console.warn(`   Retry:  cd "${cwd}" && npm install ${pkgs.join(" ")}`);
-  }
-  return res.ok;
-}
-
-// Public: ensure systray2 is installed on macOS/Linux only.
-// Windows skips entirely (uses PowerShell tray).
+/**
+ * Ensure the tray runtime is available. Called during postinstall or first run.
+ */
 function ensureTrayRuntime({ silent = false } = {}) {
-  // Always evict the legacy `systray` package — its binary is broken on
-  // modern macOS and an AV false-positive on Windows.
   cleanupLegacySystray({ silent });
 
   if (process.platform === "win32") {
     return { systray: false, skipped: true };
   }
-  if (hasSystray()) {
-    chmodSystrayBin({ silent });
+
+  const binPath = getTrayBinPath();
+  if (binPath) {
+    // Ensure executable bit
+    try { fs.chmodSync(binPath, 0o755); } catch {}
     if (!silent) console.log("✅ System tray ready");
-    return { systray: true };
+    return { systray: true, binPath };
   }
-  const ok = npmInstall([`${SYSTRAY_PKG}@${SYSTRAY_VERSION}`], { silent });
-  if (ok) chmodSystrayBin({ silent });
-  return { systray: ok && hasSystray() };
+
+  if (!silent) console.log("ℹ️  Tray binary not found (optionalDependency may have been skipped). Will download on first use.");
+  return { systray: false, needsDownload: true };
 }
 
-module.exports = { ensureTrayRuntime };
+module.exports = { ensureTrayRuntime, getTrayBinPath, downloadBinaryFallback, getPlatformPackage };
+

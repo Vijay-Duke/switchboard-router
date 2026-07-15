@@ -1,0 +1,14 @@
+{
+  "name": "switchboard-tray-darwin-x64",
+  "version": "1.0.0",
+  "description": "Switchboard system tray binary for macOS (Intel)",
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "files": ["bin/switchboard-tray"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vijay-Duke/switchboard-router.git",
+    "directory": "cli/tray-packages/@switchboard/tray-darwin-x64"
+  }
+}
