@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   registerShutdownHandlers: vi.fn(),
@@ -13,6 +13,11 @@ describe("Next instrumentation bootstrap", () => {
     mocks.initializeApp.mockClear();
     delete global.__appBootstrapped;
     delete global.__appInstrumentationRegistration;
+    process.env.NEXT_RUNTIME = "nodejs";
+    delete process.env.NEXT_PHASE;
+  });
+
+  afterEach(() => {
     delete process.env.NEXT_RUNTIME;
     delete process.env.NEXT_PHASE;
   });

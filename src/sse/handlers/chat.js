@@ -44,6 +44,7 @@ import { updateProviderCredentials, checkAndRefreshToken } from "../services/tok
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
 import { hasValidCliToken } from "@/shared/utils/cliToken.js";
+import { getNativeClaudeCredentials } from "../services/claudePassThrough.js";
 import {
   insertRoutingEvent,
   applyJudgeScoreByRequestId,
@@ -453,6 +454,7 @@ export async function handleChat(request, clientRawRequest = null) {
       signal: request?.signal || null,
       preferredConnectionId,
       strictPreferredConnection,
+      allowNativeClaudeOAuth: true,
     });
   }
 
@@ -463,6 +465,7 @@ export async function handleChat(request, clientRawRequest = null) {
         signal: request?.signal || null,
         preferredConnectionId,
         strictPreferredConnection,
+        allowNativeClaudeOAuth: true,
       });
     }
     await repairInboundVaultResults(body, { conversationId });
@@ -475,7 +478,7 @@ export async function handleChat(request, clientRawRequest = null) {
         clientRawRequest,
         request,
         apiKey,
-        { signal: request?.signal || null, preferredConnectionId, strictPreferredConnection, vaultInternal: !!options?.vaultInternal, vaultStore: true, vaultConversationId: conversationId },
+        { signal: request?.signal || null, preferredConnectionId, strictPreferredConnection, allowNativeClaudeOAuth: true, vaultInternal: !!options?.vaultInternal, vaultStore: true, vaultConversationId: conversationId },
       ),
       body,
       wire,
@@ -488,6 +491,7 @@ export async function handleChat(request, clientRawRequest = null) {
       signal: request?.signal || null,
       preferredConnectionId,
       strictPreferredConnection,
+      allowNativeClaudeOAuth: true,
     });
   }
 }
@@ -502,6 +506,7 @@ export async function handleChat(request, clientRawRequest = null) {
  * @param {number} [callOpts.autoDepth] - Auto-combo recursion depth
  * @param {number} [callOpts.comboDepth] - Fallback/round-robin/fusion combo recursion depth
  * @param {boolean} [callOpts.vaultInternal] - Suppress duplicate client request-log rows
+ * @param {boolean} [callOpts.allowNativeClaudeOAuth] - Permit direct request-scoped Claude subscription credentials
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, callOpts = null) {
   const modelInfo = await getModelInfo(modelStr);
@@ -684,12 +689,22 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   const excludeConnectionIds = new Set();
   let lastError = null;
   let lastStatus = null;
+  const nativeClaudeCredentials = getNativeClaudeCredentials({
+    request,
+    provider,
+    allowNativeOAuth: callOpts?.allowNativeClaudeOAuth === true,
+  });
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
-      preferredConnectionId: callOpts?.preferredConnectionId || null,
-      strictPreferredConnection: callOpts?.strictPreferredConnection === true,
-    });
+    const credentials = nativeClaudeCredentials || await getProviderCredentials(
+      provider,
+      excludeConnectionIds,
+      model,
+      {
+        preferredConnectionId: callOpts?.preferredConnectionId || null,
+        strictPreferredConnection: callOpts?.strictPreferredConnection === true,
+      },
+    );
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
@@ -710,7 +725,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Log account selection
     log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
 
-    const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
+    const refreshedCredentials = credentials.ephemeral
+      ? credentials
+      : await checkAndRefreshToken(provider, credentials);
 
     // Ensure real project ID is available for providers that need it (P0 fix: cold miss)
     if ((provider === "antigravity" || provider === "gemini-cli") && !refreshedCredentials.projectId) {
@@ -773,6 +790,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       vaultInternal: !!callOpts?.vaultInternal,
       abortSignal: callOpts?.signal || null,
       onCredentialsRefreshed: async (newCreds) => {
+        if (credentials.ephemeral) return;
         await updateProviderCredentials(credentials.connectionId, {
           ...newCreds,
           existingProviderSpecificData: credentials.providerSpecificData,
@@ -780,11 +798,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         });
       },
       onRequestSuccess: async () => {
+        if (credentials.ephemeral) return;
         await clearAccountError(credentials.connectionId, credentials, model);
       },
       // Antigravity empty-stream exhaustion: bench this account so the client's
       // next retry (or outer account loop) can rotate. Switchboard PR#2462.
       onUpstreamEmptyExhausted: async (errMsg, resetsAtMs) => {
+        if (credentials.ephemeral) return;
         await markAccountUnavailable(
           credentials.connectionId,
           502,
@@ -797,6 +817,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     });
 
     if (result.success) return result.response;
+
+    // A native Claude token belongs to this request only. Never persist error
+    // state or fall back to a stored/replayed Claude account behind the user's
+    // back after Anthropic rejects it.
+    if (credentials.ephemeral) return result.response;
 
     // Mark account unavailable (auto-calculates cooldown with exponential backoff, or precise resetsAtMs)
     const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs);

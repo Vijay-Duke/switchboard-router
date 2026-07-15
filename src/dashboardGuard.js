@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSettings, validateApiKey } from "@/lib/db/index.js";
 import { hasValidCliToken } from "@/shared/utils/cliToken.js";
+import { extractGatewayApiKey } from "@/shared/utils/gatewayApiKey.js";
 import { isManagementTokenValid } from "@/lib/mgmt/token.js";
 
 // Public LLM API prefixes (optional API-key gate for non-local callers).
@@ -156,14 +157,7 @@ function isPublicLlmApi(pathname) {
 }
 
 function extractApiKey(request) {
-  const authHeader = request.headers.get("Authorization");
-  if (authHeader?.startsWith("Bearer ")) return authHeader.slice(7);
-  const apiKeyHeader = request.headers.get("x-api-key");
-  if (apiKeyHeader) return apiKeyHeader;
-  const googleApiKeyHeader = request.headers.get("x-goog-api-key");
-  if (googleApiKeyHeader) return googleApiKeyHeader;
-  // M9: query-string keys land in access logs / Referer — headers only.
-  return null;
+  return extractGatewayApiKey(request.headers);
 }
 
 async function hasValidApiKey(request) {

@@ -10,11 +10,15 @@ async function setupDb() {
   process.env.DATA_DIR = tempDir;
   vi.resetModules();
 
-  const { createProviderNode } = await import("@/models/index.js");
-  const { getModelInfo } = await import("@/sse/services/model.js");
+  const { createCombo, createProviderNode } = await import("@/models/index.js");
+  const { getComboModels, getModelInfo } = await import("@/sse/services/model.js");
+  const { encodeClaudeCatalogModelId } = await import("@/shared/claudeGateway.js");
 
   return {
+    createCombo,
     createProviderNode,
+    encodeClaudeCatalogModelId,
+    getComboModels,
     getModelInfo,
     cleanup() {
       fs.rmSync(tempDir, { recursive: true, force: true });
@@ -76,5 +80,28 @@ describe("model routing", () => {
         provider: "openai-compatible-chat-test",
         model: "gpt-image-1",
       });
+  });
+
+  it("routes reversible Claude catalog IDs to provider models and combos", async () => {
+    const ctx = await setupDb();
+    cleanup = ctx.cleanup;
+
+    const providerModel = ctx.encodeClaudeCatalogModelId("openai/gpt-5.6");
+    expect(providerModel).toBe("claude-switchboard-v1/openai/gpt-5.6");
+    await expect(ctx.getModelInfo(providerModel)).resolves.toEqual({
+      provider: "openai",
+      model: "gpt-5.6",
+    });
+
+    await ctx.createCombo({
+      name: "coding-auto",
+      models: ["openai/gpt-5.6", "gemini/gemini-3.1-pro"],
+    });
+    const comboModel = ctx.encodeClaudeCatalogModelId("coding-auto");
+    expect(comboModel).toBe("claude-switchboard-v1/coding-auto");
+    await expect(ctx.getComboModels(comboModel)).resolves.toEqual([
+      "openai/gpt-5.6",
+      "gemini/gemini-3.1-pro",
+    ]);
   });
 });

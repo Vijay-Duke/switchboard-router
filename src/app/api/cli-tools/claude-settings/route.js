@@ -10,20 +10,33 @@ import {
   restoreObjectKeys,
   snapshotObjectKeys,
 } from "@/lib/cli/fileIo.js";
+import { hasClaudePassThroughHeader } from "@/shared/claudeGateway.js";
 
 const execAsync = promisify(exec);
 const BACKUP_VERSION = 1;
 
 const MANAGED_ENV_KEYS = [
   "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_CUSTOM_HEADERS",
+  "ANTHROPIC_CUSTOM_MODEL_OPTION",
   "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION",
   "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION",
   "ANTHROPIC_DEFAULT_FABLE_MODEL",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL_DESCRIPTION",
   "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION",
   "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
   "API_TIMEOUT_MS",
 ];
+const LEGACY_MANAGED_ENV_KEYS = MANAGED_ENV_KEYS.filter((key) => key !== "ANTHROPIC_API_KEY");
 
 // The settings file and backup must move through Apply/Disconnect as one
 // generation. Serialize mutations so concurrent clicks cannot overwrite the
@@ -116,7 +129,21 @@ const looksLikeLegacySwitchboard = (settings) => {
   const env = isObject(settings?.env) ? settings.env : {};
   return env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY === "1"
     || env.ANTHROPIC_AUTH_TOKEN === "sk_switchboard"
+    || detectRoutingMode(settings) === "pass-through"
     || isLocalBaseUrl(env.ANTHROPIC_BASE_URL);
+};
+
+/**
+ * Infer which Switchboard gateway mode is represented by Claude's settings.
+ * @param {Record<string, any> | null | undefined} settings
+ * @returns {"pass-through" | "proxy" | null}
+ */
+const detectRoutingMode = (settings) => {
+  const env = isObject(settings?.env) ? settings.env : {};
+  if (hasClaudePassThroughHeader(env.ANTHROPIC_CUSTOM_HEADERS)) {
+    return "pass-through";
+  }
+  return env.ANTHROPIC_AUTH_TOKEN && env.ANTHROPIC_BASE_URL ? "proxy" : null;
 };
 
 const checkClaudeInstalled = async () => {
@@ -159,6 +186,7 @@ async function getClaudeSettings() {
       settings,
       hasSwitchboard,
       hasBackup,
+      routingMode: detectRoutingMode(settings),
       settingsPath: getClaudeSettingsPath(),
     });
   } catch (error) {
@@ -178,7 +206,11 @@ async function postClaudeSettings(request) {
     if (!isObject(requestedEnv)) {
       return NextResponse.json({ error: "Invalid env object" }, { status: 400 });
     }
-
+    const removeEnvKeys = body?.removeEnvKeys ?? [];
+    if (!Array.isArray(removeEnvKeys)
+      || !removeEnvKeys.every((key) => typeof key === "string" && MANAGED_ENV_KEYS.includes(key))) {
+      return NextResponse.json({ error: "Invalid removeEnvKeys" }, { status: 400 });
+    }
     const [{ exists, raw, settings: currentSettings }, rawBackup] = await Promise.all([
       readSettingsFile(),
       readBackup(),
@@ -191,16 +223,19 @@ async function postClaudeSettings(request) {
       env.ANTHROPIC_BASE_URL = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
     }
 
+    const nextEnv = {
+      ...(isObject(currentSettings.env) ? currentSettings.env : {}),
+      ...env,
+    };
+    for (const key of removeEnvKeys) delete nextEnv[key];
     const newSettings = {
       ...currentSettings,
       hasCompletedOnboarding: true,
-      env: {
-        ...(isObject(currentSettings.env) ? currentSettings.env : {}),
-        ...env,
-      },
+      ...(Object.keys(nextEnv).length > 0 ? { env: nextEnv } : {}),
     };
+    if (Object.keys(nextEnv).length === 0) delete newSettings.env;
     const currentEnv = isObject(currentSettings.env) ? currentSettings.env : {};
-    const requestedKeys = Object.keys(env);
+    const requestedKeys = Array.from(new Set([...Object.keys(env), ...removeEnvKeys]));
     const backup = storedBackup || {
       version: BACKUP_VERSION,
       state: "active",
@@ -242,7 +277,7 @@ async function postClaudeSettings(request) {
     });
   } catch (error) {
     console.log("Error updating claude settings:", error);
-    return NextResponse.json({ error: "Failed to update claude settings" }, { status: 500 });
+    return NextResponse.json({ error: "Failed to update Claude Code settings." }, { status: 500 });
   }
 }
 
@@ -321,7 +356,7 @@ async function deleteClaudeSettings() {
       legacyCleanup = true;
       const current = settingsFile.settings;
       if (isObject(current.env)) {
-        for (const key of MANAGED_ENV_KEYS) delete current.env[key];
+        for (const key of LEGACY_MANAGED_ENV_KEYS) delete current.env[key];
         if (Object.keys(current.env).length === 0) delete current.env;
       }
       settingsContent = JSON.stringify(current, null, 2);

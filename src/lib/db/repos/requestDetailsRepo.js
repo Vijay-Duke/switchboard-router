@@ -61,7 +61,7 @@ let droppedSinceLastWarn = 0;
 
 function sanitizeHeaders(headers) {
   if (!headers || typeof headers !== "object") return {};
-  const sensitiveKeys = ["authorization", "x-api-key", "cookie", "token", "api-key"];
+  const sensitiveKeys = ["authorization", "x-api-key", "x-switchboard-key", "cookie", "token", "api-key"];
   const sanitized = { ...headers };
   for (const key of Object.keys(sanitized)) {
     if (sensitiveKeys.some((s) => key.toLowerCase().includes(s))) delete sanitized[key];

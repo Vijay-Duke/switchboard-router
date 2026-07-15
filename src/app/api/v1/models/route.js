@@ -20,6 +20,12 @@ import {
   updateProviderCredentials,
 } from "@/sse/services/tokenRefresh";
 import { capabilitiesFromServiceKind } from "open-sse/providers/capabilities.js";
+import {
+  encodeClaudeCatalogModelId,
+  isClaudeFullCatalogRequest,
+  isClaudeGatewayAlias,
+  readClaudeCatalogSelectionFromHeaders,
+} from "@/shared/claudeGateway.js";
 
 // Per-provider live model resolvers. Each receives a connection record and
 // returns { models: [{ id, name? }, ...] } | null on failure.
@@ -308,6 +314,22 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
     models.push(entry);
   }
 
+  // Claude Code gateway discovery intentionally accepts only Claude/Anthropic-
+  // shaped IDs. Expose matching model aliases themselves (not just their
+  // provider/model targets) so users can add arbitrary Switchboard-backed
+  // models to Claude's picker without confusing provider parsing.
+  if (kindFilter.includes(LLM_KIND)) {
+    for (const alias of Object.keys(modelAliases || {})) {
+      if (!isClaudeGatewayAlias(alias)) continue;
+      models.push({
+        id: alias,
+        object: "model",
+        owned_by: "switchboard-alias",
+        display_name: `Switchboard · ${alias}`,
+      });
+    }
+  }
+
   if (connections.length === 0) {
     // DB unavailable -> return static models, filtered by per-model kind
     const aliasToProviderId = Object.fromEntries(
@@ -528,10 +550,26 @@ export async function OPTIONS() {
  */
 export async function GET(request) {
   try {
-    const data = await buildModelsList([LLM_KIND], {
+    const models = await buildModelsList([LLM_KIND], {
       signal: request?.signal,
       skipCompatibleDiscovery: isModelCatalogDiscoveryRequest(request),
     });
+    let data = models;
+    if (isClaudeFullCatalogRequest(request?.headers)) {
+      const selectedModels = new Set(readClaudeCatalogSelectionFromHeaders(request?.headers));
+      const catalogModels = [];
+      for (const model of models) {
+        if (!selectedModels.has(model.id)) continue;
+        catalogModels.push({
+          id: encodeClaudeCatalogModelId(model.id),
+          object: "model",
+          owned_by: "switchboard-catalog",
+          display_name: `Switchboard · ${model.id}`,
+          description: `Routes to ${model.id}`,
+        });
+      }
+      data = catalogModels;
+    }
     return Response.json({ object: "list", data }, {
     });
   } catch (error) {

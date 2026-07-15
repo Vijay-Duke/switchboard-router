@@ -4,7 +4,7 @@ import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
 import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
 import { buildClineHeaders } from "../shared/clineAuth.js";
-import { getCachedClaudeHeaders } from "../utils/claudeHeaderCache.js";
+import { getCachedClaudeHeaders, pickClaudeIdentityHeaders } from "../utils/claudeHeaderCache.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
@@ -42,8 +42,13 @@ const HEADER_HOOKS = {
   kimiHeaders: (h) => Object.assign(h, buildKimiHeaders()),
   clineHeaders: (h, c) => Object.assign(h, buildClineHeaders(c.apiKey || c.accessToken)),
   kilocodeOrg: (h, c) => { if (c.providerSpecificData?.orgId) h["X-Kilocode-OrganizationID"] = c.providerSpecificData.orgId; },
-  claudeOverlay: (h) => {
-    const cached = getCachedClaudeHeaders();
+  claudeOverlay: (h, credentials) => {
+    // Request-scoped headers win. The singleton is only a cold-path fallback
+    // for legacy callers that do not thread clientRawRequest through chatCore.
+    const hasRequestHeaders = credentials && Object.hasOwn(credentials, "rawHeaders");
+    const cached = hasRequestHeaders
+      ? pickClaudeIdentityHeaders(credentials.rawHeaders || {})
+      : getCachedClaudeHeaders();
     if (!cached) return;
     // getCachedClaudeHeaders() hands back the live cache object. Merging this
     // request's static anthropic-beta flags into it would persist them into

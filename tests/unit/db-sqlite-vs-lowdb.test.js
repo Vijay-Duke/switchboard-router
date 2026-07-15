@@ -272,7 +272,15 @@ describe("DB SQLite layer — public API parity", () => {
     await sqliteDb.saveRequestDetail({
       id: "d1", provider: "openai", model: "gpt-4", connectionId: "c1",
       status: "ok", tokens: { prompt_tokens: 10 },
-      request: { method: "POST" }, response: { status: 200 },
+      request: {
+        method: "POST",
+        headers: {
+          authorization: "Bearer native-claude-oauth-secret",
+          "x-switchboard-key": "sk-switchboard-secret",
+          "user-agent": "claude-code/2.1.129",
+        },
+      },
+      response: { status: 200 },
     });
 
     // Wait for buffer flush
@@ -281,6 +289,7 @@ describe("DB SQLite layer — public API parity", () => {
     const got = await sqliteDb.getRequestDetailById("d1");
     expect(got).toBeDefined();
     expect(got.id).toBe("d1");
+    expect(got.request.headers).toEqual({ "user-agent": "claude-code/2.1.129" });
 
     const list = await sqliteDb.getRequestDetails({ provider: "openai" });
     expect(list.details.length).toBeGreaterThanOrEqual(1);

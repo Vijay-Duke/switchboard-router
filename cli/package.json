@@ -3,7 +3,8 @@
   "version": "0.6.17",
   "description": "Switchboard CLI — local AI routing gateway (install: npm i -g switchboard-router; run: switchboard)",
   "bin": {
-    "switchboard": "./cli.js"
+    "switchboard": "./cli.js",
+    "claude-switchboard": "./claude-switchboard.js"
   },
   "repository": {
     "type": "git",
@@ -15,6 +16,7 @@
   },
   "files": [
     "cli.js",
+    "claude-switchboard.js",
     "src",
     "hooks",
     "app",

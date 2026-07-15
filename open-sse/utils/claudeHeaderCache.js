@@ -29,6 +29,20 @@ const CLAUDE_IDENTITY_HEADERS = [
 let cachedHeaders = null;
 
 /**
+ * Select only non-secret Claude Code identity/capability headers.
+ * @param {object} headers
+ * @returns {object|null}
+ */
+export function pickClaudeIdentityHeaders(headers) {
+  if (!headers || typeof headers !== "object" || !isClaudeCodeClient(headers)) return null;
+  const captured = {};
+  for (const key of CLAUDE_IDENTITY_HEADERS) {
+    if (headers[key] !== undefined && headers[key] !== null) captured[key] = headers[key];
+  }
+  return Object.keys(captured).length > 0 ? captured : null;
+}
+
+/**
  * Detect if request headers look like a real Claude Code client.
  * @param {object} headers - Lowercase header key/value object
  */
@@ -44,17 +58,8 @@ function isClaudeCodeClient(headers) {
  * @param {object} headers - Lowercase header key/value object (from request.headers.entries())
  */
 export function cacheClaudeHeaders(headers) {
-  if (!headers || typeof headers !== "object") return;
-  if (!isClaudeCodeClient(headers)) return;
-
-  const captured = {};
-  for (const key of CLAUDE_IDENTITY_HEADERS) {
-    if (headers[key] !== undefined && headers[key] !== null) {
-      captured[key] = headers[key];
-    }
-  }
-
-  if (Object.keys(captured).length > 0) {
+  const captured = pickClaudeIdentityHeaders(headers);
+  if (captured) {
     cachedHeaders = captured;
     console.log(`[ClaudeHeaders] Cached ${Object.keys(captured).length} identity headers from Claude Code client`);
   }

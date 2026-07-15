@@ -8,6 +8,7 @@ import { parseTOML } from "confbox";
 
 const originalHome = process.env.HOME;
 const originalXdg = process.env.XDG_CONFIG_HOME;
+const originalDataDir = process.env.DATA_DIR;
 let home;
 
 const payload = {
@@ -28,6 +29,7 @@ beforeAll(async () => {
   home = await fs.mkdtemp(path.join(os.tmpdir(), "switchboard-cli-models-"));
   process.env.HOME = home;
   process.env.XDG_CONFIG_HOME = path.join(home, ".config");
+  process.env.DATA_DIR = path.join(home, ".switchboard");
 });
 
 afterAll(async () => {
@@ -35,10 +37,104 @@ afterAll(async () => {
   else process.env.HOME = originalHome;
   if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = originalXdg;
+  if (originalDataDir === undefined) delete process.env.DATA_DIR;
+  else process.env.DATA_DIR = originalDataDir;
   await fs.rm(home, { recursive: true, force: true });
 });
 
 describe("CLI catalog routes write native client schemas", () => {
+  it("rejects unmanaged Claude environment removals", async () => {
+    const { POST } = await import("../../src/app/api/cli-tools/claude-settings/route.js");
+    const response = await POST(post({
+      env: {},
+      removeEnvKeys: ["KEEP_ME"],
+    }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Invalid removeEnvKeys" });
+  });
+
+  it("switches Claude Code to pass-through without leaving a gateway bearer token", async () => {
+    const claudeDir = path.join(home, ".claude");
+    const settingsPath = path.join(claudeDir, "settings.json");
+    const backupPath = path.join(claudeDir, "switchboard-backup.json");
+    await fs.mkdir(claudeDir, { recursive: true });
+    await fs.rm(backupPath, { force: true });
+    await fs.writeFile(settingsPath, JSON.stringify({
+      env: {
+        ANTHROPIC_API_KEY: "original-console-key",
+        ANTHROPIC_AUTH_TOKEN: "old-gateway-token",
+        KEEP_ME: "yes",
+      },
+    }, null, 2));
+
+    const { GET, POST, DELETE } = await import("../../src/app/api/cli-tools/claude-settings/route.js");
+    const response = await POST(post({
+      env: {
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:20128/v1",
+        ANTHROPIC_CUSTOM_HEADERS: "X-Switchboard-Key: sk-test\nX-Switchboard-Claude-Mode: pass-through",
+      },
+      removeEnvKeys: [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_CUSTOM_MODEL_OPTION",
+        "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+      ],
+    }));
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(await fs.readFile(settingsPath, "utf8")).env).toEqual({
+      KEEP_ME: "yes",
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:20128/v1",
+      ANTHROPIC_CUSTOM_HEADERS: "X-Switchboard-Key: sk-test\nX-Switchboard-Claude-Mode: pass-through",
+    });
+    expect(await (await GET()).json()).toMatchObject({ routingMode: "pass-through" });
+
+    expect((await DELETE()).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(settingsPath, "utf8")).env).toEqual({
+      ANTHROPIC_API_KEY: "original-console-key",
+      ANTHROPIC_AUTH_TOKEN: "old-gateway-token",
+      KEEP_ME: "yes",
+    });
+  });
+
+  it("writes and removes an isolated Claude full-catalog launch profile", async () => {
+    const profilePath = path.join(process.env.DATA_DIR, "claude-code", "full-catalog-settings.json");
+    const { GET, POST, DELETE } = await import("../../src/app/api/cli-tools/claude-full-catalog/route.js");
+
+    expect(await (await GET()).json()).toMatchObject({
+      configured: false,
+      models: [],
+    });
+
+    const response = await POST(post({
+      baseUrl: "http://127.0.0.1:20128",
+      gatewayKey: "sk-profile",
+      models: ["cx/gpt-5.6", "coding-auto"],
+    }));
+    expect(response.status).toBe(200);
+    expect(JSON.parse(await fs.readFile(profilePath, "utf8"))).toMatchObject({
+      env: {
+        ANTHROPIC_AUTH_TOKEN: "sk-profile",
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:20128/v1",
+        ANTHROPIC_CUSTOM_HEADERS: expect.stringContaining("X-Switchboard-Claude-Mode: full-catalog"),
+        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+      },
+    });
+
+    const status = await (await GET()).json();
+    expect(status).toMatchObject({
+      configured: true,
+      baseUrl: "http://127.0.0.1:20128/v1",
+      launcher: "claude-switchboard",
+      models: ["cx/gpt-5.6", "coding-auto"],
+    });
+    expect(JSON.stringify(status)).not.toContain("sk-profile");
+
+    expect((await DELETE()).status).toBe(200);
+    await expect(fs.access(profilePath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("disconnects Claude Code by restoring the pre-Switchboard settings", async () => {
     const claudeDir = path.join(home, ".claude");
     const settingsPath = path.join(claudeDir, "settings.json");

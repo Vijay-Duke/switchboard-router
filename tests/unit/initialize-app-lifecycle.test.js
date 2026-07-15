@@ -46,6 +46,7 @@ beforeEach(() => {
   delete global.__appSingleton;
   delete global.__appBootstrapped;
   delete global.__appInstrumentationRegistration;
+  process.env.NEXT_RUNTIME = "nodejs";
 });
 
 afterEach(() => {
@@ -58,6 +59,7 @@ afterEach(() => {
   delete global.__appSingleton;
   delete global.__appBootstrapped;
   delete global.__appInstrumentationRegistration;
+  delete process.env.NEXT_RUNTIME;
   vi.restoreAllMocks();
 });
 

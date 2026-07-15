@@ -1,4 +1,9 @@
 // Check if running in Node.js environment (has fs module)
+import {
+  FULL_REDACTION_REQUEST_LOG_HEADER_NAMES,
+  SENSITIVE_REQUEST_LOG_HEADER_NAMES,
+} from "../config/appConstants.js";
+
 const isNode = typeof process !== "undefined" && process.versions?.node && typeof window === "undefined";
 
 // Check if logging is enabled via environment variable (default: false)
@@ -70,16 +75,17 @@ function writeJsonFile(sessionPath, filename, data) {
 }
 
 // Mask sensitive headers before writing request logs to disk (H6).
-function maskSensitiveHeaders(headers) {
+export function maskSensitiveHeaders(headers) {
   if (!headers) return {};
   const masked = { ...headers };
-  const sensitiveKeys = ["authorization", "x-api-key", "x-goog-api-key", "cookie", "token", "set-cookie"];
 
   for (const key of Object.keys(masked)) {
     const lowerKey = key.toLowerCase();
-    if (sensitiveKeys.some((sk) => lowerKey.includes(sk))) {
+    if (SENSITIVE_REQUEST_LOG_HEADER_NAMES.some((name) => lowerKey.includes(name))) {
       const value = masked[key];
-      if (typeof value === "string" && value.length > 12) {
+      if (FULL_REDACTION_REQUEST_LOG_HEADER_NAMES.some((name) => lowerKey.includes(name))) {
+        masked[key] = "[redacted]";
+      } else if (typeof value === "string" && value.length > 12) {
         masked[key] = value.slice(0, 8) + "..." + value.slice(-4);
       } else if (value != null) {
         masked[key] = "[redacted]";

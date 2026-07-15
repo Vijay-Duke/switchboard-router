@@ -22,6 +22,19 @@ const moduleDefault = {
       "Anthropic-Version": "2023-06-01",
       "Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
     },
+    auth: {
+      apiKey: {
+        header: "x-api-key",
+        scheme: "raw",
+      },
+      oauth: {
+        header: "Authorization",
+        scheme: "bearer",
+      },
+      hooks: [
+        "claudeOverlay",
+      ],
+    },
   },
   models: [
     { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4" },

@@ -363,12 +363,12 @@ describe("dashboard guard local-only access", () => {
     expect(response).toBe(mocks.nextResponse);
   });
 
-  it("extracts bearer API keys before x-api-key", () => {
+  it("extracts a dedicated Switchboard key before a native bearer token", () => {
     const req = request("/v1/x", {
       authorization: "Bearer first",
-      "x-api-key": "second",
+      "x-switchboard-key": "second",
     });
-    expect(__test__.extractApiKey(req)).toBe("first");
+    expect(__test__.extractApiKey(req)).toBe("second");
   });
 
   it("extracts Google API keys after x-api-key", () => {

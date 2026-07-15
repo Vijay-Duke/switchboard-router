@@ -4,6 +4,7 @@ import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLock
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import * as log from "../utils/logger.js";
+import { extractGatewayApiKey } from "@/shared/utils/gatewayApiKey.js";
 
 // M1: per-provider mutex — unrelated providers select credentials in parallel
 const selectionMutexByProvider = new Map();
@@ -311,25 +312,7 @@ export async function clearAccountError(connectionId, currentConnection, model =
  * Extract API key from request headers
  */
 export function extractApiKey(request) {
-  // Check Authorization header first
-  const authHeader = request.headers.get("Authorization");
-  if (authHeader?.startsWith("Bearer ")) {
-    return authHeader.slice(7);
-  }
-
-  // Check Anthropic x-api-key header
-  const xApiKey = request.headers.get("x-api-key");
-  if (xApiKey) {
-    return xApiKey;
-  }
-
-  // Gemini clients use Google's native API-key header.
-  const googleApiKey = request.headers.get("x-goog-api-key");
-  if (googleApiKey) {
-    return googleApiKey;
-  }
-
-  return null;
+  return extractGatewayApiKey(request.headers);
 }
 
 /**

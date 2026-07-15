@@ -200,6 +200,44 @@ describe("DefaultExecutor.buildHeaders() — claude provider", () => {
   });
 });
 
+describe("DefaultExecutor.buildHeaders() — Anthropic API provider", () => {
+  it("uses bearer auth for request-scoped native Claude OAuth", async () => {
+    const { DefaultExecutor } = await import("open-sse/executors/default.js");
+    const headers = new DefaultExecutor("anthropic").buildHeaders({
+      accessToken: "native-claude-token",
+      rawHeaders: {
+        "user-agent": "claude-code/2.1.129",
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+        authorization: "Bearer native-claude-token",
+        "x-switchboard-key": "sk-switchboard",
+      },
+    }, true);
+
+    expect(headers.Authorization).toBe("Bearer native-claude-token");
+    expect(headers["x-api-key"]).toBeUndefined();
+    expect(headers["anthropic-beta"]).toContain("oauth-2025-04-20");
+    expect(headers["x-switchboard-key"]).toBeUndefined();
+  });
+
+  it("does not reuse cached Claude identity for a non-Claude request", async () => {
+    const cache = await import("open-sse/utils/claudeHeaderCache.js");
+    cache.cacheClaudeHeaders({
+      "user-agent": "claude-code/2.1.129",
+      "x-claude-code-session-id": "previous-session",
+      "anthropic-beta": "oauth-2025-04-20",
+    });
+    const { DefaultExecutor } = await import("open-sse/executors/default.js");
+    const headers = new DefaultExecutor("anthropic").buildHeaders({
+      apiKey: "anthropic-api-key",
+      rawHeaders: { "user-agent": "curl/8.0" },
+    }, false);
+
+    expect(headers["x-claude-code-session-id"]).toBeUndefined();
+    expect(headers["user-agent"]).toBeUndefined();
+    expect(headers["anthropic-beta"]).toBeUndefined();
+  });
+});
+
 describe("DefaultExecutor.buildHeaders() — claude provider cold start (no cache)", () => {
   let DefaultExecutor;
 

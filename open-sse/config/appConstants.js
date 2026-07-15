@@ -71,6 +71,22 @@ export const CLIENT_METADATA = {
 // Internal anti-loop header
 export const INTERNAL_REQUEST_HEADER = { name: "x-request-source", value: "local" };
 
+// Request-log header classification. Keep credential names centralized so new
+// log sinks cannot drift between partial masking and full redaction.
+export const SENSITIVE_REQUEST_LOG_HEADER_NAMES = Object.freeze([
+  "authorization",
+  "x-api-key",
+  "x-goog-api-key",
+  "x-switchboard-key",
+  "cookie",
+  "token",
+  "set-cookie",
+]);
+export const FULL_REDACTION_REQUEST_LOG_HEADER_NAMES = Object.freeze([
+  "authorization",
+  "x-switchboard-key",
+]);
+
 // Suffix added to client tools when forwarding to Antigravity provider (anti-ban cloaking)
 export const AG_TOOL_SUFFIX = "_ide";
 

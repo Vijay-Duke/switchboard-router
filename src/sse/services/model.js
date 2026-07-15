@@ -2,6 +2,7 @@
 import { getModelAliases, getComboByName, getProviderNodes } from "@/lib/db/index.js";
 import { parseModel as parseModelCore, resolveModelAliasFromMap, getModelInfoCore } from "open-sse/services/model.js";
 import REGISTRY from "open-sse/providers/registry/index.js";
+import { decodeClaudeCatalogModelId } from "@/shared/claudeGateway.js";
 
 // Local provider alias overrides (HMR-friendly, applied on top of open-sse map)
 const LOCAL_PROVIDER_ALIASES = {
@@ -36,7 +37,8 @@ export async function resolveModelAlias(alias) {
  * Get full model info (parse or resolve)
  */
 export async function getModelInfo(modelStr) {
-  const parsed = parseModel(modelStr);
+  const canonicalModel = decodeClaudeCatalogModelId(modelStr) || modelStr;
+  const parsed = parseModel(canonicalModel);
 
   if (!parsed.isAlias) {
     // Provider-node prefixes are user-defined. They must not override built-in
@@ -75,7 +77,7 @@ export async function getModelInfo(modelStr) {
     return { provider: null, model: parsed.model };
   }
 
-  return getModelInfoCore(modelStr, getModelAliases);
+  return getModelInfoCore(canonicalModel, getModelAliases);
 }
 
 /**
@@ -83,10 +85,11 @@ export async function getModelInfo(modelStr) {
  * @returns {Promise<string[]|null>} Array of models or null if not a combo
  */
 export async function getComboModels(modelStr) {
+  const canonicalModel = decodeClaudeCatalogModelId(modelStr) || modelStr;
   // Only check if it's not in provider/model format
-  if (modelStr.includes("/")) return null;
+  if (canonicalModel.includes("/")) return null;
 
-  const combo = await getComboByName(modelStr);
+  const combo = await getComboByName(canonicalModel);
   if (combo && combo.models && combo.models.length > 0) {
     return combo.models;
   }
