@@ -12,6 +12,7 @@ import { SSE_DONE, SSE_HEADERS } from "../utils/sseConstants.js";
 import { chatChunkSse } from "../utils/sse.js";
 import { FORMATS } from "../translator/formats.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { extractNativeToolCalls } from "../utils/nativeToolCallAdapters/index.js";
 import zlib from "zlib";
 
 // Detect cloud environment
@@ -421,10 +422,21 @@ export class CursorExecutor extends BaseExecutor {
 
     debugLog(`[CURSOR BUFFER] Final toolCalls count: ${toolCalls.length}`);
 
+    // Native tool-call token detection: if no structured tool calls were found
+    // in the protobuf, check if the text content contains native tokens (e.g. DeepSeek format)
+    let resolvedContent = finalContent;
+    if (toolCalls.length === 0 && finalContent) {
+      const nativeResult = extractNativeToolCalls(finalContent, model);
+      if (nativeResult && nativeResult.toolCalls.length > 0) {
+        debugLog(`[CURSOR BUFFER] Extracted ${nativeResult.toolCalls.length} native tool call(s) from text content`);
+        toolCalls.push(...nativeResult.toolCalls);
+        resolvedContent = nativeResult.content || "";
+      }
+    }
 
     const message = {
       role: "assistant",
-      content: finalContent || null
+      content: resolvedContent || null
     };
 
     if (toolCalls.length > 0) {
@@ -645,6 +657,49 @@ export class CursorExecutor extends BaseExecutor {
                 }
               ]
             }
+          }));
+        }
+      }
+    }
+
+    // Native tool-call token detection: if no structured tool calls arrived via protobuf,
+    // check if the accumulated text contains native tokens (e.g. DeepSeek format).
+    // WARNING: This pattern requires buffered SSE (all chunks collected before Response is
+    // returned). If this method is ever refactored to stream incrementally, this logic breaks.
+    // Since SSE chunks were already pushed with raw text, we rebuild the chunks array.
+    if (toolCalls.length === 0 && totalContent) {
+      const nativeResult = extractNativeToolCalls(totalContent, model);
+      if (nativeResult && nativeResult.toolCalls.length > 0) {
+        debugLog(`[CURSOR BUFFER SSE] Extracted ${nativeResult.toolCalls.length} native tool call(s) from text content`);
+
+        // Rebuild chunks: replace text-content chunks with clean content + tool calls
+        chunks.length = 0;
+        const cleanContent = nativeResult.content || "";
+
+        // Emit role + clean content
+        if (cleanContent) {
+          chunks.push(chatChunkSse({ id: responseId, created, model, delta: { role: "assistant", content: cleanContent } }));
+        } else {
+          chunks.push(chatChunkSse({ id: responseId, created, model, delta: { role: "assistant", content: "" } }));
+        }
+
+        // Emit tool call chunks
+        for (let i = 0; i < nativeResult.toolCalls.length; i++) {
+          const tc = nativeResult.toolCalls[i];
+          toolCalls.push({ ...tc, index: i });
+          chunks.push(chatChunkSse({
+            id: responseId, created, model,
+            delta: {
+              tool_calls: [{
+                index: i,
+                id: tc.id,
+                type: "function",
+                function: {
+                  name: tc.function.name,
+                  arguments: tc.function.arguments,
+                },
+              }],
+            },
           }));
         }
       }
