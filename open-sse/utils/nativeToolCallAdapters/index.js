@@ -92,5 +92,3 @@ export function registerAdapter(pattern, adapter, { prepend = false } = {}) {
     ADAPTER_REGISTRY.push([pattern, adapter]);
   }
 }
-
-export default { extractNativeToolCalls, getAdapterForModel, registerAdapter };
