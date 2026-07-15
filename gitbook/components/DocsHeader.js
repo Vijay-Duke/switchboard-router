@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { DOCS_CONFIG, t } from "@/constants/docsConfig";
 import { DEFAULT_LANG } from "@/constants/languages";
 import { ExternalLink, Menu, X } from "lucide-react";
@@ -17,6 +18,7 @@ export default function DocsHeader({ lang = DEFAULT_LANG }) {
   useEffect(() => {
     if (!mobileMenuOpen) return;
 
+    const menuButton = menuButtonRef.current;
     const previousOverflow = document.body.style.overflow;
     const drawer = drawerRef.current;
     const focusable = drawer?.querySelectorAll(
@@ -47,7 +49,7 @@ export default function DocsHeader({ lang = DEFAULT_LANG }) {
     return () => {
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
-      menuButtonRef.current?.focus();
+      menuButton?.focus();
     };
   }, [mobileMenuOpen]);
 
@@ -72,12 +74,13 @@ export default function DocsHeader({ lang = DEFAULT_LANG }) {
             className="docs-brand"
             aria-label="Switchboard documentation home"
           >
-            <img
+            <Image
               className="docs-brand-icon"
               src={`${basePath}/favicon.svg`}
               alt=""
               width={32}
               height={32}
+              unoptimized
             />
             <span>{DOCS_CONFIG.logo}</span>
             <span className="docs-brand-suffix">Docs</span>
@@ -114,12 +117,13 @@ export default function DocsHeader({ lang = DEFAULT_LANG }) {
           >
             <div className="mobile-menu-heading">
               <span id="mobile-docs-title" className="docs-brand docs-brand-mobile">
-                <img
+                <Image
                   className="docs-brand-icon"
                   src={`${basePath}/favicon.svg`}
                   alt=""
                   width={32}
                   height={32}
+                  unoptimized
                 />
                 {DOCS_CONFIG.logo} Docs
               </span>
