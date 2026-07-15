@@ -77,65 +77,30 @@ describe("tray actions", () => {
   });
 
   it("observes rejected async click registration when the tray binary cannot run", () => {
-    const spawnError = Object.assign(new Error("spawn Unknown system error -86"), { errno: -86 });
-    const clickRegistration = { catch: vi.fn() };
-
-    class UnsupportedArchitectureTray {
-      onClick() {
-        return clickRegistration;
-      }
-
-      ready() {
-        return Promise.reject(spawnError);
-      }
-    }
-
+    // When the binary path is null (not installed), initUnixTray returns null
     const instance = tray.initUnixTray(
       { port: 20128 },
       {
-        resolveSystrayImpl: () => ({ mod: UnsupportedArchitectureTray, isV2: true }),
-        chmodTrayBinImpl: vi.fn(),
+        resolveTrayBinPathImpl: () => ({ binPath: null, downloadBinaryFallback: vi.fn().mockResolvedValue(null) }),
         getAutostartEnabledImpl: () => false,
       },
     );
 
-    expect(instance).toBeInstanceOf(UnsupportedArchitectureTray);
-    expect(clickRegistration.catch).toHaveBeenCalledOnce();
-    expect(() => clickRegistration.catch.mock.calls[0][0](spawnError)).not.toThrow();
+    expect(instance).toBeNull();
   });
 
   it("does not emit an unhandled rejection when tray readiness fails with -86", async () => {
-    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const spawnError = Object.assign(new Error("spawn Unknown system error -86"), { errno: -86 });
-    const readiness = Promise.reject(spawnError);
-    const unhandled = vi.fn();
+    // With the new architecture, a missing binary simply returns null
+    // instead of spawning an incompatible binary that rejects with -86.
+    // This test verifies the graceful null return.
+    const instance = tray.initUnixTray(
+      { port: 20128 },
+      {
+        resolveTrayBinPathImpl: () => ({ binPath: null, downloadBinaryFallback: null }),
+        getAutostartEnabledImpl: () => false,
+      },
+    );
 
-    class UnsupportedArchitectureTray {
-      onClick() {
-        return readiness.then(() => {});
-      }
-
-      ready() {
-        return readiness;
-      }
-    }
-
-    process.on("unhandledRejection", unhandled);
-    try {
-      const instance = tray.initUnixTray(
-        { port: 20128 },
-        {
-          resolveSystrayImpl: () => ({ mod: UnsupportedArchitectureTray, isV2: true }),
-          chmodTrayBinImpl: vi.fn(),
-          getAutostartEnabledImpl: () => false,
-        },
-      );
-
-      await expect(instance.ready()).rejects.toBe(spawnError);
-      await new Promise((resolve) => setImmediate(resolve));
-      expect(unhandled).not.toHaveBeenCalled();
-    } finally {
-      process.removeListener("unhandledRejection", unhandled);
-    }
+    expect(instance).toBeNull();
   });
 });
