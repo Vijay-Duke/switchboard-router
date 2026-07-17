@@ -307,6 +307,7 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
       id: combo.name,
       object: "model",
       owned_by: "combo",
+      name: combo.name,
     };
     if (combo.kind === "webSearch" || combo.kind === "webFetch") {
       entry.kind = combo.kind;

@@ -21,7 +21,10 @@ const proxyClientMaxBodySize = process.env.SWITCHBOARD_PROXY_CLIENT_MAX_BODY_SIZ
 const nextConfig = {
   distDir,
   output: "standalone",
-  serverExternalPackages: ["better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite"],
+  serverExternalPackages: [
+    "better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite", "node-machine-id", "bindings",
+    "open-sse"
+  ],
   // Next.js 16 blocks /_next/* cross-origin in dev by default. Without this,
   // opening the app via 127.0.0.1 or a LAN IP leaves React unhydrated — login
   // form does a dead native GET submit and appears to "do nothing".
@@ -62,16 +65,78 @@ const nextConfig = {
     // Cache fetch responses across HMR refreshes for faster dev reloads.
     serverComponentsHmrCache: true,
   },
-  webpack: (config, { isServer }) => {
-    // Ignore Node-only modules in browser bundle
+  webpack: (config, { isServer, nextRuntime }) => {
+    // Ignore Node-only modules in browser bundle  
     if (!isServer) {
       config.resolve.fallback = {
         ...config.resolve.fallback,
         fs: false,
         path: false,
         crypto: false,
+        stream: false,
+        zlib: false,
+        http: false,
+        https: false,
+        net: false,
+        tls: false,
+        os: false,
+        url: false,
+        querystring: false,
+        string_decoder: false,
+        util: false,
+        events: false,
+        dns: false,
+        dgram: false,
+        cluster: false,
+        child_process: false,
       };
     }
+    
+    // Server-side: Externalize Node built-ins and native modules
+    // The instrumentation.js file imports Node-native modules that webpack can't bundle
+    if (isServer) {
+      const nodeExternals = [
+        /^node:/,           // node: prefixed built-ins
+        /^bun:/,            // bun: prefixed built-ins
+        "fs", "path", "os", "net", "https", "http", "tls", "url",
+        "querystring", "string_decoder", "util", "events", "dns", "dgram",
+        "cluster", "child_process", "crypto", "stream", "zlib", "buffer",
+        "timers", "tty", "vm", "assert", "constants", "console", "domain",
+        "punycode", "process", "v8", "worker_threads", "perf_hooks", "async_hooks",
+        "diagnostics_channel", "trace_events", "inspector", "module", "readline",
+        "repl", "stream/web", "sys", "timers/promises",
+        "wasi", "webcrypto", "http2"
+      ];
+      
+      // Handle both function and array forms of config.externals
+      if (typeof config.externals === 'function') {
+        const originalExternals = config.externals;
+        config.externals = (ctx, callback) => {
+          const { request } = ctx;
+          if (nodeExternals.some(ext => 
+            typeof ext === 'string' ? request === ext : ext.test(request)
+          )) {
+            return callback(null, `node-commonjs ${request}`);
+          }
+          return originalExternals(ctx, callback);
+        };
+      } else {
+        config.externals = config.externals || [];
+        if (!Array.isArray(config.externals)) {
+          config.externals = [config.externals];
+        }
+        // Use webpack's node externals pattern for Node built-ins
+        config.externals.push(({ request }, callback) => {
+          if (nodeExternals.some(ext => 
+            typeof ext === 'string' ? request === ext : ext.test(request)
+          )) {
+            return callback(null, `node-commonjs ${request}`);
+          }
+          callback();
+        });
+      }
+    }
+    
     // Exclude non-source dirs from watcher to reduce inotify load
     config.watchOptions = {
       ...config.watchOptions,
