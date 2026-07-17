@@ -67,15 +67,17 @@ describe("Claude Code settings form", () => {
       models: ["openai/gpt-5.6", "coding-auto", "openai/gpt-5.6"],
     });
 
-    expect(profile).toEqual({
-      env: {
-        ANTHROPIC_API_KEY: "",
-        ANTHROPIC_AUTH_TOKEN: "sk-test",
-        ANTHROPIC_BASE_URL: "http://127.0.0.1:20128/v1",
-        ANTHROPIC_CUSTOM_HEADERS: expect.stringContaining("X-Switchboard-Claude-Mode: full-catalog"),
-        ANTHROPIC_CUSTOM_MODEL_OPTION: "",
-        CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
-      },
+    expect(profile.env).toMatchObject({
+      ANTHROPIC_API_KEY: "",
+      ANTHROPIC_AUTH_TOKEN: "sk-test",
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:20128/v1",
+      ANTHROPIC_CUSTOM_HEADERS: expect.stringContaining("X-Switchboard-Claude-Mode: full-catalog"),
+      ANTHROPIC_CUSTOM_MODEL_OPTION: "",
+      CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "",
+      ANTHROPIC_DEFAULT_FABLE_MODEL: "",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "",
     });
     expect(readClaudeCatalogSelectionFromCustomHeaders(
       profile.env.ANTHROPIC_CUSTOM_HEADERS,

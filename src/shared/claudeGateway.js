@@ -11,6 +11,25 @@ export const SWITCHBOARD_KEY_HEADER = "x-switchboard-key";
 export const CLAUDE_CATALOG_MODEL_PREFIX = "claude-switchboard-v1/";
 const CLAUDE_GATEWAY_ALIAS_PATTERN = /^(?:claude|anthropic)-[a-z0-9][a-z0-9._-]*$/i;
 
+// Subscription-hybrid slot env keys from ~/.claude/settings.json must be blanked
+// in the isolated full-catalog profile. Otherwise Claude Code keeps routing
+// opus/sonnet/fable/haiku through stale LiteLLM model IDs (for example
+// claude-low-carbon-apac-opus[1m]) instead of the gateway catalog selection.
+export const CLAUDE_SLOT_ENV_KEYS = Object.freeze([
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL_DESCRIPTION",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION",
+]);
+
 /** @param {string} name */
 const formatHeaderName = (name) => name.replace(
   /(^|-)([a-z])/g,
@@ -130,16 +149,16 @@ export function buildClaudeFullCatalogProfile({ baseUrl, gatewayKey, models = []
   const normalizedKey = String(gatewayKey || "").trim();
   if (!normalizedUrl) throw new TypeError("A Switchboard endpoint is required.");
   if (!normalizedKey) throw new TypeError("A Switchboard API key is required.");
-  return {
-    env: {
-      ANTHROPIC_API_KEY: "",
-      ANTHROPIC_AUTH_TOKEN: normalizedKey,
-      ANTHROPIC_BASE_URL: normalizedUrl.endsWith("/v1") ? normalizedUrl : `${normalizedUrl}/v1`,
-      ANTHROPIC_CUSTOM_HEADERS: buildClaudeFullCatalogHeaders(models),
-      ANTHROPIC_CUSTOM_MODEL_OPTION: "",
-      CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
-    },
+  const env = {
+    ANTHROPIC_API_KEY: "",
+    ANTHROPIC_AUTH_TOKEN: normalizedKey,
+    ANTHROPIC_BASE_URL: normalizedUrl.endsWith("/v1") ? normalizedUrl : `${normalizedUrl}/v1`,
+    ANTHROPIC_CUSTOM_HEADERS: buildClaudeFullCatalogHeaders(models),
+    ANTHROPIC_CUSTOM_MODEL_OPTION: "",
+    CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
   };
+  for (const key of CLAUDE_SLOT_ENV_KEYS) env[key] = "";
+  return { env };
 }
 
 /** @param {unknown} value */
