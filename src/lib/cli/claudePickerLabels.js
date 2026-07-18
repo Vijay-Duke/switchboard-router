@@ -28,7 +28,14 @@ async function getInternalHeaders() {
  * @param {string} label
  */
 function sanitizePickerLabel(label) {
-  return String(label || "").trim().replace(/[\r\n]+/g, " ").slice(0, MAX_LABEL_LENGTH);
+  return String(label || "")
+    .normalize("NFKD")
+    .replace(/[·•—–]/g, " | ")
+    .replace(/[^\x20-\x7E]/g, "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_LABEL_LENGTH);
 }
 
 /**
@@ -79,6 +86,7 @@ function buildPickerLabelPrompt(modelIds, existingLabels = {}) {
     "Rules:",
     "- Return ONLY a JSON object mapping each model ID to its label.",
     "- Max 32 characters per label.",
+    "- Use printable ASCII only. Separate useful parts with |.",
     "- Keep provider/source distinct (kr vs cr vs llm/lite-llm).",
     "- Include model family and region when useful (opus, sonnet, apac, bedrock).",
     "- Labels must be unique within this batch.",

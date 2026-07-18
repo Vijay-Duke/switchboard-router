@@ -45,7 +45,7 @@ beforeEach(() => {
 
 afterEach(() => {
   global.fetch = originalFetch;
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
 describe("/v1/models compatible-provider discovery", () => {
@@ -113,7 +113,7 @@ describe("/v1/models compatible-provider discovery", () => {
     expect(body.data).toEqual(expect.arrayContaining([
       expect.objectContaining({
         owned_by: "switchboard-catalog",
-        display_name: "llm · openai · gpt 5.6",
+        display_name: "llm | openai | gpt 5.6",
         description: "lite-llm/openai/gpt-5.6-sol",
       }),
       expect.objectContaining({
@@ -177,6 +177,35 @@ describe("/v1/models compatible-provider discovery", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ object: "list", data: [] });
+    expect(mocks.getProviderConnections).not.toHaveBeenCalled();
+  });
+
+  it("answers full-catalog discovery without fetching provider catalogs", async () => {
+    global.fetch = vi.fn();
+
+    const { GET } = await import("../../src/app/api/v1/models/route.js");
+    const {
+      buildClaudeCatalogSelectionHeader,
+      CLAUDE_CATALOG_SELECTION_HEADER,
+    } = await import("../../src/shared/claudeGateway.js");
+    const selectedModels = [
+      "lite-llm/openai/gpt-5.6-terra",
+      "kr/claude-opus-4.8-thinking-agentic",
+      "coding-auto",
+    ];
+    const response = await GET(new Request("http://switchboard.test/v1/models?limit=1000", {
+      headers: {
+        "X-Switchboard-Claude-Mode": "full-catalog",
+        [CLAUDE_CATALOG_SELECTION_HEADER]: buildClaudeCatalogSelectionHeader(selectedModels),
+      },
+    }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toHaveLength(3);
+    expect(body.data.map((model) => model.description)).toEqual(selectedModels);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mocks.getProviderConnections).not.toHaveBeenCalled();
   });
 
   it.each([

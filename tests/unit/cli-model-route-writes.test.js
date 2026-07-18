@@ -101,6 +101,22 @@ describe("CLI catalog routes write native client schemas", () => {
   it("writes and removes an isolated Claude full-catalog launch profile", async () => {
     const profilePath = path.join(process.env.DATA_DIR, "claude-code", "full-catalog-settings.json");
     const { GET, POST, DELETE } = await import("../../src/app/api/cli-tools/claude-full-catalog/route.js");
+    const {
+      createCombo,
+      createProviderConnection,
+      deleteCombo,
+      deleteProviderConnection,
+    } = await import("../../src/lib/db/index.js");
+    const provider = await createProviderConnection({
+      provider: "openai-compatible-chat-claude-catalog-test",
+      authType: "api_key",
+      apiKey: "provider-key",
+      providerSpecificData: { prefix: "cx" },
+    });
+    const combo = await createCombo({
+      name: "coding-auto",
+      models: ["cx/gpt-5.6"],
+    });
 
     expect(await (await GET()).json()).toMatchObject({
       configured: false,
@@ -133,6 +149,18 @@ describe("CLI catalog routes write native client schemas", () => {
 
     expect((await DELETE()).status).toBe(200);
     await expect(fs.access(profilePath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    await deleteProviderConnection(provider.id);
+    await deleteCombo(combo.id);
+    const unavailableResponse = await POST(post({
+      baseUrl: "http://127.0.0.1:20128",
+      gatewayKey: "sk-profile",
+      models: ["cx/gpt-5.6", "coding-auto"],
+    }));
+    expect(unavailableResponse.status).toBe(400);
+    expect(await unavailableResponse.json()).toMatchObject({
+      invalidModels: ["cx/gpt-5.6", "coding-auto"],
+    });
   });
 
   it("disconnects Claude Code by restoring the pre-Switchboard settings", async () => {

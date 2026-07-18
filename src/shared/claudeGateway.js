@@ -10,6 +10,7 @@ export const CLAUDE_CATALOG_SELECTION_HEADER = "x-switchboard-claude-models";
 export const CLAUDE_CATALOG_LABELS_HEADER = "x-switchboard-claude-labels";
 export const SWITCHBOARD_KEY_HEADER = "x-switchboard-key";
 export const CLAUDE_CATALOG_MODEL_PREFIX = "claude-switchboard-v1/";
+export const CLAUDE_FULL_CATALOG_HEADERS_MAX_BYTES = 7 * 1024;
 const CLAUDE_GATEWAY_ALIAS_PATTERN = /^(?:claude|anthropic)-[a-z0-9][a-z0-9._-]*$/i;
 
 // Subscription-hybrid slot env keys from ~/.claude/settings.json must be blanked
@@ -30,6 +31,18 @@ export const CLAUDE_SLOT_ENV_KEYS = Object.freeze([
   "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
   "ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION",
 ]);
+
+/** @param {unknown} value */
+export function fingerprintClaudeGatewayKey(value) {
+  const key = String(value || "");
+  if (!key) return "";
+  let hash = 2166136261;
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
 
 /** @param {string} name */
 const formatHeaderName = (name) => name.replace(
@@ -120,7 +133,11 @@ export function normalizeClaudeCatalogPickerLabels(labels, models) {
   const result = {};
   for (const [modelId, label] of Object.entries(labels)) {
     if (!allowed.has(modelId)) continue;
-    const trimmed = String(label || "").trim().replace(/[\r\n]+/g, " ");
+    const trimmed = String(label || "")
+      .trim()
+      .replace(/[·•—–]/g, " | ")
+      .replace(/[\r\n]+/g, " ")
+      .replace(/\s+/g, " ");
     if (!trimmed) continue;
     result[modelId] = trimmed.slice(0, 48);
   }
@@ -211,11 +228,17 @@ export function buildClaudeFullCatalogProfile({
   if (!normalizedKey) throw new TypeError("A Switchboard API key is required.");
   const normalizedModels = normalizeClaudeCatalogSelection(models);
   const normalizedLabels = normalizeClaudeCatalogPickerLabels(pickerLabels, normalizedModels);
+  const customHeaders = buildClaudeFullCatalogHeaders(normalizedModels, normalizedLabels);
+  if (new TextEncoder().encode(customHeaders).byteLength > CLAUDE_FULL_CATALOG_HEADERS_MAX_BYTES) {
+    throw new TypeError(
+      "This catalog is too large for Claude Code request headers. Remove models or shorten picker labels.",
+    );
+  }
   const env = {
     ANTHROPIC_API_KEY: "",
     ANTHROPIC_AUTH_TOKEN: normalizedKey,
     ANTHROPIC_BASE_URL: normalizedUrl.endsWith("/v1") ? normalizedUrl : `${normalizedUrl}/v1`,
-    ANTHROPIC_CUSTOM_HEADERS: buildClaudeFullCatalogHeaders(normalizedModels, normalizedLabels),
+    ANTHROPIC_CUSTOM_HEADERS: customHeaders,
     ANTHROPIC_CUSTOM_MODEL_OPTION: "",
     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
   };

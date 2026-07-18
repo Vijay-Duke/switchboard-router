@@ -27,6 +27,7 @@ const REGION_RULES = [
 ];
 
 const INFRA_TOKENS = ["bedrock", "vertex", "azure", "openai"];
+const LABEL_SEPARATOR = " | ";
 
 /**
  * @param {string} value
@@ -110,7 +111,7 @@ export function formatClaudeCatalogDisplayLabel(modelId) {
     if (tail) parts.push(tail.slice(0, 24));
   }
 
-  return parts.join(" · ");
+  return parts.join(LABEL_SEPARATOR);
 }
 
 /**
@@ -166,13 +167,13 @@ export function buildClaudeCatalogDisplayNameMap(modelIds) {
     }
     const used = new Set();
     ids.forEach((modelId, index) => {
-      let candidate = `${base} · ${disambiguationSuffix(modelId, index)}`;
+      let candidate = `${base}${LABEL_SEPARATOR}${disambiguationSuffix(modelId, index)}`;
       let suffix = 2;
       while (used.has(candidate)) {
         const tail = modelId.split("/").filter(Boolean).pop() || `alt-${suffix}`;
-        candidate = `${base} · ${tail.replace(/^anthropic\./i, "").replace(/[._-]/g, " ").trim().slice(0, 20)}`;
+        candidate = `${base}${LABEL_SEPARATOR}${tail.replace(/^anthropic\./i, "").replace(/[._-]/g, " ").trim().slice(0, 20)}`;
         if (used.has(candidate)) {
-          candidate = `${base} · ${index + 1}`;
+          candidate = `${base}${LABEL_SEPARATOR}${index + 1}`;
         }
         suffix += 1;
       }

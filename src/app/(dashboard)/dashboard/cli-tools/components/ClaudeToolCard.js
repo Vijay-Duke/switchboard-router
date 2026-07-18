@@ -9,16 +9,19 @@ import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import {
   beginClaudeToolOperation,
+  buildClaudeCatalogDraftFingerprint,
   buildClaudeSettingsMutation,
   finishClaudeToolOperation,
   isClaudeToolOperationCurrent,
   readClaudeModelMappings,
+  requestClaudePickerLabels,
 } from "./claudeSettingsForm";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 import {
   buildClaudeFullCatalogProfile,
   CLAUDE_ROUTING_MODES,
   encodeClaudeCatalogModelId,
+  fingerprintClaudeGatewayKey,
   readSwitchboardKeyFromCustomHeaders,
 } from "@/shared/claudeGateway.js";
 import {
@@ -58,6 +61,8 @@ export default function ClaudeToolCard({
 }) {
   const [claudeStatus, setClaudeStatus] = useState(initialStatus || null);
   const [fullCatalogProfile, setFullCatalogProfile] = useState(null);
+  const [fullCatalogProfileError, setFullCatalogProfileError] = useState("");
+  const [loadingFullCatalogProfile, setLoadingFullCatalogProfile] = useState(false);
   const [checkingClaude, setCheckingClaude] = useState(false);
   const [operation, setOperation] = useState("idle");
   const [message, setMessage] = useState(null);
@@ -77,11 +82,13 @@ export default function ClaudeToolCard({
       : CLAUDE_ROUTING_MODES.PASS_THROUGH,
   );
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
+  const [manualConfigs, setManualConfigs] = useState([]);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [ccFilterNaming, setCcFilterNaming] = useState(false);
   const hasInitializedModels = useRef(false);
   const hasInitializedFullCatalogModels = useRef(false);
   const fullCatalogRowIdRef = useRef(0);
+  const fullCatalogDraftTouchedRef = useRef(false);
   const mountedRef = useRef(true);
   const statusRequestGenerationRef = useRef(0);
   const fullCatalogRequestGenerationRef = useRef(0);
@@ -115,7 +122,7 @@ export default function ClaudeToolCard({
     return assigned.map((entry) => ({
       id: `claude-catalog-${fullCatalogRowIdRef.current += 1}`,
       value: entry.value,
-      label: entry.label,
+      label: entry.label.slice(0, 48),
       labelCustom: entry.labelCustom,
     }));
   };
@@ -124,7 +131,7 @@ export default function ClaudeToolCard({
     const assigned = assignClaudeCatalogDisplayRows(rows);
     return rows.map((row, index) => ({
       ...row,
-      label: assigned[index]?.label || row.label,
+      label: String(assigned[index]?.label || row.label).slice(0, 48),
       labelCustom: row.labelCustom || assigned[index]?.labelCustom || false,
     }));
   };
@@ -245,14 +252,24 @@ export default function ClaudeToolCard({
       && fullCatalogRequestGenerationRef.current === generation
       && canCommit()
     );
+    if (mountedRef.current) setLoadingFullCatalogProfile(true);
     try {
       const res = await fetch("/api/cli-tools/claude-full-catalog", { signal });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to read full-catalog profile");
       if (mayCommit()) {
+        setFullCatalogProfileError("");
         setFullCatalogProfile(data);
         if (!hasInitializedFullCatalogModels.current) {
           hasInitializedFullCatalogModels.current = true;
+          fullCatalogDraftTouchedRef.current = false;
+          const savedKey = apiKeys?.find(
+            (key) => fingerprintClaudeGatewayKey(key.key) === data.gatewayKeyFingerprint,
+          );
+          if (savedKey) setSelectedApiKey(savedKey.key);
+          if (data.configured && typeof data.baseUrl === "string") {
+            setCustomBaseUrl(data.baseUrl);
+          }
           const pickerLabels = data.pickerLabels && typeof data.pickerLabels === "object"
             ? data.pickerLabels
             : {};
@@ -268,8 +285,23 @@ export default function ClaudeToolCard({
       return data;
     } catch (error) {
       if (error?.name === "AbortError") return null;
+      if (mayCommit()) {
+        setFullCatalogProfileError(
+          error instanceof Error ? error.message : "Failed to read full-catalog profile",
+        );
+      }
       throw error;
+    } finally {
+      if (mayCommit()) setLoadingFullCatalogProfile(false);
     }
+  };
+
+  const retryFullCatalogProfile = () => {
+    setFullCatalogProfileError("");
+    if (fullCatalogDraftTouchedRef.current) {
+      hasInitializedFullCatalogModels.current = true;
+    }
+    checkFullCatalogProfile().catch(() => {});
   };
 
   useEffect(() => {
@@ -342,6 +374,9 @@ export default function ClaudeToolCard({
         throw new Error("Select a Switchboard API key for this endpoint.");
       }
       const isFullCatalog = routingMode === CLAUDE_ROUTING_MODES.FULL_CATALOG;
+      if (isFullCatalog && fullCatalogProfileError) {
+        throw new Error("Reload the saved full catalog before replacing it.");
+      }
       const endpoint = isFullCatalog
         ? "/api/cli-tools/claude-full-catalog"
         : "/api/cli-tools/claude-settings";
@@ -370,6 +405,7 @@ export default function ClaudeToolCard({
         const canCommit = () => isCurrentOperation(operationToken);
         if (isFullCatalog) {
           setFullCatalogProfile(data);
+          fullCatalogDraftTouchedRef.current = false;
           const pickerLabels = data.pickerLabels && typeof data.pickerLabels === "object"
             ? data.pickerLabels
             : buildPickerLabelsPayload();
@@ -387,7 +423,13 @@ export default function ClaudeToolCard({
           setMessage({ type: "success", text: data.message || "Claude Code connected to Switchboard." });
         }
       } else {
-        setMessage({ type: "error", text: data.error || "Failed to apply settings" });
+        const invalidModels = Array.isArray(data.invalidModels)
+          ? ` ${data.invalidModels.slice(0, 3).join(", ")}${data.invalidModels.length > 3 ? "…" : ""}`
+          : "";
+        setMessage({
+          type: "error",
+          text: `${data.error || "Failed to apply settings"}${invalidModels}`,
+        });
       }
     } catch (error) {
       if (isCurrentOperation(operationToken)) {
@@ -462,6 +504,7 @@ export default function ClaudeToolCard({
   const handleFullCatalogModelSelect = (model) => {
     const value = String(model?.value || model?.name || model || "").trim();
     if (!value) return;
+    fullCatalogDraftTouchedRef.current = true;
     setFullCatalogModels((current) => {
       if (current.some((entry) => entry.value === value)) return current;
       const next = [
@@ -479,10 +522,12 @@ export default function ClaudeToolCard({
 
   const handleFullCatalogModelDeselect = (model) => {
     const value = String(model?.value || model?.name || model || "").trim();
+    fullCatalogDraftTouchedRef.current = true;
     setFullCatalogModels((current) => current.filter((entry) => entry.value !== value));
   };
 
   const handlePickerLabelChange = (rowId, label) => {
+    fullCatalogDraftTouchedRef.current = true;
     setFullCatalogModels((current) => current.map((entry) => (
       entry.id === rowId ? { ...entry, label, labelCustom: true } : entry
     )));
@@ -495,30 +540,25 @@ export default function ClaudeToolCard({
     setGeneratingPickerLabels(true);
     setMessage(null);
     try {
-      const res = await fetch("/api/cli-tools/claude-picker-labels", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          modelIds,
-          namingModel: pickerNamingModel.trim() || undefined,
-          existingLabels: buildCurrentPickerLabels(),
-        }),
+      const data = await requestClaudePickerLabels({
+        modelIds,
+        namingModel: pickerNamingModel,
+        existingLabels: buildCurrentPickerLabels(),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to generate picker labels");
       const labels = data.labels && typeof data.labels === "object" ? data.labels : {};
+      fullCatalogDraftTouchedRef.current = true;
       setFullCatalogModels((current) => current.map((entry) => {
         const nextLabel = labels[entry.value];
         if (!nextLabel) return entry;
-        return { ...entry, label: nextLabel, labelCustom: true };
+        return { ...entry, label: String(nextLabel).slice(0, 48), labelCustom: true };
       }));
       const generatedCount = modelIds.filter((modelId) => labels[modelId]).length;
       if (generatedCount === 0) throw new Error("Label model returned no suggestions");
       setMessage({
         type: "success",
         text: data.source === "ai"
-          ? `Generated ${generatedCount} picker label${generatedCount === 1 ? "" : "s"} with AI.`
-          : `Generated ${generatedCount} picker label${generatedCount === 1 ? "" : "s"} from heuristics. Set a labeling model for AI suggestions.`,
+          ? `Improved ${generatedCount} picker label${generatedCount === 1 ? "" : "s"} with AI. Review them, then save the full catalog.`
+          : `Refreshed ${generatedCount} picker label${generatedCount === 1 ? "" : "s"}. Review them, then save the full catalog.`,
       });
     } catch (error) {
       setMessage({
@@ -566,17 +606,55 @@ export default function ClaudeToolCard({
     ];
   };
 
-  const controlsLocked = operation !== "idle" || generatingPickerLabels;
+  const handleOpenManualConfig = () => {
+    try {
+      setManualConfigs(getManualConfigs());
+      setShowManualConfigModal(true);
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "Unable to build manual configuration",
+      });
+    }
+  };
+
+  const controlsLocked = operation !== "idle"
+    || generatingPickerLabels
+    || loadingFullCatalogProfile;
   const isFullCatalog = routingMode === CLAUDE_ROUTING_MODES.FULL_CATALOG;
   const fullCatalogModelValues = fullCatalogModels.map((model) => model.value);
   const nonEmptyFullCatalogModels = fullCatalogModelValues.filter((model) => model.trim());
   const firstFullCatalogModel = nonEmptyFullCatalogModels[0] || null;
   const hybridConfigured = configStatus === "configured"
     && claudeStatus?.routingMode === CLAUDE_ROUTING_MODES.PASS_THROUGH;
+  const effectiveSelectedApiKey = selectedApiKey?.trim()
+    || apiKeys?.[0]?.key
+    || (!cloudEnabled ? "sk_switchboard" : "");
+  const fullCatalogDirty = Boolean(
+    fullCatalogProfile?.configured
+    && (
+      fingerprintClaudeGatewayKey(effectiveSelectedApiKey) !== fullCatalogProfile.gatewayKeyFingerprint
+      || buildClaudeCatalogDraftFingerprint({
+        baseUrl: getEffectiveBaseUrl(),
+        models: nonEmptyFullCatalogModels,
+        pickerLabels: buildPickerLabelsPayload(),
+      }) !== buildClaudeCatalogDraftFingerprint({
+        baseUrl: fullCatalogProfile.baseUrl,
+        models: fullCatalogProfile.models,
+        pickerLabels: fullCatalogProfile.pickerLabels,
+      })
+    ),
+  );
 
   return (
     <Card padding="xs" className="overflow-hidden">
-      <div className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center" onClick={onToggle}>
+      <button
+        type="button"
+        className="flex w-full items-start justify-between gap-3 text-left hover:cursor-pointer sm:items-center"
+        onClick={onToggle}
+        aria-expanded={isExpanded}
+        aria-controls="claude-tool-card-content"
+      >
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
             <Image src="/providers/claude.png" alt={tool.name} width={32} height={32} className="size-8 object-contain rounded-lg" sizes="32px" onError={(e) => { e.target.style.display = "none"; }} />
@@ -585,7 +663,9 @@ export default function ClaudeToolCard({
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h3 className="font-medium text-sm">{tool.name}</h3>
               {hybridConfigured && <span className="px-1.5 py-0.5 text-[10px] font-medium bg-green-500/10 text-green-600 dark:text-green-400 rounded-full">Subscription hybrid ready</span>}
-              {fullCatalogProfile?.configured && <span className="px-1.5 py-0.5 text-[10px] font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-full">Full catalog ready</span>}
+              {fullCatalogProfile?.configured && (fullCatalogDirty
+                ? <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">Full catalog has unsaved changes</span>
+                : <span className="rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">Full catalog ready</span>)}
               {!hybridConfigured && !fullCatalogProfile?.configured && configStatus === "not_configured" && <span className="px-1.5 py-0.5 text-[10px] font-medium bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 rounded-full">Not configured</span>}
               {configStatus === "other" && <span className="px-1.5 py-0.5 text-[10px] font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-full">Other</span>}
             </div>
@@ -593,10 +673,10 @@ export default function ClaudeToolCard({
           </div>
         </div>
         <span className={`material-symbols-outlined text-text-muted text-[20px] transition-transform ${isExpanded ? "rotate-180" : ""}`}>expand_more</span>
-      </div>
+      </button>
 
       {isExpanded && (
-        <div className="mt-4 pt-4 border-t border-border flex flex-col gap-4">
+        <div id="claude-tool-card-content" className="mt-4 pt-4 border-t border-border flex flex-col gap-4">
           {checkingClaude && (
             <div className="flex items-center gap-2 text-text-muted">
               <span className="material-symbols-outlined animate-spin">progress_activity</span>
@@ -615,7 +695,7 @@ export default function ClaudeToolCard({
                   </div>
                 </div>
                 <div className="flex items-center gap-2 pl-9">
-                  <Button variant="secondary" size="sm" onClick={() => setShowManualConfigModal(true)} className="!bg-yellow-500/20 !border-yellow-500/40 !text-yellow-700 dark:!text-yellow-300 hover:!bg-yellow-500/30">
+                  <Button variant="secondary" size="sm" onClick={handleOpenManualConfig} className="!bg-yellow-500/20 !border-yellow-500/40 !text-yellow-700 dark:!text-yellow-300 hover:!bg-yellow-500/30">
                     <span className="material-symbols-outlined text-[18px] mr-1">content_copy</span>
                     Manual Config
                   </Button>
@@ -676,7 +756,9 @@ export default function ClaudeToolCard({
                       <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-text-main">
                         Curated Switchboard catalog
                         <span className="rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400">{nonEmptyFullCatalogModels.length} selected</span>
-                        {fullCatalogProfile?.configured && <span className="rounded-full bg-green-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-green-600 dark:text-green-400">Configured</span>}
+                        {fullCatalogProfile?.configured && (fullCatalogDirty
+                          ? <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">Unsaved changes</span>
+                          : <span className="rounded-full bg-green-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-green-600 dark:text-green-400">Configured</span>)}
                       </span>
                       <span className="mt-1 block text-xs leading-relaxed text-text-muted">Choose which Switchboard models and combos appear in the separate launcher&apos;s <code>/model</code> picker. Uses provider credentials stored in Switchboard, not the Claude subscription.</span>
                     </span>
@@ -691,7 +773,10 @@ export default function ClaudeToolCard({
                   <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
                   <BaseUrlSelect
                     value={customBaseUrl || getDisplayUrl()}
-                    onChange={setCustomBaseUrl}
+                    onChange={(value) => {
+                      if (isFullCatalog) fullCatalogDraftTouchedRef.current = true;
+                      setCustomBaseUrl(value);
+                    }}
                     requiresExternalUrl={tool.requiresExternalUrl}
                     tunnelEnabled={tunnelEnabled}
                     tunnelPublicUrl={tunnelPublicUrl}
@@ -715,7 +800,15 @@ export default function ClaudeToolCard({
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
                   <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Switchboard key</span>
                   <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
-                  <ApiKeySelect value={selectedApiKey} onChange={setSelectedApiKey} apiKeys={apiKeys} cloudEnabled={cloudEnabled} />
+                  <ApiKeySelect
+                    value={selectedApiKey}
+                    onChange={(value) => {
+                      if (isFullCatalog) fullCatalogDraftTouchedRef.current = true;
+                      setSelectedApiKey(value);
+                    }}
+                    apiKeys={apiKeys}
+                    cloudEnabled={cloudEnabled}
+                  />
                 </div>
 
                 {!isFullCatalog && (
@@ -745,12 +838,20 @@ export default function ClaudeToolCard({
                       <span className="material-symbols-outlined text-blue-500">account_tree</span>
                       <div className="min-w-0 flex-1">
                         <h4 className="text-sm font-semibold text-text-main">Selected models and combos</h4>
-                        <p className="mt-1 text-xs leading-relaxed text-text-muted">Only the entries selected here are published to Claude Code. Each row gets an auto label on add; use <strong>Generate all labels</strong> for one-shot AI naming, or edit any label directly.</p>
+                        <p className="mt-1 text-xs leading-relaxed text-text-muted">Only the entries selected here are published to Claude Code. Labels are created automatically; optionally choose a model to improve all labels with AI, or edit any label directly.</p>
+
+                        {fullCatalogProfileError && (
+                          <div className="mt-3 flex items-start justify-between gap-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400" role="alert">
+                            <span>{fullCatalogProfileError} Reload the saved profile before making changes.</span>
+                            <button type="button" onClick={retryFullCatalogProfile} className="shrink-0 font-semibold underline underline-offset-2">Retry</button>
+                          </div>
+                        )}
 
                         <div className="mt-3 grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
-                          <span className="text-xs font-semibold text-text-main sm:text-right">Labeling model</span>
+                          <label htmlFor="claude-picker-labeling-model" className="text-xs font-semibold text-text-main sm:text-right">Labeling model</label>
                           <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
                           <input
+                            id="claude-picker-labeling-model"
                             disabled={controlsLocked}
                             type="text"
                             value={pickerNamingModel}
@@ -763,12 +864,18 @@ export default function ClaudeToolCard({
                             onClick={handleGenerateAllPickerLabels}
                             disabled={controlsLocked || fullCatalogModels.length === 0}
                             className="flex min-h-10 items-center justify-center gap-1 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 text-xs font-medium text-blue-700 transition-colors hover:border-blue-500 hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-300"
-                            title="Generate short picker labels for every selected model"
+                            title={pickerNamingModel.trim()
+                              ? "Improve every picker label with the selected AI model"
+                              : "Refresh every picker label using local naming rules"}
                           >
                             <span className={`material-symbols-outlined text-[16px] ${generatingPickerLabels ? "animate-spin" : ""}`}>
                               {generatingPickerLabels ? "progress_activity" : "auto_awesome"}
                             </span>
-                            {generatingPickerLabels ? "Generating..." : "Generate all labels"}
+                            {generatingPickerLabels
+                              ? "Generating..."
+                              : pickerNamingModel.trim()
+                                ? "Improve labels with AI"
+                                : "Refresh labels"}
                           </button>
                         </div>
 
@@ -787,17 +894,26 @@ export default function ClaudeToolCard({
                                     disabled={controlsLocked}
                                     type="text"
                                     value={model.label}
+                                    maxLength={48}
                                     onChange={(event) => handlePickerLabelChange(model.id, event.target.value)}
                                     aria-label={`Picker label for ${model.value}`}
                                     className="w-full min-w-0 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-text-main focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-60"
                                   />
-                                  <code className="mt-1 block truncate text-[10px] text-text-muted" title={model.value}>
-                                    {model.value}
-                                  </code>
+                                  <div className="mt-1 flex min-w-0 items-center gap-2 text-[10px] text-text-muted">
+                                    <code className="min-w-0 flex-1 truncate" title={model.value}>
+                                      {model.value}
+                                    </code>
+                                    <span className="shrink-0" aria-label={`${model.label.length} of 48 label characters used`}>
+                                      {model.label.length}/48
+                                    </span>
+                                  </div>
                                 </div>
                                 <button
                                   type="button"
-                                  onClick={() => setFullCatalogModels((current) => current.filter((_, entryIndex) => entryIndex !== index))}
+                                  onClick={() => {
+                                    fullCatalogDraftTouchedRef.current = true;
+                                    setFullCatalogModels((current) => current.filter((_, entryIndex) => entryIndex !== index));
+                                  }}
                                   className="rounded p-1 text-text-muted transition-colors hover:bg-red-500/10 hover:text-red-500"
                                   aria-label={`Remove ${model.value || `selection ${index + 1}`}`}
                                 >
@@ -856,20 +972,24 @@ export default function ClaudeToolCard({
               </fieldset>
 
               {message && (
-                <div className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${message.type === "success" ? "bg-green-500/10 text-green-600" : message.type === "warning" ? "bg-amber-500/10 text-amber-600" : "bg-red-500/10 text-red-600"}`}>
+                <div
+                  role={message.type === "error" ? "alert" : "status"}
+                  aria-live={message.type === "error" ? "assertive" : "polite"}
+                  className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${message.type === "success" ? "bg-green-500/10 text-green-600" : message.type === "warning" ? "bg-amber-500/10 text-amber-600" : "bg-red-500/10 text-red-600"}`}
+                >
                   <span className="material-symbols-outlined text-[14px]">{message.type === "success" ? "check_circle" : message.type === "warning" ? "warning" : "error"}</span>
                   <span>{message.text}</span>
                 </div>
               )}
 
               <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center">
-                <Button variant="primary" size="sm" onClick={handleApplySettings} disabled={controlsLocked || (isFullCatalog && (!hasActiveProviders || nonEmptyFullCatalogModels.length === 0))} loading={operation === "apply"}>
+                <Button variant="primary" size="sm" onClick={handleApplySettings} disabled={controlsLocked || (isFullCatalog && (Boolean(fullCatalogProfileError) || !hasActiveProviders || nonEmptyFullCatalogModels.length === 0))} loading={operation === "apply"}>
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>{isFullCatalog ? "Save full catalog" : "Save subscription hybrid"}
                 </Button>
-                <Button variant="outline" size="sm" onClick={handleDisconnect} disabled={controlsLocked || (isFullCatalog ? !fullCatalogProfile?.configured : !claudeStatus?.hasSwitchboard)} loading={operation === "disconnect"} title={isFullCatalog ? "Remove the separate full-catalog launch profile" : (claudeStatus?.hasBackup ? "Restore the pre-Switchboard Claude Code settings" : "Remove Switchboard settings from Claude Code")}>
-                  <span className="material-symbols-outlined text-[14px] mr-1">link_off</span>{isFullCatalog ? "Remove full catalog" : "Disconnect hybrid"}
+                <Button variant="outline" size="sm" onClick={handleDisconnect} disabled={controlsLocked || (isFullCatalog ? (!fullCatalogProfile?.configured && !fullCatalogProfileError) : !claudeStatus?.hasSwitchboard)} loading={operation === "disconnect"} title={isFullCatalog ? "Remove the separate full-catalog launch profile" : (claudeStatus?.hasBackup ? "Restore the pre-Switchboard Claude Code settings" : "Remove Switchboard settings from Claude Code")}>
+                  <span className="material-symbols-outlined text-[14px] mr-1">link_off</span>{isFullCatalog && fullCatalogProfileError ? "Remove unreadable profile" : isFullCatalog ? "Remove full catalog" : "Disconnect hybrid"}
                 </Button>
-                <Button variant="ghost" size="sm" onClick={() => setShowManualConfigModal(true)}>
+                <Button variant="ghost" size="sm" onClick={handleOpenManualConfig}>
                   <span className="material-symbols-outlined text-[14px] mr-1">content_copy</span>Manual Config
                 </Button>
               </div>
@@ -897,7 +1017,7 @@ export default function ClaudeToolCard({
         isOpen={showManualConfigModal}
         onClose={() => setShowManualConfigModal(false)}
         title="Claude CLI - Manual Configuration"
-        configs={getManualConfigs()}
+        configs={manualConfigs}
       />
     </Card>
   );

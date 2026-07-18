@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   beginClaudeToolOperation,
+  buildClaudeCatalogDraftFingerprint,
   buildClaudeSettingsMutation,
   finishClaudeToolOperation,
   isClaudeToolOperationCurrent,
   readClaudeModelMappings,
+  requestClaudePickerLabels,
 } from "../../src/app/(dashboard)/dashboard/cli-tools/components/claudeSettingsForm.js";
 
 const models = [
@@ -13,6 +15,44 @@ const models = [
 ];
 
 describe("Claude Code settings form", () => {
+  it("detects meaningful full-catalog draft changes", () => {
+    const saved = buildClaudeCatalogDraftFingerprint({
+      baseUrl: "http://127.0.0.1:20128/v1/",
+      models: ["kr/claude-opus-4-8"],
+      pickerLabels: { "kr/claude-opus-4-8": "KR Opus" },
+    });
+
+    expect(buildClaudeCatalogDraftFingerprint({
+      baseUrl: "http://127.0.0.1:20128/v1",
+      models: ["kr/claude-opus-4-8"],
+      pickerLabels: { "kr/claude-opus-4-8": "KR Opus" },
+    })).toBe(saved);
+    expect(buildClaudeCatalogDraftFingerprint({
+      baseUrl: "http://127.0.0.1:20128/v1",
+      models: ["kr/claude-opus-4-8"],
+      pickerLabels: { "kr/claude-opus-4-8": "KR Opus APAC" },
+    })).not.toBe(saved);
+  });
+
+  it("generates labels in batches without exposing the request limit", async () => {
+    const modelIds = Array.from({ length: 81 }, (_, index) => `kr/model-${index + 1}`);
+    const batchSizes = [];
+    const fetchImpl = async (_url, options) => {
+      const body = JSON.parse(options.body);
+      batchSizes.push(body.modelIds.length);
+      return new Response(JSON.stringify({
+        source: "ai",
+        labels: Object.fromEntries(body.modelIds.map((modelId) => [modelId, `Label ${modelId}`])),
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+
+    const result = await requestClaudePickerLabels({ modelIds, fetchImpl });
+
+    expect(batchSizes).toEqual([40, 40, 1]);
+    expect(Object.keys(result.labels)).toEqual(modelIds);
+    expect(result.source).toBe("ai");
+  });
+
   it("shows restored file values instead of substituting cc/* defaults", () => {
     expect(readClaudeModelMappings(models, {
       env: { ANTHROPIC_DEFAULT_OPUS_MODEL: "anthropic/previous-opus" },

@@ -552,39 +552,46 @@ export async function OPTIONS() {
 }
 
 /**
+ * Build Claude Code gateway-discovery rows for the full-catalog profile.
+ * Uses the saved selection directly so discovery stays within Claude Code's
+ * 3-second timeout instead of re-fetching every provider catalog first.
+ *
+ * @param {string[]} selectedModelIds
+ * @param {Record<string, string>} [pickerLabels]
+ */
+export function buildClaudeFullCatalogDiscoveryModels(selectedModelIds, pickerLabels = {}) {
+  const customLabels = normalizeClaudeCatalogPickerLabels(pickerLabels, selectedModelIds);
+  const displayNames = buildClaudeCatalogDisplayNameMap(selectedModelIds);
+  return selectedModelIds.map((modelId) => ({
+    id: encodeClaudeCatalogModelId(modelId),
+    object: "model",
+    owned_by: "switchboard-catalog",
+    display_name: customLabels[modelId]
+      || formatClaudeCatalogDisplayName(modelId, displayNames),
+    description: modelId,
+  }));
+}
+
+/**
  * GET /v1/models - OpenAI compatible models list (LLM/chat models only by default).
  * For other capabilities use /v1/models/{kind} (image, tts, stt, embedding, image-to-text, web).
  */
 export async function GET(request) {
   try {
+    if (isClaudeFullCatalogRequest(request?.headers)) {
+      const selectedModelIds = readClaudeCatalogSelectionFromHeaders(request?.headers);
+      const data = buildClaudeFullCatalogDiscoveryModels(
+        selectedModelIds,
+        readClaudeCatalogPickerLabelsFromHeaders(request?.headers),
+      );
+      return Response.json({ object: "list", data });
+    }
+
     const models = await buildModelsList([LLM_KIND], {
       signal: request?.signal,
       skipCompatibleDiscovery: isModelCatalogDiscoveryRequest(request),
     });
-    let data = models;
-    if (isClaudeFullCatalogRequest(request?.headers)) {
-      const selectedModelIds = readClaudeCatalogSelectionFromHeaders(request?.headers);
-      const selectedModels = new Set(selectedModelIds);
-      const customLabels = normalizeClaudeCatalogPickerLabels(
-        readClaudeCatalogPickerLabelsFromHeaders(request?.headers),
-        selectedModelIds,
-      );
-      const displayNames = buildClaudeCatalogDisplayNameMap(selectedModelIds);
-      const catalogModels = [];
-      for (const model of models) {
-        if (!selectedModels.has(model.id)) continue;
-        const displayName = customLabels[model.id]
-          || formatClaudeCatalogDisplayName(model.id, displayNames);
-        catalogModels.push({
-          id: encodeClaudeCatalogModelId(model.id),
-          object: "model",
-          owned_by: "switchboard-catalog",
-          display_name: displayName,
-          description: model.id,
-        });
-      }
-      data = catalogModels;
-    }
+    const data = models;
     return Response.json({ object: "list", data }, {
     });
   } catch (error) {
