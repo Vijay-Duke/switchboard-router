@@ -31,11 +31,22 @@ describe("CLI model catalog configuration", () => {
   it("builds every selected Pi model while preserving existing metadata", () => {
     const entries = buildPiModelEntries(MODELS, [
       { id: "cx/gpt-5.6", name: "GPT", contextWindow: 42, reasoning: true },
-    ]);
+    ], {
+      "cx/gpt-5.6": "Cursor GPT 5.6",
+      "cc/claude-sonnet-5": "Claude Sonnet",
+    });
 
     expect(entries).toHaveLength(2);
-    expect(entries[0]).toMatchObject({ id: "cx/gpt-5.6", name: "GPT", contextWindow: 42, reasoning: true });
-    expect(entries[1]).toMatchObject({ id: "cc/claude-sonnet-5" });
+    expect(entries[0]).toMatchObject({
+      id: "cx/gpt-5.6",
+      name: "Cursor GPT 5.6",
+      contextWindow: 42,
+      reasoning: true,
+    });
+    expect(entries[1]).toMatchObject({
+      id: "cc/claude-sonnet-5",
+      name: "Claude Sonnet",
+    });
   });
 
   it("writes jcode's repeated provider model catalog and an explicit default", () => {

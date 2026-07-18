@@ -16,6 +16,8 @@ import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import ModelCatalogInput from "./ModelCatalogInput";
 import { reportClientError } from "@/shared/utils/clientFeedback";
+import { requestPickerLabels } from "./pickerLabelsClient";
+import { buildClaudeCatalogDisplayNameMap } from "@/shared/claudeCatalogDisplay.js";
 
 /**
  * @param {object} props
@@ -23,10 +25,11 @@ import { reportClientError } from "@/shared/utils/clientFeedback";
  * @param {string} props.endpoint - e.g. /api/cli-tools/grok-settings
  * @param {string} [props.installHint]
  * @param {string} [props.runHint]
- * @param {(ctx: { baseUrl: string, apiKey: string, model: string, models: string[], defaultModel: string }) => Array<{filename: string, content: string}>} [props.buildManualConfigs]
+ * @param {(ctx: { baseUrl: string, apiKey: string, model: string, models: string[], defaultModel: string, pickerLabels: Record<string, string> }) => Array<{filename: string, content: string}>} [props.buildManualConfigs]
  * @param {boolean} [props.multipleModels]
  * @param {boolean} [props.hasDefaultModel]
  * @param {boolean} [props.requiresModelScope]
+ * @param {boolean} [props.supportsModelLabels]
  * @param {boolean} props.isExpanded
  * @param {Function} props.onToggle
  * @param {boolean} [props.hasActiveProviders]
@@ -48,6 +51,7 @@ export default function OpenAiCompatToolCard({
   multipleModels = false,
   hasDefaultModel = true,
   requiresModelScope = false,
+  supportsModelLabels = false,
   isExpanded,
   onToggle,
   hasActiveProviders,
@@ -68,6 +72,10 @@ export default function OpenAiCompatToolCard({
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
   const [selectedModels, setSelectedModels] = useState([]);
+  const [pickerLabels, setPickerLabels] = useState({});
+  const [pickerLabelOverrides, setPickerLabelOverrides] = useState({});
+  const [pickerNamingModel, setPickerNamingModel] = useState("");
+  const [generatingPickerLabels, setGeneratingPickerLabels] = useState(false);
   const [modelDraft, setModelDraft] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [modelAliases, setModelAliases] = useState({});
@@ -95,6 +103,7 @@ export default function OpenAiCompatToolCard({
   };
 
   const configStatus = getConfigStatus();
+  const controlsLocked = applying || restoring || generatingPickerLabels;
 
   /** Notes that are install-only should not appear once the binary is present. */
   const visibleNotes = (tool.notes || []).filter((note) => {
@@ -158,13 +167,22 @@ export default function OpenAiCompatToolCard({
           ? [status.settings.model]
           : [];
       setSelectedModels([...new Set(configuredModels)]);
+      if (supportsModelLabels) {
+        const savedLabels = status.settings?.pickerLabels;
+        const displayNames = buildClaudeCatalogDisplayNameMap(configuredModels);
+        setPickerLabels(Object.fromEntries(configuredModels.map((model) => [
+          model,
+          String(savedLabels?.[model] || displayNames.get(model) || model),
+        ])));
+        setPickerLabelOverrides({});
+      }
       if (status.settings?.defaultModel || status.settings?.model) {
         setSelectedModel(status.settings.defaultModel || status.settings.model);
       } else if (configuredModels[0]) {
         setSelectedModel(configuredModels[0]);
       }
     }
-  }, [status]);
+  }, [status, supportsModelLabels]);
 
   const checkStatus = async () => {
     setChecking(true);
@@ -198,23 +216,50 @@ export default function OpenAiCompatToolCard({
     || (apiKeys?.length > 0 ? apiKeys[0].key : null)
     || (!cloudEnabled ? "sk_switchboard" : null);
 
+  const fillPickerLabels = (models, currentLabels) => {
+    const displayNames = buildClaudeCatalogDisplayNameMap(models);
+    return Object.fromEntries(models.map((model) => [
+      model,
+      currentLabels[model] !== undefined
+        ? String(currentLabels[model])
+        : String(displayNames.get(model) || model).slice(0, 48),
+    ]));
+  };
+
   const addModel = (value = modelDraft) => {
+    if (controlsLocked) return;
     const model = value.trim();
     if (!model) return;
-    setSelectedModels((current) => current.includes(model) ? current : [...current, model]);
+    if (selectedModels.includes(model)) return;
+    const next = [...selectedModels, model];
+    setSelectedModels(next);
+    if (supportsModelLabels) {
+      const updated = fillPickerLabels(next, pickerLabels);
+      setPickerLabels(updated);
+      setPickerLabelOverrides((overrides) => ({
+        ...overrides,
+        [model]: updated[model],
+      }));
+    }
     if (hasDefaultModel && !selectedModel) setSelectedModel(model);
     setModelDraft("");
   };
 
   const removeModel = (model) => {
-    setSelectedModels((current) => {
-      const next = current.filter((entry) => entry !== model);
-      if (selectedModel === model) setSelectedModel(next[0] || "");
-      return next;
-    });
+    if (controlsLocked) return;
+    const next = selectedModels.filter((entry) => entry !== model);
+    setSelectedModels(next);
+    if (supportsModelLabels) {
+      setPickerLabels((labels) => fillPickerLabels(next, labels));
+      setPickerLabelOverrides((overrides) => Object.fromEntries(
+        Object.entries(overrides).filter(([modelId]) => modelId !== model),
+      ));
+    }
+    if (selectedModel === model) setSelectedModel(next[0] || "");
   };
 
   const handleApply = async () => {
+    if (controlsLocked) return;
     setApplying(true);
     setMessage(null);
     try {
@@ -227,11 +272,16 @@ export default function OpenAiCompatToolCard({
           model: multipleModels ? (selectedModel || selectedModels[0]) : selectedModel,
           models: multipleModels ? selectedModels : undefined,
           defaultModel: multipleModels && hasDefaultModel ? (selectedModel || selectedModels[0]) : undefined,
+          pickerLabels: supportsModelLabels ? pickerLabelOverrides : undefined,
         }),
       });
       const data = await res.json();
       if (res.ok) {
         setMessage({ type: "success", text: data.message || "Settings applied successfully!" });
+        if (supportsModelLabels && data.pickerLabels && typeof data.pickerLabels === "object") {
+          setPickerLabels(data.pickerLabels);
+        }
+        setPickerLabelOverrides({});
         checkStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to apply settings" });
@@ -244,6 +294,7 @@ export default function OpenAiCompatToolCard({
   };
 
   const handleReset = async () => {
+    if (controlsLocked) return;
     setRestoring(true);
     setMessage(null);
     try {
@@ -253,6 +304,8 @@ export default function OpenAiCompatToolCard({
         setMessage({ type: "success", text: data.message || "Settings reset successfully!" });
         setSelectedModel("");
         setSelectedModels([]);
+        setPickerLabels({});
+        setPickerLabelOverrides({});
         checkStatus();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
@@ -265,11 +318,47 @@ export default function OpenAiCompatToolCard({
   };
 
   const handleModelSelect = (model) => {
+    if (controlsLocked) return;
     if (multipleModels) {
       addModel(model.value);
     } else {
       setSelectedModel(model.value);
       setModalOpen(false);
+    }
+  };
+
+  const handleGeneratePickerLabels = async () => {
+    if (selectedModels.length === 0 || controlsLocked) return;
+    setGeneratingPickerLabels(true);
+    setMessage(null);
+    try {
+      const data = await requestPickerLabels({
+        modelIds: selectedModels,
+        namingModel: pickerNamingModel,
+        existingLabels: fillPickerLabels(selectedModels, pickerLabels),
+      });
+      const labels = data.labels && typeof data.labels === "object" ? data.labels : {};
+      setPickerLabels((current) => fillPickerLabels(selectedModels, {
+        ...current,
+        ...labels,
+      }));
+      setPickerLabelOverrides((current) => ({
+        ...current,
+        ...labels,
+      }));
+      setMessage({
+        type: "success",
+        text: data.source === "ai"
+          ? `Improved ${Object.keys(labels).length} Pi model labels with AI. Click Apply to save.`
+          : `Refreshed ${Object.keys(labels).length} Pi model labels. Click Apply to save.`,
+      });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "Failed to generate model labels",
+      });
+    } finally {
+      setGeneratingPickerLabels(false);
     }
   };
 
@@ -287,6 +376,7 @@ export default function OpenAiCompatToolCard({
         model,
         models,
         defaultModel: selectedModel || models[0],
+        pickerLabels: fillPickerLabels(models, pickerLabels),
       });
     }
     return [
@@ -519,18 +609,81 @@ export default function OpenAiCompatToolCard({
                 </div>
 
                 {multipleModels ? (
-                  <ModelCatalogInput
-                    models={selectedModels}
-                    draft={modelDraft}
-                    onDraftChange={setModelDraft}
-                    onAdd={() => addModel()}
-                    onRemove={removeModel}
-                    onOpenPicker={() => setModalOpen(true)}
-                    canOpenPicker={Boolean(hasActiveProviders)}
-                    defaultModel={hasDefaultModel ? selectedModel : undefined}
-                    onDefaultChange={hasDefaultModel ? setSelectedModel : undefined}
-                    label={hasDefaultModel ? "Models" : "Available Models"}
-                  />
+                  <>
+                    <ModelCatalogInput
+                      models={selectedModels}
+                      draft={modelDraft}
+                      onDraftChange={setModelDraft}
+                      onAdd={() => addModel()}
+                      onRemove={removeModel}
+                      onOpenPicker={() => setModalOpen(true)}
+                      canOpenPicker={Boolean(hasActiveProviders) && !controlsLocked}
+                      defaultModel={hasDefaultModel ? selectedModel : undefined}
+                      onDefaultChange={hasDefaultModel ? setSelectedModel : undefined}
+                      label={hasDefaultModel ? "Models" : "Available Models"}
+                    />
+                    {supportsModelLabels && selectedModels.length > 0 && (
+                      <div className="mt-2 rounded-lg border border-blue-500/30 bg-blue-500/5 p-3">
+                        <h4 className="text-sm font-semibold text-text-main">Pi model labels</h4>
+                        <p className="mt-1 text-xs leading-relaxed text-text-muted">
+                          These names appear in Pi&apos;s <code>/model</code> picker. Edit them directly, or optionally use a model to improve all labels with AI.
+                        </p>
+                        <div className="mt-3 grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
+                          <label htmlFor={`${tool.id}-picker-labeling-model`} className="text-xs font-semibold text-text-main sm:text-right">
+                            Labeling model
+                          </label>
+                          <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
+                          <input
+                            id={`${tool.id}-picker-labeling-model`}
+                            type="text"
+                            disabled={controlsLocked}
+                            value={pickerNamingModel}
+                            onChange={(event) => setPickerNamingModel(event.target.value)}
+                            placeholder="Cheap model for AI labels (optional)"
+                            className="w-full min-w-0 rounded border border-border bg-surface px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleGeneratePickerLabels}
+                            disabled={controlsLocked}
+                            className="flex min-h-10 items-center justify-center gap-1 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 text-xs font-medium text-blue-700 transition-colors hover:border-blue-500 hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-300"
+                          >
+                            <span className={`material-symbols-outlined text-[16px] ${generatingPickerLabels ? "animate-spin" : ""}`}>
+                              {generatingPickerLabels ? "progress_activity" : "auto_awesome"}
+                            </span>
+                            {generatingPickerLabels
+                              ? "Generating..."
+                              : pickerNamingModel.trim()
+                                ? "Improve labels with AI"
+                                : "Refresh labels"}
+                          </button>
+                        </div>
+                        <div className="mt-3 flex max-h-56 flex-col gap-1.5 overflow-y-auto">
+                          {selectedModels.map((model) => (
+                            <div key={model} className="rounded border border-border bg-surface px-2 py-1.5">
+                              <input
+                                type="text"
+                                disabled={controlsLocked}
+                                value={pickerLabels[model] || ""}
+                                maxLength={48}
+                                onChange={(event) => {
+                                  const label = event.target.value;
+                                  setPickerLabels((current) => ({ ...current, [model]: label }));
+                                  setPickerLabelOverrides((current) => ({ ...current, [model]: label }));
+                                }}
+                                aria-label={`Pi picker label for ${model}`}
+                                className="w-full min-w-0 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-text-main focus:outline-none focus:ring-1 focus:ring-primary/50"
+                              />
+                              <div className="mt-1 flex min-w-0 items-center gap-2 text-[10px] text-text-muted">
+                                <code className="min-w-0 flex-1 truncate" title={model}>{model}</code>
+                                <span className="shrink-0">{(pickerLabels[model] || "").length}/48</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 ) : (
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
                   <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">
@@ -596,7 +749,7 @@ export default function OpenAiCompatToolCard({
                   variant="primary"
                   size="sm"
                   onClick={handleApply}
-                  disabled={multipleModels ? selectedModels.length === 0 : !selectedModel}
+                  disabled={controlsLocked || (multipleModels ? selectedModels.length === 0 : !selectedModel)}
                   loading={applying}
                 >
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>
@@ -606,7 +759,7 @@ export default function OpenAiCompatToolCard({
                   variant="outline"
                   size="sm"
                   onClick={handleReset}
-                  disabled={!status?.hasSwitchboard}
+                  disabled={controlsLocked || !status?.hasSwitchboard}
                   loading={restoring}
                 >
                   <span className="material-symbols-outlined text-[14px] mr-1">restore</span>

@@ -14,8 +14,8 @@ import {
   finishClaudeToolOperation,
   isClaudeToolOperationCurrent,
   readClaudeModelMappings,
-  requestClaudePickerLabels,
 } from "./claudeSettingsForm";
+import { requestPickerLabels } from "./pickerLabelsClient";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 import {
   buildClaudeFullCatalogProfile,
@@ -540,7 +540,7 @@ export default function ClaudeToolCard({
     setGeneratingPickerLabels(true);
     setMessage(null);
     try {
-      const data = await requestClaudePickerLabels({
+      const data = await requestPickerLabels({
         modelIds,
         namingModel: pickerNamingModel,
         existingLabels: buildCurrentPickerLabels(),

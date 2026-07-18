@@ -6,8 +6,8 @@ import {
   finishClaudeToolOperation,
   isClaudeToolOperationCurrent,
   readClaudeModelMappings,
-  requestClaudePickerLabels,
 } from "../../src/app/(dashboard)/dashboard/cli-tools/components/claudeSettingsForm.js";
+import { requestPickerLabels } from "../../src/app/(dashboard)/dashboard/cli-tools/components/pickerLabelsClient.js";
 
 const models = [
   { alias: "opus", envKey: "ANTHROPIC_DEFAULT_OPUS_MODEL", defaultValue: "cc/claude-opus-4-8" },
@@ -46,7 +46,7 @@ describe("Claude Code settings form", () => {
       }), { status: 200, headers: { "content-type": "application/json" } });
     };
 
-    const result = await requestClaudePickerLabels({ modelIds, fetchImpl });
+    const result = await requestPickerLabels({ modelIds, fetchImpl });
 
     expect(batchSizes).toEqual([40, 40, 1]);
     expect(Object.keys(result.labels)).toEqual(modelIds);

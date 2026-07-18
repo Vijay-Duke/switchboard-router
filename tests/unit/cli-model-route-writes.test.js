@@ -351,6 +351,42 @@ describe("CLI catalog routes write native client schemas", () => {
     const { POST } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
     expect((await POST(post({ ...payload, baseUrl: [] }))).status).toBe(400);
     expect((await POST(post({ ...payload, apiKey: { value: "bad" } }))).status).toBe(400);
+    expect((await POST(post({
+      ...payload,
+      pickerLabels: { "cx/gpt-5.6": { label: "not a string" } },
+    }))).status).toBe(400);
+  });
+
+  it("preserves untouched Pi model names exactly during Apply", async () => {
+    const piDir = path.join(home, ".pi/agent");
+    const originalName = `Existing · ${"long-name-".repeat(7)}`;
+    await fs.mkdir(piDir, { recursive: true });
+    await fs.writeFile(path.join(piDir, "models.json"), JSON.stringify({
+      providers: {
+        switchboard: {
+          baseUrl: "http://127.0.0.1:20128/v1",
+          models: [{ id: "cx/gpt-5.6", name: originalName, contextWindow: 42 }],
+        },
+      },
+    }));
+    await fs.writeFile(path.join(piDir, "settings.json"), JSON.stringify({}));
+
+    const { GET, POST, DELETE } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
+    const before = await (await GET()).json();
+    expect(before.settings.pickerLabels["cx/gpt-5.6"]).toBe(originalName);
+    expect((await POST(post({
+      ...payload,
+      models: ["cx/gpt-5.6"],
+      defaultModel: "cx/gpt-5.6",
+    }))).status).toBe(200);
+
+    const config = JSON.parse(await fs.readFile(path.join(piDir, "models.json"), "utf8"));
+    expect(config.providers.switchboard.models[0]).toMatchObject({
+      id: "cx/gpt-5.6",
+      name: originalName,
+      contextWindow: 42,
+    });
+    expect((await DELETE()).status).toBe(200);
   });
 
   it("repairs structurally invalid Pi provider catalogs during Apply", async () => {
@@ -433,10 +469,23 @@ describe("CLI catalog routes write native client schemas", () => {
     const { GET, POST, DELETE } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
     const before = await (await GET()).json();
     expect(before.settings.scopeConfigured).toBe(false);
-    expect((await POST(post())).status).toBe(200);
+    const pickerLabels = {
+      "cx/gpt-5.6": "Cursor — GPT 5.6",
+      "cc/claude-sonnet-5": "Claude Sonnet",
+    };
+    const persistedPickerLabels = {
+      "cx/gpt-5.6": "Cursor | GPT 5.6",
+      "cc/claude-sonnet-5": "Claude Sonnet",
+    };
+    const applyResponse = await POST(post({ ...payload, pickerLabels }));
+    expect(applyResponse.status).toBe(200);
+    expect((await applyResponse.json()).pickerLabels).toEqual(persistedPickerLabels);
     const config = JSON.parse(await fs.readFile(path.join(piDir, "models.json"), "utf8"));
     const settings = JSON.parse(await fs.readFile(path.join(piDir, "settings.json"), "utf8"));
     expect(config.providers.switchboard.models.map((entry) => entry.id)).toEqual(payload.models);
+    expect(Object.fromEntries(
+      config.providers.switchboard.models.map((entry) => [entry.id, entry.name]),
+    )).toEqual(persistedPickerLabels);
     expect(config.providers.zai.models[0].id).toBe("glm-4.5-air");
     expect(settings).toMatchObject({
       theme: "dark",
@@ -446,6 +495,7 @@ describe("CLI catalog routes write native client schemas", () => {
     });
     const status = await (await GET()).json();
     expect(status.settings.defaultModel).toBe(payload.defaultModel);
+    expect(status.settings.pickerLabels).toEqual(persistedPickerLabels);
     expect(status.settings.scopeConfigured).toBe(true);
 
     expect((await DELETE()).status).toBe(200);

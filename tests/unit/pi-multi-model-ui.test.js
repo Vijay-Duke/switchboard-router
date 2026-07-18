@@ -26,4 +26,17 @@ describe("Pi multi-model picker", () => {
     expect(modal).toContain('aria-live="polite"');
     expect(modal).toContain("Done selecting");
   });
+
+  it("exposes editable and bulk-generated labels for Pi models", () => {
+    const piCard = source("src/app/(dashboard)/dashboard/cli-tools/components/PiToolCard.js");
+    const sharedCard = source("src/app/(dashboard)/dashboard/cli-tools/components/OpenAiCompatToolCard.js");
+
+    expect(piCard).toContain("supportsModelLabels");
+    expect(piCard).toContain("pickerLabels[model]");
+    expect(sharedCard).toContain("Pi model labels");
+    expect(sharedCard).toContain("Improve labels with AI");
+    expect(sharedCard).toContain("pickerLabels: supportsModelLabels");
+    expect(sharedCard).toContain("if (controlsLocked) return");
+    expect(sharedCard).toContain("disabled={controlsLocked}");
+  });
 });

@@ -48,8 +48,9 @@ export function modelDisplayName(id) {
 /**
  * @param {unknown} modelIds
  * @param {Array<Record<string, any>>} [previous]
+ * @param {Record<string, string>} [pickerLabels]
  */
-export function buildPiModelEntries(modelIds, previous = []) {
+export function buildPiModelEntries(modelIds, previous = [], pickerLabels = {}) {
   const byId = new Map(previous.filter((entry) => entry?.id).map((entry) => [entry.id, entry]));
   return normalizeModelIds(modelIds).map((id) => ({
     reasoning: false,
@@ -58,7 +59,9 @@ export function buildPiModelEntries(modelIds, previous = []) {
     maxTokens: 16384,
     ...byId.get(id),
     id,
-    name: byId.get(id)?.name || modelDisplayName(id),
+    name: String(pickerLabels[id] || "").trim().slice(0, 48)
+      || byId.get(id)?.name
+      || modelDisplayName(id),
   }));
 }
 

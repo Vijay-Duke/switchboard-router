@@ -20,6 +20,7 @@ import {
   resolveDefaultModel,
 } from "@/lib/cli/modelCatalog.js";
 import { replaceCliFiles, restoreObjectKeys, snapshotObjectKeys } from "@/lib/cli/fileIo.js";
+import { normalizeClaudeCatalogPickerLabels } from "@/shared/claudeGateway.js";
 
 const execAsync = promisify(exec);
 
@@ -168,6 +169,11 @@ async function getPiSettings() {
     const models = Array.isArray(provider?.models)
       ? provider.models.map((entry) => entry?.id).filter(Boolean)
       : [];
+    const pickerLabels = Object.fromEntries(
+      (Array.isArray(provider?.models) ? provider.models : [])
+        .filter((entry) => entry?.id && entry?.name)
+        .map((entry) => [entry.id, entry.name]),
+    );
     const configuredDefault = piSettings.defaultProvider === PROVIDER_ID
       && models.includes(piSettings.defaultModel)
       ? piSettings.defaultModel
@@ -186,6 +192,7 @@ async function getPiSettings() {
         model,
         defaultModel: model,
         models,
+        pickerLabels,
         apiKeySet: !!provider?.apiKey,
         provider: PROVIDER_ID,
         scopeConfigured,
@@ -205,7 +212,14 @@ export async function GET() {
 
 async function postPiSettings(request) {
   try {
-    const { baseUrl, apiKey, model, models: requestedModels, defaultModel } = await request.json();
+    const {
+      baseUrl,
+      apiKey,
+      model,
+      models: requestedModels,
+      defaultModel,
+      pickerLabels: requestedPickerLabels,
+    } = await request.json();
     const [data, piSettings, rawBackup] = await Promise.all([
       readModels(),
       readSettings(),
@@ -220,13 +234,26 @@ async function postPiSettings(request) {
       ? [model, ...previousModels.map((entry) => entry?.id)]
       : requestedModels;
     const models = normalizeModelIds(legacyModels);
-    if (!isNonEmptyString(baseUrl) || !isOptionalString(apiKey) || models.length === 0) {
-      return NextResponse.json({ error: "baseUrl and at least one model are required" }, { status: 400 });
+    const pickerLabelsValid = requestedPickerLabels === undefined
+      || (
+        requestedPickerLabels
+        && typeof requestedPickerLabels === "object"
+        && !Array.isArray(requestedPickerLabels)
+        && Object.values(requestedPickerLabels).every((label) => typeof label === "string")
+      );
+    if (!isNonEmptyString(baseUrl)
+      || !isOptionalString(apiKey)
+      || models.length === 0
+      || !pickerLabelsValid) {
+      return NextResponse.json({
+        error: "baseUrl, models, API key, or picker labels are invalid",
+      }, { status: 400 });
     }
 
     const normalized = normalizeBaseUrl(baseUrl);
     const key = apiKey || "sk_switchboard";
     const activeModel = resolveDefaultModel(defaultModel || model, models);
+    const pickerLabels = normalizeClaudeCatalogPickerLabels(requestedPickerLabels, models);
     if (!data.providers || typeof data.providers !== "object" || Array.isArray(data.providers)) {
       data.providers = {};
     }
@@ -241,7 +268,7 @@ async function postPiSettings(request) {
         supportsReasoningEffort: true,
         supportsUsageInStreaming: true,
       },
-      models: buildPiModelEntries(models, previousModels),
+      models: buildPiModelEntries(models, previousModels, pickerLabels),
     };
     const backup = storedBackup?.version === BACKUP_VERSION
       ? storedBackup
@@ -268,6 +295,9 @@ async function postPiSettings(request) {
     return NextResponse.json({
       success: true,
       message: `Pi configured with ${models.length} model${models.length === 1 ? "" : "s"}. ${activeModel} is the default; use /model to switch.`,
+      pickerLabels: Object.fromEntries(
+        managedProvider.models.map((entry) => [entry.id, entry.name]),
+      ),
       configPath: getModelsPath(),
       settingsPath: getSettingsPath(),
     });
