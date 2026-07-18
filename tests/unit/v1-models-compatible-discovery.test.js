@@ -257,6 +257,27 @@ describe("/v1/models compatible-provider discovery", () => {
     );
   });
 
+  it("keeps probe-removed compatible models out of live discovery", async () => {
+    const providerId = "openai-compatible-responses-5f69ccc9-f1e2-4faa-acf6-d5551eab7cce";
+    mocks.getDisabledModels.mockResolvedValueOnce({
+      [providerId]: ["bedrock/stale-model", "mixedcase/model"],
+    });
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: [
+        { id: "bedrock/stale-model" },
+        { id: "models/MixedCase/Model" },
+        { id: "bedrock/available-model" },
+      ],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+
+    const { buildModelsList } = await import("../../src/app/api/v1/models/route.js");
+    const models = await buildModelsList(["llm"]);
+
+    expect(models.map((model) => model.id)).toEqual([
+      "lite-llm/bedrock/available-model",
+    ]);
+  });
+
   it("replaces a stale enabled-model snapshot with the current live catalog", async () => {
     mocks.getProviderConnections.mockResolvedValueOnce([{
       id: "compatible-connection",

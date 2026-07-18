@@ -13,7 +13,11 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { translate } from "@/i18n/runtime";
 import { fetchSuggestedModels } from "@/shared/utils/providerModelsFetcher";
-import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
+import {
+  buildCanonicalDisabledModelSet,
+  getProviderCustomModelRows,
+  isCanonicalModelDisabled,
+} from "@/shared/utils/providerCustomModels";
 import { normalizeImportedModel } from "@/shared/utils/importProviderModels";
 import ModelRow from "./ModelRow";
 import PassthroughModelsSection from "./PassthroughModelsSection";
@@ -191,6 +195,13 @@ export default function ProviderDetailPage() {
   const providerDisplayAlias = isCompatible
     ? (providerNode?.prefix || providerId)
     : providerAlias;
+  const disabledCanonicalIds = buildCanonicalDisabledModelSet(
+    disabledModelIds,
+    providerStorageAlias,
+  );
+  const isProviderModelDisabled = (modelId) => (
+    isCanonicalModelDisabled(disabledCanonicalIds, modelId, providerStorageAlias)
+  );
 
   const fetchDisabledModels = useCallback(async () => {
     try {
@@ -218,9 +229,12 @@ export default function ProviderDetailPage() {
   const handleEnableModel = async (modelId) => {
     try {
       const res = await fetch(`/api/models/disabled?providerAlias=${encodeURIComponent(providerStorageAlias)}&id=${encodeURIComponent(modelId)}`, { method: "DELETE" });
-      if (res.ok) await fetchDisabledModels();
+      if (!res.ok) return false;
+      await fetchDisabledModels();
+      return true;
     } catch (error) {
       reportClientError("Error enabling model:", error);
+      return false;
     }
   };
 
@@ -693,7 +707,7 @@ export default function ProviderDetailPage() {
 
         // Already in static catalog — re-enable if user had disabled it
         if (builtInIds.has(id)) {
-          if (disabledModelIds.includes(id)) toReenable.push(id);
+          if (isProviderModelDisabled(id)) toReenable.push(id);
           continue;
         }
 
@@ -1148,6 +1162,8 @@ export default function ProviderDetailPage() {
           onRefreshModels={fetchCustomModels}
           connections={connections}
           isAnthropic={isAnthropicCompatible}
+          disabledModelIds={disabledModelIds}
+          onEnableModel={handleEnableModel}
         />
       );
     }
@@ -1157,9 +1173,8 @@ export default function ProviderDetailPage() {
       ...models,
       ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
     ].filter((m) => { const k = getModelKind(m); return !k || k === "llm"; });
-    const disabledSet = new Set(disabledModelIds);
-    const displayModels = allModels.filter((m) => !disabledSet.has(m.id));
-    const disabledDisplayModels = allModels.filter((m) => disabledSet.has(m.id));
+    const displayModels = allModels.filter((model) => !isProviderModelDisabled(model.id));
+    const disabledDisplayModels = allModels.filter((model) => isProviderModelDisabled(model.id));
     const customModelRows = getProviderCustomModelRows({
       customModels,
       modelAliases,
@@ -1170,6 +1185,7 @@ export default function ProviderDetailPage() {
 
     // Apply filter to custom models
     const filteredCustomModelRows = customModelRows.filter((model) => {
+      if (isProviderModelDisabled(model.id)) return false;
       if (modelFilter === "all") return true;
       const modelCanonicalId = canonicalModelId(model.id, providerStorageAlias);
       return (probeByModel[modelCanonicalId] || null) === modelFilter;
@@ -1741,7 +1757,7 @@ export default function ProviderDetailPage() {
                   ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
                 ].filter((m) => { const k = getModelKind(m); return !k || k === "llm"; }).map((m) => m.id)
               : [];
-            const activeIds = allIds.filter((id) => !disabledModelIds.includes(id));
+            const activeIds = allIds.filter((id) => !isProviderModelDisabled(id));
             return (
               <div className="flex flex-wrap gap-2">
                 {modelToolbarActions.showImport && (
@@ -1800,11 +1816,13 @@ export default function ProviderDetailPage() {
             type: "llm",
           });
           const verifyList = [
-            ...customRows.map((m) => ({ id: m.id, name: m.name || m.id, kind: "llm" })),
+            ...customRows
+              .filter((model) => !isProviderModelDisabled(model.id))
+              .map((m) => ({ id: m.id, name: m.name || m.id, kind: "llm" })),
             ...models
               .filter((m) => {
                 const k = getModelKind(m);
-                return (!k || k === "llm") && !disabledModelIds.includes(m.id);
+                return (!k || k === "llm") && !isProviderModelDisabled(m.id);
               })
               .map((m) => ({ id: m.id, name: m.name || m.id, kind: "llm" })),
           ];
@@ -1821,7 +1839,16 @@ export default function ProviderDetailPage() {
                 if (startedConnectionId) startVerifyStatusPolling(startedConnectionId);
               }}
               onComplete={async (s) => {
+                if (s?.removedStatus) {
+                  setVerifyStatus((current) => current ? {
+                    ...current,
+                    dead: Number(s.dead ?? current.dead ?? 0),
+                    retryable: Number(s.retryable ?? current.retryable ?? 0),
+                    retryableAuthOnly: s.retryableAuthOnly === true,
+                  } : current);
+                }
                 if (s?.removed > 0) await fetchCustomModels();
+                if (s?.removed > 0) await fetchDisabledModels();
                 if (s?.removed > 0 || s?.cacheCleared) await fetchProbes(activeConnection?.id);
               }}
             />

@@ -1,5 +1,19 @@
+import { canonicalModelId } from "@/lib/model-probe/canonicalId.js";
+
 function modelType(model) {
   return model?.kind || model?.type || "llm";
+}
+
+export function buildCanonicalDisabledModelSet(modelIds, providerAlias = "") {
+  return new Set(
+    (Array.isArray(modelIds) ? modelIds : [])
+      .map((modelId) => canonicalModelId(modelId, providerAlias))
+      .filter(Boolean),
+  );
+}
+
+export function isCanonicalModelDisabled(disabledIds, modelId, providerAlias = "") {
+  return disabledIds.has(canonicalModelId(modelId, providerAlias));
 }
 
 export function getProviderCustomModelRows({

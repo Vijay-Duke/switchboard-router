@@ -11,8 +11,10 @@ import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, AI_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 import {
+  buildCanonicalDisabledModelSet,
   getCompatibleProviderModelRows,
   getSelectableProviderModelRows,
+  isCanonicalModelDisabled,
 } from "@/shared/utils/providerCustomModels";
 
 // Provider order: OAuth first, then Free Tier, then API Key (matches dashboard/providers)
@@ -341,12 +343,14 @@ export default function ModelSelectModal({
     // Filter out disabled models per provider (disabled keyed by storage alias OR providerId)
     Object.entries(groups).forEach(([providerId, group]) => {
       const aliasKey = getProviderAlias(providerId);
-      const disabledIds = new Set([
+      const disabledIds = buildCanonicalDisabledModelSet([
         ...(disabledModels[aliasKey] || []),
         ...(disabledModels[providerId] || []),
-      ]);
+      ], aliasKey);
       if (disabledIds.size === 0) return;
-      group.models = group.models.filter((m) => !disabledIds.has(m.id));
+      group.models = group.models.filter(
+        (model) => !isCanonicalModelDisabled(disabledIds, model.id, aliasKey),
+      );
       if (group.models.length === 0) delete groups[providerId];
     });
 

@@ -1,11 +1,26 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCanonicalDisabledModelSet,
   getCompatibleProviderModelRows,
   getProviderCustomModelRows,
   getSelectableProviderModelRows,
+  isCanonicalModelDisabled,
 } from "@/shared/utils/providerCustomModels.js";
 
 describe("provider custom model rows", () => {
+  it("matches disabled IDs across casing and models prefixes", () => {
+    const disabled = buildCanonicalDisabledModelSet(
+      ["mixedcase/model"],
+      "lite-llm",
+    );
+
+    expect(isCanonicalModelDisabled(
+      disabled,
+      "models/MixedCase/Model",
+      "lite-llm",
+    )).toBe(true);
+  });
+
   it("keeps identical model IDs separate per provider", () => {
     const customModels = [
       { providerAlias: "ollama", id: "minimax-m2.5", type: "llm", name: "MiniMax M2.5" },

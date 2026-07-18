@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import {
   deleteCustomModel,
+  disableModels,
   getCustomModels,
   getModelIdsByStatus,
   getProviderConnectionById,
@@ -39,6 +40,15 @@ export async function POST(request, { params }) {
       kind,
       { excludeFailureClasses },
     ));
+    const allMatching = status === "retryable"
+      ? new Set(await getModelIdsByStatus(
+        connection.provider,
+        scopeKey,
+        status,
+        kind,
+        { excludeFailureClasses: [] },
+      ))
+      : unavailable;
     const customModels = await getCustomModels();
     const removableModels = customModels.filter((model) => {
       const modelKind = model.kind || model.type || "llm";
@@ -46,11 +56,24 @@ export async function POST(request, { params }) {
       const canonicalId = canonicalModelId(model.id, providerAlias);
       return unavailable.has(canonicalId);
     });
-    const removedModels = await Promise.all(removableModels.map(async (model) => {
+    await Promise.all(removableModels.map(async (model) => {
       const modelKind = model.kind || model.type || "llm";
       await deleteCustomModel({ providerAlias, id: model.id, type: modelKind });
-      return { id: model.id, kind: modelKind, name: model.name || model.id };
     }));
+    const unavailableIds = [...unavailable];
+    await disableModels(providerAlias, unavailableIds);
+    const removedMetadata = new Map(removableModels.map((model) => [
+      canonicalModelId(model.id, providerAlias),
+      model,
+    ]));
+    const removedModels = unavailableIds.map((id) => {
+      const metadata = removedMetadata.get(id);
+      return {
+        id,
+        kind,
+        name: metadata?.name || metadata?.id || id,
+      };
+    });
 
     return NextResponse.json({
       success: true,
@@ -59,7 +82,9 @@ export async function POST(request, { params }) {
       scopeKey,
       providerAlias,
       status,
-      removed: removedModels.length,
+      removed: unavailableIds.length,
+      kept: Math.max(0, allMatching.size - unavailableIds.length),
+      deletedCustomModels: removableModels.length,
       removedModels,
     });
   } catch (error) {

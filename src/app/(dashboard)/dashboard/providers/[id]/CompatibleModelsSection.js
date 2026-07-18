@@ -4,7 +4,11 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
 import { Button } from "@/shared/components";
-import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels";
+import {
+  buildCanonicalDisabledModelSet,
+  getProviderCustomModelRows,
+  isCanonicalModelDisabled,
+} from "@/shared/utils/providerCustomModels";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias, onTest, testStatus, isTesting }) {
   const borderColor = testStatus === "ok"
@@ -86,6 +90,8 @@ export default function CompatibleModelsSection({
   onRefreshModels,
   connections,
   isAnthropic,
+  disabledModelIds = [],
+  onEnableModel,
 }) {
   const [newModel, setNewModel] = useState("");
   const [adding, setAdding] = useState(false);
@@ -112,12 +118,20 @@ export default function CompatibleModelsSection({
     }
   };
 
-  const allModels = getProviderCustomModelRows({
+  const disabledIds = buildCanonicalDisabledModelSet(
+    disabledModelIds,
+    providerStorageAlias,
+  );
+  const removedModelIds = [...disabledIds];
+  const allModelRows = getProviderCustomModelRows({
     customModels,
     modelAliases,
     providerAlias: providerStorageAlias,
     type: "llm",
   });
+  const allModels = allModelRows.filter(
+    (model) => !isCanonicalModelDisabled(disabledIds, model.id, providerStorageAlias),
+  );
 
   const handleAdd = async () => {
     if (!newModel.trim() || adding) return;
@@ -129,6 +143,10 @@ export default function CompatibleModelsSection({
 
     setAdding(true);
     try {
+      if (isCanonicalModelDisabled(disabledIds, modelId, providerStorageAlias)) {
+        const enabled = await onEnableModel?.(modelId);
+        if (enabled === false) throw new Error("Failed to enable removed model");
+      }
       await onAddCustomModel(modelId);
       setNewModel("");
     } catch (error) {
@@ -158,12 +176,15 @@ export default function CompatibleModelsSection({
         return;
       }
 
-      const existing = new Set(allModels.map((m) => m.id));
+      const existing = new Set(allModelRows.map((m) => m.id));
       const toAdd = [];
       const seen = new Set();
       for (const model of models) {
         const modelId = String(model.id || model.name || model.model || "").trim();
-        if (!modelId || existing.has(modelId) || seen.has(modelId)) continue;
+        if (!modelId
+          || existing.has(modelId)
+          || seen.has(modelId)
+          || isCanonicalModelDisabled(disabledIds, modelId, providerStorageAlias)) continue;
         seen.add(modelId);
         toAdd.push({
           providerAlias: providerStorageAlias,
@@ -261,6 +282,27 @@ export default function CompatibleModelsSection({
           ))}
         </div>
       )}
+
+      {removedModelIds.length > 0 && (
+        <details className="rounded-lg border border-border bg-surface/30 p-3">
+          <summary className="cursor-pointer text-sm font-medium text-text-main">
+            Removed models ({removedModelIds.length})
+          </summary>
+          <p className="mt-1 text-xs text-text-muted">
+            Enable a model to make it available for import and selection again.
+          </p>
+          <div className="mt-3 flex max-h-56 flex-col gap-1.5 overflow-y-auto">
+            {removedModelIds.map((modelId) => (
+              <div key={modelId} className="flex items-center justify-between gap-3 rounded border border-border bg-background px-2 py-1.5">
+                <code className="min-w-0 flex-1 truncate text-xs" title={modelId}>{modelId}</code>
+                <Button size="sm" variant="secondary" onClick={() => onEnableModel?.(modelId)}>
+                  Enable
+                </Button>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
@@ -281,4 +323,6 @@ CompatibleModelsSection.propTypes = {
     isActive: PropTypes.bool,
   })).isRequired,
   isAnthropic: PropTypes.bool,
+  disabledModelIds: PropTypes.arrayOf(PropTypes.string),
+  onEnableModel: PropTypes.func,
 };

@@ -97,6 +97,7 @@ export default function VerifyModelsPanel({
         ok: snap.ok || 0, dead: snap.dead || 0, retryable: snap.retryable || 0,
         tested: snap.done || 0, skippedDead: snap.skippedDead || 0, skippedDup: snap.skippedDup || 0,
         cancelled: snap.status === "cancelled",
+        retryableAuthOnly: snap.retryableAuthOnly === true,
       };
       setSummary(finalSummary);
       setLogLine(snap.status === "cancelled" ? "Cancelled (partial results saved)." : snap.status === "error" ? "Stopped." : "Done.");
@@ -164,14 +165,14 @@ export default function VerifyModelsPanel({
     if (isRetryable) {
       const confirmed = await requestConfirmation({
         title: "Remove retry-failed models?",
-        message: `Remove ${count} custom model(s) that failed with a retryable error? Timeouts, rate limits, network failures, and provider errors may be temporary. Credential failures are kept. Removed models can be imported again later.`,
-        confirmText: `Remove ${count}`,
+        message: `Review ${count} retryable result(s) and remove the eligible models? Timeouts, rate limits, network failures, and provider errors may be temporary. Credential failures are kept. Removed models can be enabled or imported again later.`,
+        confirmText: "Remove eligible",
       });
       if (!confirmed) return;
     }
     setRemovingStatus(status);
     setError("");
-    setLogLine(`Removing ${isRetryable ? "retry-failed" : "dead"} custom models…`);
+    setLogLine(`Removing ${isRetryable ? "retry-failed" : "dead"} models…`);
     try {
       const res = await fetch(`/api/providers/${connectionId}/model-probes/remove-unavailable`, {
         method: "POST",
@@ -184,10 +185,24 @@ export default function VerifyModelsPanel({
         return;
       }
       const removed = Number(data.removed || 0);
+      const kept = Number(data.kept || 0);
       const summaryKey = isRetryable ? "retryable" : "dead";
-      setSummary(summary ? { ...summary, [summaryKey]: 0 } : summary);
-      setLogLine(`Removed ${removed} ${isRetryable ? "retry-failed" : "dead"} custom model(s).`);
-      cbRef.current.onComplete?.({ ...(summary || {}), removed, removedStatus: status });
+      const nextSummary = summary ? {
+        ...summary,
+        [summaryKey]: kept,
+        ...(isRetryable ? { retryableAuthOnly: kept > 0 } : {}),
+      } : summary;
+      setSummary(nextSummary);
+      setLogLine(
+        `Removed ${removed} ${isRetryable ? "retry-failed" : "dead"} model(s).`
+        + (kept > 0 ? ` Kept ${kept} credential failure(s).` : ""),
+      );
+      cbRef.current.onComplete?.({
+        ...(nextSummary || {}),
+        removed,
+        kept,
+        removedStatus: status,
+      });
     } catch (removeError) {
       setError(removeError?.message || "Remove failed");
     } finally {
@@ -314,7 +329,7 @@ export default function VerifyModelsPanel({
               Remove {summary.dead} dead
             </Button>
           )}
-          {summary.retryable > 0 && (
+          {summary.retryable > 0 && !summary.retryableAuthOnly && (
             <Button size="sm" variant="danger" icon="delete_sweep" onClick={() => handleRemoveUnavailable("retryable")} disabled={running || Boolean(removingStatus)} loading={removingStatus === "retryable"}>
               Remove {summary.retryable} retry failures
             </Button>

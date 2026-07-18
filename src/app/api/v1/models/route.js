@@ -9,6 +9,10 @@ import {
 import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/db/index.js";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { isModelCatalogDiscoveryRequest, MODEL_CATALOG_HEADER } from "@/lib/modelCatalogDiscovery";
+import {
+  buildCanonicalDisabledModelSet,
+  isCanonicalModelDisabled,
+} from "@/shared/utils/providerCustomModels.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
@@ -255,7 +259,18 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
   } catch (e) {
     console.log("Could not fetch disabled models");
   }
-  const isDisabled = (alias, modelId) => Array.isArray(disabledByAlias[alias]) && disabledByAlias[alias].includes(modelId);
+  const disabledCanonicalByAlias = new Map(
+    Object.entries(disabledByAlias).map(([alias, modelIds]) => [
+      alias,
+      buildCanonicalDisabledModelSet(modelIds, alias),
+    ]),
+  );
+  const isDisabled = (alias, modelId) => {
+    const disabledIds = disabledCanonicalByAlias.get(alias);
+    return disabledIds
+      ? isCanonicalModelDisabled(disabledIds, modelId, alias)
+      : false;
+  };
 
   const activeConnectionByProvider = new Map();
   for (const conn of connections) {

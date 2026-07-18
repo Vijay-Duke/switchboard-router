@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const deleteCustomModel = vi.fn(async () => {});
-const getModelIdsByStatus = vi.fn(async () => ["retry-model"]);
+const disableModels = vi.fn(async () => {});
+const getModelIdsByStatus = vi.fn(async () => ["retry-model", "live-only-model"]);
 
 vi.mock("@/lib/db/index.js", () => ({
   deleteCustomModel,
+  disableModels,
   getCustomModels: vi.fn(async () => [
     { providerAlias: "lite-llm", id: "retry-model", kind: "llm", name: "Retry model" },
     { providerAlias: "lite-llm", id: "working-model", kind: "llm", name: "Working model" },
@@ -30,7 +32,9 @@ const req = (body) => ({ json: async () => body });
 describe("remove unavailable models route", () => {
   beforeEach(() => {
     deleteCustomModel.mockClear();
+    disableModels.mockClear();
     getModelIdsByStatus.mockClear();
+    getModelIdsByStatus.mockImplementation(async () => ["retry-model", "live-only-model"]);
   });
 
   it("removes retryable models only for the selected provider", async () => {
@@ -47,7 +51,11 @@ describe("remove unavailable models route", () => {
     );
     expect(deleteCustomModel).toHaveBeenCalledOnce();
     expect(deleteCustomModel).toHaveBeenCalledWith({ providerAlias: "lite-llm", id: "retry-model", type: "llm" });
-    expect(data).toMatchObject({ status: "retryable", removed: 1 });
+    expect(disableModels).toHaveBeenCalledWith(
+      "lite-llm",
+      ["retry-model", "live-only-model"],
+    );
+    expect(data).toMatchObject({ status: "retryable", removed: 2 });
   });
 
   it("keeps dead removal backward compatible when status is omitted", async () => {
@@ -63,6 +71,26 @@ describe("remove unavailable models route", () => {
       { excludeFailureClasses: [] },
     );
     expect(data.status).toBe("dead");
+  });
+
+  it("keeps credential failures out of retryable removal", async () => {
+    getModelIdsByStatus.mockImplementation(async (
+      _provider,
+      _scope,
+      _status,
+      _kind,
+      options,
+    ) => (
+      options.excludeFailureClasses.includes("auth")
+        ? ["retry-model"]
+        : ["retry-model", "auth-model"]
+    ));
+
+    const response = await POST(req({ status: "retryable", kind: "llm" }), { params });
+    const data = await response.json();
+
+    expect(disableModels).toHaveBeenCalledWith("lite-llm", ["retry-model"]);
+    expect(data).toMatchObject({ removed: 1, kept: 1 });
   });
 
   it("rejects unsupported probe statuses", async () => {
