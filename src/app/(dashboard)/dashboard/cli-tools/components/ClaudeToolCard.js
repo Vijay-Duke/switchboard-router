@@ -70,7 +70,7 @@ export default function ClaudeToolCard({
     /** @type {Array<{id: string, value: string, label: string, labelCustom: boolean}>} */ ([]),
   );
   const [pickerNamingModel, setPickerNamingModel] = useState("");
-  const [generatingLabelRowId, setGeneratingLabelRowId] = useState(null);
+  const [generatingPickerLabels, setGeneratingPickerLabels] = useState(false);
   const [routingMode, setRoutingMode] = useState(
     initialStatus?.routingMode === CLAUDE_ROUTING_MODES.PROXY
       ? CLAUDE_ROUTING_MODES.FULL_CATALOG
@@ -131,9 +131,9 @@ export default function ClaudeToolCard({
 
   const buildPickerLabelsPayload = () => buildClaudeCatalogPickerLabelsPayload(fullCatalogModels);
 
-  const buildExistingPickerLabels = (excludeValue = "") => Object.fromEntries(
+  const buildCurrentPickerLabels = () => Object.fromEntries(
     fullCatalogModels
-      .filter((model) => model.value && model.value !== excludeValue && model.label?.trim())
+      .filter((model) => model.value && model.label?.trim())
       .map((model) => [model.value, model.label.trim()]),
   );
 
@@ -488,40 +488,45 @@ export default function ClaudeToolCard({
     )));
   };
 
-  const handleGeneratePickerLabel = async (rowId) => {
-    const row = fullCatalogModels.find((entry) => entry.id === rowId);
-    if (!row?.value || generatingLabelRowId) return;
+  const handleGenerateAllPickerLabels = async () => {
+    const modelIds = fullCatalogModels.map((entry) => entry.value).filter(Boolean);
+    if (modelIds.length === 0 || generatingPickerLabels) return;
 
-    setGeneratingLabelRowId(rowId);
+    setGeneratingPickerLabels(true);
     setMessage(null);
     try {
       const res = await fetch("/api/cli-tools/claude-picker-labels", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          modelIds: [row.value],
+          modelIds,
           namingModel: pickerNamingModel.trim() || undefined,
-          existingLabels: buildExistingPickerLabels(row.value),
+          existingLabels: buildCurrentPickerLabels(),
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to generate picker label");
-      const nextLabel = data.labels?.[row.value];
-      if (!nextLabel) throw new Error("Label model returned no suggestion");
-      handlePickerLabelChange(rowId, nextLabel);
+      if (!res.ok) throw new Error(data.error || "Failed to generate picker labels");
+      const labels = data.labels && typeof data.labels === "object" ? data.labels : {};
+      setFullCatalogModels((current) => current.map((entry) => {
+        const nextLabel = labels[entry.value];
+        if (!nextLabel) return entry;
+        return { ...entry, label: nextLabel, labelCustom: true };
+      }));
+      const generatedCount = modelIds.filter((modelId) => labels[modelId]).length;
+      if (generatedCount === 0) throw new Error("Label model returned no suggestions");
       setMessage({
         type: "success",
         text: data.source === "ai"
-          ? "AI picker label generated."
-          : "Picker label generated from heuristics. Set a labeling model for AI suggestions.",
+          ? `Generated ${generatedCount} picker label${generatedCount === 1 ? "" : "s"} with AI.`
+          : `Generated ${generatedCount} picker label${generatedCount === 1 ? "" : "s"} from heuristics. Set a labeling model for AI suggestions.`,
       });
     } catch (error) {
       setMessage({
         type: "error",
-        text: error instanceof Error ? error.message : "Failed to generate picker label",
+        text: error instanceof Error ? error.message : "Failed to generate picker labels",
       });
     } finally {
-      setGeneratingLabelRowId(null);
+      setGeneratingPickerLabels(false);
     }
   };
 
@@ -561,7 +566,7 @@ export default function ClaudeToolCard({
     ];
   };
 
-  const controlsLocked = operation !== "idle" || generatingLabelRowId !== null;
+  const controlsLocked = operation !== "idle" || generatingPickerLabels;
   const isFullCatalog = routingMode === CLAUDE_ROUTING_MODES.FULL_CATALOG;
   const fullCatalogModelValues = fullCatalogModels.map((model) => model.value);
   const nonEmptyFullCatalogModels = fullCatalogModelValues.filter((model) => model.trim());
@@ -740,9 +745,9 @@ export default function ClaudeToolCard({
                       <span className="material-symbols-outlined text-blue-500">account_tree</span>
                       <div className="min-w-0 flex-1">
                         <h4 className="text-sm font-semibold text-text-main">Selected models and combos</h4>
-                        <p className="mt-1 text-xs leading-relaxed text-text-muted">Only the entries selected here are published to Claude Code. Each row gets an auto label; use the AI button for a smarter short name, or edit the label directly.</p>
+                        <p className="mt-1 text-xs leading-relaxed text-text-muted">Only the entries selected here are published to Claude Code. Each row gets an auto label on add; use <strong>Generate all labels</strong> for one-shot AI naming, or edit any label directly.</p>
 
-                        <div className="mt-3 grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-center">
+                        <div className="mt-3 grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
                           <span className="text-xs font-semibold text-text-main sm:text-right">Labeling model</span>
                           <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
                           <input
@@ -753,6 +758,18 @@ export default function ClaudeToolCard({
                             placeholder="Cheap model for AI labels (optional)"
                             className="w-full min-w-0 rounded border border-border bg-surface px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-60 sm:py-1.5"
                           />
+                          <button
+                            type="button"
+                            onClick={handleGenerateAllPickerLabels}
+                            disabled={controlsLocked || fullCatalogModels.length === 0}
+                            className="flex min-h-10 items-center justify-center gap-1 rounded-lg border border-blue-500/40 bg-blue-500/10 px-3 text-xs font-medium text-blue-700 transition-colors hover:border-blue-500 hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-300"
+                            title="Generate short picker labels for every selected model"
+                          >
+                            <span className={`material-symbols-outlined text-[16px] ${generatingPickerLabels ? "animate-spin" : ""}`}>
+                              {generatingPickerLabels ? "progress_activity" : "auto_awesome"}
+                            </span>
+                            {generatingPickerLabels ? "Generating..." : "Generate all labels"}
+                          </button>
                         </div>
 
                         {fullCatalogModels.length === 0 ? (
@@ -778,18 +795,6 @@ export default function ClaudeToolCard({
                                     {model.value}
                                   </code>
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={() => handleGeneratePickerLabel(model.id)}
-                                  disabled={controlsLocked}
-                                  className="rounded p-1 text-text-muted transition-colors hover:bg-blue-500/10 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
-                                  title="Generate picker label with AI"
-                                  aria-label={`Generate AI picker label for ${model.value}`}
-                                >
-                                  <span className={`material-symbols-outlined text-[15px] ${generatingLabelRowId === model.id ? "animate-spin" : ""}`}>
-                                    {generatingLabelRowId === model.id ? "progress_activity" : "auto_awesome"}
-                                  </span>
-                                </button>
                                 <button
                                   type="button"
                                   onClick={() => setFullCatalogModels((current) => current.filter((_, entryIndex) => entryIndex !== index))}
