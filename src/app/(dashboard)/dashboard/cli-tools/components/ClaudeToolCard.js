@@ -21,6 +21,10 @@ import {
   encodeClaudeCatalogModelId,
   readSwitchboardKeyFromCustomHeaders,
 } from "@/shared/claudeGateway.js";
+import {
+  assignClaudeCatalogDisplayRows,
+  buildClaudeCatalogPickerLabelsPayload,
+} from "@/shared/claudeCatalogDisplay.js";
 
 const CLOUD_URL = process.env.NEXT_PUBLIC_CLOUD_URL;
 
@@ -63,8 +67,10 @@ export default function ClaudeToolCard({
   const [selectedApiKey, setSelectedApiKey] = useState("");
   const [modelAliases, setModelAliases] = useState({});
   const [fullCatalogModels, setFullCatalogModels] = useState(
-    /** @type {Array<{id: string, value: string}>} */ ([]),
+    /** @type {Array<{id: string, value: string, label: string, labelCustom: boolean}>} */ ([]),
   );
+  const [pickerNamingModel, setPickerNamingModel] = useState("");
+  const [generatingLabelRowId, setGeneratingLabelRowId] = useState(null);
   const [routingMode, setRoutingMode] = useState(
     initialStatus?.routingMode === CLAUDE_ROUTING_MODES.PROXY
       ? CLAUDE_ROUTING_MODES.FULL_CATALOG
@@ -104,10 +110,32 @@ export default function ClaudeToolCard({
     setOperation("idle");
   };
 
-  const createFullCatalogModelRows = (models) => models.map((value) => ({
-    id: `claude-catalog-${fullCatalogRowIdRef.current += 1}`,
-    value,
-  }));
+  const createFullCatalogModelRows = (entries) => {
+    const assigned = assignClaudeCatalogDisplayRows(entries);
+    return assigned.map((entry) => ({
+      id: `claude-catalog-${fullCatalogRowIdRef.current += 1}`,
+      value: entry.value,
+      label: entry.label,
+      labelCustom: entry.labelCustom,
+    }));
+  };
+
+  const refreshFullCatalogLabels = (rows) => {
+    const assigned = assignClaudeCatalogDisplayRows(rows);
+    return rows.map((row, index) => ({
+      ...row,
+      label: assigned[index]?.label || row.label,
+      labelCustom: row.labelCustom || assigned[index]?.labelCustom || false,
+    }));
+  };
+
+  const buildPickerLabelsPayload = () => buildClaudeCatalogPickerLabelsPayload(fullCatalogModels);
+
+  const buildExistingPickerLabels = (excludeValue = "") => Object.fromEntries(
+    fullCatalogModels
+      .filter((model) => model.value && model.value !== excludeValue && model.label?.trim())
+      .map((model) => [model.value, model.label.trim()]),
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -225,8 +253,15 @@ export default function ClaudeToolCard({
         setFullCatalogProfile(data);
         if (!hasInitializedFullCatalogModels.current) {
           hasInitializedFullCatalogModels.current = true;
+          const pickerLabels = data.pickerLabels && typeof data.pickerLabels === "object"
+            ? data.pickerLabels
+            : {};
           setFullCatalogModels(createFullCatalogModelRows(
-            Array.isArray(data.models) ? data.models : [],
+            (Array.isArray(data.models) ? data.models : []).map((value) => ({
+              value,
+              label: pickerLabels[value] || "",
+              labelCustom: Boolean(pickerLabels[value]),
+            })),
           ));
         }
       }
@@ -316,6 +351,7 @@ export default function ClaudeToolCard({
             baseUrl: getEffectiveBaseUrl(),
             gatewayKey: keyToUse,
             models: fullCatalogModels.map((model) => model.value),
+            pickerLabels: buildPickerLabelsPayload(),
           }
         : buildClaudeSettingsMutation({
             baseUrl: getEffectiveBaseUrl(),
@@ -334,10 +370,16 @@ export default function ClaudeToolCard({
         const canCommit = () => isCurrentOperation(operationToken);
         if (isFullCatalog) {
           setFullCatalogProfile(data);
+          const pickerLabels = data.pickerLabels && typeof data.pickerLabels === "object"
+            ? data.pickerLabels
+            : buildPickerLabelsPayload();
           setFullCatalogModels(createFullCatalogModelRows(
-            Array.isArray(data.models)
-              ? data.models
-              : fullCatalogModels.map((model) => model.value),
+            (Array.isArray(data.models) ? data.models : fullCatalogModels.map((model) => model.value))
+              .map((value) => ({
+                value,
+                label: pickerLabels[value] || "",
+                labelCustom: Boolean(pickerLabels[value]),
+              })),
           ));
         }
         else await checkClaudeStatus({ canCommit });
@@ -420,14 +462,67 @@ export default function ClaudeToolCard({
   const handleFullCatalogModelSelect = (model) => {
     const value = String(model?.value || model?.name || model || "").trim();
     if (!value) return;
-    setFullCatalogModels((current) => current.some((entry) => entry.value === value)
-      ? current
-      : [...current, ...createFullCatalogModelRows([value])]);
+    setFullCatalogModels((current) => {
+      if (current.some((entry) => entry.value === value)) return current;
+      const next = [
+        ...current,
+        {
+          id: `claude-catalog-${fullCatalogRowIdRef.current += 1}`,
+          value,
+          label: "",
+          labelCustom: false,
+        },
+      ];
+      return refreshFullCatalogLabels(next);
+    });
   };
 
   const handleFullCatalogModelDeselect = (model) => {
     const value = String(model?.value || model?.name || model || "").trim();
     setFullCatalogModels((current) => current.filter((entry) => entry.value !== value));
+  };
+
+  const handlePickerLabelChange = (rowId, label) => {
+    setFullCatalogModels((current) => current.map((entry) => (
+      entry.id === rowId ? { ...entry, label, labelCustom: true } : entry
+    )));
+  };
+
+  const handleGeneratePickerLabel = async (rowId) => {
+    const row = fullCatalogModels.find((entry) => entry.id === rowId);
+    if (!row?.value || generatingLabelRowId) return;
+
+    setGeneratingLabelRowId(rowId);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/cli-tools/claude-picker-labels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          modelIds: [row.value],
+          namingModel: pickerNamingModel.trim() || undefined,
+          existingLabels: buildExistingPickerLabels(row.value),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to generate picker label");
+      const nextLabel = data.labels?.[row.value];
+      if (!nextLabel) throw new Error("Label model returned no suggestion");
+      handlePickerLabelChange(rowId, nextLabel);
+      setMessage({
+        type: "success",
+        text: data.source === "ai"
+          ? "AI picker label generated."
+          : "Picker label generated from heuristics. Set a labeling model for AI suggestions.",
+      });
+    } catch (error) {
+      setMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "Failed to generate picker label",
+      });
+    } finally {
+      setGeneratingLabelRowId(null);
+    }
   };
 
   // Generate settings.json content for manual copy
@@ -441,6 +536,7 @@ export default function ClaudeToolCard({
           baseUrl: getEffectiveBaseUrl(),
           gatewayKey: keyToUse,
           models: fullCatalogModels.map((model) => model.value),
+          pickerLabels: buildPickerLabelsPayload(),
         })
       : {
           hasCompletedOnboarding: true,
@@ -465,7 +561,7 @@ export default function ClaudeToolCard({
     ];
   };
 
-  const controlsLocked = operation !== "idle";
+  const controlsLocked = operation !== "idle" || generatingLabelRowId !== null;
   const isFullCatalog = routingMode === CLAUDE_ROUTING_MODES.FULL_CATALOG;
   const fullCatalogModelValues = fullCatalogModels.map((model) => model.value);
   const nonEmptyFullCatalogModels = fullCatalogModelValues.filter((model) => model.trim());
@@ -644,7 +740,20 @@ export default function ClaudeToolCard({
                       <span className="material-symbols-outlined text-blue-500">account_tree</span>
                       <div className="min-w-0 flex-1">
                         <h4 className="text-sm font-semibold text-text-main">Selected models and combos</h4>
-                        <p className="mt-1 text-xs leading-relaxed text-text-muted">Only the entries selected here are published to Claude Code. You can add provider models and existing Switchboard combos.</p>
+                        <p className="mt-1 text-xs leading-relaxed text-text-muted">Only the entries selected here are published to Claude Code. Each row gets an auto label; use the AI button for a smarter short name, or edit the label directly.</p>
+
+                        <div className="mt-3 grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-center">
+                          <span className="text-xs font-semibold text-text-main sm:text-right">Labeling model</span>
+                          <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
+                          <input
+                            disabled={controlsLocked}
+                            type="text"
+                            value={pickerNamingModel}
+                            onChange={(event) => setPickerNamingModel(event.target.value)}
+                            placeholder="Cheap model for AI labels (optional)"
+                            className="w-full min-w-0 rounded border border-border bg-surface px-2 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-60 sm:py-1.5"
+                          />
+                        </div>
 
                         {fullCatalogModels.length === 0 ? (
                           <div className="mt-3 rounded-lg border border-dashed border-border bg-surface/50 px-3 py-4 text-center">
@@ -656,9 +765,31 @@ export default function ClaudeToolCard({
                             {fullCatalogModels.map((model, index) => (
                               <div key={model.id} className="flex min-w-0 items-center gap-2 rounded border border-border bg-surface px-2 py-1.5">
                                 <span className="material-symbols-outlined shrink-0 text-[15px] text-blue-500">smart_toy</span>
-                                <code className="min-w-0 flex-1 truncate text-xs text-text-main" title={model.value}>
-                                  {model.value}
-                                </code>
+                                <div className="min-w-0 flex-1">
+                                  <input
+                                    disabled={controlsLocked}
+                                    type="text"
+                                    value={model.label}
+                                    onChange={(event) => handlePickerLabelChange(model.id, event.target.value)}
+                                    aria-label={`Picker label for ${model.value}`}
+                                    className="w-full min-w-0 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-text-main focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  />
+                                  <code className="mt-1 block truncate text-[10px] text-text-muted" title={model.value}>
+                                    {model.value}
+                                  </code>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleGeneratePickerLabel(model.id)}
+                                  disabled={controlsLocked}
+                                  className="rounded p-1 text-text-muted transition-colors hover:bg-blue-500/10 hover:text-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+                                  title="Generate picker label with AI"
+                                  aria-label={`Generate AI picker label for ${model.value}`}
+                                >
+                                  <span className={`material-symbols-outlined text-[15px] ${generatingLabelRowId === model.id ? "animate-spin" : ""}`}>
+                                    {generatingLabelRowId === model.id ? "progress_activity" : "auto_awesome"}
+                                  </span>
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => setFullCatalogModels((current) => current.filter((_, entryIndex) => entryIndex !== index))}

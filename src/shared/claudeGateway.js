@@ -7,6 +7,7 @@ export const CLAUDE_ROUTING_MODES = Object.freeze({
 });
 export const CLAUDE_ROUTING_MODE_HEADER = "x-switchboard-claude-mode";
 export const CLAUDE_CATALOG_SELECTION_HEADER = "x-switchboard-claude-models";
+export const CLAUDE_CATALOG_LABELS_HEADER = "x-switchboard-claude-labels";
 export const SWITCHBOARD_KEY_HEADER = "x-switchboard-key";
 export const CLAUDE_CATALOG_MODEL_PREFIX = "claude-switchboard-v1/";
 const CLAUDE_GATEWAY_ALIAS_PATTERN = /^(?:claude|anthropic)-[a-z0-9][a-z0-9._-]*$/i;
@@ -108,12 +109,66 @@ export function readClaudeCatalogSelectionFromHeaders(headers) {
   return decodeClaudeCatalogSelectionHeader(headers?.get(CLAUDE_CATALOG_SELECTION_HEADER));
 }
 
-/** @param {unknown} models */
-export function buildClaudeFullCatalogHeaders(models = []) {
-  return [
+/**
+ * @param {unknown} labels
+ * @param {string[]} models
+ */
+export function normalizeClaudeCatalogPickerLabels(labels, models) {
+  if (!labels || typeof labels !== "object" || Array.isArray(labels)) return {};
+  const allowed = new Set(normalizeClaudeCatalogSelection(models));
+  /** @type {Record<string, string>} */
+  const result = {};
+  for (const [modelId, label] of Object.entries(labels)) {
+    if (!allowed.has(modelId)) continue;
+    const trimmed = String(label || "").trim().replace(/[\r\n]+/g, " ");
+    if (!trimmed) continue;
+    result[modelId] = trimmed.slice(0, 48);
+  }
+  return result;
+}
+
+/** @param {unknown} value */
+function decodeClaudeCatalogLabelsHeader(value) {
+  if (typeof value !== "string" || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(decodeURIComponent(value));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/** @param {unknown} value */
+export function readClaudeCatalogPickerLabelsFromCustomHeaders(value) {
+  return decodeClaudeCatalogLabelsHeader(
+    readCustomHeaderValue(value, CLAUDE_CATALOG_LABELS_HEADER),
+  );
+}
+
+/** @param {{ get: (name: string) => string|null } | null | undefined} headers */
+export function readClaudeCatalogPickerLabelsFromHeaders(headers) {
+  return decodeClaudeCatalogLabelsHeader(headers?.get(CLAUDE_CATALOG_LABELS_HEADER));
+}
+
+/** @param {unknown} models @param {Record<string, string>} [pickerLabels] */
+export function buildClaudeCatalogLabelsHeader(models, pickerLabels = {}) {
+  const normalized = normalizeClaudeCatalogPickerLabels(pickerLabels, models);
+  if (Object.keys(normalized).length === 0) return "";
+  return encodeURIComponent(JSON.stringify(normalized));
+}
+
+/** @param {unknown} models @param {Record<string, string>} [pickerLabels] */
+export function buildClaudeFullCatalogHeaders(models = [], pickerLabels = {}) {
+  const normalizedModels = normalizeClaudeCatalogSelection(models);
+  const lines = [
     `${formatHeaderName(CLAUDE_ROUTING_MODE_HEADER)}: ${CLAUDE_ROUTING_MODES.FULL_CATALOG}`,
-    `${formatHeaderName(CLAUDE_CATALOG_SELECTION_HEADER)}: ${buildClaudeCatalogSelectionHeader(models)}`,
-  ].join("\n");
+    `${formatHeaderName(CLAUDE_CATALOG_SELECTION_HEADER)}: ${buildClaudeCatalogSelectionHeader(normalizedModels)}`,
+  ];
+  const labelsHeader = buildClaudeCatalogLabelsHeader(normalizedModels, pickerLabels);
+  if (labelsHeader) {
+    lines.push(`${formatHeaderName(CLAUDE_CATALOG_LABELS_HEADER)}: ${labelsHeader}`);
+  }
+  return lines.join("\n");
 }
 
 /** @param {string} modelId */
@@ -142,23 +197,33 @@ export function decodeClaudeCatalogModelId(value) {
  * `claude-switchboard` launcher. This profile intentionally does not contain
  * or reuse Claude subscription OAuth credentials.
  *
- * @param {{baseUrl: string, gatewayKey: string, models?: string[]}} options
+ * @param {{baseUrl: string, gatewayKey: string, models?: string[], pickerLabels?: Record<string, string>}} options
  */
-export function buildClaudeFullCatalogProfile({ baseUrl, gatewayKey, models = [] }) {
+export function buildClaudeFullCatalogProfile({
+  baseUrl,
+  gatewayKey,
+  models = [],
+  pickerLabels = {},
+}) {
   const normalizedUrl = String(baseUrl || "").trim().replace(/\/+$/, "");
   const normalizedKey = String(gatewayKey || "").trim();
   if (!normalizedUrl) throw new TypeError("A Switchboard endpoint is required.");
   if (!normalizedKey) throw new TypeError("A Switchboard API key is required.");
+  const normalizedModels = normalizeClaudeCatalogSelection(models);
+  const normalizedLabels = normalizeClaudeCatalogPickerLabels(pickerLabels, normalizedModels);
   const env = {
     ANTHROPIC_API_KEY: "",
     ANTHROPIC_AUTH_TOKEN: normalizedKey,
     ANTHROPIC_BASE_URL: normalizedUrl.endsWith("/v1") ? normalizedUrl : `${normalizedUrl}/v1`,
-    ANTHROPIC_CUSTOM_HEADERS: buildClaudeFullCatalogHeaders(models),
+    ANTHROPIC_CUSTOM_HEADERS: buildClaudeFullCatalogHeaders(normalizedModels, normalizedLabels),
     ANTHROPIC_CUSTOM_MODEL_OPTION: "",
     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
   };
   for (const key of CLAUDE_SLOT_ENV_KEYS) env[key] = "";
-  return { env };
+  return {
+    env,
+    pickerLabels: normalizedLabels,
+  };
 }
 
 /** @param {unknown} value */

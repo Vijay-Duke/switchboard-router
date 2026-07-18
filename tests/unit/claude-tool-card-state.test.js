@@ -65,6 +65,7 @@ describe("Claude Code settings form", () => {
       baseUrl: "http://127.0.0.1:20128/",
       gatewayKey: "sk-test",
       models: ["openai/gpt-5.6", "coding-auto", "openai/gpt-5.6"],
+      pickerLabels: { "openai/gpt-5.6": "GPT 5.6" },
     });
 
     expect(profile.env).toMatchObject({
@@ -82,6 +83,9 @@ describe("Claude Code settings form", () => {
     expect(readClaudeCatalogSelectionFromCustomHeaders(
       profile.env.ANTHROPIC_CUSTOM_HEADERS,
     )).toEqual(["openai/gpt-5.6", "coding-auto"]);
+    expect(profile.pickerLabels).toEqual({
+      "openai/gpt-5.6": "GPT 5.6",
+    });
   });
 
   it("clears stale custom picker state when pass-through has no custom model", () => {

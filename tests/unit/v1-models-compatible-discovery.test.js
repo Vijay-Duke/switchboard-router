@@ -113,13 +113,58 @@ describe("/v1/models compatible-provider discovery", () => {
     expect(body.data).toEqual(expect.arrayContaining([
       expect.objectContaining({
         owned_by: "switchboard-catalog",
-        display_name: "Switchboard · lite-llm/openai/gpt-5.6-sol",
+        display_name: "llm · openai · gpt 5.6",
+        description: "lite-llm/openai/gpt-5.6-sol",
       }),
       expect.objectContaining({
         owned_by: "switchboard-catalog",
-        display_name: "Switchboard · coding-auto",
+        display_name: "coding-auto",
+        description: "coding-auto",
       }),
     ]));
+  });
+
+  it("uses saved picker labels for full-catalog discovery when provided", async () => {
+    mocks.getProviderConnections.mockResolvedValueOnce([{
+      id: "kr-connection",
+      provider: "openai-compatible-responses-5f69ccc9-f1e2-4faa-acf6-d5551eab7cce",
+      apiKey: "secret",
+      isActive: true,
+      providerSpecificData: {
+        baseUrl: "https://kr.example/v1",
+        prefix: "kr",
+      },
+    }]);
+    mocks.getCombos.mockResolvedValueOnce([]);
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: [{ id: "prod/claude-opus-4-8" }],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+
+    const { GET } = await import("../../src/app/api/v1/models/route.js");
+    const {
+      buildClaudeCatalogSelectionHeader,
+      CLAUDE_CATALOG_LABELS_HEADER,
+      CLAUDE_CATALOG_SELECTION_HEADER,
+    } = await import("../../src/shared/claudeGateway.js");
+    const selectedModels = ["kr/prod/claude-opus-4-8"];
+    const response = await GET(new Request("http://switchboard.test/v1/models", {
+      headers: {
+        "X-Switchboard-Claude-Mode": "full-catalog",
+        [CLAUDE_CATALOG_SELECTION_HEADER]: buildClaudeCatalogSelectionHeader(selectedModels),
+        [CLAUDE_CATALOG_LABELS_HEADER]: encodeURIComponent(JSON.stringify({
+          "kr/prod/claude-opus-4-8": "KR Opus APAC",
+        })),
+      },
+    }));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toEqual([
+      expect.objectContaining({
+        display_name: "KR Opus APAC",
+        description: "kr/prod/claude-opus-4-8",
+      }),
+    ]);
   });
 
   it("publishes no gateway models when the full-catalog selection is empty", async () => {

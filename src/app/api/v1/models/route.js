@@ -21,9 +21,15 @@ import {
 } from "@/sse/services/tokenRefresh";
 import { capabilitiesFromServiceKind } from "open-sse/providers/capabilities.js";
 import {
+  buildClaudeCatalogDisplayNameMap,
+  formatClaudeCatalogDisplayName,
+} from "@/shared/claudeCatalogDisplay.js";
+import {
   encodeClaudeCatalogModelId,
   isClaudeFullCatalogRequest,
   isClaudeGatewayAlias,
+  normalizeClaudeCatalogPickerLabels,
+  readClaudeCatalogPickerLabelsFromHeaders,
   readClaudeCatalogSelectionFromHeaders,
 } from "@/shared/claudeGateway.js";
 
@@ -557,16 +563,24 @@ export async function GET(request) {
     });
     let data = models;
     if (isClaudeFullCatalogRequest(request?.headers)) {
-      const selectedModels = new Set(readClaudeCatalogSelectionFromHeaders(request?.headers));
+      const selectedModelIds = readClaudeCatalogSelectionFromHeaders(request?.headers);
+      const selectedModels = new Set(selectedModelIds);
+      const customLabels = normalizeClaudeCatalogPickerLabels(
+        readClaudeCatalogPickerLabelsFromHeaders(request?.headers),
+        selectedModelIds,
+      );
+      const displayNames = buildClaudeCatalogDisplayNameMap(selectedModelIds);
       const catalogModels = [];
       for (const model of models) {
         if (!selectedModels.has(model.id)) continue;
+        const displayName = customLabels[model.id]
+          || formatClaudeCatalogDisplayName(model.id, displayNames);
         catalogModels.push({
           id: encodeClaudeCatalogModelId(model.id),
           object: "model",
           owned_by: "switchboard-catalog",
-          display_name: `Switchboard · ${model.id}`,
-          description: `Routes to ${model.id}`,
+          display_name: displayName,
+          description: model.id,
         });
       }
       data = catalogModels;

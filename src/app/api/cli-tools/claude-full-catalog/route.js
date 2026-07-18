@@ -7,6 +7,7 @@ import { replaceCliFiles } from "@/lib/cli/fileIo.js";
 import {
   buildClaudeFullCatalogProfile,
   hasClaudeFullCatalogHeader,
+  normalizeClaudeCatalogPickerLabels,
   readClaudeCatalogSelectionFromCustomHeaders,
 } from "@/shared/claudeGateway.js";
 
@@ -20,6 +21,7 @@ const readProfile = async () => {
   try {
     const parsed = JSON.parse(await fs.readFile(getClaudeFullCatalogProfilePath(), "utf8"));
     const env = parsed?.env && typeof parsed.env === "object" ? parsed.env : {};
+    const models = readClaudeCatalogSelectionFromCustomHeaders(env.ANTHROPIC_CUSTOM_HEADERS);
     return {
       configured: Boolean(
         env.ANTHROPIC_BASE_URL
@@ -28,11 +30,12 @@ const readProfile = async () => {
         && hasClaudeFullCatalogHeader(env.ANTHROPIC_CUSTOM_HEADERS),
       ),
       baseUrl: typeof env.ANTHROPIC_BASE_URL === "string" ? env.ANTHROPIC_BASE_URL : null,
-      models: readClaudeCatalogSelectionFromCustomHeaders(env.ANTHROPIC_CUSTOM_HEADERS),
+      models,
+      pickerLabels: normalizeClaudeCatalogPickerLabels(parsed?.pickerLabels, models),
     };
   } catch (error) {
     if (error?.code === "ENOENT") {
-      return { configured: false, baseUrl: null, models: [] };
+      return { configured: false, baseUrl: null, models: [], pickerLabels: {} };
     }
     throw error;
   }
@@ -69,6 +72,7 @@ export async function POST(request) {
         baseUrl: body.baseUrl,
         gatewayKey: body.gatewayKey,
         models: body.models ?? [],
+        pickerLabels: body.pickerLabels ?? {},
       });
     } catch (error) {
       return NextResponse.json(
@@ -101,7 +105,7 @@ export async function DELETE() {
     }]);
     return NextResponse.json({
       success: true,
-      ...responseBody({ configured: false, baseUrl: null, models: [] }),
+      ...responseBody({ configured: false, baseUrl: null, models: [], pickerLabels: {} }),
       message: "Full Switchboard catalog profile removed",
     });
   } catch (error) {
