@@ -192,6 +192,10 @@ function applyFormat(fmt, body, cfg, caps) {
     case "claude-adaptive": {
       if (none && canDisable) { body.thinking = { type: "disabled" }; break; }
       const level = toLevel(eff);
+      // Emit both thinking.type and output_config.effort — Bedrock (via LiteLLM
+      // or other proxies) requires both fields present. Direct Anthropic API
+      // accepts either alone; keeping both is harmless and maximally compatible.
+      body.thinking = { type: "adaptive" };
       body.output_config = { effort: level === "xhigh" ? "high" : level };
       break;
     }

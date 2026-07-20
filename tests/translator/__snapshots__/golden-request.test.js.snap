@@ -105,6 +105,9 @@ exports[`GOLDEN request: OpenAI → Claude > reasoning_effort → adaptive outpu
     "effort": "high",
   },
   "stream": true,
+  "thinking": {
+    "type": "adaptive",
+  },
 }
 `;
 

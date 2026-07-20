@@ -58,7 +58,7 @@ describe("applyThinking per provider format", () => {
   it("claude 4.6+ → adaptive output_config (no budget_tokens)", () => {
     const out = apply("claude", "claude-opus-4.7", { reasoning_effort: "high" }, "claude");
     expect(out.output_config).toEqual({ effort: "high" });
-    expect(out.thinking).toBeUndefined();
+    expect(out.thinking).toEqual({ type: "adaptive" });
   });
   it("claude haiku → enabled+budget", () => {
     const out = apply("claude", "claude-haiku-4.5", { reasoning_effort: "high" }, "claude");

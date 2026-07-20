@@ -1,6 +1,6 @@
 {
   "name": "switchboard-router",
-  "version": "0.6.26",
+  "version": "0.6.27",
   "description": "Switchboard CLI — local AI routing gateway (install: npm i -g switchboard-router; run: switchboard)",
   "bin": {
     "switchboard": "./cli.js",
