@@ -28,6 +28,8 @@ import {
 import {
   splitPoolByTier,
   pickBanditPolicy,
+  posteriorFor,
+  nonDominatedSet,
 } from "../../open-sse/routing/objective.js";
 import {
   handleAutoChat,
@@ -285,22 +287,26 @@ describe("splitPoolByTier", () => {
 // ── Bandit policy fast path ──────────────────────────────────────────────────
 describe("pickBanditPolicy", () => {
   const cands = ["a/x", "b/y"];
-  it("fires for a solo qualified winner (n≥10)", () => {
-    const table = { debug: { "a/x": { attempts: 12, avgScore: 70 } } };
-    expect(pickBanditPolicy(table, "debug", cands, "balanced")?.model).toBe("a/x");
-  });
-  it("fires when the winner leads the runner-up by >15", () => {
+  it("fires when the winner separates from the runner-up", () => {
     const table = {
-      debug: { "a/x": { attempts: 20, avgScore: 80 }, "b/y": { attempts: 20, avgScore: 60 } },
+      debug: { "a/x": { attempts: 60, avgScore: 85 }, "b/y": { attempts: 60, avgScore: 45 } },
     };
     const r = pickBanditPolicy(table, "debug", cands, "quality");
     expect(r?.model).toBe("a/x");
   });
-  it("does not fire when contested (lead ≤ 15)", () => {
+  it("does not fire on a lead the sample size cannot support", () => {
+    // 80 vs 60 at n=20 each: the OLD rule fired here (lead > 15), but a
+    // two-proportion test on those counts is not significant. Overconfident.
     const table = {
-      debug: { "a/x": { attempts: 20, avgScore: 70 }, "b/y": { attempts: 20, avgScore: 60 } },
+      debug: { "a/x": { attempts: 20, avgScore: 80 }, "b/y": { attempts: 20, avgScore: 60 } },
     };
     expect(pickBanditPolicy(table, "debug", cands, "quality")).toBe(null);
+  });
+  it("does not fire when a candidate has no history to separate from", () => {
+    // b/y is unseen, so its posterior is prior-wide — an unmeasured model
+    // cannot be ruled out, however good the measured one looks.
+    const table = { debug: { "a/x": { attempts: 12, avgScore: 70 } } };
+    expect(pickBanditPolicy(table, "debug", cands, "balanced")).toBe(null);
   });
   it("does not fire without enough samples", () => {
     const table = { debug: { "a/x": { attempts: 5, avgScore: 90 } } };
@@ -309,6 +315,76 @@ describe("pickBanditPolicy", () => {
   it("ignores models outside the candidate pool", () => {
     const table = { debug: { "gone/z": { attempts: 40, avgScore: 95 } } };
     expect(pickBanditPolicy(table, "debug", cands, "balanced")).toBe(null);
+  });
+  it("fires for a lone candidate with history", () => {
+    const table = { debug: { "a/x": { attempts: 30, avgScore: 75 } } };
+    expect(pickBanditPolicy(table, "debug", ["a/x"], "balanced")?.model).toBe("a/x");
+  });
+});
+
+// ── Shrunk posteriors + non-dominated exploration ────────────────────────────
+describe("posteriorFor", () => {
+  it("returns a wide prior-only interval for an unseen cell", () => {
+    const p = posteriorFor({}, "debug", "a/x");
+    expect(p.mean).toBeCloseTo(50, 5);
+    expect(p.attempts).toBe(0);
+    expect(p.hi - p.lo).toBeGreaterThan(50);
+  });
+  it("narrows as evidence accumulates", () => {
+    const few = posteriorFor({ debug: { "a/x": { attempts: 5, avgScore: 80 } } }, "debug", "a/x");
+    const many = posteriorFor({ debug: { "a/x": { attempts: 80, avgScore: 80 } } }, "debug", "a/x");
+    expect(many.hi - many.lo).toBeLessThan(few.hi - few.lo);
+    expect(many.mean).toBeGreaterThan(few.mean); // less shrinkage toward 0.5
+  });
+  it("shrinks toward the worker's OTHER clusters, not toward 0.5", () => {
+    const table = {
+      debug: { "a/x": { attempts: 4, avgScore: 50 } },
+      explain: { "a/x": { attempts: 200, avgScore: 90 } },
+    };
+    const pooled = posteriorFor(table, "debug", "a/x");
+    const alone = posteriorFor(
+      { debug: { "a/x": { attempts: 4, avgScore: 50 } } },
+      "debug",
+      "a/x"
+    );
+    expect(pooled.mean).toBeGreaterThan(alone.mean);
+  });
+  it("uses attemptsEff over attempts when the optimizer recorded it", () => {
+    const raw = posteriorFor({ debug: { "a/x": { attempts: 10, avgScore: 90 } } }, "debug", "a/x");
+    const eff = posteriorFor(
+      { debug: { "a/x": { attempts: 10, attemptsEff: 2, avgScore: 90 } } },
+      "debug",
+      "a/x"
+    );
+    expect(eff.hi - eff.lo).toBeGreaterThan(raw.hi - raw.lo);
+  });
+});
+
+describe("nonDominatedSet", () => {
+  it("drops arms whose upper bound cannot reach the best lower bound", () => {
+    const table = {
+      debug: {
+        "a/x": { attempts: 200, avgScore: 90 },
+        "b/y": { attempts: 200, avgScore: 20 },
+        "c/z": { attempts: 200, avgScore: 88 },
+      },
+    };
+    const s = nonDominatedSet(table, "debug", ["a/x", "b/y", "c/z"]);
+    expect(s).toContain("a/x");
+    expect(s).toContain("c/z");
+    expect(s).not.toContain("b/y");
+  });
+  it("keeps an unmeasured arm alive", () => {
+    const table = { debug: { "a/x": { attempts: 200, avgScore: 90 } } };
+    expect(nonDominatedSet(table, "debug", ["a/x", "new/m"])).toContain("new/m");
+  });
+  it("returns the full pool with no history (cold start unchanged)", () => {
+    expect(nonDominatedSet(null, "debug", ["a/x", "b/y"])).toEqual(["a/x", "b/y"]);
+    expect(nonDominatedSet({}, "debug", ["a/x", "b/y"])).toEqual(["a/x", "b/y"]);
+  });
+  it("never returns empty", () => {
+    expect(nonDominatedSet({}, "debug", ["a/x"])).toEqual(["a/x"]);
+    expect(nonDominatedSet({}, "debug", [])).toEqual([]);
   });
 });
 

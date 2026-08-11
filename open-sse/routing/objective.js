@@ -278,58 +278,169 @@ export function splitPoolByTier(pool) {
   return { cheap, frontier, disabled: false };
 }
 
+// ── Shrunk posteriors over cluster×worker score ──────────────────────────────
+// Point-estimate avgScore discards sample size, which forced the old fixed
+// n ≥ 10 / lead > 15 cliff (9 samples said nothing, the 10th flipped the pick)
+// and made ε-greedy re-test known-bad arms at frontier prices. Instead each cell
+// gets a fractional-count Beta quasi-posterior over score/100, shrunk toward a
+// prior pooled across the OTHER clusters for that same worker — most cells here
+// have n < 10, so pooling by worker is where the information actually comes from.
+//
+// ponytail: normal approximation to the Beta interval, not the exact incomplete
+// beta — a dependency-free sqrt is accurate enough at κ ≥ 4 total mass. Swap in
+// a real quantile if a cell ever needs a tight interval near 0 or 1.
+
+/** Prior mass in pseudo-observations. Small: it must yield to ~10 real events. */
+const PRIOR_KAPPA = 4;
+/** z for the credible interval (~90%), used for both dominance and separation. */
+const PRIOR_Z = 1.645;
+
+/**
+ * Prior mean (0–1) for a worker, pooled over every cluster EXCEPT the one being
+ * estimated — leave-one-out, so a cell never shrinks toward itself. Falls back to
+ * the table-wide mean, then to 0.5 for a worker with no history at all.
+ * @param {Record<string, Record<string, object>>|null|undefined} banditTable
+ * @param {string} worker
+ * @param {string|null} [excludeCluster]
+ * @returns {number}
+ */
+export function workerPriorMean(banditTable, worker, excludeCluster = null) {
+  let workerN = 0;
+  let workerSum = 0;
+  let globalN = 0;
+  let globalSum = 0;
+  for (const [cluster, models] of Object.entries(banditTable || {})) {
+    if (excludeCluster != null && cluster === excludeCluster) continue;
+    for (const [id, s] of Object.entries(models || {})) {
+      const n = Number(s?.attemptsEff ?? s?.attempts) || 0;
+      if (n <= 0) continue;
+      const avg = Number(s?.avgScore) || 0;
+      globalN += n;
+      globalSum += avg * n;
+      if (id === worker) {
+        workerN += n;
+        workerSum += avg * n;
+      }
+    }
+  }
+  if (workerN > 0) return workerSum / workerN / 100;
+  if (globalN > 0) return globalSum / globalN / 100;
+  return 0.5;
+}
+
+/**
+ * Shrunk posterior for one (cluster, worker) cell, on the 0–100 score scale.
+ * A worker absent from the cluster is prior-only — a wide interval, not an
+ * absence, so a freshly added model stays a live candidate instead of being
+ * invisible to selection.
+ *
+ * Uses `attemptsEff` (Kish effective sample size) when the optimizer recorded
+ * it: avgScore is a WEIGHTED mean (user-rated events count 5×), and treating a
+ * single thumbs-up as five independent observations would overstate confidence —
+ * doubly so since that rating already moved the score by ±25.
+ *
+ * @param {Record<string, Record<string, object>>|null|undefined} banditTable
+ * @param {string} cluster
+ * @param {string} worker
+ * @returns {{ mean: number, lo: number, hi: number, sd: number, attempts: number }}
+ */
+export function posteriorFor(banditTable, cluster, worker) {
+  const cell = banditTable?.[cluster]?.[worker];
+  const mu0 = workerPriorMean(banditTable, worker, cluster);
+  const n = Math.max(0, Number(cell?.attemptsEff ?? cell?.attempts) || 0);
+  const y = n > 0 ? Math.min(1, Math.max(0, (Number(cell?.avgScore) || 0) / 100)) : 0;
+  const a = PRIOR_KAPPA * mu0 + n * y;
+  const b = PRIOR_KAPPA * (1 - mu0) + n * (1 - y);
+  const total = a + b;
+  const mean = total > 0 ? a / total : mu0;
+  const variance = total > 0 ? (a * b) / (total * total * (total + 1)) : 0.25;
+  const sd = Math.sqrt(Math.max(0, variance));
+  return {
+    mean: mean * 100,
+    lo: Math.max(0, mean - PRIOR_Z * sd) * 100,
+    hi: Math.min(1, mean + PRIOR_Z * sd) * 100,
+    sd: sd * 100,
+    attempts: Number(cell?.attempts) || 0,
+  };
+}
+
+/**
+ * Candidates that are not provably worse than the best arm: keep w when its
+ * upper bound still reaches the highest lower bound. This is the exploration
+ * pool — uniform-random exploration over the FULL pool pays frontier price to
+ * re-test arms already ruled out, which is the main cost of plain ε-greedy.
+ *
+ * Conservative by construction (overlapping intervals do not imply an
+ * indistinguishable difference), which is the right side to err on for
+ * exploration; the fast path below uses the sharper difference test instead.
+ *
+ * @param {Record<string, Record<string, object>>|null|undefined} banditTable
+ * @param {string} cluster
+ * @param {string[]} candidates
+ * @returns {string[]} never empty when candidates is non-empty
+ */
+export function nonDominatedSet(banditTable, cluster, candidates) {
+  const list = (candidates || []).filter(Boolean);
+  if (list.length <= 1) return list.slice();
+  const posts = list.map((w) => ({ w, ...posteriorFor(banditTable, cluster, w) }));
+  let bestLo = -Infinity;
+  for (const p of posts) if (p.lo > bestLo) bestLo = p.lo;
+  const kept = posts.filter((p) => p.hi >= bestLo).map((p) => p.w);
+  return kept.length ? kept : list.slice();
+}
+
 /**
  * Deterministic bandit policy pick for the pre-generation fast path.
- * Returns the winning worker id only when the cluster is confidently decided:
- *   - the winner has n ≥ minAttempts, AND
- *   - it is the only qualified (n ≥ minAttempts) candidate, OR its avgScore
- *     leads the next-best qualified candidate by > leadMargin.
- * Otherwise null (caller falls through to the cached route / router LLM).
+ * Returns the winning worker only when the objective winner's posterior
+ * SEPARATES from the best other candidate:
  *
- * @param {Record<string, Record<string, { avgScore?: number, attempts?: number }>>|null} banditTable
+ *   z = (mean_w - mean_other) / sqrt(sd_w² + sd_other²)  ≥ PRIOR_Z
+ *
+ * i.e. the old "leads by > 15 points" becomes "leads by > 15 points of
+ * uncertainty". A lone candidate fires unconditionally. Otherwise null and the
+ * caller falls through to the cached route / router LLM — so the router still
+ * carries cold start, when every posterior is prior-wide and nothing separates.
+ *
+ * @param {Record<string, Record<string, { avgScore?: number, attempts?: number, attemptsEff?: number }>>|null} banditTable
  * @param {string} cluster
  * @param {string[]} candidates - current worker pool (winner must be in it)
  * @param {string} [objective]
- * @param {{ minAttempts?: number, leadMargin?: number, estInputTokens?: number }} [opts]
+ * @param {{ estInputTokens?: number, providerBias?: object }} [opts]
  * @returns {{ model: string, qualified: number, lead: number }|null}
  */
 export function pickBanditPolicy(banditTable, cluster, candidates, objective = "balanced", opts = {}) {
-  const minAttempts = Number.isFinite(opts.minAttempts) ? opts.minAttempts : 10;
-  const leadMargin = Number.isFinite(opts.leadMargin) ? opts.leadMargin : 15;
   if (!banditTable || typeof banditTable !== "object" || !cluster) return null;
-  const models = banditTable[cluster];
-  if (!models || typeof models !== "object") return null;
-  const allow = new Set((candidates || []).filter(Boolean));
-  if (!allow.size) return null;
+  const list = (candidates || []).filter(Boolean);
+  if (!list.length) return null;
+  // Every candidate is scored, including ones with no cell yet (prior-only).
+  const posts = new Map(list.map((w) => [w, posteriorFor(banditTable, cluster, w)]));
+  // Nothing observed anywhere in this cluster → no signal to act on.
+  if (![...posts.values()].some((p) => p.attempts > 0)) return null;
 
-  // Qualified = in pool AND enough samples.
-  const qualified = {};
-  const qEntries = [];
-  for (const [id, s] of Object.entries(models)) {
-    if (!allow.has(id)) continue;
-    const attempts = Number(s?.attempts) || 0;
-    if (attempts < minAttempts) continue;
-    qualified[id] = s;
-    qEntries.push({ id, avgScore: Number(s?.avgScore) || 0, attempts });
+  /** @type {Record<string, object>} */
+  const models = {};
+  for (const [w, p] of posts) {
+    models[w] = { ...(banditTable[cluster]?.[w] || {}), avgScore: p.mean, attempts: p.attempts };
   }
-  if (!qEntries.length) return null;
-
-  const winner = pickByObjective(qualified, objective, null, opts);
+  const winner = pickByObjective(models, objective, null, opts);
   if (!winner) return null;
 
-  if (qEntries.length === 1) {
+  if (list.length === 1) {
     return { model: winner, qualified: 1, lead: Infinity };
   }
-  // avgScore lead of the objective winner over the best OTHER qualified candidate.
-  const winnerAvg = Number(qualified[winner]?.avgScore) || 0;
-  let bestOther = -Infinity;
-  for (const e of qEntries) {
-    if (e.id === winner) continue;
-    if (e.avgScore > bestOther) bestOther = e.avgScore;
+
+  const win = posts.get(winner);
+  let best = null;
+  for (const [w, p] of posts) {
+    if (w === winner) continue;
+    if (!best || p.mean > best.mean) best = p;
   }
-  const lead = winnerAvg - bestOther;
-  if (lead > leadMargin) {
-    return { model: winner, qualified: qEntries.length, lead };
+  if (!best) return { model: winner, qualified: 1, lead: Infinity };
+
+  const spread = Math.sqrt(win.sd * win.sd + best.sd * best.sd);
+  const lead = win.mean - best.mean;
+  if (spread > 0 && lead / spread >= PRIOR_Z) {
+    return { model: winner, qualified: list.length, lead };
   }
   return null;
 }

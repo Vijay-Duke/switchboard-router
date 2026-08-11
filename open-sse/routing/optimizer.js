@@ -279,6 +279,7 @@ export function buildBanditTableFromEvents(events) {
       acc[c][w] = {
         scoreSum: 0,
         weightSum: 0,
+        weightSqSum: 0,
         attempts_real: 0,
         wins_real: 0,
         lats: [],
@@ -290,6 +291,7 @@ export function buildBanditTableFromEvents(events) {
     const wgt = ratedWeight(e);
     cell.scoreSum += score * wgt;
     cell.weightSum += wgt;
+    cell.weightSqSum += wgt * wgt;
     cell.attempts_real += 1;
     cell.wins_real += score >= 60 ? 1 : 0;
     if (e.workerLatencyMs != null && Number.isFinite(Number(e.workerLatencyMs))) {
@@ -317,6 +319,13 @@ export function buildBanditTableFromEvents(events) {
       table[c][w] = {
         wins: Math.max(0, Math.min(n, cell.wins_real)),
         attempts: n,
+        // Kish effective sample size of the rating weights. avgScore is a
+        // WEIGHTED mean (5× user-rated, 2× judge-adjusted), so posteriors must
+        // shrink on the information those weights actually carry: an isolated
+        // 5× rating is one effective observation, not five.
+        attemptsEff: cell.weightSqSum
+          ? (cell.weightSum * cell.weightSum) / cell.weightSqSum
+          : n,
         avgScore: avg,
         avgLatencyMs: avgLat,
         p50LatencyMs: p50 != null ? p50 : avgLat,

@@ -28,7 +28,12 @@ import {
   invalidateRoutingCache,
 } from "./routingCache.js";
 import { deriveClusterGuess } from "./taxonomy.js";
-import { splitPoolByTier, pickBanditPolicy, pickByObjective } from "./objective.js";
+import {
+  splitPoolByTier,
+  pickBanditPolicy,
+  pickByObjective,
+  nonDominatedSet,
+} from "./objective.js";
 import { DEFAULT_PROVIDER_LATENCY_GUARD_MS } from "./providerPreference.js";
 import { createJudgeContext, takeJudgeEscalation } from "./judge.js";
 import {
@@ -654,9 +659,18 @@ async function selectAutoWorker({
 
   let exploration = false;
   if (Math.random() < explorationRate && candidates.length > 1) {
-    const rnd = candidates[Math.floor(Math.random() * candidates.length)];
+    // Explore only among arms not yet ruled out. Uniform exploration over the
+    // whole pool spends frontier money re-testing models already known to be
+    // worse; a cluster with no history yields the full pool, so cold start is
+    // unchanged. When one arm dominates, the draw returns it and the guard
+    // below makes this a no-op.
+    const plausible = nonDominatedSet(learning?.banditTable || null, pick.cluster, candidates);
+    const rnd = plausible[Math.floor(Math.random() * plausible.length)];
     if (rnd !== pick.model) {
-      log?.info?.("AUTO", `exploration → ${rnd} (ε=${explorationRate})`);
+      log?.info?.(
+        "AUTO",
+        `exploration → ${rnd} (ε=${explorationRate}, ${plausible.length}/${candidates.length} plausible)`
+      );
       pick = {
         ...pick,
         model: rnd,
