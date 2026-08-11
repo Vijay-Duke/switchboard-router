@@ -62,7 +62,7 @@
     "@tailwindcss/postcss": "^4.1.18",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.10",
-    "postcss": "8.5.16",
+    "postcss": "8.5.26",
     "tailwindcss": "^4"
   },
   "overrides": {
