@@ -1,3 +1,8 @@
+# v0.6.31 (2026-08-17)
+
+## Fixes
+- **GLM / Import models**: treat Anthropic and Z.AI catalog `type: "model"` as llm so live models show on the provider page instead of disappearing after import
+
 # v0.5.20 (2026-07-07)
 
 ## Features
