@@ -18,7 +18,7 @@ import {
   getProviderCustomModelRows,
   isCanonicalModelDisabled,
 } from "@/shared/utils/providerCustomModels";
-import { normalizeImportedModel } from "@/shared/utils/importProviderModels";
+import { asServiceKind, normalizeImportedModel } from "@/shared/utils/importProviderModels";
 import ModelRow from "./ModelRow";
 import PassthroughModelsSection from "./PassthroughModelsSection";
 import CompatibleModelsSection from "./CompatibleModelsSection";
@@ -715,7 +715,7 @@ export default function ProviderDetailPage() {
           (entry) =>
             entry.providerAlias === providerStorageAlias &&
             entry.id === id &&
-            (entry.kind || entry.type || "llm") === type
+            asServiceKind(entry.kind || entry.type || "llm") === type
         );
         if (alreadyCustom) continue;
 

@@ -1,7 +1,8 @@
 import { canonicalModelId } from "@/lib/model-probe/canonicalId.js";
+import { asServiceKind } from "@/shared/utils/importProviderModels";
 
 function modelType(model) {
-  return model?.kind || model?.type || "llm";
+  return asServiceKind(model?.kind || model?.type || "llm");
 }
 
 export function buildCanonicalDisabledModelSet(modelIds, providerAlias = "") {

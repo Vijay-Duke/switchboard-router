@@ -1,5 +1,6 @@
 // @ts-check
 import { canonicalModelId } from "./canonicalId.js";
+import { asServiceKind } from "@/shared/utils/importProviderModels";
 
 function getModelId(model) {
   if (typeof model === "string") return model;
@@ -13,7 +14,7 @@ function getModelName(model, id) {
 
 function getModelKind(model) {
   if (typeof model === "string") return "llm";
-  return model?.kind || model?.type || "llm";
+  return asServiceKind(model?.kind || model?.type || "llm");
 }
 
 function getProbeKey(kind, canonicalId) {

@@ -3,6 +3,20 @@
  * Shared helpers for "Import models" from a connection's live /models listing.
  */
 
+// Anthropic / Z.AI /models uses type:"model" as the object type, not a service kind.
+const LLM_TYPE_ALIASES = new Set(["chat", "text", "language", "model"]);
+
+/**
+ * Map an upstream type/kind string onto Switchboard's service kinds.
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+export function asServiceKind(value) {
+  if (typeof value !== "string" || !value) return value;
+  const t = value.toLowerCase();
+  return LLM_TYPE_ALIASES.has(t) ? "llm" : t;
+}
+
 /**
  * Guess service kind from a model id/name when the upstream list has no type.
  * @param {string} id
@@ -12,9 +26,7 @@
 export function inferModelType(id, model = {}) {
   const explicit = model.kind || model.type;
   if (explicit && typeof explicit === "string") {
-    const t = explicit.toLowerCase();
-    if (t === "chat" || t === "text" || t === "language") return "llm";
-    return t;
+    return asServiceKind(explicit);
   }
   const s = String(id || "").toLowerCase();
   if (/embed/.test(s)) return "embedding";

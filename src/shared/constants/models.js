@@ -15,6 +15,7 @@ export {
 
 import { AI_PROVIDERS, isOpenAICompatibleProvider } from "./providers.js";
 import { PROVIDER_MODELS as MODELS } from "open-sse/config/providerModels.js";
+import { asServiceKind } from "@/shared/utils/importProviderModels";
 
 // Providers that accept any model (passthrough)
 const PASSTHROUGH_PROVIDERS = new Set(
@@ -37,7 +38,10 @@ export const AI_MODELS = Object.entries(MODELS).flatMap(([alias, models]) =>
   models.map(m => ({ provider: alias, model: m.id, name: m.name }))
 );
 
-export const getModelKind = (m, fallback = null) => m?.kind || m?.type || fallback;
+export const getModelKind = (m, fallback = null) => {
+  const kind = m?.kind || m?.type || fallback;
+  return kind ? asServiceKind(kind) : kind;
+};
 
 // Capacity metadata for UI badges — icon + label + color per capability.
 export const CAPACITY_META = {
