@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useNotificationStore } from "@/store/notificationStore";
 import Sidebar from "../Sidebar";
@@ -39,6 +39,16 @@ export default function DashboardLayout({ children }) {
   const removeNotification = useNotificationStore((state) => state.removeNotification);
 
   const isChat = pathname === "/dashboard/basic-chat";
+
+  // QA-027: mobile drawer must be dismissible with Escape
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const handleEscape = (e) => {
+      if (e.key === "Escape") setSidebarOpen(false);
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [sidebarOpen]);
 
   return (
     <div
@@ -79,8 +89,10 @@ export default function DashboardLayout({ children }) {
       <GlobalConfirmModal />
 
       {sidebarOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+        <button
+          type="button"
+          aria-label="Close menu"
+          className="fixed inset-0 z-40 bg-black/40 lg:hidden cursor-default"
           onClick={() => setSidebarOpen(false)}
         />
       )}
