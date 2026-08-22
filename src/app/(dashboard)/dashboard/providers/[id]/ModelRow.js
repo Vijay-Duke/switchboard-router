@@ -22,6 +22,9 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
         <span
           className="material-symbols-outlined shrink-0 text-base"
           style={iconColor ? { color: iconColor } : undefined}
+          role={testStatus ? "img" : undefined}
+          aria-label={testStatus === "ok" ? "Test passed" : testStatus === "error" ? "Test failed" : undefined}
+          aria-hidden={testStatus ? undefined : "true"}
         >
           {testStatus === "ok" ? "check_circle" : testStatus === "error" ? "cancel" : "smart_toy"}
         </span>
@@ -52,13 +55,14 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
             <button
               onClick={onTest}
               disabled={isTesting}
+              aria-label={isTesting ? `Testing ${displayModel}` : `Test ${displayModel}`}
               className={`rounded p-0.5 text-text-muted transition-opacity hover:bg-sidebar hover:text-primary ${isTesting ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100"}`}
             >
-              <span className="material-symbols-outlined text-sm" style={isTesting ? { animation: "spin 1s linear infinite" } : undefined}>
+              <span className="material-symbols-outlined text-sm" aria-hidden="true" style={isTesting ? { animation: "spin 1s linear infinite" } : undefined}>
                 {isTesting ? "progress_activity" : "science"}
               </span>
             </button>
-            <span className="pointer-events-none absolute mt-1 top-5 left-1/2 -translate-x-1/2 text-[10px] text-text-muted whitespace-nowrap opacity-0 group-hover/btn:opacity-100 transition-opacity">
+            <span className="pointer-events-none absolute mt-1 top-5 left-1/2 -translate-x-1/2 text-[10px] text-text-muted whitespace-nowrap opacity-0 group-hover/btn:opacity-100 transition-opacity" aria-hidden="true">
               {isTesting ? "Testing..." : "Test"}
             </span>
           </div>
@@ -66,13 +70,14 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
         <div className="relative shrink-0 group/btn">
           <button
             onClick={() => onCopy(displayModel, `model-${model.id}`)}
+            aria-label={copied === `model-${model.id}` ? `Copied ${displayModel}` : `Copy ${displayModel}`}
             className="rounded p-0.5 text-text-muted hover:bg-sidebar hover:text-primary"
           >
-            <span className="material-symbols-outlined text-sm">
+            <span className="material-symbols-outlined text-sm" aria-hidden="true">
               {copied === `model-${model.id}` ? "check" : "content_copy"}
             </span>
           </button>
-          <span className="pointer-events-none absolute mt-1 top-5 left-1/2 -translate-x-1/2 text-[10px] text-text-muted whitespace-nowrap opacity-0 group-hover/btn:opacity-100 transition-opacity">
+          <span className="pointer-events-none absolute mt-1 top-5 left-1/2 -translate-x-1/2 text-[10px] text-text-muted whitespace-nowrap opacity-0 group-hover/btn:opacity-100 transition-opacity" aria-hidden="true">
             {copied === `model-${model.id}` ? "Copied!" : "Copy"}
           </span>
         </div>
@@ -80,17 +85,19 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
           <button
             onClick={onDeleteAlias}
             className="ml-auto rounded p-0.5 text-text-muted opacity-100 transition-opacity hover:bg-red-500/10 hover:text-red-500 sm:opacity-0 sm:group-hover:opacity-100"
+            aria-label={`Remove custom model ${displayModel}`}
             title="Remove custom model"
           >
-            <span className="material-symbols-outlined text-sm">close</span>
+            <span className="material-symbols-outlined text-sm" aria-hidden="true">close</span>
           </button>
         ) : onDisable ? (
           <button
             onClick={onDisable}
             className="ml-auto rounded p-0.5 text-text-muted opacity-100 transition-opacity hover:bg-red-500/10 hover:text-red-500 sm:opacity-0 sm:group-hover:opacity-100"
+            aria-label={`Disable ${displayModel}`}
             title="Disable this model"
           >
-            <span className="material-symbols-outlined text-sm">close</span>
+            <span className="material-symbols-outlined text-sm" aria-hidden="true">close</span>
           </button>
         ) : null}
       </div>

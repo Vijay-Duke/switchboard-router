@@ -108,19 +108,23 @@ export default function ConnectionRow({ connection, isOAuth, isFirst, isLast, on
           <button
             onClick={onMoveUp}
             disabled={isFirst}
+            aria-label={`Move ${displayName} up`}
+            title={`Move ${displayName} up`}
             className={`p-0.5 rounded ${isFirst ? "text-text-muted/30 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}
           >
-            <span className="material-symbols-outlined text-sm">keyboard_arrow_up</span>
+            <span className="material-symbols-outlined text-sm" aria-hidden="true">keyboard_arrow_up</span>
           </button>
           <button
             onClick={onMoveDown}
             disabled={isLast}
+            aria-label={`Move ${displayName} down`}
+            title={`Move ${displayName} down`}
             className={`p-0.5 rounded ${isLast ? "text-text-muted/30 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}
           >
-            <span className="material-symbols-outlined text-sm">keyboard_arrow_down</span>
+            <span className="material-symbols-outlined text-sm" aria-hidden="true">keyboard_arrow_down</span>
           </button>
         </div>
-        <span className="material-symbols-outlined shrink-0 text-base text-text-muted">
+        <span className="material-symbols-outlined shrink-0 text-base text-text-muted" aria-hidden="true">
           {authIcon}
         </span>
         <div className="flex-1 min-w-0">
