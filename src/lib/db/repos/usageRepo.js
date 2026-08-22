@@ -2,6 +2,7 @@ import { EventEmitter } from "events";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { getMeta, setMeta } from "../helpers/metaStore.js";
+import { runPrometheusMetricMutation, validateUsageMetricRow } from "@/lib/metrics/aggregateState.js";
 import { requireMetricNumber } from "@/lib/metrics/numeric.js";
 import { isCurrentMetricProvider } from "@/lib/metrics/providerRoster.js";
 
@@ -372,11 +373,24 @@ export async function saveRequestUsage(entry) {
       aggregateEntryToDay(day, entry);
       db.run(`INSERT INTO usageDaily(dateKey, data) VALUES(?, ?) ON CONFLICT(dateKey) DO UPDATE SET data = excluded.data`, [dateKey, stringifyJson(day)]);
 
-      const metricsTable = db.get(
-        `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'prometheusUsageTotals'`,
-      );
-      if (metricsTable) {
+      runPrometheusMetricMutation(db, () => {
         const metricProvider = isCurrentMetricProvider(db, entry.provider) ? entry.provider : "unknown";
+        const existing = db.get(
+          `SELECT provider, requests, promptTokens, completionTokens, cachedTokens, cost
+           FROM prometheusUsageTotals WHERE provider = ?`,
+          [metricProvider],
+        );
+        if (existing) validateUsageMetricRow(existing);
+        if (existing) {
+          validateUsageMetricRow({
+            provider: metricProvider,
+            requests: existing.requests + 1,
+            promptTokens: existing.promptTokens + promptTokens,
+            completionTokens: existing.completionTokens + completionTokens,
+            cachedTokens: existing.cachedTokens + cachedTokens,
+            cost: existing.cost + metricCost,
+          });
+        }
         db.run(
           `INSERT INTO prometheusUsageTotals(provider, requests, promptTokens, completionTokens, cachedTokens, cost)
            VALUES(?, 1, ?, ?, ?, ?)
@@ -388,7 +402,7 @@ export async function saveRequestUsage(entry) {
              cost = cost + excluded.cost`,
           [metricProvider, promptTokens, completionTokens, cachedTokens, metricCost],
         );
-      }
+      });
 
       // Atomic counter increment in same transaction
       const cur = db.get(`SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'`);

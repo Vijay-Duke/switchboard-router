@@ -1,4 +1,5 @@
 import REGISTRY from "open-sse/providers/registry/index.js";
+import { runPrometheusMetricMutation, validateUsageMetricRow } from "./aggregateState.js";
 
 export const BUILT_IN_PROVIDER_IDS = new Set(
   REGISTRY.map((entry) => entry?.id).filter((id) => typeof id === "string" && id),
@@ -39,22 +40,38 @@ export function isCurrentMetricProvider(db, provider) {
 export function retirePrometheusProviderInTx(db, provider) {
   if (!provider || provider === "unknown" || isCurrentMetricProvider(db, provider)) return;
   if (!tableExists(db, "prometheusUsageTotals")) return;
-  const row = db.get(
-    `SELECT requests, promptTokens, completionTokens, cachedTokens, cost
-     FROM prometheusUsageTotals WHERE provider = ?`,
-    [provider],
-  );
-  if (!row) return;
-  db.run(
-    `INSERT INTO prometheusUsageTotals(provider, requests, promptTokens, completionTokens, cachedTokens, cost)
-     VALUES('unknown', ?, ?, ?, ?, ?)
-     ON CONFLICT(provider) DO UPDATE SET
-       requests = requests + excluded.requests,
-       promptTokens = promptTokens + excluded.promptTokens,
-       completionTokens = completionTokens + excluded.completionTokens,
-       cachedTokens = cachedTokens + excluded.cachedTokens,
-       cost = cost + excluded.cost`,
-    [row.requests, row.promptTokens, row.completionTokens, row.cachedTokens, row.cost],
-  );
-  db.run(`DELETE FROM prometheusUsageTotals WHERE provider = ?`, [provider]);
+  runPrometheusMetricMutation(db, () => {
+    const row = db.get(
+      `SELECT provider, requests, promptTokens, completionTokens, cachedTokens, cost
+       FROM prometheusUsageTotals WHERE provider = ?`,
+      [provider],
+    );
+    if (!row) return;
+    validateUsageMetricRow(row);
+    const unknown = db.get(
+      `SELECT provider, requests, promptTokens, completionTokens, cachedTokens, cost
+       FROM prometheusUsageTotals WHERE provider = 'unknown'`,
+    );
+    if (unknown) validateUsageMetricRow(unknown);
+    validateUsageMetricRow({
+      provider: "unknown",
+      requests: (unknown?.requests || 0) + row.requests,
+      promptTokens: (unknown?.promptTokens || 0) + row.promptTokens,
+      completionTokens: (unknown?.completionTokens || 0) + row.completionTokens,
+      cachedTokens: (unknown?.cachedTokens || 0) + row.cachedTokens,
+      cost: (unknown?.cost || 0) + row.cost,
+    });
+    db.run(
+      `INSERT INTO prometheusUsageTotals(provider, requests, promptTokens, completionTokens, cachedTokens, cost)
+       VALUES('unknown', ?, ?, ?, ?, ?)
+       ON CONFLICT(provider) DO UPDATE SET
+         requests = requests + excluded.requests,
+         promptTokens = promptTokens + excluded.promptTokens,
+         completionTokens = completionTokens + excluded.completionTokens,
+         cachedTokens = cachedTokens + excluded.cachedTokens,
+         cost = cost + excluded.cost`,
+      [row.requests, row.promptTokens, row.completionTokens, row.cachedTokens, row.cost],
+    );
+    db.run(`DELETE FROM prometheusUsageTotals WHERE provider = ?`, [provider]);
+  });
 }

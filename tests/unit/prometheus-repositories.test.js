@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const originalDataDir = process.env.DATA_DIR;
 let tempDir;
@@ -25,6 +25,10 @@ beforeAll(async () => {
   connectionsRepo = await import("../../src/lib/db/repos/connectionsRepo.js");
   nodesRepo = await import("../../src/lib/db/repos/nodesRepo.js");
   cacheRepo = await import("../../src/lib/db/repos/fetchCacheRepo.js");
+});
+
+beforeEach(() => {
+  db.run("UPDATE prometheusMetricState SET available = 1 WHERE id = 1");
 });
 
 afterAll(() => {
@@ -114,6 +118,34 @@ describe("Prometheus repository snapshots", () => {
     }
   });
 
+  it("preserves corrupt usage aggregates and disables metrics while core writes continue", async () => {
+    db.run("DELETE FROM usageHistory");
+    for (const [index, value] of [" ", "text", "0x10", 1.5, -1].entries()) {
+      db.run("UPDATE prometheusMetricState SET available = 1 WHERE id = 1");
+      db.run("DELETE FROM prometheusUsageTotals");
+      db.run(
+        `INSERT INTO prometheusUsageTotals(provider, requests, promptTokens, completionTokens, cachedTokens, cost)
+         VALUES('openai', ?, 2, 3, 0, 0.5)`,
+        [value],
+      );
+      const before = db.get("SELECT COUNT(*) AS count FROM usageHistory").count;
+
+      await usageRepo.saveRequestUsage({
+        timestamp: `2026-08-22T00:00:0${index}.000Z`,
+        requestId: `corrupt-metric-write-${index}`,
+        provider: "openai",
+        model: "secret-model",
+        tokens: { prompt_tokens: 1, completion_tokens: 1 },
+      });
+
+      expect(db.get("SELECT COUNT(*) AS count FROM usageHistory").count).toBe(before + 1);
+      expect(db.get("SELECT requests FROM prometheusUsageTotals WHERE provider = 'openai'").requests).toBe(value);
+      expect(db.get("SELECT available FROM prometheusMetricState WHERE id = 1").available).toBe(0);
+      await expect(usageRepo.getUsageMetricTotals()).rejects.toThrow("Prometheus metrics unavailable");
+    }
+  });
+
+
 
   it("collapses a deleted provider's lifetime row into unknown", async () => {
     db.run("DELETE FROM prometheusUsageTotals");
@@ -181,6 +213,28 @@ describe("Prometheus repository snapshots", () => {
     });
   });
 
+  it("does not coerce corrupt provider totals during retirement", async () => {
+    db.run("UPDATE prometheusMetricState SET available = 1 WHERE id = 1");
+    db.run("DELETE FROM prometheusUsageTotals");
+    db.run("DELETE FROM providerConnections");
+    const now = "2026-08-22T00:00:00.000Z";
+    db.run(
+      `INSERT INTO providerConnections(id, provider, authType, isActive, data, createdAt, updatedAt)
+       VALUES('corrupt-retirement', 'custom-retirement', 'apikey', 1, '{}', ?, ?)`,
+      [now, now],
+    );
+    db.run(
+      `INSERT INTO prometheusUsageTotals(provider, requests, promptTokens, completionTokens, cachedTokens, cost)
+       VALUES('custom-retirement', 2, 20, 8, 1, 2), ('unknown', ' ', 5, 2, 0, 0.5)`,
+    );
+
+    expect(await connectionsRepo.deleteProviderConnection("corrupt-retirement")).toBe(true);
+    expect(db.get("SELECT requests FROM prometheusUsageTotals WHERE provider = 'custom-retirement'").requests).toBe(2);
+    expect(db.get("SELECT requests FROM prometheusUsageTotals WHERE provider = 'unknown'").requests).toBe(" ");
+    expect(db.get("SELECT available FROM prometheusMetricState WHERE id = 1").available).toBe(0);
+  });
+
+
   it("reports routing retention as a snapshot and excludes skipped/non-terminal attempts", async () => {
     db.run("DELETE FROM routing_events");
     db.run("DELETE FROM prometheusRoutingRequests");
@@ -245,6 +299,49 @@ describe("Prometheus repository snapshots", () => {
       db.run("UPDATE prometheusRoutingTotals SET requests = ? WHERE source = 'router'", [value]);
       await expect(routingRepo.getRoutingMetricSnapshot()).rejects.toThrow("invalid Prometheus routing metric");
     }
+  });
+
+  it("preserves corrupt routing totals and disables metrics while inserts continue", async () => {
+    for (const [index, value] of [" ", "text", "0x10", 1.5, -1].entries()) {
+      db.run("UPDATE prometheusMetricState SET available = 1 WHERE id = 1");
+      db.run("DELETE FROM routing_events");
+      db.run("DELETE FROM prometheusRoutingRequests");
+      db.run("UPDATE prometheusRoutingTotals SET requests = 0, errors = 0, fallbacks = 0");
+      db.run("UPDATE prometheusRoutingTotals SET requests = ? WHERE source = 'router'", [value]);
+
+      await routingRepo.insertRoutingEvent({
+        comboName: "corrupt-routing",
+        requestId: `corrupt-routing-${index}`,
+        routerReason: "router",
+        workerStatus: 200,
+        meta: { terminal: true },
+      });
+
+      expect(db.get("SELECT COUNT(*) AS count FROM routing_events").count).toBe(1);
+      expect(db.get("SELECT requests FROM prometheusRoutingTotals WHERE source = 'router'").requests).toBe(value);
+      expect(db.get("SELECT available FROM prometheusMetricState WHERE id = 1").available).toBe(0);
+      await expect(routingRepo.getRoutingMetricSnapshot()).rejects.toThrow("Prometheus metrics unavailable");
+    }
+  });
+
+  it("does not partially decrement corrupt routing state during core deletion", async () => {
+    db.run("UPDATE prometheusMetricState SET available = 1 WHERE id = 1");
+    db.run("DELETE FROM routing_events");
+    db.run("DELETE FROM prometheusRoutingRequests");
+    db.run("UPDATE prometheusRoutingTotals SET requests = 0, errors = 0, fallbacks = 0");
+    await routingRepo.insertRoutingEvent({
+      comboName: "corrupt-delete",
+      requestId: "corrupt-delete-request",
+      routerReason: "router",
+      workerStatus: 200,
+      meta: { terminal: true },
+    });
+    db.run("UPDATE prometheusRoutingTotals SET errors = ' ' WHERE source = 'router'");
+
+    expect(await routingRepo.deleteRoutingDataForCombo("corrupt-delete")).toEqual({ events: 1, versions: 0 });
+    expect(db.get("SELECT errors FROM prometheusRoutingTotals WHERE source = 'router'").errors).toBe(" ");
+    expect(db.get("SELECT requestKey FROM prometheusRoutingRequests WHERE requestKey = 'corrupt-delete-request'")).toBeTruthy();
+    expect(db.get("SELECT available FROM prometheusMetricState WHERE id = 1").available).toBe(0);
   });
 
   it("reports active request counts without account or model dimensions", async () => {

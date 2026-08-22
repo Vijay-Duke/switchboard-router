@@ -4,6 +4,11 @@ import { randomUUID } from "crypto";
 import { recomputeStoredOutcome } from "open-sse/routing/scoring.js";
 import { providerOf } from "open-sse/routing/providerPreference.js";
 import { requireMetricNumber } from "@/lib/metrics/numeric.js";
+import {
+  runPrometheusMetricMutation,
+  validateRoutingRequestRow,
+  validateRoutingTotalRow,
+} from "@/lib/metrics/aggregateState.js";
 
 function nowIso() {
   return new Date().toISOString();
@@ -41,13 +46,24 @@ function routingMetricSource(routerReason, fallbackUsed) {
 }
 
 function adjustRoutingMetricTotal(db, state, direction) {
+  const total = db.get(
+    `SELECT source, requests, errors, fallbacks FROM prometheusRoutingTotals WHERE source = ?`,
+    [state.source],
+  );
+  validateRoutingTotalRow(total, state.source);
+  validateRoutingTotalRow({
+    source: state.source,
+    requests: total.requests + direction,
+    errors: total.errors + direction * state.isError,
+    fallbacks: total.fallbacks + direction * state.fallbackUsed,
+  });
   db.run(
     `UPDATE prometheusRoutingTotals
      SET requests = requests + ?,
          errors = errors + ?,
          fallbacks = fallbacks + ?
      WHERE source = ?`,
-    [direction, direction * Number(state.isError), direction * Number(state.fallbackUsed), state.source],
+    [direction, direction * state.isError, direction * state.fallbackUsed, state.source],
   );
 }
 
@@ -55,9 +71,15 @@ function updateRoutingMetricForInsert(db, event, id, timestamp) {
   if (!isMetricTerminal(event)) return;
   const requestKey = String(event.requestId || id);
   const previous = db.get(`SELECT * FROM prometheusRoutingRequests WHERE requestKey = ?`, [requestKey]);
-  if (previous) adjustRoutingMetricTotal(db, previous, -1);
+  if (previous) {
+    validateRoutingRequestRow(previous, requestKey);
+    adjustRoutingMetricTotal(db, previous, -1);
+  }
   const fallbackUsed = previous?.fallbackUsed === 1 || event.fallbackUsed ? 1 : 0;
-  const isError = previous?.isError === 1 || Number(event.workerStatus) >= 400 ? 1 : 0;
+  const workerStatus = event.workerStatus == null
+    ? null
+    : requireMetricNumber(event.workerStatus, `${requestKey}.workerStatus`, { integer: true });
+  const isError = previous?.isError === 1 || (workerStatus != null && workerStatus >= 400) ? 1 : 0;
   const state = {
     requestKey,
     comboName: event.comboName || null,
@@ -83,17 +105,37 @@ function updateRoutingMetricForInsert(db, event, id, timestamp) {
 }
 
 function deleteRoutingMetricRequests(db, where, params) {
-  const rows = db.all(
-    `SELECT source, COUNT(*) AS requests, SUM(isError) AS errors, SUM(fallbackUsed) AS fallbacks
-     FROM prometheusRoutingRequests WHERE ${where} GROUP BY source`,
+  const requests = db.all(
+    `SELECT requestKey, terminalId, source, isError, fallbackUsed
+     FROM prometheusRoutingRequests WHERE ${where}`,
     params,
   ) || [];
-  for (const row of rows) {
+  const totals = new Map();
+  for (const request of requests) {
+    validateRoutingRequestRow(request);
+    const total = totals.get(request.source) || { source: request.source, requests: 0, errors: 0, fallbacks: 0 };
+    total.requests += 1;
+    total.errors += request.isError;
+    total.fallbacks += request.fallbackUsed;
+    totals.set(request.source, total);
+  }
+  for (const removed of totals.values()) {
+    const current = db.get(
+      `SELECT source, requests, errors, fallbacks FROM prometheusRoutingTotals WHERE source = ?`,
+      [removed.source],
+    );
+    validateRoutingTotalRow(current, removed.source);
+    validateRoutingTotalRow({
+      source: removed.source,
+      requests: current.requests - removed.requests,
+      errors: current.errors - removed.errors,
+      fallbacks: current.fallbacks - removed.fallbacks,
+    });
     db.run(
       `UPDATE prometheusRoutingTotals
        SET requests = requests - ?, errors = errors - ?, fallbacks = fallbacks - ?
        WHERE source = ?`,
-      [Number(row.requests), Number(row.errors) || 0, Number(row.fallbacks) || 0, row.source],
+      [removed.requests, removed.errors, removed.fallbacks, removed.source],
     );
   }
   db.run(`DELETE FROM prometheusRoutingRequests WHERE ${where}`, params);
@@ -136,7 +178,9 @@ export async function insertRoutingEvent(event) {
         event.meta != null ? stringifyJson(event.meta) : null,
       ],
     );
-    updateRoutingMetricForInsert(db, event, result.lastInsertRowid, timestamp);
+    runPrometheusMetricMutation(db, () => {
+      updateRoutingMetricForInsert(db, event, result.lastInsertRowid, timestamp);
+    });
   });
   // Do NOT notifyWrite here — event inserts are high-frequency and would
   // thrash the 15s stats/learning cache on every auto request. Learning
@@ -780,7 +824,9 @@ export async function deleteOldRoutingEvents(days = 90) {
   const cutoff = new Date(Date.now() - days * 86400000).toISOString();
   let changes = 0;
   db.transaction(() => {
-    deleteRoutingMetricRequests(db, "timestamp < ?", [cutoff]);
+    runPrometheusMetricMutation(db, () => {
+      deleteRoutingMetricRequests(db, "timestamp < ?", [cutoff]);
+    });
     const info = db.run(`DELETE FROM routing_events WHERE timestamp < ?`, [cutoff]);
     changes = info?.changes ?? 0;
   });
@@ -795,7 +841,9 @@ export async function deleteRoutingDataForCombo(comboName) {
   let events = 0;
   let versions = 0;
   db.transaction(() => {
-    deleteRoutingMetricRequests(db, "comboName = ?", [comboName]);
+    runPrometheusMetricMutation(db, () => {
+      deleteRoutingMetricRequests(db, "comboName = ?", [comboName]);
+    });
     events = db.run(`DELETE FROM routing_events WHERE comboName = ?`, [comboName])?.changes ?? 0;
     versions = db.run(`DELETE FROM router_learning_versions WHERE comboName = ?`, [comboName])?.changes ?? 0;
   });
@@ -810,7 +858,15 @@ export async function rekeyRoutingDataForCombo(oldName, newName) {
   db.transaction(() => {
     db.run(`UPDATE routing_events SET comboName = ? WHERE comboName = ?`, [newName, oldName]);
     db.run(`UPDATE router_learning_versions SET comboName = ? WHERE comboName = ?`, [newName, oldName]);
-    db.run(`UPDATE prometheusRoutingRequests SET comboName = ? WHERE comboName = ?`, [newName, oldName]);
+    runPrometheusMetricMutation(db, () => {
+      const requests = db.all(
+        `SELECT requestKey, terminalId, source, isError, fallbackUsed
+         FROM prometheusRoutingRequests WHERE comboName = ?`,
+        [oldName],
+      ) || [];
+      for (const request of requests) validateRoutingRequestRow(request);
+      db.run(`UPDATE prometheusRoutingRequests SET comboName = ? WHERE comboName = ?`, [newName, oldName]);
+    });
   });
   notifyWrite(oldName);
   notifyWrite(newName);
