@@ -1,3 +1,24 @@
+# v0.7.0 (2026-08-22)
+
+## Features
+- **Client-key security**: replace plaintext gateway-key usage attribution with non-secret key IDs (migration 8); scrub historical usage; salted scrypt verifiers; indexed digest lookup; bounded per-key model/combo allowlists, expiration, request-rate, concurrency, and spend policies with stream-safe leases on every provider-work handler
+- **Account Scheduler v2**: opt-in per-provider balanced scheduling with client-key/provider/session-scoped affinity, least-inflight selection, fresh per-account quota scoring, per-connection best-effort concurrency caps, deterministic tie-breaking, failover rebinding, and visible selection reasons; exact in-flight tracking across chat, embeddings, image, STT/TTS, search, fetch, and native Gemini
+- **Prometheus metrics**: opt-in authenticated `/api/mgmt/v1/metrics` endpoint with bounded materialized aggregates (migration 9), strict numeric validation, corrupt-state atomic 503, fixed low-cardinality metric families, and single-flight collection
+- **TLS transport**: prebuilt Claude Code TLS helper binaries for all six platform/arch targets
+- **CORS**: compatibility API preflight now reflects the requesting Origin
+- **Basic Chat**: post to gateway `/v1/chat/completions` with user-facing model IDs; add New conversation action; Stop marks cancelled turns; icon actions have human-readable names
+- **Accessibility**: shared Modal/Drawer dialog semantics with focus trap, Escape close, and focus return; keyboard-operable sortable table headers, expandable rows, auto-refresh switches, combo model editors, and MITM tool expanders; associated form labels across provider, media, and settings surfaces; named icon-only actions with row context; usage tabs/periods/pagination expose programmatic state; mobile nav Escape dismissal; visible error states for console-log disconnect, translator validation, usage fetch failures, and inverted date ranges
+
+## Fixes
+- **Ollama**: preserve assistant content in non-streaming `/v1/api/chat` responses
+- **Models**: `/v1/models/info` resolves advertised active models; `/v1/models/llm` accepts the `llm` kind; `/v1beta/models` includes active local models
+- **Management**: unauthorized responses carry `Cache-Control: no-store`
+- **Theme**: light selection now removes the `dark` class from `documentElement`
+- **DB**: shared SQLite shutdown listener registry prevents EventEmitter leaks; legacy JSON import is retryable across restarts, seeds durable spend, and sanitizes all migration backups payload-locally without cross-copying verifiers
+- **Packaging**: standalone build copies `.next/static` and `public` alongside custom-server; Vitest and ESLint exclude nested worktrees
+- **Translator**: fix `setContents` state wiring so editor input reaches Format and Send
+- **Pi**: preserve non-Switchboard providers in `enabledModels` after Apply
+
 # v0.6.31 (2026-08-17)
 
 ## Fixes
