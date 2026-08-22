@@ -2,7 +2,7 @@
 // @ts-check
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Card, Button, Input, Modal, Toggle } from "@/shared/components";
+import { Card, Button, Input, Modal, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { getCurrentLocale, onLocaleChange } from "@/i18n/runtime";
 import {
@@ -42,6 +42,22 @@ export default function TokenSaverClient() {
     useState(false);
   const [headroomActionLoading, setHeadroomActionLoading] = useState(false);
   const [headroomActionError, setHeadroomActionError] = useState("");
+  const [headroomExtras, setHeadroomExtras] = useState({
+    version: null,
+    extras: { code: false, ml: false },
+    available: ["code", "ml"],
+    loading: false,
+  });
+  const [pendingExtras, setPendingExtras] = useState([]);
+  const [extrasActionLoading, setExtrasActionLoading] = useState(false);
+  const [extrasActionError, setExtrasActionError] = useState("");
+  const [removingExtra, setRemovingExtra] = useState(null);
+  const [installLog, setInstallLog] = useState("");
+  const [extrasConfirm, setExtrasConfirm] = useState(null);
+  const [codeAware, setCodeAware] = useState(false);
+  const [kompress, setKompress] = useState(true);
+  const [restartingProxy, setRestartingProxy] = useState(false);
+  const logPollRef = useRef(null);
   const [cavemanEnabled, setCavemanEnabled] = useState(false);
   const [cavemanLevel, setCavemanLevel] = useState("full");
   const [ponytailEnabled, setPonytailEnabled] = useState(false);
@@ -144,6 +160,29 @@ export default function TokenSaverClient() {
       });
       const data = await res.json();
       setHeadroomStatus({ ...data, loading: false });
+      if (!data?.installed) {
+        setHeadroomExtras((prev) => ({ ...prev, version: null, extras: { code: false, ml: false }, loading: false }));
+        setPendingExtras([]);
+      } else {
+        try {
+          const res = await fetch("/api/headroom/extras", { cache: "no-store" });
+          const extrasData = await res.json();
+          if (res.ok) {
+            setHeadroomExtras({
+              version: extrasData.version ?? null,
+              extras: extrasData.extras || { code: false, ml: false },
+              available: extrasData.available || ["code", "ml"],
+              loading: false,
+            });
+          } else {
+            setHeadroomExtras((prev) => ({ ...prev, loading: false }));
+          }
+          setPendingExtras([]);
+        } catch {
+          setHeadroomExtras((prev) => ({ ...prev, loading: false }));
+          setPendingExtras([]);
+        }
+      }
     } catch {
       setHeadroomStatus({
         installed: false,
@@ -151,6 +190,8 @@ export default function TokenSaverClient() {
         python: null,
         loading: false,
       });
+      setHeadroomExtras({ version: null, extras: { code: false, ml: false }, available: ["code", "ml"], loading: false });
+      setPendingExtras([]);
     }
   }, []);
 
@@ -184,6 +225,138 @@ export default function TokenSaverClient() {
     patchSetting({ cavemanLevel: level });
   };
 
+  const togglePendingExtra = (extra) => {
+    setPendingExtras((cur) =>
+      cur.includes(extra) ? cur.filter((e) => e !== extra) : [...cur, extra]
+    );
+  };
+
+  // Poll the install log tail while a pip install/uninstall is running.
+  const startLogPolling = useCallback(() => {
+    setInstallLog("");
+    if (logPollRef.current) clearInterval(logPollRef.current);
+    const tick = async () => {
+      try {
+        const r = await fetch("/api/headroom/extras?log=1", {
+          headers: { "Cache-Control": "no-store" },
+        });
+        const d = await r.json().catch(() => ({}));
+        if (typeof d.log === "string") setInstallLog(d.log);
+      } catch { /* ignore transient poll errors */ }
+    };
+    tick();
+    logPollRef.current = setInterval(tick, 1500);
+  }, []);
+
+  const stopLogPolling = useCallback(() => {
+    if (logPollRef.current) {
+      clearInterval(logPollRef.current);
+      logPollRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => stopLogPolling(), [stopLogPolling]);
+
+  const installExtrasConfirmed = useCallback(async () => {
+    if (pendingExtras.length === 0) return;
+    setExtrasActionLoading(true);
+    setExtrasActionError("");
+    startLogPolling();
+    try {
+      const res = await fetch("/api/headroom/extras", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ extras: pendingExtras }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Install failed");
+      setHeadroomExtras((s) => ({
+        ...s,
+        version: data.version ?? s.version,
+        extras: data.extras || s.extras,
+      }));
+      setPendingExtras([]);
+    } catch (e) {
+      setExtrasActionError(e.message);
+    } finally {
+      stopLogPolling();
+      setExtrasActionLoading(false);
+    }
+  }, [pendingExtras, startLogPolling, stopLogPolling]);
+
+  const removeExtraConfirmed = useCallback(async (extra) => {
+    setRemovingExtra(extra);
+    setExtrasActionError("");
+    startLogPolling();
+    try {
+      const res = await fetch("/api/headroom/extras", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ extras: [extra] }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Remove failed");
+      setHeadroomExtras((s) => ({
+        ...s,
+        version: data.version ?? s.version,
+        extras: data.extras || s.extras,
+      }));
+    } catch (e) {
+      setExtrasActionError(e.message);
+    } finally {
+      stopLogPolling();
+      setRemovingExtra(null);
+    }
+  }, [startLogPolling, stopLogPolling]);
+
+  const handleInstallExtras = useCallback(() => {
+    if (pendingExtras.length === 0) return;
+    // Warn about the heavy ~1GB torch download before installing [ml].
+    if (pendingExtras.includes("ml")) {
+      setExtrasConfirm({
+        title: "Install [ml]",
+        message: "[ml] downloads ~1 GB (torch + huggingface-hub). Continue?",
+        confirmText: "Install",
+        variant: "primary",
+        onConfirm: installExtrasConfirmed,
+      });
+      return;
+    }
+    installExtrasConfirmed();
+  }, [pendingExtras, installExtrasConfirmed]);
+
+  const handleRemoveExtra = useCallback((extra) => {
+    setExtrasConfirm({
+      title: `Remove [${extra}]`,
+      message: `Remove [${extra}] and its packages?`,
+      confirmText: "Remove",
+      variant: "danger",
+      onConfirm: () => removeExtraConfirmed(extra),
+    });
+  }, [removeExtraConfirmed]);
+
+  // Toggle an extra's active state (persist setting), then restart the proxy so
+  // the new --code-aware / --disable-kompress flags take effect.
+  const toggleExtraActive = useCallback(async (extra, value) => {
+    setExtrasActionError("");
+    if (extra === "code") setCodeAware(value);
+    if (extra === "ml") setKompress(value);
+    const key = extra === "code" ? "headroomCodeAware" : "headroomKompress";
+    await patchSetting({ [key]: value });
+    if (!headroomStatus.running) return;
+    setRestartingProxy(true);
+    try {
+      const res = await fetch("/api/headroom/restart", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Restart failed");
+      await refreshHeadroomStatus();
+    } catch (e) {
+      setExtrasActionError(e.message);
+    } finally {
+      setRestartingProxy(false);
+    }
+  }, [headroomStatus.running, refreshHeadroomStatus]);
+
   const handlePonytailEnabled = (value) => {
     setPonytailEnabled(value);
     patchSetting({ ponytailEnabled: value });
@@ -209,6 +382,8 @@ export default function TokenSaverClient() {
           setVaultThresholdKB(data.tokenSaver?.vaultThresholdKB ?? 8);
           setHeadroomEnabled(!!data.headroomEnabled);
           setHeadroomUrl(data.headroomUrl || "http://localhost:8787");
+          setCodeAware(data.headroomCodeAware === true);
+          setKompress(data.headroomKompress !== false);
           setCavemanEnabled(!!data.cavemanEnabled);
           setCavemanLevel(data.cavemanLevel || "full");
           setPonytailEnabled(!!data.ponytailEnabled);
@@ -273,7 +448,7 @@ export default function TokenSaverClient() {
             aria-label="Compress tool output (RTK)"
           />
         </div>
-        <div className="flex items-center justify-between py-4 border-b border-border gap-4 flex-wrap">
+        <div className="flex items-center justify-between py-4 gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-3 flex-wrap">
               <p className="font-medium">
@@ -305,13 +480,110 @@ export default function TokenSaverClient() {
             </p>
           </div>
           <Toggle
-            checked={headroomEnabled && headroomRunning}
-            disabled={!headroomRunning}
+            checked={headroomEnabled}
             onChange={() => handleHeadroomEnabled(!headroomEnabled)}
             aria-label="Compress context (Headroom)"
           />
         </div>
-        <div className="flex items-center justify-between pt-4 gap-4 flex-wrap">
+        {headroomStatus.installed && (
+          <div className="mb-3 ml-1 pl-3 pb-4 border-l-2 border-border">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-text-muted">
+                Compression extras
+                {headroomExtras.version ? ` · v${headroomExtras.version}` : ""}:
+              </span>
+              {headroomExtras.available.map((extra) => {
+                const installed = !!headroomExtras.extras[extra];
+                const pending = pendingExtras.includes(extra);
+                const extraTitle =
+                  extra === "code"
+                    ? "tree-sitter AST compression for code responses"
+                    : "Kompress-v2 HF model for prose/agentic traces (~+1GB)";
+
+                if (installed) {
+                  const active = extra === "code" ? codeAware : kompress;
+                  return (
+                    <div
+                      key={extra}
+                      className="flex items-center gap-1.5 text-xs px-2 py-1 rounded border border-success/40 bg-success/5 text-text"
+                      title={extraTitle}
+                    >
+                      <Toggle
+                        size="sm"
+                        checked={active}
+                        disabled={restartingProxy}
+                        onChange={() => toggleExtraActive(extra, !active)}
+                      />
+                      <span className="font-medium">[{extra}]</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveExtra(extra)}
+                        disabled={removingExtra === extra}
+                        className="ml-1 text-error underline hover:opacity-80 disabled:opacity-50"
+                        title={`Uninstall [${extra}]`}
+                      >
+                        {removingExtra === extra ? "Uninstalling…" : "Uninstall"}
+                      </button>
+                    </div>
+                  );
+                }
+
+                return (
+                  <label
+                    key={extra}
+                    className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded border cursor-pointer transition-colors ${
+                      pending
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border text-text-muted hover:bg-surface-2"
+                    }`}
+                    title={extraTitle}
+                  >
+                    <input
+                      type="checkbox"
+                      className="w-3 h-3"
+                      checked={pending}
+                      onChange={() => togglePendingExtra(extra)}
+                    />
+                    <span className="font-medium">[{extra}]</span>
+                    <span className="opacity-70">not installed</span>
+                  </label>
+                );
+              })}
+              {pendingExtras.length > 0 && (
+                <button
+                  onClick={handleInstallExtras}
+                  disabled={extrasActionLoading}
+                  className="text-xs px-2.5 py-1 rounded bg-primary text-white hover:opacity-90 disabled:opacity-50"
+                >
+                  {extrasActionLoading
+                    ? "Installing…"
+                    : `Install [proxy,${pendingExtras.join(",")}]`}
+                </button>
+              )}
+            </div>
+            {extrasActionError && (
+              <p className="text-xs text-error mt-1">{extrasActionError}</p>
+            )}
+            {restartingProxy && (
+              <p className="text-xs text-text-muted mt-1">Restarting proxy…</p>
+            )}
+            {(extrasActionLoading || removingExtra) && installLog && (
+              <pre className="mt-2 max-h-32 overflow-auto rounded bg-surface-2 p-2 text-[10px] leading-tight text-text-muted whitespace-pre-wrap">
+                {installLog}
+              </pre>
+            )}
+            <p className="text-xs text-text-muted mt-1">
+              Installing adds the package; use <code>on</code>/<code>off</code>{" "}
+              to activate it (restarts the proxy). Default install is{" "}
+              <code>[proxy]</code> only (SmartCrusher for JSON). Adding{" "}
+              <code>[code]</code> enables AST compression
+              (Python/JS/TS/Go/Rust/Java/C/C++/Perl). Adding <code>[ml]</code>{" "}
+              enables the Kompress-v2 HF model for prose/agentic traces but
+              adds ~1 GB (torch + huggingface-hub).
+            </p>
+          </div>
+        )}
+        <div className="flex items-center justify-between pt-4 border-t border-border gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
             <p className="font-medium">
               Compress LLM output{" "}
@@ -585,6 +857,19 @@ export default function TokenSaverClient() {
           </div>
         </div>
       </Modal>
+      <ConfirmModal
+        isOpen={!!extrasConfirm}
+        onClose={() => setExtrasConfirm(null)}
+        onConfirm={() => {
+          const fn = extrasConfirm?.onConfirm;
+          setExtrasConfirm(null);
+          fn?.();
+        }}
+        title={extrasConfirm?.title}
+        message={extrasConfirm?.message}
+        confirmText={extrasConfirm?.confirmText}
+        variant={extrasConfirm?.variant}
+      />
     </div>
   );
 }
