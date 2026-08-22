@@ -186,3 +186,27 @@ describe("OAuth services fetch identity", () => {
     );
   });
 });
+
+describe("kimi-coding stable device id circuit", () => {
+  it("mints a device id at request time and threads it through poll into tokens", async () => {
+    proxyAwareFetch
+      .mockResolvedValueOnce(jsonResponse({
+        device_code: "dc",
+        user_code: "UC-1",
+        verification_uri: "https://www.kimi.com/code/authorize_device",
+        interval: 5,
+      }))
+      .mockResolvedValueOnce(jsonResponse({ access_token: "kimi-access", refresh_token: "r" }));
+
+    const deviceData = await requestDeviceCode("kimi-coding");
+    expect(deviceData._kimiDeviceId).toMatch(/^[0-9a-f-]{36}$/);
+
+    // The route forwards extraData from the frontend; the poll must reuse the
+    // SAME X-Msh-Device-Id that requestDeviceCode used, not mint a fresh one.
+    const { tokens } = await pollForToken("kimi-coding", "dc", null, { _kimiDeviceId: deviceData._kimiDeviceId });
+
+    expect(tokens.providerSpecificData).toEqual({ deviceId: deviceData._kimiDeviceId });
+    const [, pollInit] = proxyAwareFetch.mock.calls[1];
+    expect(pollInit.headers["X-Msh-Device-Id"]).toBe(deviceData._kimiDeviceId);
+  });
+});

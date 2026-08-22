@@ -275,7 +275,9 @@ export async function POST(request, { params }) {
       const noPkceProviders = ["github", "kimi-coding", "kilocode", "codebuddy-cn"];
       let result;
       if (noPkceProviders.includes(provider)) {
-        result = await pollForToken(provider, deviceCode);
+        // kimi-coding threads _kimiDeviceId through extraData; the others
+        // declare no fourth parameter and ignore it.
+        result = await pollForToken(provider, deviceCode, null, extraData);
       } else if (provider === "kiro") {
         // Kiro needs extraData (clientId, clientSecret) from device code response
         result = await pollForToken(provider, deviceCode, null, extraData);

@@ -179,9 +179,11 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         const verifyUrl = data.verification_uri_complete || data.verification_uri;
         if (verifyUrl) window.open(verifyUrl, "_blank", "noopener,noreferrer");
 
-        // Pass extraData for Kiro (contains _clientId, _clientSecret) and
+        // Pass extraData for Kiro (contains _clientId, _clientSecret),
         // Qoder (contains _qoderMachineId / _qoderNonce — needed so mapTokens
-        // can persist the machine id alongside the token).
+        // can persist the machine id alongside the token), and kimi-coding
+        // (contains _kimiDeviceId so the stable X-Msh-Device-Id survives
+        // from the device-code request through polling into providerSpecificData).
         const extraData = provider === "kiro"
           ? {
               _clientId: data._clientId,
@@ -197,6 +199,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
               _qoderMachineId: data._qoderMachineId,
               _qoderVerifier: data.codeVerifier,
             }
+          : provider === "kimi-coding"
+          ? { _kimiDeviceId: data._kimiDeviceId }
           : null;
         startPolling(
           data.device_code,
