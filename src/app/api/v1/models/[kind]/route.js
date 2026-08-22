@@ -1,8 +1,11 @@
 // @ts-check
 import { buildModelsList } from "../route.js";
+import { corsPreflightResponse } from "@/shared/utils/cors.js";
 
-// URL slug → service kind(s). `web` covers both webSearch and webFetch.
+// URL slug → service kind(s). `llm` is the default chat kind (same list as
+// GET /v1/models); `web` covers both webSearch and webFetch.
 const KIND_SLUG_MAP = {
+  "llm": ["llm"],
   "image": ["image"],
   "tts": ["tts"],
   "stt": ["stt"],
@@ -11,18 +14,13 @@ const KIND_SLUG_MAP = {
   "web": ["webSearch", "webFetch"],
 };
 
-export async function OPTIONS() {
-  return new Response(null, {
-    headers: {
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Allow-Headers": "*",
-    },
-  });
+export async function OPTIONS(request) {
+  return corsPreflightResponse(request, { methods: "GET, OPTIONS" });
 }
 
 /**
  * GET /v1/models/{kind} - OpenAI-compatible models list filtered by capability.
- * Supported kinds: image, tts, stt, embedding, image-to-text, web.
+ * Supported kinds: llm, image, tts, stt, embedding, image-to-text, web.
  */
 export async function GET(request, { params }) {
   try {

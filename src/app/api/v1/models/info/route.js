@@ -2,6 +2,8 @@
 import { PROVIDER_MODELS } from "open-sse/config/providerModels.js";
 import { AI_PROVIDERS, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { getModelKind } from "@/shared/constants/models";
+import { buildModelsList } from "../route.js";
+import { corsPreflightResponse } from "@/shared/utils/cors.js";
 
 const KIND_ENDPOINT = {
   llm: "/v1/chat/completions",
@@ -77,10 +79,45 @@ function lookup(fullId, requestedKind) {
   return null;
 }
 
-export async function OPTIONS() {
-  return new Response(null, {
-    headers: { "Access-Control-Allow-Methods": "GET, OPTIONS" },
-  });
+// All service kinds — used when no (or no valid) ?kind= disambiguator is given.
+const ALL_KINDS = ["llm", "image", "tts", "stt", "embedding", "imageToText", "webSearch", "webFetch"];
+
+/**
+ * Resolve metadata for a model that GET /v1/models advertises but the static
+ * PROVIDER_MODELS catalog does not know: provider-node prefixed models
+ * (e.g. "qa-openai/qa-chat"), compatible-provider discovered models, custom
+ * models, combos, and aliases (QA-024). Metadata must agree with what the
+ * list endpoint actually serves, so the list builder is the source of truth.
+ */
+async function lookupAdvertised(fullId, requestedKind, signal) {
+  let advertised = [];
+  try {
+    advertised = await buildModelsList(
+      requestedKind && ALL_KINDS.includes(requestedKind) ? [requestedKind] : ALL_KINDS,
+      { signal },
+    );
+  } catch {
+    return null;
+  }
+  const entry = advertised.find((m) => m?.id === fullId);
+  if (!entry) return null;
+
+  const kind = entry.kind || "llm";
+  const slash = entry.id.indexOf("/");
+  const modelId = slash === -1 ? entry.id : entry.id.slice(slash + 1);
+  const out = {
+    id: entry.id,
+    name: entry.name || entry.display_name || modelId,
+    kind,
+    owned_by: entry.owned_by || (slash === -1 ? "switchboard" : entry.id.slice(0, slash)),
+    endpoint: KIND_ENDPOINT[kind] || null,
+  };
+  if (entry.capabilities) out.capabilities = entry.capabilities;
+  return out;
+}
+
+export async function OPTIONS(request) {
+  return corsPreflightResponse(request, { methods: "GET, OPTIONS" });
 }
 
 // GET /v1/models/info?id={alias}/{modelId} — metadata for a single model
@@ -94,7 +131,7 @@ export async function GET(request) {
       { status: 400 },
     );
   }
-  const info = lookup(id, kind);
+  const info = lookup(id, kind) || await lookupAdvertised(id, kind, request?.signal);
   if (!info) {
     return Response.json(
       { error: { message: `Model not found: ${id}`, type: "not_found" } },
