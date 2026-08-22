@@ -14,4 +14,13 @@ describe("request logger credential redaction", () => {
       "user-agent": "claude-code/2.1.129",
     });
   });
+
+  it("fully redacts every supported gateway key carrier", () => {
+    const rawKey = "sk-switchboard-request-log-secret";
+    for (const header of ["authorization", "x-switchboard-key", "x-api-key", "x-goog-api-key"]) {
+      const output = maskSensitiveHeaders({ [header]: rawKey });
+      expect(output[header]).toBe("[redacted]");
+      expect(JSON.stringify(output)).not.toContain(rawKey);
+    }
+  });
 });

@@ -85,6 +85,8 @@ export const SENSITIVE_REQUEST_LOG_HEADER_NAMES = Object.freeze([
 export const FULL_REDACTION_REQUEST_LOG_HEADER_NAMES = Object.freeze([
   "authorization",
   "x-switchboard-key",
+  "x-api-key",
+  "x-goog-api-key",
 ]);
 
 // Suffix added to client tools when forwarding to Antigravity provider (anti-ban cloaking)
