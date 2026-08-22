@@ -249,3 +249,5 @@ Blocking findings from `review-findings-round1.md` were addressed in commit:
 - Consumer result: **5 files passed; 42 tests passed**.
 
 No full suite, lint, React Doctor, build, scheduler, or Prometheus command was run.
+
+Final round-1 verification after both commits: **29 focused files passed; 180 tests passed; 0 failures**. This included every original client-key contract plus new verifier, durable-ledger/pruning, migration retry/sanitization, enabled log-file, all-handler rejection, usage-completion ordering, embeddings/STT abort, safe-consumer, application lifecycle, probe, CLI route, and dashboard regressions.
