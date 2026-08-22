@@ -445,3 +445,15 @@ Commit `7f23b8c7 fix: sanitize legacy backups in place` makes sanitization paylo
 RED: the distinct-backup regression received repaired active settings in the failed backup.
 
 GREEN: `npm --prefix tests test -- unit/db-migration-chain.test.js unit/client-key-migration.test.js` → **2 files, 13 tests, 0 failures**.
+
+## Payload-local historical verifiers
+
+Commit `6c091c55 fix: preserve backup key verifiers` ensures historical archives remain independently restorable:
+
+- Active source and the current successful backup may use the current database verifier.
+- Every older backup ignores active `storedById` even on ID collision, normalizes its own v1/v2 value, or packs its own plaintext once.
+- Backup-only and same-ID/different-raw regressions prove each archived verifier matches only its own raw secret, never the active secret; usage attribution remains payload-local and raw bytes are absent.
+
+RED: backup-only keys remained plaintext/null, and a same-ID backup received the active repaired verifier.
+
+GREEN: focused migration suite → **2 files, 13 tests, 0 failures**.
