@@ -165,7 +165,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
 export function buildOnStreamComplete({ provider, model, connectionId, clientKeyId, requestStartTime, body, stream, finalBody, translatedBody, requestId, clientRawRequest }) {
   const streamDetailId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
-  const onStreamComplete = (contentObj, usage, ttftAt) => {
+  const onStreamComplete = async (contentObj, usage, ttftAt) => {
     const latency = {
       ttft: ttftAt ? ttftAt - requestStartTime : Date.now() - requestStartTime,
       total: Date.now() - requestStartTime
@@ -186,7 +186,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, clientKey
       console.error("[RequestDetail] Failed to update streaming content:", err.message);
     });
 
-    saveUsageStats({ provider, model, tokens: usage, connectionId, clientKeyId, requestId, endpoint: clientRawRequest?.endpoint, label: "STREAM USAGE" });
+    await saveUsageStats({ provider, model, tokens: usage, connectionId, clientKeyId, requestId, endpoint: clientRawRequest?.endpoint, label: "STREAM USAGE" });
   };
 
   return { onStreamComplete, streamDetailId };

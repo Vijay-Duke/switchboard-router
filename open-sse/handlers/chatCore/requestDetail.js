@@ -93,7 +93,7 @@ export function saveUsageStats({ provider, model, tokens, connectionId, clientKe
     completion_tokens: tokens.completion_tokens ?? tokens.output_tokens ?? 0
   };
 
-  saveRequestUsage({
+  return saveRequestUsage({
     provider: provider || "unknown",
     model: model || "unknown",
     tokens: normalized,
@@ -102,5 +102,5 @@ export function saveUsageStats({ provider, model, tokens, connectionId, clientKe
     clientKeyId: clientKeyId || undefined,
     endpoint: endpoint || null,
     requestId: requestId || null
-  }).catch(() => {});
+  });
 }

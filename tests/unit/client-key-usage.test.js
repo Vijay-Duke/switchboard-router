@@ -9,7 +9,8 @@ import { packApiKeyRecord } from "@/lib/crypto/secrets.js";
 const RAW_KEY = "sk-switchboard-usage-super-secret-tail";
 const mocks = vi.hoisted(() => ({ getAdapter: vi.fn() }));
 vi.mock("@/lib/db/driver.js", () => ({ getAdapter: mocks.getAdapter }));
-vi.mock("@/lib/db/repos/pricingRepo.js", () => ({ getPricingForModel: vi.fn().mockResolvedValue(null) }));
+vi.mock("@/lib/db/repos/pricingRepo.js", () => ({ getPricingForModel: vi.fn().mockResolvedValue({ input: 1 }) }));
+vi.mock("open-sse/providers/pricing.js", () => ({ calculateCostFromTokens: vi.fn(() => 2.5) }));
 
 let db;
 let file;
@@ -27,6 +28,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  delete process.env.USAGE_HISTORY_MAX;
   db.run(`DELETE FROM usageHistory`);
   db.run(`DELETE FROM usageDaily`);
   db.run(`DELETE FROM apiKeys`);
@@ -53,6 +55,8 @@ function serializedBoundaries() {
 
 describe("client key usage attribution", () => {
   it("persists a stable key ID and never a reusable or masked gateway key", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const transactionSpy = vi.spyOn(db, "transaction");
     await usage.saveRequestUsage({
       timestamp: new Date().toISOString(),
       provider: "openai",
@@ -64,6 +68,10 @@ describe("client key usage attribution", () => {
       tokens: { prompt_tokens: 2, completion_tokens: 3 },
       requestId: "request-1",
     });
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(transactionSpy).toHaveBeenCalled();
+    transactionSpy.mockRestore();
+    errorSpy.mockRestore();
 
     expect(db.all(`SELECT clientKeyId, requestId FROM usageHistory`)).toEqual([
       { clientKeyId: "client-1", requestId: "request-1" },
@@ -129,5 +137,18 @@ describe("client key usage attribution", () => {
     await usage.saveRequestUsage({ ...entry });
     expect(db.get(`SELECT COUNT(*) count, SUM(promptTokens) prompt, SUM(completionTokens) completion FROM usageHistory`))
       .toEqual({ count: 1, prompt: 7, completion: 8 });
+  });
+
+  it("increments durable spend once per request even when history is pruned", async () => {
+    process.env.USAGE_HISTORY_MAX = "1";
+    const base = {
+      timestamp: new Date().toISOString(), provider: "openai", model: "gpt-5",
+      clientKeyId: "client-1", tokens: { prompt_tokens: 1, completion_tokens: 1 },
+    };
+    await usage.saveRequestUsage({ ...base, requestId: "ledger-1" });
+    await usage.saveRequestUsage({ ...base, requestId: "ledger-2" });
+    await usage.saveRequestUsage({ ...base, requestId: "ledger-2" });
+    expect(db.get(`SELECT COUNT(*) count FROM usageHistory`).count).toBe(1);
+    expect(db.get(`SELECT spentUsd FROM apiKeys WHERE id = 'client-1'`).spentUsd).toBe(5);
   });
 });

@@ -20,6 +20,7 @@ export async function handleEmbeddingsCore({
   log,
   onCredentialsRefreshed,
   onRequestSuccess,
+  abortSignal,
 }) {
   const { provider, model } = modelInfo;
 
@@ -66,6 +67,7 @@ export async function handleEmbeddingsCore({
       headers,
       body: JSON.stringify(requestBody),
       redirect: "error",
+      signal: abortSignal,
     });
   } catch (error) {
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
@@ -101,6 +103,7 @@ export async function handleEmbeddingsCore({
           headers: retryHeaders,
           body: JSON.stringify(requestBody),
           redirect: "error",
+          signal: abortSignal,
         });
       } catch {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);

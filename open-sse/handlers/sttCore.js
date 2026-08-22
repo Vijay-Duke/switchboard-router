@@ -13,6 +13,25 @@ function buildAuthHeaders(cfg, token) {
     default:           return { "Authorization": `Bearer ${token}` };
   }
 }
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw Object.assign(new Error("STT request aborted"), { name: "AbortError" });
+}
+
+function abortableDelay(ms, signal) {
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(Object.assign(new Error("STT request aborted"), { name: "AbortError" }));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 
 // Map browser file MIME / ext → audio MIME for binary formats (deepgram/HF)
 function resolveAudioContentType(file) {
@@ -33,7 +52,7 @@ async function upstreamError(res) {
 }
 
 // Deepgram: raw binary POST + model query param
-async function transcribeDeepgram(cfg, file, model, token, formData) {
+async function transcribeDeepgram(cfg, file, model, token, formData, abortSignal) {
   const url = new URL(cfg.baseUrl);
   url.searchParams.set("model", model);
   url.searchParams.set("smart_format", "true");
@@ -43,10 +62,12 @@ async function transcribeDeepgram(cfg, file, model, token, formData) {
   else url.searchParams.set("detect_language", "true");
 
   const buf = await file.arrayBuffer();
+  throwIfAborted(abortSignal);
   const res = await fetch(url, {
     method: "POST",
     headers: { ...buildAuthHeaders(cfg, token), "Content-Type": resolveAudioContentType(file) },
     body: buf,
+    signal: abortSignal,
   });
   if (!res.ok) return upstreamError(res);
   const data = await res.json();
@@ -55,11 +76,12 @@ async function transcribeDeepgram(cfg, file, model, token, formData) {
 }
 
 // AssemblyAI: upload → submit → poll (max 120s)
-async function transcribeAssemblyAI(cfg, file, model, token) {
+async function transcribeAssemblyAI(cfg, file, model, token, abortSignal) {
   const auth = buildAuthHeaders(cfg, token);
   const buf = await file.arrayBuffer();
+  throwIfAborted(abortSignal);
   const up = await fetch("https://api.assemblyai.com/v2/upload", {
-    method: "POST", headers: { ...auth, "Content-Type": "application/octet-stream" }, body: buf,
+    method: "POST", headers: { ...auth, "Content-Type": "application/octet-stream" }, body: buf, signal: abortSignal,
   });
   if (!up.ok) return upstreamError(up);
   const { upload_url } = await up.json();
@@ -68,14 +90,15 @@ async function transcribeAssemblyAI(cfg, file, model, token) {
     method: "POST",
     headers: { ...auth, "Content-Type": "application/json" },
     body: JSON.stringify({ audio_url: upload_url, speech_models: [model], language_detection: true }),
+    signal: abortSignal,
   });
   if (!sub.ok) return upstreamError(sub);
   const { id } = await sub.json();
 
   const start = Date.now();
   while (Date.now() - start < 120_000) {
-    await new Promise((r) => setTimeout(r, 2000));
-    const poll = await fetch(`${cfg.baseUrl}/${id}`, { headers: auth });
+    await abortableDelay(2000, abortSignal);
+    const poll = await fetch(`${cfg.baseUrl}/${id}`, { headers: auth, signal: abortSignal });
     if (!poll.ok) continue;
     const r = await poll.json();
     if (r.status === "completed") return jsonResponse({ text: r.text || "" });
@@ -85,19 +108,20 @@ async function transcribeAssemblyAI(cfg, file, model, token) {
 }
 
 // Nvidia NIM: multipart, normalize response
-async function transcribeNvidia(cfg, file, model, token) {
+async function transcribeNvidia(cfg, file, model, token, abortSignal) {
   const fd = new FormData();
   fd.append("file", file, file.name || "audio.wav");
   fd.append("model", model);
-  const res = await fetch(cfg.baseUrl, { method: "POST", headers: buildAuthHeaders(cfg, token), body: fd });
+  const res = await fetch(cfg.baseUrl, { method: "POST", headers: buildAuthHeaders(cfg, token), body: fd, signal: abortSignal });
   if (!res.ok) return upstreamError(res);
   const data = await res.json();
   return jsonResponse({ text: data.text || data.transcript || "" });
 }
 
 // Gemini: generateContent with inline_data audio + transcription prompt
-async function transcribeGemini(cfg, file, model, token, formData) {
+async function transcribeGemini(cfg, file, model, token, formData, abortSignal) {
   const buf = await file.arrayBuffer();
+  throwIfAborted(abortSignal);
   const b64 = Buffer.from(buf).toString("base64");
   const mime = resolveAudioContentType(file);
   const lang = formData.get("language");
@@ -114,6 +138,7 @@ async function transcribeGemini(cfg, file, model, token, formData) {
     body: JSON.stringify({
       contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: mime, data: b64 } }] }],
     }),
+    signal: abortSignal,
   });
   if (!res.ok) return upstreamError(res);
   const data = await res.json();
@@ -122,14 +147,16 @@ async function transcribeGemini(cfg, file, model, token, formData) {
 }
 
 // HuggingFace: POST raw binary to {baseUrl}/{model_id}
-async function transcribeHuggingFace(cfg, file, model, token) {
+async function transcribeHuggingFace(cfg, file, model, token, abortSignal) {
   if (model.includes("..") || model.includes("//")) return createErrorResult(400, "Invalid model ID");
   const url = `${cfg.baseUrl.replace(/\/+$/, "")}/${model}`;
   const buf = await file.arrayBuffer();
+  throwIfAborted(abortSignal);
   const res = await fetch(url, {
     method: "POST",
     headers: { ...buildAuthHeaders(cfg, token), "Content-Type": resolveAudioContentType(file) },
     body: buf,
+    signal: abortSignal,
   });
   if (!res.ok) return upstreamError(res);
   const data = await res.json();
@@ -137,7 +164,7 @@ async function transcribeHuggingFace(cfg, file, model, token) {
 }
 
 // Default: OpenAI/Groq/Whisper-compatible multipart
-async function transcribeOpenAICompatible(cfg, file, model, token, formData) {
+async function transcribeOpenAICompatible(cfg, file, model, token, formData, abortSignal) {
   const fd = new FormData();
   fd.append("file", file, file.name || "audio.wav");
   fd.append("model", model);
@@ -145,7 +172,7 @@ async function transcribeOpenAICompatible(cfg, file, model, token, formData) {
     const v = formData.get(k);
     if (v !== null && v !== undefined && v !== "") fd.append(k, v);
   }
-  const res = await fetch(cfg.baseUrl, { method: "POST", headers: buildAuthHeaders(cfg, token), body: fd });
+  const res = await fetch(cfg.baseUrl, { method: "POST", headers: buildAuthHeaders(cfg, token), body: fd, signal: abortSignal });
   if (!res.ok) return upstreamError(res);
   const ct = res.headers.get("content-type") || "application/json";
   const txt = await res.text();
@@ -166,7 +193,7 @@ function jsonResponse(obj) {
  * STT core handler — dispatch by sttConfig.format.
  * @returns {Promise<{success, response, status?, error?}>}
  */
-export async function handleSttCore({ provider, model, formData, credentials, sttConfig }) {
+export async function handleSttCore({ provider, model, formData, credentials, sttConfig, abortSignal }) {
   const file = formData.get("file");
   if (!file) return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Missing required field: file");
 
@@ -180,12 +207,12 @@ export async function handleSttCore({ provider, model, formData, credentials, st
 
   try {
     switch (cfg.format) {
-      case "deepgram":        return await transcribeDeepgram(cfg, file, model, token, formData);
-      case "assemblyai":      return await transcribeAssemblyAI(cfg, file, model, token);
-      case "nvidia-asr":      return await transcribeNvidia(cfg, file, model, token);
-      case "huggingface-asr": return await transcribeHuggingFace(cfg, file, model, token);
-      case "gemini-stt":      return await transcribeGemini(cfg, file, model, token, formData);
-      default:                return await transcribeOpenAICompatible(cfg, file, model, token, formData);
+      case "deepgram":        return await transcribeDeepgram(cfg, file, model, token, formData, abortSignal);
+      case "assemblyai":      return await transcribeAssemblyAI(cfg, file, model, token, abortSignal);
+      case "nvidia-asr":      return await transcribeNvidia(cfg, file, model, token, abortSignal);
+      case "huggingface-asr": return await transcribeHuggingFace(cfg, file, model, token, abortSignal);
+      case "gemini-stt":      return await transcribeGemini(cfg, file, model, token, formData, abortSignal);
+      default:                return await transcribeOpenAICompatible(cfg, file, model, token, formData, abortSignal);
     }
   } catch (err) {
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, err.message || "STT request failed");

@@ -134,26 +134,22 @@ export function normalizeClientKeyPatch(data) {
   return out;
 }
 
-const WITH_SPEND = `
-  SELECT k.*,
-         COALESCE((SELECT SUM(u.cost) FROM usageHistory u WHERE u.clientKeyId = k.id), 0) AS spentUsd
-  FROM apiKeys k
-`;
+const KEY_ROWS = `SELECT k.* FROM apiKeys k`;
 
 export async function getClientKeySpend(id) {
   const db = await getAdapter();
-  const row = db.get(`SELECT COALESCE(SUM(cost), 0) AS spentUsd FROM usageHistory WHERE clientKeyId = ?`, [id]);
+  const row = db.get(`SELECT spentUsd FROM apiKeys WHERE id = ?`, [id]);
   return Number(row?.spentUsd || 0);
 }
 
 export async function getApiKeys() {
   const db = await getAdapter();
-  return db.all(`${WITH_SPEND} ORDER BY k.createdAt ASC`).map(rowToKey);
+  return db.all(`${KEY_ROWS} ORDER BY k.createdAt ASC`).map(rowToKey);
 }
 
 export async function getApiKeyById(id) {
   const db = await getAdapter();
-  return rowToKey(db.get(`${WITH_SPEND} WHERE k.id = ?`, [id]));
+  return rowToKey(db.get(`${KEY_ROWS} WHERE k.id = ?`, [id]));
 }
 
 export async function createApiKey(name, machineId) {
@@ -178,8 +174,8 @@ export async function createApiKey(name, machineId) {
     spentUsd: 0,
   };
   db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd)
-     VALUES(?, ?, ?, ?, 1, ?, NULL, NULL, NULL, NULL, NULL, NULL)`,
+    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd)
+     VALUES(?, ?, ?, ?, 1, ?, NULL, NULL, NULL, NULL, NULL, NULL, 0)`,
     [row.id, packed, name, machineId, row.createdAt]
   );
   return { ...rowToKey(row), key: generated.key };
@@ -190,7 +186,7 @@ export async function updateApiKey(id, data) {
   const db = await getAdapter();
   let result = null;
   db.transaction(() => {
-    const row = db.get(`${WITH_SPEND} WHERE k.id = ?`, [id]);
+    const row = db.get(`${KEY_ROWS} WHERE k.id = ?`, [id]);
     if (!row) return;
     const current = rowToKey(row);
     const merged = { ...current, ...patch };
@@ -214,13 +210,16 @@ export async function deleteApiKey(id) {
 export async function authenticateApiKey(raw) {
   if (!raw || typeof raw !== "string") return null;
   const db = await getAdapter();
-  const rows = db.all(`${WITH_SPEND} WHERE k.isActive = 1`);
+  const rows = db.all(`${KEY_ROWS} WHERE k.isActive = 1`);
   for (const row of rows) {
     if (!matchesApiKeyRecord(row.key, raw)) continue;
-    if (unpackApiKeyRecord(row.key).legacy) {
-      db.run(`UPDATE apiKeys SET key = ? WHERE id = ?`, [packApiKeyRecord(raw), row.id]);
-      row.key = packApiKeyRecord(raw);
+    const unpacked = unpackApiKeyRecord(row.key);
+    if (unpacked.legacy || unpacked.version === 1) {
+      const packed = packApiKeyRecord(raw);
+      db.run(`UPDATE apiKeys SET key = ? WHERE id = ?`, [packed, row.id]);
+      row.key = packed;
     }
+    row.spentUsd = await getClientKeySpend(row.id);
     return rowToKey(row);
   }
   return null;

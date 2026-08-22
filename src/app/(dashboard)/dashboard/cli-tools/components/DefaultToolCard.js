@@ -18,7 +18,7 @@ export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, ba
   
   // Initialize state directly with computed value - no need for useEffect
   const [selectedApiKey, setSelectedApiKey] = useState(() => 
-    apiKeys?.length > 0 ? apiKeys[0].key : ""
+    apiKeys?.length > 0 ? apiKeys[0].keySecret : ""
   );
 
   const replaceVars = (text) => {

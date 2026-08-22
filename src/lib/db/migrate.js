@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { LEGACY_FILES, DB_DIR, DATA_FILE } from "./paths.js";
+import { LEGACY_FILES, DB_DIR, DATA_FILE, BACKUPS_DIR } from "./paths.js";
 import { TABLES, buildCreateTableSql } from "./schema.js";
 import { MIGRATIONS, latestVersion } from "./migrations/index.js";
 import { getMetaSync, setMetaSync } from "./helpers/metaStoreSync.js";
@@ -44,6 +44,55 @@ function importWithAssertion(adapter, tableName, rows, insertFn, rowMeta) {
 function readJsonSafe(file) {
   if (!fs.existsSync(file)) return null;
   try { return JSON.parse(fs.readFileSync(file, "utf-8")); } catch { return null; }
+}
+
+function writeJsonRestricted(file, value) {
+  if (!file || !fs.existsSync(path.dirname(file))) return;
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(value, null, 2), { mode: 0o600 });
+  fs.renameSync(temp, file);
+  fs.chmodSync(file, 0o600);
+}
+
+function sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir = null) {
+  const keys = adapter.all(`SELECT id, key FROM apiKeys`) || [];
+  const storedById = new Map(keys.map((key) => [key.id, key.key]));
+  const main = legacyMain && typeof legacyMain === "object"
+    ? {
+        ...legacyMain,
+        apiKeys: (legacyMain.apiKeys || []).map((key) => ({
+          ...key,
+          key: storedById.get(key.id) || null,
+        })),
+      }
+    : null;
+  const usage = legacyUsage && typeof legacyUsage === "object"
+    ? {
+        ...legacyUsage,
+        history: (legacyUsage.history || []).map((entry) => ({ ...entry, apiKey: null, clientKeyId: null })),
+        dailySummary: Object.fromEntries(
+          Object.entries(legacyUsage.dailySummary || {}).map(([dateKey, day]) => [
+            dateKey,
+            scrubUsageDailyData(day, keys),
+          ])
+        ),
+      }
+    : null;
+  if (main) writeJsonRestricted(LEGACY_FILES.main, main);
+  if (usage) writeJsonRestricted(LEGACY_FILES.usage, usage);
+  if (backupDir) {
+    if (main) writeJsonRestricted(path.join(backupDir, path.basename(LEGACY_FILES.main)), main);
+    if (usage) writeJsonRestricted(path.join(backupDir, path.basename(LEGACY_FILES.usage)), usage);
+  }
+  if (!backupDir && fs.existsSync(BACKUPS_DIR)) {
+    for (const entry of fs.readdirSync(BACKUPS_DIR, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name.startsWith("migrate-from-json-")) {
+        const dir = path.join(BACKUPS_DIR, entry.name);
+        if (main) writeJsonRestricted(path.join(dir, path.basename(LEGACY_FILES.main)), main);
+        if (usage) writeJsonRestricted(path.join(dir, path.basename(LEGACY_FILES.usage)), usage);
+      }
+    }
+  }
 }
 
 function checkpointBeforeBackup(adapter) {
@@ -151,11 +200,11 @@ function importLegacyMain(adapter, data) {
       ? packApiKeyRecord(k.key)
       : k.key;
     adapter.run(
-      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd)
-       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd)
+       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [k.id, storedKey, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(),
         k.allowedModels == null ? null : stringifyJson(k.allowedModels), k.allowedCombos == null ? null : stringifyJson(k.allowedCombos),
-        k.expiresAt || null, k.rateLimitPerMinute ?? null, k.concurrencyLimit ?? null, k.spendLimitUsd ?? null]
+        k.expiresAt || null, k.rateLimitPerMinute ?? null, k.concurrencyLimit ?? null, k.spendLimitUsd ?? null, Number(k.spentUsd || 0)]
     );
   }, (k) => ({ id: k.id ?? null, name: k.name ?? null }));
   importWithAssertion(adapter, "combos", data.combos || [], (c) => {
@@ -231,7 +280,6 @@ function importLegacyDetails(adapter, data) {
 // ─── Main entry ──────────────────────────────────────────────────────────
 export async function runMigrationOnce(adapter) {
   if (_migratedAdapters.has(adapter)) return;
-  _migratedAdapters.add(adapter);
 
   // Capture freshness BEFORE migrations stamp _meta (otherwise we'd misclassify
   // a brand-new DB as non-fresh once schemaVersion is written).
@@ -250,6 +298,12 @@ export async function runMigrationOnce(adapter) {
   const legacyDisabled = readJsonSafe(LEGACY_FILES.disabled);
   const legacyDetails = readJsonSafe(LEGACY_FILES.details);
   const hasLegacy = !!(legacyMain || legacyUsage || legacyDisabled || legacyDetails);
+  if (!fresh && hasLegacy && !alreadyImported) {
+    adapter.checkpoint?.();
+    sanitizeLegacySources(adapter, legacyMain, legacyUsage);
+    fs.writeFileSync(MIGRATED_MARKER, new Date().toISOString(), { mode: 0o600 });
+  }
+
 
   if (fresh && hasLegacy && !alreadyImported) {
     const t0 = Date.now();
@@ -273,14 +327,18 @@ export async function runMigrationOnce(adapter) {
       throw err;
     }
 
-    try { fs.writeFileSync(MIGRATED_MARKER, new Date().toISOString()); } catch {}
+    adapter.checkpoint?.();
+    sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir);
+    fs.writeFileSync(MIGRATED_MARKER, new Date().toISOString(), { mode: 0o600 });
     pruneOldBackups();
-    console.log(`[DB][migrate] JSON → SQLite in ${Date.now() - t0}ms | legacy JSON kept at DATA_DIR | backup: ${backupDir}`);
+    console.log(`[DB][migrate] JSON → SQLite in ${Date.now() - t0}ms | legacy sources sanitized | backup: ${backupDir}`);
+    _migratedAdapters.add(adapter);
     return;
   }
 
   if (fresh) {
     setMetaSync(adapter, "appVersion", getAppVersion());
+    _migratedAdapters.add(adapter);
     return;
   }
 
@@ -301,4 +359,5 @@ export async function runMigrationOnce(adapter) {
     try { backupFile(DATA_FILE, backupDir); } catch {}
     pruneOldBackups();
   }
+  _migratedAdapters.add(adapter);
 }

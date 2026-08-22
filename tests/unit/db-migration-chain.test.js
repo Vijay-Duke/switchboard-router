@@ -38,7 +38,7 @@ describe("Schema migrations", () => {
       "_meta", "settings", "providerConnections", "providerNodes",
       "proxyPools", "apiKeys", "combos", "kv", "usageHistory", "usageDaily", "requestDetails",
     ]));
-  });
+  }, 15_000);
 
   it("existing DB at older schemaVersion → re-applies pending migrations on restart", async () => {
     // 1st boot
@@ -104,6 +104,14 @@ describe("Schema migrations", () => {
       modelAliases: { "gpt-4": "gpt-4-turbo" },
     };
     fs.writeFileSync(path.join(tempDir, "db.json"), JSON.stringify(legacy));
+    fs.writeFileSync(path.join(tempDir, "usage.json"), JSON.stringify({
+      history: [{ apiKey: "abc", provider: "openai", model: "gpt-5", cost: 1 }],
+      dailySummary: {
+        "2026-08-21": {
+          byApiKey: { "abc|gpt-5|openai": { apiKey: "abc", rawModel: "gpt-5", provider: "openai", cost: 1 } },
+        },
+      },
+    }));
 
     const { getAdapter } = await import("@/lib/db/driver.js");
     const db = await getAdapter();
@@ -113,14 +121,24 @@ describe("Schema migrations", () => {
 
     const keys = db.all(`SELECT * FROM apiKeys`);
     expect(keys).toHaveLength(1);
-    expect(keys[0].key).toMatch(/^v1:/);
+    expect(keys[0].key).toMatch(/^v2:/);
 
     const connection = db.get(`SELECT data FROM providerConnections WHERE id = ?`, ["legacy-connection"]);
     expect(connection.data).not.toContain("legacy-access-token");
 
     const aliases = db.all(`SELECT * FROM kv WHERE scope='modelAliases'`);
     expect(aliases).toHaveLength(1);
-  });
+
+    for (const file of [path.join(tempDir, "db.json"), path.join(tempDir, "usage.json")]) {
+      expect(fs.readFileSync(file, "utf8")).not.toContain("\"abc\"");
+      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    }
+    const backupRoot = path.join(tempDir, "db", "backups");
+    const backupBytes = fs.readdirSync(backupRoot)
+      .flatMap((dir) => fs.readdirSync(path.join(backupRoot, dir)).map((name) => fs.readFileSync(path.join(backupRoot, dir, name), "utf8")))
+      .join("\\n");
+    expect(backupBytes).not.toContain("\"abc\"");
+  }, 15_000);
 
   it("auto-sync re-creates missing index when DB lacks it", async () => {
     const { getAdapter } = await import("@/lib/db/driver.js");

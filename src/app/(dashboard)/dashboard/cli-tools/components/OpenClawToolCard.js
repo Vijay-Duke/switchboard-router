@@ -53,7 +53,7 @@ export default function OpenClawToolCard({
 
   useEffect(() => {
     if (apiKeys?.length > 0 && !selectedApiKey) {
-      setSelectedApiKey(apiKeys[0].key);
+      setSelectedApiKey(apiKeys[0].keySecret);
     }
   }, [apiKeys, selectedApiKey]);
 
@@ -89,7 +89,7 @@ export default function OpenClawToolCard({
         const primaryModel = openclawStatus.settings?.agents?.defaults?.model?.primary;
         if (primaryModel) setSelectedModel(primaryModel.replace("switchboard/", ""));
         else if (models[0]) setSelectedModel(models[0]);
-        if (provider.apiKey && apiKeys?.some(k => k.key === provider.apiKey)) {
+        if (provider.apiKey && apiKeys?.some(k => k.keySecret === provider.apiKey)) {
           setSelectedApiKey(provider.apiKey);
         }
       }
@@ -158,7 +158,7 @@ export default function OpenClawToolCard({
     setMessage(null);
     try {
       const keyToUse = selectedApiKey?.trim()
-        || (apiKeys?.length > 0 ? apiKeys[0].key : null)
+        || (apiKeys?.length > 0 ? apiKeys[0].keySecret : null)
         || (!cloudEnabled ? "sk_switchboard" : null);
 
       const res = await fetch("/api/cli-tools/openclaw-settings", {

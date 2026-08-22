@@ -423,7 +423,7 @@ export function createSSEStream(options = {}) {
       }
     },
 
-    flush(controller) {
+    async flush(controller) {
       const evtSummary = Object.entries(eventTypeCounts).map(([k, v]) => `${k}=${v}`).join(",") || "none";
       dbg("SSE", `flush | provider=${provider} | model=${model} | recvLines=${sseLineCount} | emitted=${sseEmittedCount} | events=[${evtSummary}]`);
       trackPendingRequest(model, provider, connectionId, false);
@@ -457,7 +457,7 @@ export function createSSEStream(options = {}) {
           }
 
           if (onStreamComplete) {
-            onStreamComplete({
+            await onStreamComplete({
               content: accumulatedContent,
               thinking: accumulatedThinking
             }, usage, ttftAt);
@@ -534,7 +534,7 @@ export function createSSEStream(options = {}) {
         }
         
         if (onStreamComplete) {
-          onStreamComplete({
+          await onStreamComplete({
             content: accumulatedContent,
             thinking: accumulatedThinking
           }, state?.usage, ttftAt);

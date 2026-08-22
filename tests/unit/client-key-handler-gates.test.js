@@ -57,6 +57,8 @@ const source = Object.fromEntries(Object.entries(files).map(([name, file]) => [
 describe("client key provider-work boundaries", () => {
 
   it("returns policy rejection unchanged before model routing, credentials, or fetch on every surface", async () => {
+    const rawKey = "sk-runtime-security-secret-tail";
+    const consoleSpies = ["log", "warn", "error"].map((method) => vi.spyOn(console, method).mockImplementation(() => {}));
     mocks.getSettings.mockResolvedValue({ requireApiKey: true });
     mocks.getCombos.mockResolvedValue([]);
     mocks.getComboModels.mockResolvedValue(null);
@@ -73,7 +75,7 @@ describe("client key provider-work boundaries", () => {
     const byName = Object.fromEntries(Object.keys(files).map((name, index) => [name, modules[index]]));
     const jsonRequest = (body) => new Request("https://router.test/v1/test", {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: "Bearer gateway-key" },
+      headers: { "content-type": "application/json", authorization: `Bearer ${rawKey}` },
       body: JSON.stringify(body),
     });
     const form = new FormData();
@@ -86,7 +88,7 @@ describe("client key provider-work boundaries", () => {
       byName.image.handleImageGeneration(jsonRequest({ model: "openai/image", prompt: "x" })),
       byName.search.handleSearch(jsonRequest({ model: "openai", query: "x" })),
       byName.stt.handleStt(new Request("https://router.test/v1/audio/transcriptions", {
-        method: "POST", headers: { authorization: "Bearer gateway-key" }, body: form,
+        method: "POST", headers: { authorization: `Bearer ${rawKey}` }, body: form,
       })),
       byName.tts.handleTts(jsonRequest({ model: "openai/tts", input: "x" })),
       byName.gemini.POST(
@@ -109,6 +111,9 @@ describe("client key provider-work boundaries", () => {
     expect(mocks.getProviderCredentials).not.toHaveBeenCalled();
     expect(mocks.runWithLease).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
+    expect(JSON.stringify(consoleSpies.flatMap((spy) => spy.mock.calls))).not.toContain(rawKey);
+    expect(JSON.stringify(consoleSpies.flatMap((spy) => spy.mock.calls))).not.toContain(rawKey.slice(-12));
+    consoleSpies.forEach((spy) => spy.mockRestore());
   }, 20_000);
 
   for (const [name, text] of Object.entries(source)) {

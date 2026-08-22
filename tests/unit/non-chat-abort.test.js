@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { handleFetchCore } from "../../open-sse/handlers/fetch/index.js";
 import { handleSearchCore } from "../../open-sse/handlers/search/index.js";
+import { handleSttCore } from "../../open-sse/handlers/sttCore.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -61,6 +62,29 @@ describe("non-chat combo abort propagation", () => {
     caller.abort();
 
     await expect(resultPromise).resolves.toMatchObject({ success: false, status: 504 });
+    expect(upstreamSignal.aborted).toBe(true);
+  });
+
+  it("aborts STT provider fetch when the caller disconnects", async () => {
+    const caller = new AbortController();
+    let upstreamSignal;
+    vi.stubGlobal("fetch", vi.fn((url, init) => {
+      upstreamSignal = init.signal;
+      return abortableFetch(url, init);
+    }));
+    const formData = new FormData();
+    formData.append("file", new Blob(["audio"], { type: "audio/wav" }), "audio.wav");
+    const resultPromise = handleSttCore({
+      provider: "deepgram",
+      model: "nova",
+      formData,
+      credentials: { apiKey: "provider-key" },
+      sttConfig: { format: "deepgram", baseUrl: "https://example.com/listen", authHeader: "token" },
+      abortSignal: caller.signal,
+    });
+    await vi.waitFor(() => expect(upstreamSignal).toBeDefined());
+    caller.abort();
+    await expect(resultPromise).resolves.toMatchObject({ success: false });
     expect(upstreamSignal.aborted).toBe(true);
   });
 });

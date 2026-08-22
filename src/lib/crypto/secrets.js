@@ -86,21 +86,23 @@ export function apiKeyPrefix(rawKey) {
   return rawKey.length <= 12 ? rawKey.slice(0, 4) + "…" : rawKey.slice(0, 10) + "…";
 }
 
-/** Stored form: v1:<prefix>:<hash> */
+/** Stored form: v2:<prefix>:<saltHex>:<scryptHex>. */
 export function packApiKeyRecord(rawKey) {
-  return `v1:${apiKeyPrefix(rawKey)}:${hashApiKey(rawKey)}`;
+  const salt = crypto.randomBytes(16);
+  const verifier = crypto.scryptSync(rawKey, salt, 32, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+  return `v2:${apiKeyPrefix(rawKey)}:${salt.toString("hex")}:${verifier.toString("hex")}`;
 }
 
 export function unpackApiKeyRecord(stored) {
-  if (!stored || typeof stored !== "string") return { prefix: "", hash: null, legacy: true, raw: stored };
-  if (stored.startsWith("v1:")) {
-    const parts = stored.split(":");
-    // v1:prefix:hash — prefix may contain "…" only
-    if (parts.length >= 3) {
-      return { prefix: parts[1], hash: parts.slice(2).join(":"), legacy: false, raw: null };
-    }
+  if (!stored || typeof stored !== "string") return { version: 0, prefix: "", hash: null, salt: null, legacy: true, raw: stored };
+  const parts = stored.split(":");
+  if (stored.startsWith("v2:") && parts.length === 4) {
+    return { version: 2, prefix: parts[1], salt: parts[2], hash: parts[3], legacy: false, raw: null };
   }
-  return { prefix: apiKeyPrefix(stored), hash: null, legacy: true, raw: stored };
+  if (stored.startsWith("v1:") && parts.length >= 3) {
+    return { version: 1, prefix: parts[1], salt: null, hash: parts.slice(2).join(":"), legacy: false, raw: null };
+  }
+  return { version: 0, prefix: apiKeyPrefix(stored), hash: null, salt: null, legacy: true, raw: stored };
 }
 
 export function timingSafeEqualStr(a, b) {
@@ -114,7 +116,13 @@ export function timingSafeEqualStr(a, b) {
 export function matchesApiKeyRecord(stored, raw) {
   if (!raw || typeof raw !== "string") return false;
   const unpacked = unpackApiKeyRecord(stored);
-  return unpacked.legacy
-    ? timingSafeEqualStr(String(unpacked.raw || ""), raw)
-    : !!unpacked.hash && timingSafeEqualStr(unpacked.hash, hashApiKey(raw));
+  if (unpacked.legacy) return timingSafeEqualStr(String(unpacked.raw || ""), raw);
+  if (unpacked.version === 1) return !!unpacked.hash && timingSafeEqualStr(unpacked.hash, hashApiKey(raw));
+  if (!unpacked.salt || !unpacked.hash) return false;
+  try {
+    const actual = crypto.scryptSync(raw, Buffer.from(unpacked.salt, "hex"), 32, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+    return timingSafeEqualStr(actual.toString("hex"), unpacked.hash);
+  } catch {
+    return false;
+  }
 }

@@ -1,6 +1,5 @@
 // @ts-check
 
-import { getApiKeys } from "@/lib/db/index.js";
 import { UPDATER_CONFIG } from "@/shared/constants/config.js";
 import { CLI_TOKEN_HEADER, getCliToken } from "@/shared/utils/cliToken.js";
 import {
@@ -11,17 +10,10 @@ import {
 const MAX_LABEL_LENGTH = 48;
 
 async function getInternalHeaders() {
-  let apiKey = null;
-  try {
-    const keys = await getApiKeys();
-    apiKey = keys.find((key) => key.isActive !== false)?.key || null;
-  } catch {}
-
-  /** @type {Record<string, string>} */
-  const headers = { "Content-Type": "application/json" };
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  headers[CLI_TOKEN_HEADER] = await getCliToken();
-  return headers;
+  return {
+    "Content-Type": "application/json",
+    [CLI_TOKEN_HEADER]: await getCliToken(),
+  };
 }
 
 /**

@@ -206,7 +206,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
 
   const usage = extractUsageFromResponse(responseBody);
   appendLog({ tokens: usage, status: "200 OK" });
-  saveUsageStats({ provider, model, tokens: usage, connectionId, clientKeyId, requestId, endpoint: clientRawRequest?.endpoint });
+  await saveUsageStats({ provider, model, tokens: usage, connectionId, clientKeyId, requestId, endpoint: clientRawRequest?.endpoint });
 
   // Same-format non-OpenAI JSON keeps native envelope (e.g. Gemini inlineData).
   // Cross-format: provider → OpenAI → project to client format (PR#2348 / #2347).

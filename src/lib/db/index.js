@@ -127,7 +127,7 @@ export async function exportDb() {
       id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt,
       allowedModels: parseJson(r.allowedModels, []), allowedCombos: parseJson(r.allowedCombos, []),
       expiresAt: r.expiresAt || null, rateLimitPerMinute: r.rateLimitPerMinute ?? null,
-      concurrencyLimit: r.concurrencyLimit ?? null, spendLimitUsd: r.spendLimitUsd ?? null,
+      concurrencyLimit: r.concurrencyLimit ?? null, spendLimitUsd: r.spendLimitUsd ?? null, spentUsd: Number(r.spentUsd || 0),
     })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
@@ -191,11 +191,11 @@ export async function importDb(payload) {
         ? packApiKeyRecord(k.key)
         : k.key;
       db.run(
-        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [k.id, storedKey, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(),
           k.allowedModels == null ? null : stringifyJson(k.allowedModels), k.allowedCombos == null ? null : stringifyJson(k.allowedCombos),
-          k.expiresAt || null, k.rateLimitPerMinute ?? null, k.concurrencyLimit ?? null, k.spendLimitUsd ?? null]
+          k.expiresAt || null, k.rateLimitPerMinute ?? null, k.concurrencyLimit ?? null, k.spendLimitUsd ?? null, Number(k.spentUsd || 0)]
       );
     }
     for (const c of payload.combos || []) {

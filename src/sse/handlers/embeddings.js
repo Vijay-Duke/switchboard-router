@@ -107,6 +107,7 @@ export async function handleEmbeddings(request) {
 
     const result = await handleEmbeddingsCore({
       clientKeyId,
+      abortSignal: request.signal,
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
       credentials: refreshedCredentials,

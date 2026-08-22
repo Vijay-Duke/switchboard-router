@@ -56,6 +56,7 @@ describe("client key repository", () => {
     expect(created.key).toMatch(/^sk-/);
     expect(created.allowedModels).toEqual([]);
     expect(created.allowedCombos).toEqual([]);
+    expect(db.get(`SELECT key FROM apiKeys WHERE id = ?`, [created.id]).key).toMatch(/^v2:/);
     expect(created.spentUsd).toBe(0);
 
     const [listed] = await repo.getApiKeys();
@@ -72,11 +73,15 @@ describe("client key repository", () => {
       `INSERT INTO apiKeys(id, key, name, isActive, createdAt) VALUES ('legacy', 'legacy-raw-key', 'Legacy', 1, '2026-08-22T00:00:00.000Z')`
     );
     expect((await repo.authenticateApiKey("legacy-raw-key")).id).toBe("legacy");
-    expect(db.get(`SELECT key FROM apiKeys WHERE id = 'legacy'`).key).toMatch(/^v1:/);
+    expect(db.get(`SELECT key FROM apiKeys WHERE id = 'legacy'`).key).toMatch(/^v2:/);
 
     await repo.updateApiKey("legacy", { isActive: false });
     expect(await repo.authenticateApiKey("legacy-raw-key")).toBeNull();
-    expect(await repo.validateApiKey("legacy-raw-key")).toBe(false);
+
+    db.run(`UPDATE apiKeys SET isActive = 1, key = ? WHERE id = 'legacy'`, [`v1:legacy…:${(await import("@/lib/crypto/secrets.js")).hashApiKey("legacy-raw-key")}`]);
+    expect((await repo.authenticateApiKey("legacy-raw-key")).id).toBe("legacy");
+    expect(db.get(`SELECT key FROM apiKeys WHERE id = 'legacy'`).key).toMatch(/^v2:/);
+    expect(await repo.validateApiKey("legacy-raw-key")).toBe(true);
   });
 
   it("normalizes policy arrays, updates atomically, and clears explicit fields", async () => {
@@ -155,9 +160,23 @@ describe("client key repository", () => {
         `INSERT INTO usageHistory(timestamp, clientKeyId, cost) VALUES ('2026-08-22T00:00:00.000Z', ?, ?)`,
         [clientKeyId, cost]
       );
+      if (clientKeyId) db.run(`UPDATE apiKeys SET spentUsd = spentUsd + ? WHERE id = ?`, [cost, clientKeyId]);
     }
     expect(await repo.getClientKeySpend(first.id)).toBe(3.75);
     expect((await repo.getApiKeyById(first.id)).spentUsd).toBe(3.75);
     expect((await repo.authenticateApiKey(first.key)).spentUsd).toBe(3.75);
+  });
+
+  it("reads durable spend for only the matched key and survives history pruning", async () => {
+    const first = await repo.createApiKey("First", "machine-ledger-1");
+    await repo.createApiKey("Second", "machine-ledger-2");
+    db.run(`UPDATE apiKeys SET spentUsd = 17.5 WHERE id = ?`, [first.id]);
+    db.run(`DELETE FROM usageHistory`);
+    const getSpy = vi.spyOn(db, "get");
+    expect((await repo.authenticateApiKey(first.key)).spentUsd).toBe(17.5);
+    const spendQueries = getSpy.mock.calls.filter(([sql]) => String(sql).includes("spentUsd"));
+    expect(spendQueries).toHaveLength(1);
+    expect(spendQueries[0][1]).toEqual([first.id]);
+    getSpy.mockRestore();
   });
 });

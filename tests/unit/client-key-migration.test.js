@@ -124,6 +124,10 @@ describe("migration 8 client key identity scrub", () => {
       { id: 11, clientKeyId: null },
       { id: 19, clientKeyId: null },
     ]);
+    expect(db.all(`SELECT id, spentUsd FROM apiKeys ORDER BY id`)).toEqual([
+      { id: "key-legacy", spentUsd: 0.5 },
+      { id: "key-packed", spentUsd: 0.25 },
+    ]);
     expect(snapshot(db)).toEqual(before);
 
     const daily = JSON.parse(db.get(`SELECT data FROM usageDaily`).data);
@@ -163,6 +167,19 @@ describe("migration 8 client key identity scrub", () => {
 
     m008.afterUp = originalAfterUp;
     expect(runVersionedMigrations(db)).toEqual({ applied: 1, from: 7, to: 8 });
+    expect(db.get(`SELECT value FROM _meta WHERE key = 'schemaVersion'`).value).toBe("8");
+    db.close();
+  });
+
+  it("retries a failed afterUp through runMigrationOnce on the same adapter", async () => {
+    const { db } = await createVersion7Fixture();
+    const m008 = MIGRATIONS.find((entry) => entry.version === 8);
+    const originalAfterUp = m008.afterUp;
+    m008.afterUp = () => { throw new Error("vacuum failed once"); };
+    const { runMigrationOnce } = await import("@/lib/db/migrate.js");
+    await expect(runMigrationOnce(db)).rejects.toThrow("vacuum failed once");
+    m008.afterUp = originalAfterUp;
+    await expect(runMigrationOnce(db)).resolves.toBeUndefined();
     expect(db.get(`SELECT value FROM _meta WHERE key = 'schemaVersion'`).value).toBe("8");
     db.close();
   });

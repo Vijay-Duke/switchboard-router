@@ -29,7 +29,7 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
   const [customBaseUrl, setCustomBaseUrl] = useState("");
 
   useEffect(() => {
-    if (apiKeys?.length > 0 && !selectedApiKey) setSelectedApiKey(apiKeys[0].key);
+    if (apiKeys?.length > 0 && !selectedApiKey) setSelectedApiKey(apiKeys[0].keySecret);
   }, [apiKeys, selectedApiKey]);
 
   useEffect(() => {

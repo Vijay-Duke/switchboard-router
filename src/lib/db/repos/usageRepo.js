@@ -312,6 +312,12 @@ export async function saveRequestUsage(entry) {
           stringifyJson(tokens), stringifyJson({}), requestId,
         ]
       );
+      if (entry.clientKeyId) {
+        db.run(
+          `UPDATE apiKeys SET spentUsd = spentUsd + ? WHERE id = ?`,
+          [Number(entry.cost || 0), entry.clientKeyId]
+        );
+      }
 
       // H8: maintain row count in _meta — avoid full-table COUNT(*) on every insert.
       const maxHist = parseInt(process.env.USAGE_HISTORY_MAX || "50000", 10);

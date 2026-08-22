@@ -15,7 +15,7 @@ export default function MitmServerCard({ apiKeys, cloudEnabled, onStatusChange }
   const [loading, setLoading] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [sudoPassword, setSudoPassword] = useState("");
-  const [selectedApiKey, setSelectedApiKey] = useState(() => apiKeys?.[0]?.key || "");
+  const [selectedApiKey, setSelectedApiKey] = useState(() => apiKeys?.[0]?.keySecret || "");
   const [pendingAction, setPendingAction] = useState(null);
   const [modalError, setModalError] = useState(null);
   const [actionError, setActionError] = useState(null);
@@ -76,7 +76,7 @@ export default function MitmServerCard({ apiKeys, cloudEnabled, onStatusChange }
         });
       } else if (action === "start") {
         const keyToUse = selectedApiKey?.trim()
-          || (apiKeys?.length > 0 ? apiKeys[0].key : null)
+          || (apiKeys?.length > 0 ? apiKeys[0].keySecret : null)
           || (!cloudEnabled ? "sk_switchboard" : null);
         res = await fetch("/api/cli-tools/antigravity-mitm", {
           method: "POST",
@@ -202,7 +202,7 @@ export default function MitmServerCard({ apiKeys, cloudEnabled, onStatusChange }
                 {apiKeys?.length > 0 && (
                   <datalist id="mitm-api-keys">
                     {apiKeys.map((key) => (
-                      <option key={key.id} value={key.key}>{key.name || key.key}</option>
+                      <option key={key.id} value={key.keySecret || ""}>{key.name || key.keyPrefix}</option>
                     ))}
                   </datalist>
                 )}

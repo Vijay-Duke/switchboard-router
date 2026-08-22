@@ -11,6 +11,7 @@ const POLICY_COLUMNS = {
   rateLimitPerMinute: "INTEGER",
   concurrencyLimit: "INTEGER",
   spendLimitUsd: "REAL",
+  spentUsd: "REAL NOT NULL DEFAULT 0",
 };
 
 function columns(db, table) {
@@ -186,6 +187,13 @@ const migration = {
     }
 
     rewriteDaily(db, keys, "up");
+    db.exec(`
+      UPDATE apiKeys
+      SET spentUsd = MAX(
+        COALESCE(spentUsd, 0),
+        COALESCE((SELECT SUM(cost) FROM usageHistory WHERE clientKeyId = apiKeys.id), 0)
+      )
+    `);
     for (const key of keys) {
       if (unpackApiKeyRecord(key.key).legacy) {
         db.run(`UPDATE apiKeys SET key = ? WHERE id = ?`, [packApiKeyRecord(String(key.key)), key.id]);
