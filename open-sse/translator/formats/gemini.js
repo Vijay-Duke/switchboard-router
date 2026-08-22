@@ -10,6 +10,10 @@ export const UNSUPPORTED_SCHEMA_CONSTRAINTS = [
   "minItems", "maxItems", "format",
   // String/array constraints Gemini rejects (wave8)
   "pattern", "uniqueItems",
+  // Array keyword with no Gemini field; agent tool schemas set it routinely
+  "contains",
+  // 2020-12 keywords with no Gemini equivalent
+  "unevaluatedProperties", "unevaluatedItems", "contentSchema",
   // Numeric constraints Gemini rejects (Switchboard#2309)
   "multipleOf", "minimum", "maximum",
   // Claude rejects these in VALIDATED mode
