@@ -1,0 +1,3407 @@
+{
+  "audit": "2026-08-22 full UI functional audit",
+  "surface": "S5-api",
+  "sanitization": {
+    "absoluteQaRoot": "<QA_ROOT>",
+    "credentials": "masked",
+    "cookies": "not captured",
+    "images": "omitted; text/DOM/network evidence was sufficient and avoids incidental UI state"
+  },
+  "sourceFindings": [
+    {
+      "severity": "P1",
+      "route": "/v1/api/chat",
+      "control": "Ollama-compatible POST /api/chat transform",
+      "preconditions": "seeded QA server; qa-openai/qa-chat; stream:false; loopback-only mock",
+      "steps": [
+        "POST /v1/api/chat with model qa-openai/qa-chat, one user message, and stream:false",
+        "Read the 200 application/x-ndjson response",
+        "Inspect message.content"
+      ],
+      "expected": "Ollama response preserves the upstream assistant text `QA mock reply`.",
+      "actual": "Response is 200/done:true but message.content is an empty string, discarding the model reply.",
+      "evidence": [
+        "requests-sanitized.json",
+        "assertions.json"
+      ],
+      "console": "none",
+      "network": "POST /v1/api/chat -> 200 application/x-ndjson; message.content=\"\"",
+      "fingerprint": "/v1/api/chat|Ollama response message.content|POST stream:false|assistant-content-empty"
+    },
+    {
+      "severity": "P2",
+      "route": "/v1/chat/completions; /v1/messages; /v1beta/models/:model:generateContent",
+      "control": "Cross-origin browser request / CORS preflight",
+      "preconditions": "browser origin http://127.0.0.1:22129; target http://127.0.0.1:22128; loopback only",
+      "steps": [
+        "From a browser page on 127.0.0.1:22129, fetch each target with JSON and Authorization headers",
+        "Observe the automatic OPTIONS responses",
+        "Observe the fetch promise result"
+      ],
+      "expected": "Preflight includes Access-Control-Allow-Origin for the requesting loopback origin (or `*`) and the browser can issue the API request.",
+      "actual": "All OPTIONS return 200 with allow-methods/allow-headers but no Access-Control-Allow-Origin; all three browser fetches reject with TypeError: Failed to fetch.",
+      "evidence": [
+        "cors-browser.json",
+        "requests-sanitized.json",
+        "assertions.json"
+      ],
+      "console": "browser fetch rejection: TypeError: Failed to fetch",
+      "network": "OPTIONS 200; Access-Control-Allow-Origin absent on all three routes",
+      "fingerprint": "/v1*|cross-origin browser API request|preflight|missing-access-control-allow-origin"
+    },
+    {
+      "severity": "P2",
+      "route": "/v1/models/llm",
+      "control": "GET LLM-filtered model discovery",
+      "preconditions": "seeded QA server with three active LLM models",
+      "steps": [
+        "GET /v1/models and confirm the three seeded LLM models are listed",
+        "GET /v1/models/llm",
+        "Inspect status and error"
+      ],
+      "expected": "200 OpenAI-compatible filtered list containing qa-openai/qa-chat, qa-responses/qa-response, and qa-anthropic/qa-message.",
+      "actual": "404 invalid_request_error: Unknown model kind: llm; the supported-kind list omits llm.",
+      "evidence": [
+        "requests-sanitized.json",
+        "assertions.json"
+      ],
+      "console": "none",
+      "network": "GET /v1/models/llm -> 404 application/json",
+      "fingerprint": "/v1/models/llm|LLM model discovery|GET|llm-kind-rejected"
+    },
+    {
+      "severity": "P2",
+      "route": "/v1/models/info?id=qa-openai/qa-chat",
+      "control": "GET model metadata for advertised model",
+      "preconditions": "qa-openai/qa-chat is present in GET /v1/models",
+      "steps": [
+        "GET /v1/models and confirm qa-openai/qa-chat is advertised",
+        "GET /v1/models/info?id=qa-openai%2Fqa-chat",
+        "Inspect status and error"
+      ],
+      "expected": "200 metadata for the advertised, active model.",
+      "actual": "404 not_found: Model not found: qa-openai/qa-chat.",
+      "evidence": [
+        "requests-sanitized.json",
+        "assertions.json"
+      ],
+      "console": "none",
+      "network": "GET /v1/models/info?id=qa-openai%2Fqa-chat -> 404 application/json",
+      "fingerprint": "/v1/models/info|advertised model metadata|GET seeded id|advertised-model-not-found"
+    },
+    {
+      "severity": "P2",
+      "route": "/v1beta/models",
+      "control": "Gemini-compatible active model discovery",
+      "preconditions": "qa-openai/qa-chat successfully serves Gemini generateContent on the same server",
+      "steps": [
+        "POST generateContent for qa-openai/qa-chat and confirm 200 QA mock reply",
+        "GET /v1beta/models",
+        "Search the returned model names for models/qa-openai/qa-chat"
+      ],
+      "expected": "Gemini model discovery includes the active model that the Gemini generation endpoint accepts.",
+      "actual": "GET succeeds with 741 catalog entries, but models/qa-openai/qa-chat is absent.",
+      "evidence": [
+        "requests-sanitized.json",
+        "assertions.json"
+      ],
+      "console": "none",
+      "network": "GET /v1beta/models -> 200; active seeded model absent",
+      "fingerprint": "/v1beta/models|Gemini model discovery|GET|active-local-model-omitted"
+    },
+    {
+      "severity": "P2",
+      "route": "/api/mgmt/v1/health",
+      "control": "Unauthorized management response cache policy",
+      "preconditions": "loopback TCP request forced through non-local auth branch using non-loopback Origin; no management token",
+      "steps": [
+        "GET /api/mgmt/v1/health with Origin http://qa-nonlocal.invalid and no credentials",
+        "Repeat with the ordinary gateway key, which is not a management token",
+        "Inspect response envelope and Cache-Control header"
+      ],
+      "expected": "401 {v:1,error} management responses also carry Cache-Control: no-store, matching management success/error contracts.",
+      "actual": "Both responses correctly return 401 {v:1,error}, but Cache-Control is absent.",
+      "evidence": [
+        "requests-sanitized.json",
+        "assertions.json"
+      ],
+      "console": "none",
+      "network": "GET /api/mgmt/v1/health -> 401 application/json; Cache-Control absent",
+      "fingerprint": "/api/mgmt/v1/*|unauthorized response headers|GET non-local|cache-control-no-store-missing"
+    }
+  ],
+  "artifacts": {
+    "assertions.json": {
+      "summary": {
+        "total": 56,
+        "passed": 47,
+        "failed": 9
+      },
+      "checks": [
+        {
+          "name": "models-root",
+          "routes": [
+            "/v1"
+          ],
+          "expected": "200 OpenAI list containing all seeded LLM models",
+          "actual": {
+            "status": 200,
+            "object": "list",
+            "count": 6,
+            "seededModelsPresent": {
+              "qa-openai/qa-chat": true,
+              "qa-responses/qa-response": true,
+              "qa-anthropic/qa-message": true
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "models",
+          "routes": [
+            "/v1/models"
+          ],
+          "expected": "200 OpenAI list containing all seeded LLM models",
+          "actual": {
+            "status": 200,
+            "object": "list",
+            "count": 6,
+            "seededModelsPresent": {
+              "qa-openai/qa-chat": true,
+              "qa-responses/qa-response": true,
+              "qa-anthropic/qa-message": true
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "models-api-direct",
+          "routes": [
+            "/api/v1/models"
+          ],
+          "expected": "200 OpenAI list containing all seeded LLM models",
+          "actual": {
+            "status": 200,
+            "object": "list",
+            "count": 6,
+            "seededModelsPresent": {
+              "qa-openai/qa-chat": true,
+              "qa-responses/qa-response": true,
+              "qa-anthropic/qa-message": true
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "api-health",
+          "routes": [
+            "/api/health"
+          ],
+          "expected": "200 {ok:true}",
+          "actual": {
+            "status": 200,
+            "body": {
+              "ok": true
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "models-llm",
+          "routes": [
+            "/v1/models/llm"
+          ],
+          "expected": "200 filtered LLM list containing seeded models",
+          "actual": {
+            "status": 404,
+            "body": {
+              "error": {
+                "message": "Unknown model kind: llm. Supported: image, tts, stt, embedding, image-to-text, web",
+                "type": "invalid_request_error"
+              }
+            }
+          },
+          "result": "fail"
+        },
+        {
+          "name": "models-info-required-id",
+          "routes": [
+            "/v1/models/info"
+          ],
+          "expected": "400 usable missing-id error",
+          "actual": {
+            "status": 400,
+            "body": {
+              "error": {
+                "message": "Missing required query param: id (e.g. ?id=openai/dall-e-3)",
+                "type": "invalid_request_error"
+              }
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "models-info-seeded",
+          "routes": [
+            "/v1/models/info?id=qa-openai/qa-chat"
+          ],
+          "expected": "200 metadata for model advertised by /v1/models",
+          "actual": {
+            "status": 404,
+            "body": {
+              "error": {
+                "message": "Model not found: qa-openai/qa-chat",
+                "type": "not_found"
+              }
+            }
+          },
+          "result": "fail"
+        },
+        {
+          "name": "gemini-models",
+          "routes": [
+            "/v1beta/models"
+          ],
+          "expected": "200 Gemini list containing models/qa-openai/qa-chat",
+          "actual": {
+            "status": 200,
+            "count": 741,
+            "seededModelPresent": false
+          },
+          "result": "fail"
+        },
+        {
+          "name": "options-chat",
+          "routes": [
+            "/v1/chat/completions"
+          ],
+          "expected": "2xx preflight with methods, headers, and Access-Control-Allow-Origin for requesting loopback origin",
+          "actual": {
+            "status": 200,
+            "corsHeaders": {
+              "access-control-allow-methods": "GET, POST, OPTIONS",
+              "access-control-allow-headers": "*"
+            }
+          },
+          "result": "fail"
+        },
+        {
+          "name": "options-messages",
+          "routes": [
+            "/v1/messages"
+          ],
+          "expected": "2xx preflight with methods, headers, and Access-Control-Allow-Origin for requesting loopback origin",
+          "actual": {
+            "status": 200,
+            "corsHeaders": {
+              "access-control-allow-methods": "GET, POST, OPTIONS",
+              "access-control-allow-headers": "*"
+            }
+          },
+          "result": "fail"
+        },
+        {
+          "name": "options-gemini",
+          "routes": [
+            "/v1beta/models/qa-openai/qa-chat:generateContent"
+          ],
+          "expected": "2xx preflight with methods, headers, and Access-Control-Allow-Origin for requesting loopback origin",
+          "actual": {
+            "status": 200,
+            "corsHeaders": {
+              "access-control-allow-methods": "GET, POST, OPTIONS",
+              "access-control-allow-headers": "*"
+            }
+          },
+          "result": "fail"
+        },
+        {
+          "name": "chat-nonstream",
+          "routes": [
+            "/v1/chat/completions"
+          ],
+          "expected": "200 OpenAI chat completion, QA mock reply, positive usage",
+          "actual": {
+            "status": 200,
+            "object": "chat.completion",
+            "content": "QA mock reply",
+            "usage": {
+              "prompt_tokens": 3,
+              "completion_tokens": 3,
+              "total_tokens": 6
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "chat-rewrite-v1-v1",
+          "routes": [
+            "/v1/v1/chat/completions"
+          ],
+          "expected": "200 OpenAI chat completion, QA mock reply, positive usage",
+          "actual": {
+            "status": 200,
+            "object": "chat.completion",
+            "content": "QA mock reply",
+            "usage": {
+              "prompt_tokens": 3,
+              "completion_tokens": 3,
+              "total_tokens": 6
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "chat-stream",
+          "routes": [
+            "/v1/chat/completions"
+          ],
+          "expected": "valid SSE JSON events containing QA reply and terminal [DONE]",
+          "actual": {
+            "status": 200,
+            "eventCount": 3,
+            "parseErrors": [],
+            "terminal": "[DONE]",
+            "browser": {
+              "path": "/v1/chat/completions",
+              "status": 200,
+              "contentType": "text/event-stream",
+              "ended": true,
+              "hasQaMarker": true,
+              "hasDoneMarker": true,
+              "doneMarkerRequired": true,
+              "terminatesWithSseBoundary": true,
+              "byteLength": 457
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "responses-v1",
+          "routes": [
+            "/v1/responses"
+          ],
+          "expected": "200 completed Responses shape with QA mock response",
+          "actual": {
+            "status": 200,
+            "object": "response",
+            "responseStatus": "completed",
+            "outputText": "QA mock response",
+            "usage": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 6
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "responses-root",
+          "routes": [
+            "/responses"
+          ],
+          "expected": "200 completed Responses shape with QA mock response",
+          "actual": {
+            "status": 200,
+            "object": "response",
+            "responseStatus": "completed",
+            "outputText": "QA mock response",
+            "usage": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 6
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "responses-codex",
+          "routes": [
+            "/codex"
+          ],
+          "expected": "200 completed Responses shape with QA mock response",
+          "actual": {
+            "status": 200,
+            "object": "response",
+            "responseStatus": "completed",
+            "outputText": "QA mock response",
+            "usage": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 6
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "responses-compact-validation",
+          "routes": [
+            "/v1/responses/compact"
+          ],
+          "expected": "400 before provider on invalid JSON",
+          "actual": {
+            "status": 400,
+            "body": {
+              "error": {
+                "message": "Invalid JSON body",
+                "type": "invalid_request_error",
+                "code": "bad_request"
+              }
+            },
+            "mockObservation": "gateway validation body; no QA mock marker/404"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "messages",
+          "routes": [
+            "/v1/messages"
+          ],
+          "expected": "200 Anthropic message with QA mock message and usage",
+          "actual": {
+            "status": 200,
+            "type": "message",
+            "text": "QA mock message",
+            "usage": {
+              "input_tokens": 3,
+              "output_tokens": 3
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "messages-count-tokens",
+          "routes": [
+            "/v1/messages/count_tokens"
+          ],
+          "expected": "200 positive integer covering text/tool blocks",
+          "actual": {
+            "status": 200,
+            "body": {
+              "input_tokens": 22
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "messages-count-tokens-invalid-json",
+          "routes": [
+            "/v1/messages/count_tokens"
+          ],
+          "expected": "400 invalid JSON",
+          "actual": {
+            "status": 400,
+            "body": {
+              "error": "Invalid JSON body"
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "gemini-generate",
+          "routes": [
+            "/v1beta/models/qa-openai/qa-chat:generateContent"
+          ],
+          "expected": "200 Gemini JSON with QA mock reply",
+          "actual": {
+            "status": 200,
+            "text": "QA mock reply",
+            "usageMetadata": {
+              "promptTokenCount": 3,
+              "candidatesTokenCount": 3,
+              "totalTokenCount": 6
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "gemini-stream",
+          "routes": [
+            "/v1beta/models/qa-openai/qa-chat:streamGenerateContent?alt=sse"
+          ],
+          "expected": "valid terminated Gemini SSE containing QA mock reply",
+          "actual": {
+            "status": 200,
+            "eventCount": 1,
+            "parseErrors": [],
+            "text": "QA mock reply",
+            "browser": {
+              "path": "/v1beta/models/qa-openai/qa-chat:streamGenerateContent?alt=sse",
+              "status": 200,
+              "contentType": "text/event-stream",
+              "ended": true,
+              "hasQaMarker": true,
+              "hasDoneMarker": false,
+              "doneMarkerRequired": false,
+              "terminatesWithSseBoundary": true,
+              "byteLength": 233
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "ollama-chat",
+          "routes": [
+            "/v1/api/chat"
+          ],
+          "expected": "200 Ollama response whose assistant content preserves QA mock reply",
+          "actual": {
+            "status": 200,
+            "contentType": "application/x-ndjson",
+            "body": {
+              "model": "qa-openai/qa-chat",
+              "message": {
+                "role": "assistant",
+                "content": ""
+              },
+              "done": true
+            }
+          },
+          "result": "fail"
+        },
+        {
+          "name": "embeddings",
+          "routes": [
+            "/v1/embeddings"
+          ],
+          "expected": "200 numeric embedding vector",
+          "actual": {
+            "status": 200,
+            "vectorLength": 3,
+            "usage": {
+              "prompt_tokens": 1,
+              "total_tokens": 1
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "images-missing-required",
+          "routes": [
+            "/v1/images/generations"
+          ],
+          "expected": "4xx local validation before provider choice",
+          "actual": {
+            "status": 400,
+            "body": {
+              "error": {
+                "message": "Missing model",
+                "type": "invalid_request_error",
+                "code": "bad_request"
+              }
+            },
+            "mockObservation": "gateway validation body; no QA mock marker/404"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "speech-missing-required",
+          "routes": [
+            "/v1/audio/speech"
+          ],
+          "expected": "4xx local validation before provider choice",
+          "actual": {
+            "status": 400,
+            "body": {
+              "error": {
+                "message": "Missing model",
+                "type": "invalid_request_error",
+                "code": "bad_request"
+              }
+            },
+            "mockObservation": "gateway validation body; no QA mock marker/404"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "transcription-missing-required",
+          "routes": [
+            "/v1/audio/transcriptions"
+          ],
+          "expected": "4xx local validation before provider choice",
+          "actual": {
+            "status": 400,
+            "body": {
+              "error": {
+                "message": "Invalid multipart form data",
+                "type": "invalid_request_error",
+                "code": "bad_request"
+              }
+            },
+            "mockObservation": "gateway validation body; no QA mock marker/404"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "search-missing-required",
+          "routes": [
+            "/v1/search"
+          ],
+          "expected": "4xx local validation before provider choice",
+          "actual": {
+            "status": 400,
+            "body": {
+              "error": {
+                "message": "Missing required field: provider (or model)",
+                "type": "invalid_request_error",
+                "code": "bad_request"
+              }
+            },
+            "mockObservation": "gateway validation body; no QA mock marker/404"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "web-fetch-missing-required",
+          "routes": [
+            "/v1/web/fetch"
+          ],
+          "expected": "4xx local validation before provider choice",
+          "actual": {
+            "status": 400,
+            "body": {
+              "error": {
+                "message": "Missing required field: provider (or model)",
+                "type": "invalid_request_error",
+                "code": "bad_request"
+              }
+            },
+            "mockObservation": "gateway validation body; no QA mock marker/404"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "auth-missing",
+          "routes": [
+            "/v1/chat/completions"
+          ],
+          "expected": "401 when forced through non-local auth path",
+          "actual": {
+            "status": 401,
+            "body": {
+              "error": "API key required"
+            },
+            "transport": "loopback; non-local auth branch selected by untrusted Origin"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "auth-malformed-bearer",
+          "routes": [
+            "/v1/chat/completions"
+          ],
+          "expected": "401 when forced through non-local auth path",
+          "actual": {
+            "status": 401,
+            "body": {
+              "error": "API key required"
+            },
+            "transport": "loopback; non-local auth branch selected by untrusted Origin"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "auth-disabled",
+          "routes": [
+            "/v1/chat/completions"
+          ],
+          "expected": "401 when forced through non-local auth path",
+          "actual": {
+            "status": 401,
+            "body": {
+              "error": "API key required"
+            },
+            "transport": "loopback; non-local auth branch selected by untrusted Origin"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "auth-wrong",
+          "routes": [
+            "/v1/chat/completions"
+          ],
+          "expected": "401 when forced through non-local auth path",
+          "actual": {
+            "status": 401,
+            "body": {
+              "error": "API key required"
+            },
+            "transport": "loopback; non-local auth branch selected by untrusted Origin"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "auth-valid",
+          "routes": [
+            "/v1/chat/completions"
+          ],
+          "expected": "200 for valid key or intentional trusted-loopback exemption",
+          "actual": {
+            "status": 200,
+            "content": "QA mock reply",
+            "localExemption": false
+          },
+          "result": "pass"
+        },
+        {
+          "name": "auth-local-no-key-exemption",
+          "routes": [
+            "/v1/chat/completions"
+          ],
+          "expected": "200 for valid key or intentional trusted-loopback exemption",
+          "actual": {
+            "status": 200,
+            "content": "QA mock reply",
+            "localExemption": true
+          },
+          "result": "pass"
+        },
+        {
+          "name": "auth-alias-responses-missing",
+          "routes": [
+            "/responses"
+          ],
+          "expected": "401 for non-local missing/wrong key",
+          "actual": {
+            "status": 401,
+            "body": {
+              "error": {
+                "message": "Missing API key",
+                "type": "authentication_error",
+                "code": "invalid_api_key"
+              }
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "auth-alias-responses-wrong",
+          "routes": [
+            "/responses"
+          ],
+          "expected": "401 for non-local missing/wrong key",
+          "actual": {
+            "status": 401,
+            "body": {
+              "error": {
+                "message": "Invalid API key",
+                "type": "authentication_error",
+                "code": "invalid_api_key"
+              }
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "auth-alias-codex-missing",
+          "routes": [
+            "/codex"
+          ],
+          "expected": "401 for non-local missing/wrong key",
+          "actual": {
+            "status": 401,
+            "body": {
+              "error": "API key required"
+            }
+          },
+          "result": "pass"
+        },
+        {
+          "name": "invalid-model",
+          "routes": [
+            "/v1/chat/completions"
+          ],
+          "expected": "404 usable error before upstream success",
+          "actual": {
+            "status": 404,
+            "body": {
+              "error": {
+                "message": "No active credentials for provider: qa-missing",
+                "type": "invalid_request_error",
+                "code": "model_not_found"
+              }
+            },
+            "mockObservation": "gateway validation/routing error; no QA success marker"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "invalid-json-chat",
+          "routes": [
+            "/v1/chat/completions"
+          ],
+          "expected": "400 usable error before upstream success",
+          "actual": {
+            "status": 400,
+            "body": {
+              "error": {
+                "message": "Invalid JSON body",
+                "type": "invalid_request_error",
+                "code": "bad_request"
+              }
+            },
+            "mockObservation": "gateway validation/routing error; no QA success marker"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "mgmt-health",
+          "routes": [
+            "/api/mgmt/v1/health"
+          ],
+          "expected": "200 {v:1,data} and Cache-Control:no-store",
+          "actual": {
+            "status": 200,
+            "responseKeys": [
+              "v",
+              "data"
+            ],
+            "dataKeys": [
+              "status",
+              "uptimeSeconds",
+              "db",
+              "providers",
+              "timestamp"
+            ],
+            "cacheControl": "no-store"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "mgmt-version",
+          "routes": [
+            "/api/mgmt/v1/version"
+          ],
+          "expected": "200 {v:1,data} and Cache-Control:no-store",
+          "actual": {
+            "status": 200,
+            "responseKeys": [
+              "v",
+              "data"
+            ],
+            "dataKeys": [
+              "name",
+              "version",
+              "apiVersion",
+              "node",
+              "platform",
+              "startedAt"
+            ],
+            "cacheControl": "no-store"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "mgmt-providers",
+          "routes": [
+            "/api/mgmt/v1/providers"
+          ],
+          "expected": "200 {v:1,data} and Cache-Control:no-store",
+          "actual": {
+            "status": 200,
+            "responseKeys": [
+              "v",
+              "data"
+            ],
+            "dataKeys": [
+              "providers",
+              "nodes",
+              "counts"
+            ],
+            "cacheControl": "no-store"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "mgmt-combos",
+          "routes": [
+            "/api/mgmt/v1/combos"
+          ],
+          "expected": "200 {v:1,data} and Cache-Control:no-store",
+          "actual": {
+            "status": 200,
+            "responseKeys": [
+              "v",
+              "data"
+            ],
+            "dataKeys": [
+              "combos"
+            ],
+            "cacheControl": "no-store"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "mgmt-usage",
+          "routes": [
+            "/api/mgmt/v1/usage?period=24h"
+          ],
+          "expected": "200 {v:1,data} and Cache-Control:no-store",
+          "actual": {
+            "status": 200,
+            "responseKeys": [
+              "v",
+              "data"
+            ],
+            "dataKeys": [
+              "period",
+              "usage",
+              "quota"
+            ],
+            "cacheControl": "no-store"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "mgmt-routing",
+          "routes": [
+            "/api/mgmt/v1/routing"
+          ],
+          "expected": "200 {v:1,data} and Cache-Control:no-store",
+          "actual": {
+            "status": 200,
+            "responseKeys": [
+              "v",
+              "data"
+            ],
+            "dataKeys": [
+              "combos"
+            ],
+            "cacheControl": "no-store"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "mgmt-routing-detail",
+          "routes": [
+            "/api/mgmt/v1/routing?combo=qa-auto&days=14"
+          ],
+          "expected": "200 {v:1,data} and Cache-Control:no-store",
+          "actual": {
+            "status": 200,
+            "responseKeys": [
+              "v",
+              "data"
+            ],
+            "dataKeys": [
+              "combo",
+              "days",
+              "modelPerf",
+              "eventCount",
+              "attemptCount",
+              "scoreTrend"
+            ],
+            "cacheControl": "no-store"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "mgmt-seeded-provider-counts",
+          "routes": [
+            "/api/mgmt/v1/providers"
+          ],
+          "expected": "seeded 4 provider groups, 6 accounts, 4 nodes; all base URLs loopback mock",
+          "actual": {
+            "counts": {
+              "providers": 4,
+              "accounts": 6,
+              "nodes": 4
+            },
+            "nodeBaseUrls": [
+              "http://127.0.0.1:22129/v1",
+              "http://127.0.0.1:22129/v1",
+              "http://127.0.0.1:22129/v1",
+              "http://127.0.0.1:22129/v1"
+            ]
+          },
+          "result": "pass"
+        },
+        {
+          "name": "mgmt-seeded-combos",
+          "routes": [
+            "/api/mgmt/v1/combos"
+          ],
+          "expected": "three seeded combos",
+          "actual": {
+            "count": 3,
+            "names": [
+              "qa-fallback",
+              "qa-round-robin",
+              "qa-auto"
+            ]
+          },
+          "result": "pass"
+        },
+        {
+          "name": "mgmt-usage-invalid-period",
+          "routes": [
+            "/api/mgmt/v1/usage?period=bogus"
+          ],
+          "expected": "400 {v:1,error} and no-store",
+          "actual": {
+            "status": 400,
+            "body": {
+              "v": 1,
+              "error": {
+                "message": "Invalid period"
+              }
+            },
+            "cacheControl": "no-store"
+          },
+          "result": "pass"
+        },
+        {
+          "name": "mgmt-auth-nonlocal-missing",
+          "routes": [
+            "/api/mgmt/v1/health"
+          ],
+          "expected": "401 {v:1,error} and Cache-Control:no-store for non-local unauthorized request",
+          "actual": {
+            "status": 401,
+            "body": {
+              "v": 1,
+              "error": {
+                "message": "Management API: unauthorized"
+              }
+            },
+            "cacheControl": null
+          },
+          "result": "fail"
+        },
+        {
+          "name": "mgmt-auth-nonlocal-gateway-key",
+          "routes": [
+            "/api/mgmt/v1/health"
+          ],
+          "expected": "401 {v:1,error} and Cache-Control:no-store for non-local unauthorized request",
+          "actual": {
+            "status": 401,
+            "body": {
+              "v": 1,
+              "error": {
+                "message": "Management API: unauthorized"
+              }
+            },
+            "cacheControl": null
+          },
+          "result": "fail"
+        },
+        {
+          "name": "usage-increase",
+          "routes": [
+            "/api/mgmt/v1/usage?period=24h"
+          ],
+          "expected": "request count increases after successful matrix",
+          "actual": {
+            "before": 7,
+            "afterMatrix": 19,
+            "finalAfterBrowserProbes": 23
+          },
+          "result": "pass"
+        },
+        {
+          "name": "management-secret-redaction",
+          "routes": [
+            "/api/mgmt/v1/health",
+            "/api/mgmt/v1/version",
+            "/api/mgmt/v1/providers",
+            "/api/mgmt/v1/combos",
+            "/api/mgmt/v1/usage",
+            "/api/mgmt/v1/routing"
+          ],
+          "expected": "no full credential/key/token/cookie fields or seed secret values",
+          "actual": {
+            "hits": []
+          },
+          "result": "pass"
+        },
+        {
+          "name": "mock-containment",
+          "routes": [
+            "/v1*",
+            "/v1beta*",
+            "/responses",
+            "/codex",
+            "/api/mgmt/v1*",
+            "/api/health"
+          ],
+          "expected": "all audit HTTP targets and provider base URLs stay on 127.0.0.1:22128/22129; mock remains healthy; successful upstream bodies carry QA markers",
+          "actual": {
+            "auditHosts": [
+              "127.0.0.1"
+            ],
+            "auditPorts": [
+              22128,
+              22129
+            ],
+            "providerBaseUrls": [
+              "http://127.0.0.1:22129/v1",
+              "http://127.0.0.1:22129/v1",
+              "http://127.0.0.1:22129/v1",
+              "http://127.0.0.1:22129/v1"
+            ],
+            "mockHealthBefore": {
+              "ok": true,
+              "service": "switchboard-qa-mock"
+            },
+            "mockHealthAfter": {
+              "ok": true,
+              "service": "switchboard-qa-mock"
+            },
+            "uniqueSuccessMarkers": [
+              "QA mock reply",
+              "QA mock response",
+              "QA mock message",
+              [
+                0.1,
+                0.2,
+                0.3
+              ]
+            ]
+          },
+          "result": "pass"
+        }
+      ]
+    },
+    "cors-browser.json": {
+      "origin": "http://127.0.0.1:22129",
+      "tests": [
+        {
+          "path": "/v1/chat/completions",
+          "outcome": "rejected",
+          "error": "TypeError: Failed to fetch"
+        },
+        {
+          "path": "/v1/messages",
+          "outcome": "rejected",
+          "error": "TypeError: Failed to fetch"
+        },
+        {
+          "path": "/v1beta/models/qa-openai/qa-chat:generateContent",
+          "outcome": "rejected",
+          "error": "TypeError: Failed to fetch"
+        }
+      ]
+    },
+    "requests-sanitized.json": {
+      "generatedFor": "S5-api",
+      "redaction": {
+        "authorization": "[MASKED]",
+        "x-api-key": "[MASKED]",
+        "cookies": "[MASKED]",
+        "requestBodies": "not persisted"
+      },
+      "allowedTargets": [
+        "127.0.0.1:22128",
+        "127.0.0.1:22129"
+      ],
+      "requests": [
+        {
+          "name": "mock-health-before",
+          "method": "GET",
+          "url": "http://127.0.0.1:22129/health",
+          "requestHeaders": {
+            "Accept": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json; charset=utf-8",
+          "durationMs": 5.4,
+          "responseKeys": [
+            "ok",
+            "service"
+          ],
+          "headers": {
+            "connection": "keep-alive"
+          },
+          "bodyBytes": 43,
+          "body": {
+            "ok": true,
+            "service": "switchboard-qa-mock"
+          },
+          "mockObservation": "direct allowed mock health probe on 127.0.0.1:22129"
+        },
+        {
+          "name": "mgmt-usage-before",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/mgmt/v1/usage?period=24h",
+          "requestHeaders": {
+            "Accept": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 568.8,
+          "responseKeys": [
+            "v",
+            "data"
+          ],
+          "headers": {
+            "cache-control": "no-store",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 6559,
+          "body": {
+            "truncated": true,
+            "originalChars": 6559,
+            "responseKeys": [
+              "v",
+              "data"
+            ],
+            "envelopeVersion": 1,
+            "dataKeys": [
+              "period",
+              "usage",
+              "quota"
+            ]
+          },
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "api-health",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/health",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 927.6,
+          "responseKeys": [
+            "ok"
+          ],
+          "headers": {
+            "access-control-allow-methods": "GET, OPTIONS",
+            "access-control-allow-headers": "*",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 11,
+          "body": {
+            "ok": true
+          },
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "models-root",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/v1",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 1208.4,
+          "responseKeys": [
+            "object",
+            "data"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 478,
+          "body": {
+            "object": "list",
+            "data": [
+              {
+                "id": "qa-fallback",
+                "object": "model",
+                "owned_by": "combo",
+                "name": "qa-fallback"
+              },
+              {
+                "id": "qa-round-robin",
+                "object": "model",
+                "owned_by": "combo",
+                "name": "qa-round-robin"
+              },
+              {
+                "id": "qa-auto",
+                "object": "model",
+                "owned_by": "combo",
+                "name": "qa-auto"
+              },
+              {
+                "id": "qa-openai/qa-chat",
+                "object": "model",
+                "owned_by": "qa-openai"
+              },
+              {
+                "id": "qa-responses/qa-response",
+                "object": "model",
+                "owned_by": "qa-responses"
+              },
+              {
+                "id": "qa-anthropic/qa-message",
+                "object": "model",
+                "owned_by": "qa-anthropic"
+              }
+            ]
+          },
+          "mockObservation": "model discovery/local catalog only; configured dynamic providers resolve exclusively to 127.0.0.1:22129/v1"
+        },
+        {
+          "name": "models",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/v1/models",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 2011.4,
+          "responseKeys": [
+            "object",
+            "data"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 478,
+          "body": {
+            "object": "list",
+            "data": [
+              {
+                "id": "qa-fallback",
+                "object": "model",
+                "owned_by": "combo",
+                "name": "qa-fallback"
+              },
+              {
+                "id": "qa-round-robin",
+                "object": "model",
+                "owned_by": "combo",
+                "name": "qa-round-robin"
+              },
+              {
+                "id": "qa-auto",
+                "object": "model",
+                "owned_by": "combo",
+                "name": "qa-auto"
+              },
+              {
+                "id": "qa-openai/qa-chat",
+                "object": "model",
+                "owned_by": "qa-openai"
+              },
+              {
+                "id": "qa-responses/qa-response",
+                "object": "model",
+                "owned_by": "qa-responses"
+              },
+              {
+                "id": "qa-anthropic/qa-message",
+                "object": "model",
+                "owned_by": "qa-anthropic"
+              }
+            ]
+          },
+          "mockObservation": "model discovery/local catalog only; configured dynamic providers resolve exclusively to 127.0.0.1:22129/v1"
+        },
+        {
+          "name": "models-llm",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/v1/models/llm",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 404,
+          "contentType": "application/json",
+          "durationMs": 1613.6,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 137,
+          "body": {
+            "error": {
+              "message": "Unknown model kind: llm. Supported: image, tts, stt, embedding, image-to-text, web",
+              "type": "invalid_request_error"
+            }
+          },
+          "mockObservation": "model discovery/local catalog only; configured dynamic providers resolve exclusively to 127.0.0.1:22129/v1"
+        },
+        {
+          "name": "models-info-missing-id",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/v1/models/info",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 400,
+          "contentType": "application/json",
+          "durationMs": 3383.4,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 114,
+          "body": {
+            "error": {
+              "message": "Missing required query param: id (e.g. ?id=openai/dall-e-3)",
+              "type": "invalid_request_error"
+            }
+          },
+          "mockObservation": "model discovery/local catalog only; configured dynamic providers resolve exclusively to 127.0.0.1:22129/v1"
+        },
+        {
+          "name": "models-info-seeded",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/v1/models/info?id=qa-openai%2Fqa-chat",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 404,
+          "contentType": "application/json",
+          "durationMs": 384.9,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 77,
+          "body": {
+            "error": {
+              "message": "Model not found: qa-openai/qa-chat",
+              "type": "not_found"
+            }
+          },
+          "mockObservation": "model discovery/local catalog only; configured dynamic providers resolve exclusively to 127.0.0.1:22129/v1"
+        },
+        {
+          "name": "models-api-direct",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/v1/models",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 868.9,
+          "responseKeys": [
+            "object",
+            "data"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 478,
+          "body": {
+            "object": "list",
+            "data": [
+              {
+                "id": "qa-fallback",
+                "object": "model",
+                "owned_by": "combo",
+                "name": "qa-fallback"
+              },
+              {
+                "id": "qa-round-robin",
+                "object": "model",
+                "owned_by": "combo",
+                "name": "qa-round-robin"
+              },
+              {
+                "id": "qa-auto",
+                "object": "model",
+                "owned_by": "combo",
+                "name": "qa-auto"
+              },
+              {
+                "id": "qa-openai/qa-chat",
+                "object": "model",
+                "owned_by": "qa-openai"
+              },
+              {
+                "id": "qa-responses/qa-response",
+                "object": "model",
+                "owned_by": "qa-responses"
+              },
+              {
+                "id": "qa-anthropic/qa-message",
+                "object": "model",
+                "owned_by": "qa-anthropic"
+              }
+            ]
+          },
+          "mockObservation": "model discovery/local catalog only; configured dynamic providers resolve exclusively to 127.0.0.1:22129/v1"
+        },
+        {
+          "name": "options-chat",
+          "method": "OPTIONS",
+          "url": "http://127.0.0.1:22128/v1/chat/completions",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Origin": "http://127.0.0.1:22129",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type"
+          },
+          "status": 200,
+          "contentType": null,
+          "durationMs": 1898.5,
+          "responseKeys": null,
+          "headers": {
+            "access-control-allow-methods": "GET, POST, OPTIONS",
+            "access-control-allow-headers": "*",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 0,
+          "body": "",
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "options-messages",
+          "method": "OPTIONS",
+          "url": "http://127.0.0.1:22128/v1/messages",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Origin": "http://127.0.0.1:22129",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type"
+          },
+          "status": 200,
+          "contentType": null,
+          "durationMs": 2197.4,
+          "responseKeys": null,
+          "headers": {
+            "access-control-allow-methods": "GET, POST, OPTIONS",
+            "access-control-allow-headers": "*",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 0,
+          "body": "",
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "options-gemini",
+          "method": "OPTIONS",
+          "url": "http://127.0.0.1:22128/v1beta/models/qa-openai/qa-chat:generateContent",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Origin": "http://127.0.0.1:22129",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type"
+          },
+          "status": 200,
+          "contentType": null,
+          "durationMs": 4144.5,
+          "responseKeys": null,
+          "headers": {
+            "access-control-allow-methods": "GET, POST, OPTIONS",
+            "access-control-allow-headers": "*",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 0,
+          "body": "",
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "chat-nonstream",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/chat/completions",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 94.2,
+          "responseKeys": [
+            "id",
+            "object",
+            "created",
+            "model",
+            "choices",
+            "usage"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 257,
+          "body": {
+            "id": "chatcmpl-qa",
+            "object": "chat.completion",
+            "created": 1787360400,
+            "model": "qa-chat",
+            "choices": [
+              {
+                "index": 0,
+                "message": {
+                  "role": "assistant",
+                  "content": "QA mock reply"
+                },
+                "finish_reason": "stop"
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 3,
+              "completion_tokens": 3,
+              "total_tokens": 6
+            }
+          },
+          "mockObservation": "upstream terminated at configured 127.0.0.1:22129/v1; observed QA mock reply"
+        },
+        {
+          "name": "chat-rewrite-v1-v1",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/v1/chat/completions",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 34.3,
+          "responseKeys": [
+            "id",
+            "object",
+            "created",
+            "model",
+            "choices",
+            "usage"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 257,
+          "body": {
+            "id": "chatcmpl-qa",
+            "object": "chat.completion",
+            "created": 1787360400,
+            "model": "qa-chat",
+            "choices": [
+              {
+                "index": 0,
+                "message": {
+                  "role": "assistant",
+                  "content": "QA mock reply"
+                },
+                "finish_reason": "stop"
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 3,
+              "completion_tokens": 3,
+              "total_tokens": 6
+            }
+          },
+          "mockObservation": "upstream terminated at configured 127.0.0.1:22129/v1; observed QA mock reply"
+        },
+        {
+          "name": "chat-stream",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/chat/completions",
+          "requestHeaders": {
+            "Accept": "text/event-stream",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "text/event-stream",
+          "durationMs": 27.5,
+          "responseKeys": null,
+          "headers": {
+            "cache-control": "no-cache",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 457,
+          "body": "data: {\"id\":\"chatcmpl-qa\",\"object\":\"chat.completion.chunk\",\"created\":1787360400,\"model\":\"qa-chat\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-qa\",\"object\":\"chat.completion.chunk\",\"created\":1787360400,\"model\":\"qa-chat\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"QA mock reply\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":33,\"completion_tokens\":3,\"total_tokens\":36,\"estimated\":true}}\n\ndata: [DONE]\n\n",
+          "mockObservation": "upstream terminated at configured 127.0.0.1:22129/v1; observed QA mock reply + [DONE]"
+        },
+        {
+          "name": "responses-v1",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/responses",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 1003.7,
+          "responseKeys": [
+            "id",
+            "object",
+            "created_at",
+            "status",
+            "model",
+            "output",
+            "output_text",
+            "usage"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 351,
+          "body": {
+            "id": "resp_qa",
+            "object": "response",
+            "created_at": 0,
+            "status": "completed",
+            "model": "qa-response",
+            "output": [
+              {
+                "id": "msg_qa",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "text": "QA mock response",
+                    "annotations": []
+                  }
+                ]
+              }
+            ],
+            "output_text": "QA mock response",
+            "usage": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 6
+            }
+          },
+          "mockObservation": "upstream terminated at configured 127.0.0.1:22129/v1; observed QA mock response"
+        },
+        {
+          "name": "responses-root",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/responses",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 27.0,
+          "responseKeys": [
+            "id",
+            "object",
+            "created_at",
+            "status",
+            "model",
+            "output",
+            "output_text",
+            "usage"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 351,
+          "body": {
+            "id": "resp_qa",
+            "object": "response",
+            "created_at": 0,
+            "status": "completed",
+            "model": "qa-response",
+            "output": [
+              {
+                "id": "msg_qa",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "text": "QA mock response",
+                    "annotations": []
+                  }
+                ]
+              }
+            ],
+            "output_text": "QA mock response",
+            "usage": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 6
+            }
+          },
+          "mockObservation": "upstream terminated at configured 127.0.0.1:22129/v1; observed QA mock response"
+        },
+        {
+          "name": "responses-codex",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/codex",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 25.6,
+          "responseKeys": [
+            "id",
+            "object",
+            "created_at",
+            "status",
+            "model",
+            "output",
+            "output_text",
+            "usage"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 351,
+          "body": {
+            "id": "resp_qa",
+            "object": "response",
+            "created_at": 0,
+            "status": "completed",
+            "model": "qa-response",
+            "output": [
+              {
+                "id": "msg_qa",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "text": "QA mock response",
+                    "annotations": []
+                  }
+                ]
+              }
+            ],
+            "output_text": "QA mock response",
+            "usage": {
+              "input_tokens": 3,
+              "output_tokens": 3,
+              "total_tokens": 6
+            }
+          },
+          "mockObservation": "upstream terminated at configured 127.0.0.1:22129/v1; observed QA mock response"
+        },
+        {
+          "name": "responses-compact-invalid-json",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/responses/compact",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 400,
+          "contentType": "application/json",
+          "durationMs": 1925.2,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 93,
+          "body": {
+            "error": {
+              "message": "Invalid JSON body",
+              "type": "invalid_request_error",
+              "code": "bad_request"
+            }
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "messages",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/messages",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 113.2,
+          "responseKeys": [
+            "id",
+            "type",
+            "role",
+            "model",
+            "content",
+            "stop_reason",
+            "stop_sequence",
+            "usage"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 216,
+          "body": {
+            "id": "msg_qa",
+            "type": "message",
+            "role": "assistant",
+            "model": "qa-message",
+            "content": [
+              {
+                "type": "text",
+                "text": "QA mock message"
+              }
+            ],
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "usage": {
+              "input_tokens": 3,
+              "output_tokens": 3
+            }
+          },
+          "mockObservation": "upstream terminated at configured 127.0.0.1:22129/v1; observed QA mock message"
+        },
+        {
+          "name": "messages-count-tokens",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/messages/count_tokens",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 1950.4,
+          "responseKeys": [
+            "input_tokens"
+          ],
+          "headers": {
+            "access-control-allow-methods": "POST, OPTIONS",
+            "access-control-allow-headers": "*",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 19,
+          "body": {
+            "input_tokens": 22
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "messages-count-tokens-invalid-json",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/messages/count_tokens",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01"
+          },
+          "status": 400,
+          "contentType": "application/json",
+          "durationMs": 25.2,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "access-control-allow-methods": "POST, OPTIONS",
+            "access-control-allow-headers": "*",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 29,
+          "body": {
+            "error": "Invalid JSON body"
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "gemini-generate",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1beta/models/qa-openai/qa-chat:generateContent",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 366.1,
+          "responseKeys": [
+            "candidates",
+            "modelVersion",
+            "usageMetadata"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 221,
+          "body": {
+            "candidates": [
+              {
+                "content": {
+                  "role": "model",
+                  "parts": [
+                    {
+                      "text": "QA mock reply"
+                    }
+                  ]
+                },
+                "finishReason": "STOP",
+                "index": 0
+              }
+            ],
+            "modelVersion": "qa-chat",
+            "usageMetadata": {
+              "promptTokenCount": 3,
+              "candidatesTokenCount": 3,
+              "totalTokenCount": 6
+            }
+          },
+          "mockObservation": "upstream terminated at configured 127.0.0.1:22129/v1; observed QA mock reply"
+        },
+        {
+          "name": "gemini-stream",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1beta/models/qa-openai/qa-chat:streamGenerateContent?alt=sse",
+          "requestHeaders": {
+            "Accept": "text/event-stream",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "text/event-stream",
+          "durationMs": 45.2,
+          "responseKeys": null,
+          "headers": {
+            "cache-control": "no-cache",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 233,
+          "body": "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"QA mock reply\"}]},\"index\":0,\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":33,\"candidatesTokenCount\":3,\"totalTokenCount\":36},\"modelVersion\":\"qa-chat\"}\r\n\r\n",
+          "mockObservation": "upstream terminated at configured 127.0.0.1:22129/v1; observed QA mock reply"
+        },
+        {
+          "name": "ollama-chat",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/api/chat",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/x-ndjson",
+          "durationMs": 5786.9,
+          "responseKeys": [
+            "model",
+            "message",
+            "done"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 86,
+          "body": {
+            "model": "qa-openai/qa-chat",
+            "message": {
+              "role": "assistant",
+              "content": ""
+            },
+            "done": true
+          },
+          "mockObservation": "upstream terminated at configured 127.0.0.1:22129/v1; observed 200 transformed response from qa-openai mock (content lost)"
+        },
+        {
+          "name": "embeddings",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/embeddings",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 3816.2,
+          "responseKeys": [
+            "object",
+            "data",
+            "model",
+            "usage"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 153,
+          "body": {
+            "object": "list",
+            "data": [
+              {
+                "object": "embedding",
+                "index": 0,
+                "embedding": [
+                  0.1,
+                  0.2,
+                  0.3
+                ]
+              }
+            ],
+            "model": "qa-embedding",
+            "usage": {
+              "prompt_tokens": 1,
+              "total_tokens": 1
+            }
+          },
+          "mockObservation": "upstream terminated at configured 127.0.0.1:22129/v1; observed numeric mock vector [0.1,0.2,0.3]"
+        },
+        {
+          "name": "images-missing-required",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/images/generations",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 400,
+          "contentType": "application/json",
+          "durationMs": 3067.5,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 89,
+          "body": {
+            "error": {
+              "message": "Missing model",
+              "type": "invalid_request_error",
+              "code": "bad_request"
+            }
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "speech-missing-required",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/audio/speech",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 400,
+          "contentType": "application/json",
+          "durationMs": 4206.0,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 89,
+          "body": {
+            "error": {
+              "message": "Missing model",
+              "type": "invalid_request_error",
+              "code": "bad_request"
+            }
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "transcription-missing-required",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/audio/transcriptions",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 400,
+          "contentType": "application/json",
+          "durationMs": 1951.5,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 103,
+          "body": {
+            "error": {
+              "message": "Invalid multipart form data",
+              "type": "invalid_request_error",
+              "code": "bad_request"
+            }
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "search-missing-required",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/search",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 400,
+          "contentType": "application/json",
+          "durationMs": 2672.4,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 119,
+          "body": {
+            "error": {
+              "message": "Missing required field: provider (or model)",
+              "type": "invalid_request_error",
+              "code": "bad_request"
+            }
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "web-fetch-missing-required",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/web/fetch",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 400,
+          "contentType": "application/json",
+          "durationMs": 2582.8,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 119,
+          "body": {
+            "error": {
+              "message": "Missing required field: provider (or model)",
+              "type": "invalid_request_error",
+              "code": "bad_request"
+            }
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "auth-missing",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/chat/completions",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Origin": "http://qa-nonlocal.invalid",
+            "Content-Type": "application/json"
+          },
+          "status": 401,
+          "contentType": "application/json",
+          "durationMs": 336.6,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 28,
+          "body": {
+            "error": "API key required"
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "auth-malformed-bearer",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/chat/completions",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Origin": "http://qa-nonlocal.invalid",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 401,
+          "contentType": "application/json",
+          "durationMs": 224.5,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 28,
+          "body": {
+            "error": "API key required"
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "auth-disabled",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/chat/completions",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Origin": "http://qa-nonlocal.invalid",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 401,
+          "contentType": "application/json",
+          "durationMs": 16.2,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 28,
+          "body": {
+            "error": "API key required"
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "auth-wrong",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/chat/completions",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Origin": "http://qa-nonlocal.invalid",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 401,
+          "contentType": "application/json",
+          "durationMs": 10.9,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 28,
+          "body": {
+            "error": "API key required"
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "auth-valid",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/chat/completions",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Origin": "http://qa-nonlocal.invalid",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 864.8,
+          "responseKeys": [
+            "id",
+            "object",
+            "created",
+            "model",
+            "choices",
+            "usage"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 257,
+          "body": {
+            "id": "chatcmpl-qa",
+            "object": "chat.completion",
+            "created": 1787360431,
+            "model": "qa-chat",
+            "choices": [
+              {
+                "index": 0,
+                "message": {
+                  "role": "assistant",
+                  "content": "QA mock reply"
+                },
+                "finish_reason": "stop"
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 3,
+              "completion_tokens": 3,
+              "total_tokens": 6
+            }
+          },
+          "mockObservation": "upstream terminated at configured 127.0.0.1:22129/v1; observed QA mock reply"
+        },
+        {
+          "name": "auth-local-no-key-exemption",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/chat/completions",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 60.5,
+          "responseKeys": [
+            "id",
+            "object",
+            "created",
+            "model",
+            "choices",
+            "usage"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 257,
+          "body": {
+            "id": "chatcmpl-qa",
+            "object": "chat.completion",
+            "created": 1787360431,
+            "model": "qa-chat",
+            "choices": [
+              {
+                "index": 0,
+                "message": {
+                  "role": "assistant",
+                  "content": "QA mock reply"
+                },
+                "finish_reason": "stop"
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 3,
+              "completion_tokens": 3,
+              "total_tokens": 6
+            }
+          },
+          "mockObservation": "upstream terminated at configured 127.0.0.1:22129/v1; observed QA mock reply"
+        },
+        {
+          "name": "invalid-model",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/chat/completions",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json",
+            "Origin": "http://qa-nonlocal.invalid"
+          },
+          "status": 404,
+          "contentType": "application/json",
+          "durationMs": 30.5,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 126,
+          "body": {
+            "error": {
+              "message": "No active credentials for provider: qa-missing",
+              "type": "invalid_request_error",
+              "code": "model_not_found"
+            }
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "invalid-json-chat",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/v1/chat/completions",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json",
+            "Origin": "http://qa-nonlocal.invalid"
+          },
+          "status": 400,
+          "contentType": "application/json",
+          "durationMs": 28.7,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 93,
+          "body": {
+            "error": {
+              "message": "Invalid JSON body",
+              "type": "invalid_request_error",
+              "code": "bad_request"
+            }
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "mgmt-health",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/mgmt/v1/health",
+          "requestHeaders": {
+            "Accept": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 1478.1,
+          "responseKeys": [
+            "v",
+            "data"
+          ],
+          "headers": {
+            "cache-control": "no-store",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 163,
+          "body": {
+            "v": 1,
+            "data": {
+              "status": "ok",
+              "uptimeSeconds": 343,
+              "db": {
+                "ok": true
+              },
+              "providers": {
+                "total": 6,
+                "ok": 4,
+                "error": 1,
+                "rateLimited": 0
+              },
+              "timestamp": "2026-08-22T01:00:32.900Z"
+            }
+          },
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "mgmt-version",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/mgmt/v1/version",
+          "requestHeaders": {
+            "Accept": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 1812.0,
+          "responseKeys": [
+            "v",
+            "data"
+          ],
+          "headers": {
+            "cache-control": "no-store",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 151,
+          "body": {
+            "v": 1,
+            "data": {
+              "name": "switchboard-app",
+              "version": "0.6.31",
+              "apiVersion": 1,
+              "node": "v26.7.0",
+              "platform": "darwin",
+              "startedAt": "2026-08-22T00:54:49.959Z"
+            }
+          },
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "mgmt-providers",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/mgmt/v1/providers",
+          "requestHeaders": {
+            "Accept": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 1653.9,
+          "responseKeys": [
+            "v",
+            "data"
+          ],
+          "headers": {
+            "cache-control": "no-store",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 3241,
+          "body": {
+            "v": 1,
+            "data": {
+              "providers": [
+                {
+                  "provider": "openai-compatible-chat-qa-local",
+                  "accounts": [
+                    {
+                      "id": "qa-chat-success",
+                      "provider": "openai-compatible-chat-qa-local",
+                      "authType": "apikey",
+                      "name": "QA Chat Ready",
+                      "email": null,
+                      "priority": 1,
+                      "isActive": true,
+                      "createdAt": "2026-08-22T00:55:00.598Z",
+                      "updatedAt": "2026-08-22T00:55:00.598Z",
+                      "testStatus": "success",
+                      "hasApiKey": true,
+                      "hasOAuth": false,
+                      "hasIdToken": false
+                    },
+                    {
+                      "id": "qa-chat-error",
+                      "provider": "openai-compatible-chat-qa-local",
+                      "authType": "apikey",
+                      "name": "QA Chat Error",
+                      "email": null,
+                      "priority": 2,
+                      "isActive": true,
+                      "createdAt": "2026-08-22T00:55:00.598Z",
+                      "updatedAt": "2026-08-22T00:55:00.598Z",
+                      "testStatus": "error",
+                      "lastError": "QA synthetic saved error",
+                      "errorCode": "QA_ERROR",
+                      "hasApiKey": true,
+                      "hasOAuth": false,
+                      "hasIdToken": false
+                    },
+                    {
+                      "id": "qa-chat-disabled",
+                      "provider": "openai-compatible-chat-qa-local",
+                      "authType": "apikey",
+                      "name": "QA Chat Disabled",
+                      "email": null,
+                      "priority": 3,
+                      "isActive": false,
+                      "createdAt": "2026-08-22T00:55:00.598Z",
+                      "updatedAt": "2026-08-22T00:55:00.598Z",
+                      "testStatus": "unknown",
+                      "hasApiKey": true,
+                      "hasOAuth": false,
+                      "hasIdToken": false
+                    }
+                  ]
+                },
+                {
+                  "provider": "openai-compatible-responses-qa-local",
+                  "accounts": [
+                    {
+                      "id": "qa-responses-success",
+                      "provider": "openai-compatible-responses-qa-local",
+                      "authType": "apikey",
+                      "name": "QA Responses Ready",
+                      "email": null,
+                      "priority": 1,
+                      "isActive": true,
+                      "createdAt": "2026-08-22T00:55:00.599Z",
+                      "updatedAt": "2026-08-22T00:55:00.599Z",
+                      "testStatus": "success",
+                      "hasApiKey": true,
+                      "hasOAuth": false,
+                      "hasIdToken": false
+                    }
+                  ]
+                },
+                {
+                  "provider": "anthropic-compatible-qa-local",
+                  "accounts": [
+                    {
+                      "id": "qa-anthropic-success",
+                      "provider": "anthropic-compatible-qa-local",
+                      "authType": "apikey",
+                      "name": "QA Anthropic Ready",
+                      "email": null,
+                      "priority": 1,
+                      "isActive": true,
+                      "createdAt": "2026-08-22T00:55:00.599Z",
+                      "updatedAt": "2026-08-22T00:55:00.599Z",
+                      "testStatus": "success",
+                      "hasApiKey": true,
+                      "hasOAuth": false,
+                      "hasIdToken": false
+                    }
+                  ]
+                },
+                {
+                  "provider": "custom-embedding-qa-local",
+                  "accounts": [
+                    {
+                      "id": "qa-embedding-success",
+                      "provider": "custom-embedding-qa-local",
+                      "authType": "apikey",
+                      "name": "QA Embeddings Ready",
+                      "email": null,
+                      "priority": 1,
+                      "isActive": true,
+                      "createdAt": "2026-08-22T00:55:00.599Z",
+                      "updatedAt": "2026-08-22T00:55:00.599Z",
+                      "testStatus": "success",
+                      "hasApiKey": true,
+                      "hasOAuth": false,
+                      "hasIdToken": false
+                    }
+                  ]
+                }
+              ],
+              "nodes": [
+                {
+                  "id": "openai-compatible-chat-qa-local",
+                  "name": "QA Local Chat",
+                  "type": "openai-compatible",
+                  "prefix": "qa-openai",
+                  "apiType": "chat",
+                  "baseUrl": "http://127.0.0.1:22129/v1",
+                  "createdAt": "2026-08-22T00:55:00.599Z",
+                  "updatedAt": "2026-08-22T00:55:00.599Z"
+                },
+                {
+                  "id": "openai-compatible-responses-qa-local",
+                  "name": "QA Local Responses",
+                  "type": "openai-compatible",
+                  "prefix": "qa-responses",
+                  "apiType": "responses",
+                  "baseUrl": "http://127.0.0.1:22129/v1",
+                  "createdAt": "2026-08-22T00:55:00.599Z",
+                  "updatedAt": "2026-08-22T00:55:00.599Z"
+                },
+                {
+                  "id": "anthropic-compatible-qa-local",
+                  "name": "QA Local Anthropic",
+                  "type": "anthropic-compatible",
+                  "prefix": "qa-anthropic",
+                  "baseUrl": "http://127.0.0.1:22129/v1",
+                  "createdAt": "2026-08-22T00:55:00.599Z",
+                  "updatedAt": "2026-08-22T00:55:00.599Z"
+                },
+                {
+                  "id": "custom-embedding-qa-local",
+                  "name": "QA Local Embeddings",
+                  "type": "custom-embedding",
+                  "prefix": "qa-embed",
+                  "baseUrl": "http://127.0.0.1:22129/v1",
+                  "createdAt": "2026-08-22T00:55:00.599Z",
+                  "updatedAt": "2026-08-22T00:55:00.599Z"
+                }
+              ],
+              "counts": {
+                "providers": 4,
+                "accounts": 6,
+                "nodes": 4
+              }
+            }
+          },
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "mgmt-combos",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/mgmt/v1/combos",
+          "requestHeaders": {
+            "Accept": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 4807.5,
+          "responseKeys": [
+            "v",
+            "data"
+          ],
+          "headers": {
+            "cache-control": "no-store",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 893,
+          "body": {
+            "v": 1,
+            "data": {
+              "combos": [
+                {
+                  "id": "qa-combo-fallback",
+                  "name": "qa-fallback",
+                  "kind": "llm",
+                  "models": [
+                    "qa-openai/qa-chat",
+                    "qa-anthropic/qa-message"
+                  ],
+                  "strategy": {
+                    "fallbackStrategy": "fallback",
+                    "capacityAutoSwitch": true
+                  },
+                  "routerModel": null,
+                  "fallbackStrategy": "fallback"
+                },
+                {
+                  "id": "qa-combo-round-robin",
+                  "name": "qa-round-robin",
+                  "kind": "llm",
+                  "models": [
+                    "qa-openai/qa-chat",
+                    "qa-responses/qa-response"
+                  ],
+                  "strategy": {
+                    "fallbackStrategy": "round-robin",
+                    "capacityAutoSwitch": false
+                  },
+                  "routerModel": null,
+                  "fallbackStrategy": "round-robin"
+                },
+                {
+                  "id": "qa-combo-auto",
+                  "name": "qa-auto",
+                  "kind": "llm",
+                  "models": [
+                    "qa-openai/qa-chat",
+                    "qa-anthropic/qa-message"
+                  ],
+                  "strategy": {
+                    "fallbackStrategy": "auto",
+                    "routerModel": "qa-openai/qa-chat",
+                    "objective": "balanced",
+                    "explorationRate": 0.05,
+                    "learningEnabled": true,
+                    "freezeLearning": false,
+                    "feedbackAsk": true,
+                    "capacityAutoSwitch": true
+                  },
+                  "routerModel": "qa-openai/qa-chat",
+                  "fallbackStrategy": "auto"
+                }
+              ]
+            }
+          },
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "mgmt-usage",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/mgmt/v1/usage?period=24h",
+          "requestHeaders": {
+            "Accept": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 253.7,
+          "responseKeys": [
+            "v",
+            "data"
+          ],
+          "headers": {
+            "cache-control": "no-store",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 9221,
+          "body": {
+            "truncated": true,
+            "originalChars": 9221,
+            "responseKeys": [
+              "v",
+              "data"
+            ],
+            "envelopeVersion": 1,
+            "dataKeys": [
+              "period",
+              "usage",
+              "quota"
+            ]
+          },
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "mgmt-routing",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/mgmt/v1/routing",
+          "requestHeaders": {
+            "Accept": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 2284.8,
+          "responseKeys": [
+            "v",
+            "data"
+          ],
+          "headers": {
+            "cache-control": "no-store",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 28,
+          "body": {
+            "v": 1,
+            "data": {
+              "combos": []
+            }
+          },
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "mgmt-usage-invalid-period",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/mgmt/v1/usage?period=bogus",
+          "requestHeaders": {
+            "Accept": "application/json"
+          },
+          "status": 400,
+          "contentType": "application/json",
+          "durationMs": 63.1,
+          "responseKeys": [
+            "v",
+            "error"
+          ],
+          "headers": {
+            "cache-control": "no-store",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 44,
+          "body": {
+            "v": 1,
+            "error": {
+              "message": "Invalid period"
+            }
+          },
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "mgmt-auth-nonlocal-missing",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/mgmt/v1/health",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Origin": "http://qa-nonlocal.invalid"
+          },
+          "status": 401,
+          "contentType": "application/json",
+          "durationMs": 45.8,
+          "responseKeys": [
+            "v",
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 58,
+          "body": {
+            "v": 1,
+            "error": {
+              "message": "Management API: unauthorized"
+            }
+          },
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "mgmt-auth-nonlocal-gateway-key",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/mgmt/v1/health",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Origin": "http://qa-nonlocal.invalid",
+            "Authorization": "[MASKED]"
+          },
+          "status": 401,
+          "contentType": "application/json",
+          "durationMs": 19.8,
+          "responseKeys": [
+            "v",
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 58,
+          "body": {
+            "v": 1,
+            "error": {
+              "message": "Management API: unauthorized"
+            }
+          },
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "mgmt-usage-after",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/mgmt/v1/usage?period=24h",
+          "requestHeaders": {
+            "Accept": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 22.6,
+          "responseKeys": [
+            "v",
+            "data"
+          ],
+          "headers": {
+            "cache-control": "no-store",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 9221,
+          "body": {
+            "truncated": true,
+            "originalChars": 9221,
+            "responseKeys": [
+              "v",
+              "data"
+            ],
+            "envelopeVersion": 1,
+            "dataKeys": [
+              "period",
+              "usage",
+              "quota"
+            ]
+          },
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "mock-health-after",
+          "method": "GET",
+          "url": "http://127.0.0.1:22129/health",
+          "requestHeaders": {
+            "Accept": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json; charset=utf-8",
+          "durationMs": 12.3,
+          "responseKeys": [
+            "ok",
+            "service"
+          ],
+          "headers": {
+            "connection": "keep-alive"
+          },
+          "bodyBytes": 43,
+          "body": {
+            "ok": true,
+            "service": "switchboard-qa-mock"
+          },
+          "mockObservation": "direct allowed mock health probe on 127.0.0.1:22129"
+        },
+        {
+          "name": "auth-alias-responses-missing",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/responses",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Origin": "http://qa-nonlocal.invalid",
+            "Content-Type": "application/json"
+          },
+          "status": 401,
+          "contentType": "application/json",
+          "durationMs": 2176.4,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 94,
+          "body": {
+            "error": {
+              "message": "Missing API key",
+              "type": "authentication_error",
+              "code": "invalid_api_key"
+            }
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "auth-alias-responses-wrong",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/responses",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Origin": "http://qa-nonlocal.invalid",
+            "Content-Type": "application/json",
+            "Authorization": "[MASKED]"
+          },
+          "status": 401,
+          "contentType": "application/json",
+          "durationMs": 455.8,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 94,
+          "body": {
+            "error": {
+              "message": "Invalid API key",
+              "type": "authentication_error",
+              "code": "invalid_api_key"
+            }
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "auth-alias-codex-missing",
+          "method": "POST",
+          "url": "http://127.0.0.1:22128/codex",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Origin": "http://qa-nonlocal.invalid",
+            "Content-Type": "application/json"
+          },
+          "status": 401,
+          "contentType": "application/json",
+          "durationMs": 348.7,
+          "responseKeys": [
+            "error"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 28,
+          "body": {
+            "error": "API key required"
+          },
+          "mockObservation": "no provider success marker; local auth/validation/routing contract returned before any successful mock response"
+        },
+        {
+          "name": "gemini-models",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/v1beta/models",
+          "requestHeaders": {
+            "Accept": "application/json",
+            "Authorization": "[MASKED]",
+            "Content-Type": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 4063.8,
+          "responseKeys": [
+            "models"
+          ],
+          "headers": {
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 164235,
+          "body": {
+            "truncated": true,
+            "originalChars": 164235,
+            "responseKeys": [
+              "models"
+            ],
+            "modelCount": 741,
+            "qaOpenaiModelPresent": false
+          },
+          "mockObservation": "model discovery/local catalog only; configured dynamic providers resolve exclusively to 127.0.0.1:22129/v1"
+        },
+        {
+          "name": "mgmt-routing-detail",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/mgmt/v1/routing?combo=qa-auto&days=14",
+          "requestHeaders": {
+            "Accept": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 7905.0,
+          "responseKeys": [
+            "v",
+            "data"
+          ],
+          "headers": {
+            "cache-control": "no-store",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 107,
+          "body": {
+            "v": 1,
+            "data": {
+              "combo": "qa-auto",
+              "days": 14,
+              "modelPerf": [],
+              "eventCount": 0,
+              "attemptCount": 0,
+              "scoreTrend": []
+            }
+          },
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "mgmt-usage-final-retry",
+          "method": "GET",
+          "url": "http://127.0.0.1:22128/api/mgmt/v1/usage?period=24h",
+          "requestHeaders": {
+            "Accept": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json",
+          "durationMs": 10621.4,
+          "responseKeys": [
+            "v",
+            "data"
+          ],
+          "headers": {
+            "cache-control": "no-store",
+            "connection": "keep-alive",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'"
+          },
+          "bodyBytes": 9398,
+          "body": {
+            "truncated": true,
+            "originalChars": 9398,
+            "responseKeys": [
+              "v",
+              "data"
+            ],
+            "envelopeVersion": 1,
+            "dataKeys": [
+              "period",
+              "usage",
+              "quota"
+            ]
+          },
+          "mockObservation": "management/health/local contract; no provider request expected"
+        },
+        {
+          "name": "mock-health-final",
+          "method": "GET",
+          "url": "http://127.0.0.1:22129/health",
+          "requestHeaders": {
+            "Accept": "application/json"
+          },
+          "status": 200,
+          "contentType": "application/json; charset=utf-8",
+          "durationMs": 34.9,
+          "responseKeys": [
+            "ok",
+            "service"
+          ],
+          "headers": {
+            "connection": "keep-alive"
+          },
+          "bodyBytes": 43,
+          "body": {
+            "ok": true,
+            "service": "switchboard-qa-mock"
+          },
+          "mockObservation": "direct allowed mock health probe on 127.0.0.1:22129"
+        }
+      ]
+    }
+  }
+}

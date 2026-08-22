@@ -1,0 +1,177 @@
+{
+  "audit": "2026-08-22 full UI functional audit",
+  "surface": "S4-tools",
+  "sanitization": {
+    "absoluteQaRoot": "<QA_ROOT>",
+    "credentials": "masked",
+    "cookies": "not captured",
+    "images": "omitted; text/DOM/network evidence was sufficient and avoids incidental UI state"
+  },
+  "sourceFindings": [
+    {
+      "severity": "P1",
+      "route": "/dashboard/mitm",
+      "control": "Start Server / Sudo Password Required confirmation",
+      "preconditions": "seeded QA server; S4 browser; real local status GET completed; MITM stopped",
+      "steps": [
+        "Open MITM",
+        "Wait for Start Server to enable",
+        "Activate Start Server",
+        "Inspect focus and dialog semantics",
+        "Press Escape",
+        "Cancel without confirming"
+      ],
+      "expected": "A destructive host-action confirmation is announced as a modal dialog, traps/moves focus, and supports keyboard dismissal/cancel.",
+      "actual": "The sudo prompt has no role=dialog, focus remains on the background Start Server trigger, and Escape does not dismiss it; Cancel works. No mutation was confirmed.",
+      "evidence": [
+        "observations.txt"
+      ],
+      "console": "none",
+      "network": "GET status only; no POST/PATCH/DELETE",
+      "fingerprint": "/dashboard/mitm|Start Server / Sudo Password Required|open-confirmation|inaccessible-destructive-dialog"
+    },
+    {
+      "severity": "P1",
+      "route": "/dashboard/profile",
+      "control": "Shutdown / confirmation",
+      "preconditions": "seeded QA server; S1/S3 settings restored; S4 browser",
+      "steps": [
+        "Open Settings",
+        "Scroll Shutdown into view",
+        "Activate Shutdown",
+        "Inspect dialog semantics and focus",
+        "Press Escape"
+      ],
+      "expected": "Shutdown confirmation is a labelled modal dialog and focus moves into it before any destructive confirmation is possible.",
+      "actual": "Confirmation has no role=dialog and focus remains on the background Shutdown trigger. Escape dismisses it. Shutdown was not confirmed.",
+      "evidence": [
+        "observations.txt"
+      ],
+      "console": "none",
+      "network": "none; shutdown endpoint not called",
+      "fingerprint": "/dashboard/profile|Shutdown|open-confirmation|inaccessible-destructive-dialog"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/mitm",
+      "control": "Antigravity / GitHub Copilot / Kiro card expanders",
+      "preconditions": "seeded QA server; MITM stopped",
+      "steps": [
+        "Open MITM",
+        "Observe the three visually expandable cards",
+        "Tab through interactive controls",
+        "Compare DOM role/tabIndex to pointer action"
+      ],
+      "expected": "Each expandable card header is a named button or disclosure reachable and activatable from the keyboard.",
+      "actual": "All three clickable headers have role=null and tabIndex=-1 and are absent from the accessibility action tree; only pointer activation is available.",
+      "evidence": [
+        "observations.txt"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/mitm|MITM tool card expanders|Tab|keyboard-unreachable-disclosures"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/settings/pricing",
+      "control": "Edit Pricing / Pricing Configuration",
+      "preconditions": "seeded QA pricing; S4 browser",
+      "steps": [
+        "Open Pricing Settings",
+        "Activate Edit Pricing",
+        "Inspect focus and dialog role",
+        "Press Escape",
+        "Close with ×"
+      ],
+      "expected": "Editor opens as a labelled modal, moves/traps focus, and Escape closes it with focus returned to Edit Pricing.",
+      "actual": "role=dialog count is 0, focus remains on background Edit Pricing, and Escape leaves the editor open; × closes it.",
+      "evidence": [
+        "observations.txt"
+      ],
+      "console": "none",
+      "network": "GET pricing only; no mutation",
+      "fingerprint": "/dashboard/settings/pricing|Edit Pricing|Escape|modal-remains-open-with-background-focus"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/translator",
+      "control": "Client Request / Format",
+      "preconditions": "seeded QA server; visible Monaco Client Request editor",
+      "steps": [
+        "Replace Client Request with {bad using visible Monaco surface",
+        "Activate Format",
+        "Inspect inline text, role=alert, aria-live, and toast output",
+        "Clear editor"
+      ],
+      "expected": "Malformed JSON is rejected with visible and programmatically associated feedback.",
+      "actual": "Malformed payload remains unchanged and no toast, non-empty alert, aria-live message, or inline error appears.",
+      "evidence": [
+        "observations.txt"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/translator|Format|malformed-json|silent-no-op-no-validation"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/translator",
+      "control": "Target Request / Send",
+      "preconditions": "seeded QA server; empty target request; destination not proven qa-openai/qa-chat",
+      "steps": [
+        "Leave request empty",
+        "Activate Send",
+        "Inspect network and validation feedback"
+      ],
+      "expected": "Send is disabled or produces visible validation without outbound traffic.",
+      "actual": "Send is enabled; activation makes no request and produces no toast, alert, or inline validation.",
+      "evidence": [
+        "observations.txt"
+      ],
+      "console": "none",
+      "network": "none; no provider traffic",
+      "fingerprint": "/dashboard/translator|Send|empty-submit|silent-no-op-no-validation"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/console-log",
+      "control": "Console stream / disconnected state",
+      "preconditions": "synthetic block limited to /api/translator/console-logs/stream and removed after check",
+      "steps": [
+        "Block only the console SSE path",
+        "Reload Console",
+        "Wait for EventSource error",
+        "Inspect visible/status/alert output",
+        "Remove block and reload real route"
+      ],
+      "expected": "Disconnected/error state is visible with a reconnect or retry affordance.",
+      "actual": "UI remains indistinguishable from connected empty state (“Clear / No console logs yet”); no role=status or role=alert content is rendered.",
+      "evidence": [
+        "observations.txt"
+      ],
+      "console": "none",
+      "network": "synthetic blocked stream duration=0 transferSize=0; interception removed",
+      "fingerprint": "/dashboard/console-log|Console stream|disconnect|no-visible-connection-state"
+    },
+    {
+      "severity": "P3",
+      "route": "/dashboard/profile; /dashboard/token-saver; /dashboard/agent-library; /dashboard/settings/pricing",
+      "control": "Switches, enablement checkboxes, and pricing numeric fields",
+      "preconditions": "seeded QA server; populated S4 routes",
+      "steps": [
+        "Inspect accessibility tree and live DOM",
+        "Enumerate role=switch, checkbox, and numeric input accessible names"
+      ],
+      "expected": "Each form control has a programmatic accessible name matching its visible label.",
+      "actual": "Profile and Token Saver switches expose aria-label=null and no accessible text; Agent Library enablement checkboxes and Pricing numeric fields likewise lack programmatic names/label associations.",
+      "evidence": [
+        "observations.txt"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/profile|settings form controls|accessibility-inspection|unnamed-controls"
+    }
+  ],
+  "artifacts": {
+    "observations.txt": "S4 sanitized observations, 2026-08-22\n\n1. /dashboard/mitm — expandable MITM cards\nLive DOM: Antigravity, GitHub Copilot, and Kiro card headers are visually clickable containers. Each has role=null and tabIndex=-1; only the Start Server button appears in the accessibility action inventory. Pointer expansion is available; Tab/Enter cannot reach or activate the headers.\nScreenshot: mitm-cards-keyboard.webp\nConsole: none. Network: owned GET status only; no mutation executed.\n\n2. /dashboard/mitm — Start Server confirmation boundary\nAfter the real status GET completed, pointer activation opened “Sudo Password Required.” Live DOM had one password input and Cancel/Confirm buttons, but document.querySelectorAll('[role=dialog]').length was 0. Focus remained on the background Start Server trigger. Escape did not dismiss; Cancel did. Confirm was not executed.\nConsole: none. Network: no Start/Stop/Trust/DNS mutation executed.\n\n3. /dashboard/profile — Shutdown confirmation boundary\nPointer activation after scroll opened title “Shutdown” and message “Are you sure you want to close the proxy server?” with Cancel/Shutdown buttons. Live DOM had role=dialog count 0 and focus remained on the background Shutdown trigger. Escape dismissed. Confirm was not executed.\nConsole: none. Network: no shutdown request executed.\n\n4. /dashboard/settings/pricing — Pricing Configuration modal\nPointer activation opened Pricing Configuration. role=dialog count was 0; focus remained on background Edit Pricing. Escape left the modal open; the × close control dismissed it. Five numeric fields had no aria-label and no associated label element. Submitting -1 was blocked by native validation; no pricing write occurred.\nConsole: none. Network: no pricing mutation executed.\n\n5. /dashboard/translator — malformed and empty editor actions\nUsing the visible Monaco surface, the Client Request was replaced with {bad and Format was activated. The malformed payload remained; there was no toast, non-empty role=alert, aria-live message, or inline error. Content was then cleared. Activating Send with the empty request produced no request and no toast/alert/inline validation.\nConsole: none. Network: no provider request and no external traffic.\n\n6. /dashboard/console-log — synthetic disconnected state\nCDP blocked only /api/translator/console-logs/stream, then the route was reloaded. The failed resource had duration=0 and transferSize=0. UI text remained “Clear / No console logs yet”; role=alert and role=status were empty. Block was removed and the real route restored. This is a client error-state observation, not a backend defect.\nConsole: none.\n\n7. S4 switch accessibility\nLive accessibility tree exposed unnamed switches on /dashboard/profile (Round Robin, Combo Round Robin, Outbound Proxy, Observability) and /dashboard/token-saver (RTK, Headroom, Caveman, Ponytail, Conversation Vault): aria-label=null and no accessible text on each role=switch. Agent-library enablement checkboxes likewise lacked programmatic names.\n\n8. State restoration\nFake HOME tree SHA-256 before and after: ee6b583af202d0bdbdc1a69632458464036b92552cf439f9330bb764979ef6b7 (4 files; identical manifest). Isolated settings verified restored: requireApiKey=true, locale English, theme localStorage dark, comboStrategies seed values, outboundProxyEnabled=false with blank URL/no-proxy, observability=true, RTK=true, Headroom/Caveman/Ponytail=false, Caveman/Ponytail level=full, vault=true threshold=8. No MITM/Headroom/Doctor/host/update/shutdown/catalog-install mutation ran."
+  }
+}

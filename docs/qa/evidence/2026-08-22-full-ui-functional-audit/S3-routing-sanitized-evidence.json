@@ -1,0 +1,243 @@
+{
+  "audit": "2026-08-22 full UI functional audit",
+  "surface": "S3-routing",
+  "sanitization": {
+    "absoluteQaRoot": "<QA_ROOT>",
+    "credentials": "masked",
+    "cookies": "not captured",
+    "images": "omitted; text/DOM/network evidence was sufficient and avoids incidental UI state"
+  },
+  "sourceFindings": [
+    {
+      "severity": "P1",
+      "route": "/dashboard/basic-chat",
+      "control": "Send / local qa-chat",
+      "preconditions": "seeded QA server; S3 isolated browser; QA Local Chat selected; only loopback mock configured",
+      "steps": [
+        "Open Basic Chat and wait for connected model groups",
+        "Select the seeded QA Chat Ready qa-chat model",
+        "Enter QA browser chat and press Enter",
+        "Observe the actual UI request path and assistant state",
+        "Reproduce the same request path with seeded qa-openai/qa-chat"
+      ],
+      "expected": "The UI posts to an implemented local chat endpoint, streams QA mock reply, and the request terminates at 127.0.0.1:22129.",
+      "actual": "The UI posts to /api/dashboard/chat/completions, which is not implemented and returns 404 text/html. The conversation renders Error: Failed to fetch and the mock is never reached. The UI-selected request model is also the internal id openai-compatible-chat-qa-local/qa-chat rather than the seeded qa-openai/qa-chat alias.",
+      "evidence": [
+        "basic-chat-404.json"
+      ],
+      "console": "none; the failure is rendered in the transcript",
+      "network": "POST /api/dashboard/chat/completions -> 404 text/html; no 127.0.0.1:22129 request observed",
+      "fingerprint": "/dashboard/basic-chat|Send|submit-local-message|nonexistent-chat-endpoint-404"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/combos",
+      "control": "Create Combo modal",
+      "preconditions": "seeded QA server; desktop viewport; pointer-open Create Combo",
+      "steps": [
+        "Open Create Combo",
+        "Inspect dialog semantics and active element",
+        "Press Tab twice"
+      ],
+      "expected": "The modal exposes dialog semantics, moves focus inside, traps Tab/Shift+Tab, and returns focus on close.",
+      "actual": "No role=dialog or aria-modal is exposed. Focus remains on the background Create Combo button; Tab moves to background judge and strategy controls instead of modal controls.",
+      "evidence": [
+        "combo-modal-a11y.json"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/combos|Create Combo|open-and-tab|focus-escapes-non-dialog-modal"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/combos",
+      "control": "Model row value / Click to edit",
+      "preconditions": "Create or edit a combo containing a compatible-provider model",
+      "steps": [
+        "Open Create/Edit Combo",
+        "Add a compatible-provider model",
+        "Tab through the model row",
+        "Try to edit the model ID without a pointer"
+      ],
+      "expected": "The visually clickable model value is focusable and Enter/Space opens its inline editor.",
+      "actual": "The model value is a DIV with an onClick handler, no role, and no tabindex. Keyboard focus skips it, so exact compatible model IDs cannot be edited keyboard-only.",
+      "evidence": [
+        "combo-model-inline-edit.json"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/combos|Click to edit|keyboard-focus|pointer-only-model-id-editor"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/basic-chat",
+      "control": "Stop",
+      "preconditions": "seeded local model selected; X-QA-Synthetic-State pending stream; no external traffic",
+      "steps": [
+        "Send QA stop chat",
+        "While the request is pending, activate Stop",
+        "Inspect the transcript"
+      ],
+      "expected": "The provisional assistant turn is removed or visibly marked cancelled/stopped.",
+      "actual": "Stop aborts the request and removes the Stop button, but leaves a blank assistant turn with no cancelled/stopped status.",
+      "evidence": [
+        "basic-chat-stop.json"
+      ],
+      "console": "none",
+      "network": "synthetic pending POST /api/dashboard/chat/completions aborted locally; no upstream request",
+      "fingerprint": "/dashboard/basic-chat|Stop|abort-stream|blank-unresolved-assistant-turn"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/basic-chat",
+      "control": "New conversation",
+      "preconditions": "a conversation with messages exists in History",
+      "steps": [
+        "Open Basic Chat",
+        "Complete or populate one conversation",
+        "Inspect header, History, and composer actions",
+        "Try to start a new conversation with the same model while preserving the existing chat"
+      ],
+      "expected": "A named New conversation action starts a fresh same-model session and keeps the current session in History.",
+      "actual": "No New conversation action exists. Clear deletes the active session; only switching provider/model conditionally creates a new session.",
+      "evidence": [
+        "basic-chat-controls.json"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/basic-chat|New conversation|inventory|same-model-new-chat-control-absent"
+    },
+    {
+      "severity": "P3",
+      "route": "/dashboard/basic-chat",
+      "control": "Attach / Send / Stop icon buttons",
+      "preconditions": "Basic Chat loaded with and without an active model",
+      "steps": [
+        "Inspect the accessibility tree for composer actions",
+        "Focus Attach, Send, and Stop"
+      ],
+      "expected": "Each icon-only action has a human-readable accessible name such as Attach image, Send message, and Stop generating.",
+      "actual": "Accessible names are the Material Symbols glyph strings attach_file, arrow_upward, and stop; no aria-label or visually hidden name is provided.",
+      "evidence": [
+        "basic-chat-controls.json"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/basic-chat|composer icon actions|accessibility-inventory|glyph-string-accessible-names"
+    }
+  ],
+  "artifacts": {
+    "basic-chat-404.json": {
+      "route": "/dashboard/basic-chat",
+      "selectedVisibleModel": "qa-chat",
+      "selectedRequestModel": "openai-compatible-chat-qa-local/qa-chat",
+      "message": "QA browser chat",
+      "uiObserved": "User message rendered, assistant remained streaming, then displayed Error: Failed to fetch after the request failed.",
+      "actualUiRequestPath": "/api/dashboard/chat/completions",
+      "directReproduction": {
+        "method": "POST",
+        "path": "/api/dashboard/chat/completions",
+        "model": "qa-openai/qa-chat",
+        "stream": true,
+        "status": 404,
+        "contentType": "text/html; charset=utf-8"
+      },
+      "authorizationCaptured": false,
+      "externalTrafficObserved": false
+    },
+    "basic-chat-controls.json": {
+      "route": "/dashboard/basic-chat",
+      "liveButtonsAfterConversation": [
+        "model picker",
+        "History",
+        "Clear",
+        "attach_file",
+        "send/stop"
+      ],
+      "newConversationControlPresent": false,
+      "transcriptCopyControlPresent": false,
+      "observedBehavior": "Selecting another model after messages creates a new session, but there is no way to start a new same-model conversation while preserving the current chat in History. Clear deletes the active chat.",
+      "iconOnlyAccessibleNames": [
+        "attach_file",
+        "arrow_upward",
+        "stop"
+      ],
+      "expected": "A named New conversation action, transcript/message copy action, and human-readable accessible names for icon-only composer controls.",
+      "authorizationCaptured": false
+    },
+    "basic-chat-stop.json": {
+      "route": "/dashboard/basic-chat",
+      "state": "synthetic pending stream tagged X-QA-Synthetic-State: 1",
+      "steps": [
+        "Select seeded local qa-chat",
+        "Send QA stop chat",
+        "Activate Stop while request is pending"
+      ],
+      "request": {
+        "method": "POST",
+        "path": "/api/dashboard/chat/completions",
+        "model": "openai-compatible-chat-qa-local/qa-chat",
+        "stream": true
+      },
+      "afterStop": {
+        "stopButtonPresent": false,
+        "userMessagePresent": true,
+        "assistantMessagePresent": true,
+        "assistantText": "",
+        "assistantStatusVisuallyResolved": false
+      },
+      "expected": "Cancellation removes the provisional assistant turn or marks it visibly stopped/cancelled.",
+      "actual": "The provisional assistant turn remains blank with no cancelled/stopped status.",
+      "externalTrafficObserved": false
+    },
+    "combo-modal-a11y.json": {
+      "url": "http://127.0.0.1:22128/dashboard/combos",
+      "control": "Create Combo modal",
+      "roleDialogs": 0,
+      "ariaModals": 0,
+      "focusTrace": [
+        {
+          "action": "pointer-open",
+          "active": "add Create Combo",
+          "insideModal": false
+        },
+        {
+          "action": "Tab",
+          "active": "gavel Auto — qa-openai/qa-chat",
+          "insideModal": false
+        },
+        {
+          "action": "Tab",
+          "active": "qa-fallback strategy selector",
+          "insideModal": false
+        }
+      ],
+      "backgroundFocusableExamples": [
+        "Overview",
+        "Combos",
+        "Usage",
+        "Providers",
+        "Endpoint & keys",
+        "qa-fallback strategy",
+        "qa-auto judge picker"
+      ],
+      "expected": "Opening moves focus into a dialog; Tab remains within it; dialog exposes role=dialog and aria-modal=true.",
+      "actual": "Focus remains on the background opener, then Tabs through background combo-card controls; no dialog semantics are exposed."
+    },
+    "combo-model-inline-edit.json": {
+      "route": "/dashboard/combos",
+      "control": "Model row value / Click to edit",
+      "observedDuring": "qa-s3-ephemeral create/edit lifecycle",
+      "liveElement": {
+        "tag": "DIV",
+        "title": "Click to edit",
+        "role": null,
+        "tabIndex": null,
+        "pointerAction": "opens inline textbox"
+      },
+      "keyboardProbe": "The model text itself is absent from the sequential focus order; adjacent drag, Move up, Move down, and Remove buttons are focusable.",
+      "expected": "The visually actionable model value is a button or otherwise focusable and supports Enter/Space.",
+      "actual": "Only pointer click enters model-ID editing. This blocks keyboard-only entry of exact compatible model IDs after selecting a model-id placeholder."
+    }
+  }
+}

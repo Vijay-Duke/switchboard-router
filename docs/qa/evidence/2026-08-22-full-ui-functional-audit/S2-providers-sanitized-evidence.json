@@ -1,0 +1,1448 @@
+{
+  "audit": "2026-08-22 full UI functional audit",
+  "surface": "S2-providers",
+  "sanitization": {
+    "absoluteQaRoot": "<QA_ROOT>",
+    "credentials": "masked",
+    "cookies": "not captured",
+    "unrelatedLoopbackState": "redacted",
+    "images": "omitted; text/DOM/network evidence was sufficient and avoids incidental UI state"
+  },
+  "sourceFindings": [
+    {
+      "severity": "P2",
+      "route": "/dashboard/media-providers/embedding/custom-embedding-qa-local",
+      "control": "Example / Run",
+      "preconditions": "seeded QA server; QA Local Embeddings points to http://127.0.0.1:22129/v1; active gateway key is returned to the browser as a masked prefix ending in a Unicode ellipsis",
+      "steps": [
+        "Open the QA Local Embeddings media-provider detail",
+        "Enter qa-embedding in Model",
+        "Leave the prefilled masked API key in place",
+        "Activate Run"
+      ],
+      "expected": "The example sends POST /api/v1/embeddings locally and renders the mock numeric vector, or requires a usable key before enabling Run.",
+      "actual": "Run fails before any network request because the masked key containing U+2026 is copied into the Authorization header: Failed to read the headers property from RequestInit: String contains non ISO-8859-1 code point. The same masked-key loading pattern exists in the image, TTS, STT, and embedding example components.",
+      "evidence": [
+        "media-embedding-run.json",
+        "media-example-key-exposure-sanitized.json"
+      ],
+      "console": "none; the error is rendered in the Example card",
+      "network": "no /api/v1/embeddings request was issued; failure occurred while constructing the browser request headers",
+      "fingerprint": "/dashboard/media-providers/embedding/custom-embedding-qa-local|Example Run|run|masked-key-invalid-authorization-header"
+    },
+    {
+      "severity": "P3",
+      "route": "/dashboard/providers (+ provider detail, quota, and media modal routes)",
+      "control": "Provider, connection, quota, and custom-embedding modal dialogs",
+      "preconditions": "seeded QA server; desktop viewport",
+      "steps": [
+        "Open Add OpenAI Compatible, Add API Key, Edit Compatible Node, Codex Reset Credit Expiry, or Add Custom Embedding",
+        "Inspect accessibility semantics and active element",
+        "Dismiss with Escape and inspect focus"
+      ],
+      "expected": "Each modal exposes role=dialog with aria-modal and an accessible title, moves focus inside, traps focus, and returns focus to its trigger when closed.",
+      "actual": "The audited modal containers expose no dialog role or aria-modal; document.body remains active on open, and focus returns to body rather than the invoking control after Escape.",
+      "evidence": [
+        "providers-openai-modal.json",
+        "provider-add-key-modal.json",
+        "provider-edit-node-modal.json",
+        "quota-control-states.json",
+        "media-custom-embedding-modal.json"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/providers|Provider modal dialogs|open|missing-dialog-semantics-and-focus-management"
+    },
+    {
+      "severity": "P3",
+      "route": "/dashboard/providers/openai-compatible-chat-qa-local",
+      "control": "Connection reorder and model test/copy icon buttons",
+      "preconditions": "seeded QA Local Chat detail with three connections; ephemeral detail with two custom models",
+      "steps": [
+        "Open QA Local Chat detail",
+        "Tab through connection move controls and model actions",
+        "Inspect the accessibility tree/DOM names"
+      ],
+      "expected": "Icon-only actions have task-oriented accessible names such as Move QA Chat Ready down, Test qa-chat, and Copy qa-chat.",
+      "actual": "Several actions have no aria-label/title and expose only Material Symbols ligature text such as keyboard_arrow_down, science, and content_copy; actions are ambiguous to screen-reader users and repeated controls are indistinguishable.",
+      "evidence": [
+        "provider-seeded-chat-inventory.json",
+        "provider-ephemeral-model-controls.json",
+        "provider-ephemeral-detail-ax.txt"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/providers/openai-compatible-chat-qa-local|Connection and model icon actions|Tab|material-icon-ligature-accessible-names"
+    },
+    {
+      "severity": "P3",
+      "route": "/dashboard/providers/new",
+      "control": "Provider, Authentication Method, API Key, and Display Name fields",
+      "preconditions": "seeded QA server; empty Add New Provider form",
+      "steps": [
+        "Open Add New Provider",
+        "Inspect visual labels and each control's programmatic name",
+        "Submit the empty form"
+      ],
+      "expected": "Every form control is programmatically associated with its visual label and required errors are associated with the invalid controls.",
+      "actual": "The four visual label elements have empty htmlFor values, the controls have no ids/aria-labels, and required error paragraphs are not exposed as role=alert or associated through aria-describedby/aria-invalid.",
+      "evidence": [
+        "provider-new-inventory.json",
+        "provider-new-validation.json"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/providers/new|Add New Provider fields|empty-submit|labels-and-errors-not-programmatically-associated"
+    },
+    {
+      "severity": "P3",
+      "route": "/dashboard/media-providers/{kind}/{id}",
+      "control": "Media Example form fields",
+      "preconditions": "seeded custom embedding detail and no-auth Edge TTS detail",
+      "steps": [
+        "Open a media-provider detail with an Example card",
+        "Tab through Model/Endpoint/API Key/Input/Dimensions or Input/Output Format",
+        "Inspect each control's accessible name"
+      ],
+      "expected": "Example inputs and selects expose their visible Row labels as accessible names.",
+      "actual": "The audited Example inputs/selects have no associated label, id, or aria-label even though visible text labels are rendered beside them.",
+      "evidence": [
+        "media-embedding-detail-inventory.json",
+        "media-tts-edge-detail.json"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/media-providers/{kind}/{id}|Example form fields|Tab|visible-labels-not-programmatically-associated"
+    }
+  ],
+  "artifacts": {
+    "media-custom-embedding-modal.json": {
+      "roles": 0,
+      "text": "✕\nClose\nAdd Custom Embedding\nName\n\nFriendly label for this embedding provider.\n\nBase URL\n\nOpenAI-compatible embeddings base URL (Voyage, Cohere, Jina, Mistral…).\n\nAPI Key (for Check)\nModel ID (for Check)\n\nRequired for validation. Sends a small embeddings request.\n\nCheck\nCreate\nCancel",
+      "fields": [
+        {
+          "tag": "INPUT",
+          "type": "text",
+          "ph": "Voyage AI",
+          "aria": null,
+          "value": ""
+        },
+        {
+          "tag": "INPUT",
+          "type": "text",
+          "ph": "https://api.voyageai.com/v1",
+          "aria": null,
+          "value": "https://api.openai.com/v1"
+        },
+        {
+          "tag": "INPUT",
+          "type": "password",
+          "ph": "",
+          "aria": null,
+          "value": "[redacted]"
+        },
+        {
+          "tag": "INPUT",
+          "type": "text",
+          "ph": "e.g. voyage-3, embed-english-v3.0",
+          "aria": null,
+          "value": ""
+        }
+      ],
+      "active": {
+        "tag": "BODY",
+        "text": "S\nSwitchboard\nrouting gateway\nOPERATE\nOverview\nCombos\nUsage\nQuota\nCONNECT\nProviders\nEndpoint & keys\nTOOLS\nToken saver\nMedia\nSkills\nAgent library\nCLI tools\nSettings\nDIAGNOSTICS\nconsole · translator\nmitm · cli tools\nENDPOINT\n127.0.0.1:22128\nMedia\n/\nEmbedding\nonline\nlocal gateway\n🇺🇸\ngrid_view\nEmbedding\n\nMedia providers · not agent Skills\n\nAll\nImage\nTTS\nSTT\nEmbedding\nWeb\nadd\nAdd Custom Embedding\nOpenRouter\nNo connections\nNVIDIA NIM\nNo connections\nOpenAI\nNo connections\nGitHub Copilot\nNo connections\nVoyage AI\nNo connections\nGemini\nNo connections\nFireworks AI\nNo connections\nTogether AI\nNo connections\nNebius AI\nNo connections\nMistral\nNo connections\nVE\nVenice AI\nNo connections\nVG\nVercel AI Gateway\nNo connections\nJina AI\nNo connections\nCE\nQA Local Embeddings\nCustom\n1 Connected\n✕\nClose\nAdd Custom Embedding\nName\n\nFriendly label for this embedding provider.\n\nBase URL\n\nOpenAI-compatible embeddings base URL (Voyage, Cohere, Jina, Mistral…).\n\nAPI Key (for Check)\nModel ID (for Check)\n\nRequired for validation. Sends a small embeddings request.\n\nCheck\nCreate\nCancel"
+      }
+    },
+    "media-embedding-detail-inventory.json": {
+      "url": "/dashboard/media-providers/embedding/custom-embedding-qa-local",
+      "headings": [
+        "QA Local Embeddings",
+        "Connections",
+        "Models — EMBEDDING",
+        "Example"
+      ],
+      "buttons": [
+        {
+          "t": "close",
+          "aria": "Close menu",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "menu",
+          "aria": "Open menu",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "🇺🇸",
+          "aria": null,
+          "title": "Language",
+          "disabled": false
+        },
+        {
+          "t": "grid_view",
+          "aria": null,
+          "title": "Menu",
+          "disabled": false
+        },
+        {
+          "t": "editEdit",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "deleteDelete",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "keyboard_arrow_up",
+          "aria": null,
+          "title": "",
+          "disabled": true
+        },
+        {
+          "t": "keyboard_arrow_down",
+          "aria": null,
+          "title": "",
+          "disabled": true
+        },
+        {
+          "t": "editEdit",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "deleteDelete",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "",
+          "aria": null,
+          "title": "Disable",
+          "disabled": false
+        },
+        {
+          "t": "addAdd",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "addAdd Model",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "close",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "content_copyCopy",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "play_arrowRun",
+          "aria": null,
+          "title": "",
+          "disabled": true
+        }
+      ],
+      "inputs": [
+        {
+          "tag": "INPUT",
+          "type": "text",
+          "ph": "e.g. voyage-3, embed-english-v3.0, text-embedding-3-small",
+          "aria": null,
+          "value": ""
+        },
+        {
+          "tag": "INPUT",
+          "type": "text",
+          "ph": "http://localhost:3000",
+          "aria": null,
+          "value": "http://127.0.0.1:22128"
+        },
+        {
+          "tag": "INPUT",
+          "type": "password",
+          "ph": "[REDACTED_KEY]",
+          "aria": null,
+          "value": "[redacted]"
+        },
+        {
+          "tag": "INPUT",
+          "type": "text",
+          "ph": "",
+          "aria": null,
+          "value": "The quick brown fox jumps over the lazy dog"
+        },
+        {
+          "tag": "INPUT",
+          "type": "number",
+          "ph": "optional, e.g. 512, 1024 (leave empty for default)",
+          "aria": null,
+          "value": ""
+        }
+      ],
+      "body": "S\nSwitchboard\nrouting gateway\nOPERATE\nOverview\nCombos\nUsage\nQuota\nCONNECT\nProviders\nEndpoint & keys\nTOOLS\nToken saver\nMedia\nSkills\nAgent library\nCLI tools\nSettings\nDIAGNOSTICS\nconsole · translator\nmitm · cli tools\nENDPOINT\n127.0.0.1:22128\nMedia\n/\nEmbedding\n/\nCU\ncustom-embedding-qa-local\nonline\nlocal gateway\n🇺🇸\ngrid_view\narrow_back\nEmbedding\nCE\nQA Local Embeddings\nCustom · qa-embed\nEMBEDDING\nedit\nEdit\ndelete\nDelete\nConnections\nRound Robin\nkeyboard_arrow_up\nkeyboard_arrow_down\nkey\n\nQA Embeddings Ready\n\nsuccess\n#1\nedit\nEdit\ndelete\nDelete\nadd\nAdd\nModels — EMBEDDING\nadd\nAdd Model\nExample\nModel\nEndpoint\nAPI Key\nInput\nclose\nDimensions\nREQUEST\ncontent_copy\nCopy\nplay_arrow\nRun\ncurl -X POST http://127.0.0.1:22128/v1/embeddings \\\n  -H \"Content-Type: application/json\" \\\n  -H \"Authorization: Bearer [REDACTED_KEY]\" \\\n  -d '{\"model\":\"\",\"input\":\"The quick brown fox jumps over the lazy dog\"}'\nRESPONSE\n{\n  \"object\": \"list\",\n  \"data\": [{\n    \"object\": \"embedding\",\n    \"index\": 0,\n    \"embedding\": [0.002301, -0.019212, 0.004815, -0.031249, ...]\n  }],\n  \"model\": \"...\",\n  \"usage\": { \"prompt_tokens\": 9, \"total_tokens\": 9 }\n}",
+      "overflow": {
+        "sw": 1440,
+        "cw": 1440
+      }
+    },
+    "media-embedding-run.json": {
+      "ui": {
+        "result": null,
+        "error": [
+          "delete\nDelete",
+          "Failed to execute 'fetch' on 'Window': Failed to read the 'headers' property from 'RequestInit': String contains non ISO-8859-1 code point."
+        ],
+        "button": "play_arrow\nRun"
+      },
+      "network": [],
+      "upstreamBaseUrl": "http://127.0.0.1:22129/v1"
+    },
+    "media-example-key-exposure-sanitized.json": {
+      "route": "/dashboard/media-providers/embedding/custom-embedding-qa-local",
+      "keyField": {
+        "type": "password",
+        "hasValue": true,
+        "valueLength": 11,
+        "containsEllipsis": true
+      },
+      "curlPreview": "Authorization: Bearer [masked prefix ending in ellipsis]",
+      "fullCredentialExposed": false,
+      "apiKeysRequest": "GET /api/keys"
+    },
+    "media-tts-edge-detail.json": {
+      "url": "/dashboard/media-providers/tts/edge-tts",
+      "headings": [
+        "Edge TTS",
+        "Text To Speech Config",
+        "Example"
+      ],
+      "buttons": [
+        {
+          "t": "close",
+          "aria": "Close menu",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "menu",
+          "aria": "Open menu",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "🇺🇸",
+          "aria": null,
+          "title": "Language",
+          "disabled": false
+        },
+        {
+          "t": "grid_view",
+          "aria": null,
+          "title": "Menu",
+          "disabled": false
+        },
+        {
+          "t": "No language selected",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "languageSelect language",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "close",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "content_copyCopy",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "play_arrowRun",
+          "aria": null,
+          "title": "",
+          "disabled": true
+        }
+      ],
+      "inputs": [
+        {
+          "tag": "INPUT",
+          "type": "text",
+          "ph": "",
+          "aria": null,
+          "value": "Hello, this is a text to speech test."
+        },
+        {
+          "tag": "SELECT",
+          "type": "select-one",
+          "aria": null,
+          "options": [
+            {
+              "v": "mp3",
+              "t": "MP3 (Binary)"
+            },
+            {
+              "v": "json",
+              "t": "JSON (Base64)"
+            }
+          ],
+          "value": "mp3"
+        }
+      ],
+      "body": "S\nSwitchboard\nrouting gateway\nOPERATE\nOverview\nCombos\nUsage\nQuota\nCONNECT\nProviders\nEndpoint & keys\nTOOLS\nToken saver\nMedia\nSkills\nAgent library\nCLI tools\nSettings\nDIAGNOSTICS\nconsole · translator\nmitm · cli tools\nENDPOINT\n[REDACTED_LOOPBACK_ENDPOINT]\nMedia\n/\nText To Speech\n/\nEdge TTS\nonline\nlocal gateway\n🇺🇸\ngrid_view\narrow_back\nText To Speech\nEdge TTS\nTTS\nText To Speech Config\nEndpoint\nedge-tts\nExample\nEndpoint\n/v1/audio/speech\nAPI Key\nNo key configured\nLanguage\nNo language selected\nlanguage\nSelect language\nInput\nclose\nOutput Format\nMP3 (Binary)\nJSON (Base64)\nREQUEST\ncontent_copy\nCopy\nplay_arrow\nRun\ncurl -X POST /v1/audio/speech \\\n  -H \"Content-Type: application/json\" \\\n  -H \"Authorization: Bearer YOUR_KEY\" \\\n  -d '{\"model\":\"\",\"input\":\"Hello, this is a text to speech test.\"}' \\\n  --output speech.mp3\nRESPONSE\n// Audio will appear here after running.\n// Example JSON response (response_format=json):\n{\n  \"format\": \"mp3\",\n  \"audio\": \"//NExAANaAIIAUAAANNNNNNNN...\" // base64 encoded MP3\n}",
+      "overflow": {
+        "sw": 1440,
+        "cw": 1440
+      }
+    },
+    "provider-add-key-modal.json": {
+      "fixed": "✕\nClose\nAdd QA S2 Ephemeral API Key\nSingle\nBulk Add\nName\nAPI Key\nCheck\nDefault Model\n\nEnter the model ID exactly as your compatible endpoint expects it. This model will be saved as the connection default.\n\nPriority\nSave\nCancel",
+      "roles": 0,
+      "inputs": [
+        {
+          "tag": "INPUT",
+          "type": "text",
+          "ph": "gpt-4o",
+          "aria": null,
+          "label": "Model ID"
+        },
+        {
+          "tag": "INPUT",
+          "type": "text",
+          "ph": "Production Key",
+          "aria": null
+        },
+        {
+          "tag": "INPUT",
+          "type": "password",
+          "ph": "",
+          "aria": null
+        },
+        {
+          "tag": "INPUT",
+          "type": "text",
+          "ph": "gpt-4o-mini",
+          "aria": null
+        },
+        {
+          "tag": "INPUT",
+          "type": "number",
+          "ph": "",
+          "aria": null
+        }
+      ],
+      "buttons": [
+        {
+          "t": "delete\nDelete",
+          "aria": null,
+          "disabled": false
+        },
+        {
+          "t": "",
+          "aria": null,
+          "disabled": false
+        },
+        {
+          "t": "add\nAdd API Key",
+          "aria": null,
+          "disabled": false
+        },
+        {
+          "t": "add\nAdd",
+          "aria": null,
+          "disabled": true
+        },
+        {
+          "t": "cloud_download\nImport models",
+          "aria": null,
+          "disabled": true
+        },
+        {
+          "t": "✕",
+          "aria": "Close",
+          "disabled": false
+        },
+        {
+          "t": "close",
+          "aria": "Close",
+          "disabled": false
+        },
+        {
+          "t": "Single",
+          "aria": null,
+          "disabled": false
+        },
+        {
+          "t": "Bulk Add",
+          "aria": null,
+          "disabled": false
+        },
+        {
+          "t": "Check",
+          "aria": null,
+          "disabled": true
+        },
+        {
+          "t": "Save",
+          "aria": null,
+          "disabled": true
+        },
+        {
+          "t": "Cancel",
+          "aria": null,
+          "disabled": false
+        }
+      ],
+      "active": {
+        "tag": "BODY",
+        "text": "S\nSwitchboard\nrouting gateway\nOPERATE\nOverview\nCombos\nUsage\nQuota\nCONNECT\nProviders\nEndpoint & keys\nTOOLS\nToken saver\nMedia\nSkills\nAgent library\nCLI tools\nSettings\nDIAGNOSTICS\nconsole · translator\nmitm · cli tools\nENDPOINT\n127.0.0.1:22128\nConnect / Providers\nonline\nlocal gateway\n🇺🇸\ngrid_view\narrow_back\nBack to Providers\nQA S2 Ephemeral\n\n0 connections\n\nOpenAI Compatible Details\n\nChat Completions · http://127.0.0.1:22129/v1/chat/completions\n\nadd\nAdd API Key\nedit\nEdit\ndelete\nDelete\nConnections\nRound Robin\nkey\n\nNo connections yet\n\nadd\nAdd API Key\nAvailable Models\n\nAdd OpenAI-compatible models manually or import them from the /models endpoint.\n\nModel ID\nadd\nAdd\ncloud_download\nImport models\n\nAdd a connection to enable importing models.\n\n✕\nClose\nAdd QA S2 Ephemeral API Key\nSingle\nBulk Add\nName\nAPI Key\nCheck\nDefault Model\n\nEnter the model ID exactly as your compatible endpoint expects it. This model will be saved as the connection default.\n\nPriority\nSave\nCancel"
+      }
+    },
+    "provider-edit-node-modal.json": {
+      "before": {
+        "roles": 0,
+        "fixed": "✕\nClose\nEdit OpenAI Compatible\nName\n\nFriendly label for this provider.\n\nAPI Type\nSelect an option\nChat Completions\nResponses API\nexpand_more\nBase URL\n\nBase URL ending in /v1 for your OpenAI-compatible API.\n\nModel IDs use prefix qa-openai (auto-assigned; stable so combos keep working).\n\nAPI Key (for Check)\nCheck\nModel ID (optional)\n\nIf the provider has no /models endpoint, test with a model ID.\n\nSave\nCancel",
+        "fields": [
+          {
+            "type": "checkbox",
+            "ph": "",
+            "value": "on",
+            "label": "Select All"
+          },
+          {
+            "type": "checkbox",
+            "ph": "",
+            "value": "on"
+          },
+          {
+            "type": "checkbox",
+            "ph": "",
+            "value": "on"
+          },
+          {
+            "type": "checkbox",
+            "ph": "",
+            "value": "on"
+          },
+          {
+            "type": "text",
+            "ph": "gpt-4o",
+            "value": "",
+            "label": "Model ID"
+          },
+          {
+            "type": "text",
+            "ph": "OpenAI Compatible",
+            "value": "QA Local Chat"
+          },
+          {
+            "type": "select-one",
+            "value": "chat"
+          },
+          {
+            "type": "text",
+            "ph": "https://api.openai.com/v1",
+            "value": "http://127.0.0.1:22129/v1"
+          },
+          {
+            "type": "password",
+            "ph": "",
+            "value": "[redacted]"
+          },
+          {
+            "type": "text",
+            "ph": "e.g. my-model-id",
+            "value": ""
+          }
+        ],
+        "active": {
+          "tag": "BODY",
+          "text": "S\nSwitchboard\nrouting gateway\nOPERATE\nOverview\nCombos\nUsage\nQuota\nCONNECT\nProviders\nEndpoint & keys\nTOOLS\nToken saver\nMedia\nSkills\nAgent library\nCLI tools\nSettings\nDIAGNOSTICS\nconsole · translator\nmitm · cli tools\nENDPOINT\n127.0.0.1:22128\nConnect / Providers\nonline\nlocal gateway\n🇺🇸\ngrid_view\narrow_back\nBack to Providers\nQA Local Chat\n\n3 connections\n\nOpenAI Compatible Details\n\nChat Completions · http://127.0.0.1:22129/v1/chat/completions\n\nadd\nAdd API Key\nedit\nEdit\ndelete\nDelete\nConnections\nsync\nTest Connection One-by-One\nRound Robin\nSelect All\nkeyboard_arrow_up\nkeyboard_arrow_down\nkey\n\nQA Chat Ready\n\nsuccess\nAPI Key\n#1\nedit\nEdit\ndelete\nDelete\nkeyboard_arrow_up\nkeyboard_arrow_down\nkey\n\nQA Chat Error\n\nerror\nAPI Key\nQA synthetic saved error\n#2\nedit\nEdit\ndelete\nDelete\nkeyboard_arrow_up\nkeyboard_arrow_down\nkey\n\nQA Chat Disabled\n\ndisabled\nAPI Key\n#3\nedit\nEdit\ndelete\nDelete\nAvailable Models\nscience\nVerify models\n\nAdd OpenAI-compatible models manually or import them from the /models endpoint.\n\nModel ID\nadd\nAdd\ncloud_download\nImport models\n✕\nClose\nEdit OpenAI Compatible\nName\n\nFriendly label for this provider.\n\nAPI Type\nSelect an option\nChat Completions\nResponses API\nexpand_more\nBase URL\n\nBase URL ending in /v1 for your OpenAI-compatible API.\n\nModel IDs use prefix qa-openai (auto-assigned; stable so combos keep working).\n\nAPI Key (for Check)\nCheck\nModel ID (optional)\n\nIf the provider has no /models endpoint, test with a model ID.\n\nSave\nCancel"
+        }
+      },
+      "after": {
+        "closed": false
+      }
+    },
+    "provider-ephemeral-detail-ax.txt": "root\n  container\n    container\n    container\n      anchor [ref=20392, loc=unstable, url=http://127.0.0.1:22128/dashboard]\n        text \"S\"\n        container\n          text \"Switchboard\"\n          text \"routing gateway\"\n      container\n        container\n          text \"OPERATE\"\n          anchor [ref=20400, loc=unstable, url=http://127.0.0.1:22128/dashboard]\n            container\n            text \"Overview\"\n          anchor [ref=20402, loc=href:/dashboard/combos, url=http://127.0.0.1:22128/dashboard/combos]\n            container\n            text \"Combos\"\n          anchor [ref=20404, loc=href:/dashboard/usage, url=http://127.0.0.1:22128/dashboard/usage]\n            container\n            text \"Usage\"\n          anchor [ref=20406, loc=href:/dashboard/quota, url=http://127.0.0.1:22128/dashboard/quota]\n            container\n            text \"Quota\"\n        container\n          text \"CONNECT\"\n          anchor [ref=20410, loc=unstable, url=http://127.0.0.1:22128/dashboard/providers]\n            container\n            text \"Providers\"\n          anchor [ref=20412, loc=href:/dashboard/endpoint, url=http://127.0.0.1:22128/dashboard/endpoint]\n            container\n            text \"Endpoint & keys\"\n        container\n          text \"TOOLS\"\n          anchor [ref=20416, loc=href:/dashboard/token-saver, url=http://127.0.0.1:22128/dashboard/token-saver]\n            container\n            text \"Token saver\"\n          anchor [ref=20418, loc=href:/dashboard/media-providers, url=http://127.0.0.1:22128/dashboard/media-providers]\n            container\n            text \"Media\"\n          anchor [ref=20420, loc=href:/dashboard/skills, url=http://127.0.0.1:22128/dashboard/skills]\n            container\n            text \"Skills\"\n          anchor [ref=20363, loc=href:/dashboard/agent-library, url=http://127.0.0.1:22128/dashboard/agent-library]\n            container\n            text \"Agent library\"\n          anchor [ref=20423, loc=unstable, url=http://127.0.0.1:22128/dashboard/cli-tools]\n            container\n            text \"CLI tools\"\n          anchor [ref=20425, loc=href:/dashboard/profile, url=http://127.0.0.1:22128/dashboard/profile]\n            container\n            text \"Settings\"\n        container\n          text \"DIAGNOSTICS\"\n          container\n            anchor [ref=20430, loc=href:/dashboard/console-log, url=http://127.0.0.1:22128/dashboard/console-log]\n              text \"console\"\n            text \"·\"\n            anchor [ref=20431, loc=href:/dashboard/translator, url=http://127.0.0.1:22128/dashboard/translator]\n              text \"translator\"\n            anchor [ref=20432, loc=href:/dashboard/mitm, url=http://127.0.0.1:22128/dashboard/mitm]\n              text \"mitm\"\n            text \"·\"\n            anchor [ref=20433, loc=unstable, url=http://127.0.0.1:22128/dashboard/cli-tools]\n              text \"cli tools\"\n      container\n        container\n          text \"ENDPOINT\"\n          text \"127.0.0.1:22128\"\n        container\n    container\n      container\n        container\n          text \"Connect\"\n          text \"/\"\n          text \"Providers\"\n        container\n          container\n            container\n            text \"online\"\n          container\n            container\n            text \"local gateway\"\n          button [ref=20510, loc=unstable]\n            text \"🇺🇸\"\n          button [ref=20514, loc=unstable]\n            text \"grid_view\"\n      container\n        container\n          anchor [ref=20664, loc=unstable, url=http://127.0.0.1:22128/dashboard/providers]\n            text \"arrow_back\"\n            text \"Back to Providers\"\n          container\n            image\n            container\n              heading\n                text \"QA S2 Ephemeral\"\n              paragraph\n                text \"0\"\n                text \"connection\"\n                text \"s\"\n        container\n          container\n            heading\n              text \"OpenAI Compatible Details\"\n            paragraph\n              text \"Chat Completions\"\n              text \"·\"\n              text \"http://127.0.0.1:22129/v1\"\n              text \"/\"\n              text \"chat/completions\"\n          container\n            button [ref=20674, loc=unstable]\n              text \"add\"\n              text \"Add API Key\"\n            button [ref=20675, loc=unstable]\n              text \"edit\"\n              text \"Edit\"\n            button [ref=20676, loc=unstable]\n              text \"delete\"\n              text \"Delete\"\n        container\n          container\n            heading\n              text \"Connections\"\n            container\n              text \"Round Robin\"\n              switch [ref=20681, loc=unstable]\n          container\n            container\n              text \"key\"\n              paragraph\n                text \"No connections yet\"\n            button [ref=20693, loc=unstable]\n              text \"add\"\n              text \"Add API Key\"\n        container\n          heading\n            text \"Available Models\"\n          container\n            paragraph\n              text \"Add\"\n              text \"OpenAI\"\n              text \"-compatible models manually or import them from the /models endpoint.\"\n            container\n              container\n                text \"Model ID\"\n                textbox [ref=20701, loc=css:input[placeholder=\"gpt-4o\"]]\n                  text \"gpt-4o\"\n                  container\n              button [ref=20707, loc=unstable]\n                text \"add\"\n                text \"Add\"\n              button [ref=20708, loc=unstable]\n                text \"cloud_download\"\n                text \"Import models\"\n            paragraph\n              text \"Add a connection to enable importing models.\"\n  button \"Open Next.js Dev Tools\" [ref=20869, loc=css:button[aria-label=\"Open Next.js Dev Tools\"]]\n    container\n    container\n      text \"Rendering\"\n      container\n        text \".\"\n        text \".\"\n        text \".\"\n  alert\n",
+    "provider-ephemeral-model-controls.json": {
+      "buttons": [
+        {
+          "t": "close",
+          "aria": "Close menu",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "menu",
+          "aria": "Open menu",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "🇺🇸",
+          "aria": null,
+          "title": "Language",
+          "disabled": false
+        },
+        {
+          "t": "grid_view",
+          "aria": null,
+          "title": "Menu",
+          "disabled": false
+        },
+        {
+          "t": "add\nAdd API Key",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "edit\nEdit",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "delete\nDelete",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "sync\nTest Connection One-by-One",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "keyboard_arrow_up",
+          "aria": null,
+          "title": "",
+          "disabled": true
+        },
+        {
+          "t": "keyboard_arrow_down",
+          "aria": null,
+          "title": "",
+          "disabled": true
+        },
+        {
+          "t": "edit\nEdit",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "delete\nDelete",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "",
+          "aria": null,
+          "title": "Disable connection",
+          "disabled": false
+        },
+        {
+          "t": "science\nVerify models",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "add\nAdd",
+          "aria": null,
+          "title": "",
+          "disabled": true
+        },
+        {
+          "t": "cloud_download\nImport models",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "content_copy",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "science",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "delete",
+          "aria": null,
+          "title": "Remove model",
+          "disabled": false
+        },
+        {
+          "t": "content_copy",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "science",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "delete",
+          "aria": null,
+          "title": "Remove model",
+          "disabled": false
+        }
+      ],
+      "inputs": [
+        {
+          "ph": "",
+          "type": "checkbox",
+          "value": "on"
+        },
+        {
+          "ph": "",
+          "type": "checkbox",
+          "value": "on"
+        },
+        {
+          "ph": "gpt-4o",
+          "type": "text",
+          "value": ""
+        }
+      ],
+      "body": "S\nSwitchboard\nrouting gateway\nOPERATE\nOverview\nCombos\nUsage\nQuota\nCONNECT\nProviders\nEndpoint & keys\nTOOLS\nToken saver\nMedia\nSkills\nAgent library\nCLI tools\nSettings\nDIAGNOSTICS\nconsole · translator\nmitm · cli tools\nENDPOINT\n127.0.0.1:22128\nConnect / Providers\nonline\nlocal gateway\n🇺🇸\ngrid_view\narrow_back\nBack to Providers\nQA S2 Ephemeral\n\n1 connection\n\nOpenAI Compatible Details\n\nChat Completions · http://127.0.0.1:22129/v1/chat/completions\n\nadd\nAdd API Key\nedit\nEdit\ndelete\nDelete\nConnections\nsync\nTest Connection One-by-One\nRound Robin\nSelect All\nkeyboard_arrow_up\nkeyboard_arrow_down\nkey\n\nQA S2 Ephemeral\n\nactive\nAPI Key\n#1\nedit\nEdit\ndelete\nDelete\nAvailable Models\nscience\nVerify models\n\nAdd OpenAI-compatible models manually or import them from the /models endpoint.\n\nModel ID\nadd\nAdd\ncloud_download\nImport models\nsmart_toy\n\nqa-manual\n\nqa-s2-ephemeral/qa-manual\ncontent_copy\nCopy\nscience\nTest\ndelete\nsmart_toy\n\nqa-chat\n\nqa-s2-ephemeral/qa-chat\ncontent_copy\nCopy\nscience\nTest\ndelete"
+    },
+    "provider-new-inventory.json": {
+      "url": "/dashboard/providers/new",
+      "headings": [
+        "Add New Provider"
+      ],
+      "buttons": [
+        {
+          "t": "close",
+          "aria": "Close menu",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "menu",
+          "aria": "Open menu",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "🇺🇸",
+          "aria": null,
+          "title": "Language",
+          "disabled": false
+        },
+        {
+          "t": "grid_view",
+          "aria": null,
+          "title": "Menu",
+          "disabled": false
+        },
+        {
+          "t": "lock",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "lock",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "lock",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "Cancel",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "Create Provider",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        }
+      ],
+      "links": [
+        {
+          "t": "S\nSwitchboard\nrouting gateway",
+          "href": "/dashboard"
+        },
+        {
+          "t": "Overview",
+          "href": "/dashboard"
+        },
+        {
+          "t": "Combos",
+          "href": "/dashboard/combos"
+        },
+        {
+          "t": "Usage",
+          "href": "/dashboard/usage"
+        },
+        {
+          "t": "Quota",
+          "href": "/dashboard/quota"
+        },
+        {
+          "t": "Providers",
+          "href": "/dashboard/providers"
+        },
+        {
+          "t": "Endpoint & keys",
+          "href": "/dashboard/endpoint"
+        },
+        {
+          "t": "Token saver",
+          "href": "/dashboard/token-saver"
+        },
+        {
+          "t": "Media",
+          "href": "/dashboard/media-providers"
+        },
+        {
+          "t": "Skills",
+          "href": "/dashboard/skills"
+        },
+        {
+          "t": "Agent library",
+          "href": "/dashboard/agent-library"
+        },
+        {
+          "t": "CLI tools",
+          "href": "/dashboard/cli-tools"
+        },
+        {
+          "t": "Settings",
+          "href": "/dashboard/profile"
+        },
+        {
+          "t": "console",
+          "href": "/dashboard/console-log"
+        },
+        {
+          "t": "translator",
+          "href": "/dashboard/translator"
+        },
+        {
+          "t": "mitm",
+          "href": "/dashboard/mitm"
+        },
+        {
+          "t": "cli tools",
+          "href": "/dashboard/cli-tools"
+        },
+        {
+          "t": "SSwitchboardrouting gateway",
+          "href": "/dashboard"
+        },
+        {
+          "t": "Overview",
+          "href": "/dashboard"
+        },
+        {
+          "t": "Combos",
+          "href": "/dashboard/combos"
+        },
+        {
+          "t": "Usage",
+          "href": "/dashboard/usage"
+        },
+        {
+          "t": "Quota",
+          "href": "/dashboard/quota"
+        },
+        {
+          "t": "Providers",
+          "href": "/dashboard/providers"
+        },
+        {
+          "t": "Endpoint & keys",
+          "href": "/dashboard/endpoint"
+        },
+        {
+          "t": "Token saver",
+          "href": "/dashboard/token-saver"
+        },
+        {
+          "t": "Media",
+          "href": "/dashboard/media-providers"
+        },
+        {
+          "t": "Skills",
+          "href": "/dashboard/skills"
+        },
+        {
+          "t": "Agent library",
+          "href": "/dashboard/agent-library"
+        },
+        {
+          "t": "CLI tools",
+          "href": "/dashboard/cli-tools"
+        },
+        {
+          "t": "Settings",
+          "href": "/dashboard/profile"
+        },
+        {
+          "t": "console",
+          "href": "/dashboard/console-log"
+        },
+        {
+          "t": "translator",
+          "href": "/dashboard/translator"
+        },
+        {
+          "t": "mitm",
+          "href": "/dashboard/mitm"
+        },
+        {
+          "t": "cli tools",
+          "href": "/dashboard/cli-tools"
+        },
+        {
+          "t": "arrow_back\nBack to Providers",
+          "href": "/dashboard/providers"
+        },
+        {
+          "t": "Cancel",
+          "href": "/dashboard/providers"
+        }
+      ],
+      "inputs": [
+        {
+          "tag": "SELECT",
+          "type": "select-one",
+          "aria": null
+        },
+        {
+          "tag": "INPUT",
+          "type": "password",
+          "ph": "Enter your API key",
+          "aria": null
+        },
+        {
+          "tag": "INPUT",
+          "type": "text",
+          "ph": "e.g., Production API, Dev Environment",
+          "aria": null
+        }
+      ],
+      "body": "S\nSwitchboard\nrouting gateway\nOPERATE\nOverview\nCombos\nUsage\nQuota\nCONNECT\nProviders\nEndpoint & keys\nTOOLS\nToken saver\nMedia\nSkills\nAgent library\nCLI tools\nSettings\nDIAGNOSTICS\nconsole · translator\nmitm · cli tools\nENDPOINT\n127.0.0.1:22128\nConnect / Providers\nonline\nlocal gateway\n🇺🇸\ngrid_view\narrow_back\nBack to Providers\nAdd New Provider\n\nConfigure a new AI provider to use with your applications.\n\nProvider*\nSelect a provider\nGemini CLI\nKiro AI\nMiMo Code Free\nOpenCode Free\nQoder\nBytePlus ModelArk\nCloudflare\nCoqui TTS\nEdge TTS\nGemini\nGoogle TTS\nLocal Device\nNVIDIA NIM\nOllama Cloud\nOpenRouter\nSearXNG\nTortoise TTS\nVertex AI\nAntigravity\nClaude Code\nCline\nClinePass\nCodeBuddy CN\nOpenAI Codex\nCursor IDE\nGitHub Copilot\nGitLab Duo\niFlow AI\nKilo Code\nKimchi\nKimi Coding\nQwen Code\nxAI (Grok)\nAlibaba Intl\nAlibaba\nAnthropic\nAssemblyAI\nAWS Polly\nAzure OpenAI\nBlack Forest Labs\nBlackbox AI\nBrave Search\nCartesia\nCerebras\nChutes AI\nCohere\nComfyUI\nCommand Code\nDeepgram\nDeepSeek\nElevenLabs\nExa\nFal.ai\nFirecrawl\nFireworks AI\nGLM (China)\nGLM Coding\nGoogle PSE\nGroq\nHuggingFace\nHyperbolic\nInworld TTS\nJina AI\nJina Reader\nKimi\nLinkup\nMinimax (China)\nMinimax Coding\nMistral\nMMF\nNanoBanana API\nNebius AI\nOllama Local\nOpenAI\nOpenCode Go\nPerplexity\nPlayHT\nRecraft\nRunway ML\nSD WebUI\nSearchAPI\nSerper\nSiliconFlow\nStability AI\nTavily\nTogether AI\nTopaz\nVenice AI\nVercel AI Gateway\nVertex Partner\nVolcengine Ark\nVoyage AI\nXiaomi MiMo\nXiaomi MiMo (Token Plan)\nYou.com Search\nGrok Web (Subscription)\nPerplexity Web (Pro/Max)\nexpand_more\nAuthentication Method *\nlock\nlock\nlock\nAPI Key*\n\nYour API key will be encrypted and stored securely.\n\nDisplay Name\n\nOptional. A friendly name to identify this configuration.\n\nActive\nEnable this provider for use in your applications\nCancel\nCreate Provider",
+      "overflow": {
+        "sw": 1440,
+        "cw": 1440
+      }
+    },
+    "provider-new-validation.json": {
+      "errors": [
+        {
+          "text": "*",
+          "outer": "<span class=\"text-red-500 ml-1\">*</span>"
+        },
+        {
+          "text": "error\nPlease select a provider",
+          "outer": "<p class=\"text-xs text-red-500 flex items-center gap-1\"><span class=\"material-symbols-outlined text-[14px]\">error</span>Please select a provider</p>"
+        },
+        {
+          "text": "*",
+          "outer": "<span class=\"text-red-500\">*</span>"
+        },
+        {
+          "text": "*",
+          "outer": "<span class=\"text-red-500 ml-1\">*</span>"
+        },
+        {
+          "text": "error\nAPI Key is required",
+          "outer": "<p class=\"text-xs text-red-500 flex items-center gap-1\"><span class=\"material-symbols-outlined text-[14px] leading-none\">error</span>API Key is required</p>"
+        }
+      ],
+      "body": "e\nxAI (Grok)\nAlibaba Intl\nAlibaba\nAnthropic\nAssemblyAI\nAWS Polly\nAzure OpenAI\nBlack Forest Labs\nBlackbox AI\nBrave Search\nCartesia\nCerebras\nChutes AI\nCohere\nComfyUI\nCommand Code\nDeepgram\nDeepSeek\nElevenLabs\nExa\nFal.ai\nFirecrawl\nFireworks AI\nGLM (China)\nGLM Coding\nGoogle PSE\nGroq\nHuggingFace\nHyperbolic\nInworld TTS\nJina AI\nJina Reader\nKimi\nLinkup\nMinimax (China)\nMinimax Coding\nMistral\nMMF\nNanoBanana API\nNebius AI\nOllama Local\nOpenAI\nOpenCode Go\nPerplexity\nPlayHT\nRecraft\nRunway ML\nSD WebUI\nSearchAPI\nSerper\nSiliconFlow\nStability AI\nTavily\nTogether AI\nTopaz\nVenice AI\nVercel AI Gateway\nVertex Partner\nVolcengine Ark\nVoyage AI\nXiaomi MiMo\nXiaomi MiMo (Token Plan)\nYou.com Search\nGrok Web (Subscription)\nPerplexity Web (Pro/Max)\nexpand_more\n\nerror\nPlease select a provider\n\nAuthentication Method *\nlock\nlock\nlock\nAPI Key*\n\nerror\nAPI Key is required\n\nDisplay Name\n\nOptional. A friendly name to identify this configuration.\n\nActive\nEnable this provider for use in your applications\nCancel\nCreate Provider",
+      "active": "<button type=\"submit\" class=\"inline-flex items-center justify-center gap-1.5 font-semibold transition-all duration-150 ease-out cursor-pointer active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100 bg-brand-500 hover:bg-brand-400 text-[#1B1710] border border-brand-500/80 shadow-sm disabled:bg-surface-3 disabled:text-text-muted disabled:border-transparent h-9 px-3.5 text-sm rounded-[8px] w-full flex-1\"><span class=\"leading-none\">Create Provider</span></button>",
+      "labels": [
+        {
+          "text": "Provider*",
+          "for": ""
+        },
+        {
+          "text": "Authentication Method *",
+          "for": ""
+        },
+        {
+          "text": "API Key*",
+          "for": ""
+        },
+        {
+          "text": "Display Name",
+          "for": ""
+        }
+      ]
+    },
+    "provider-seeded-chat-inventory.json": {
+      "url": "/dashboard/providers/openai-compatible-chat-qa-local",
+      "headings": [
+        "QA Local Chat",
+        "OpenAI Compatible Details",
+        "Connections",
+        "Available Models"
+      ],
+      "buttons": [
+        {
+          "t": "close",
+          "aria": "Close menu",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "menu",
+          "aria": "Open menu",
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "🇺🇸",
+          "aria": null,
+          "title": "Language",
+          "disabled": false
+        },
+        {
+          "t": "grid_view",
+          "aria": null,
+          "title": "Menu",
+          "disabled": false
+        },
+        {
+          "t": "add\nAdd API Key",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "edit\nEdit",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "delete\nDelete",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "sync\nTest Connection One-by-One",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "keyboard_arrow_up",
+          "aria": null,
+          "title": "",
+          "disabled": true
+        },
+        {
+          "t": "keyboard_arrow_down",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "edit\nEdit",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "delete\nDelete",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "",
+          "aria": null,
+          "title": "Disable connection",
+          "disabled": false
+        },
+        {
+          "t": "keyboard_arrow_up",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "keyboard_arrow_down",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "edit\nEdit",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "delete\nDelete",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "",
+          "aria": null,
+          "title": "Disable connection",
+          "disabled": false
+        },
+        {
+          "t": "keyboard_arrow_up",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "keyboard_arrow_down",
+          "aria": null,
+          "title": "",
+          "disabled": true
+        },
+        {
+          "t": "edit\nEdit",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "delete\nDelete",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "",
+          "aria": null,
+          "title": "Enable connection",
+          "disabled": false
+        },
+        {
+          "t": "science\nVerify models",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        },
+        {
+          "t": "add\nAdd",
+          "aria": null,
+          "title": "",
+          "disabled": true
+        },
+        {
+          "t": "cloud_download\nImport models",
+          "aria": null,
+          "title": "",
+          "disabled": false
+        }
+      ],
+      "inputs": [
+        {
+          "tag": "INPUT",
+          "type": "checkbox",
+          "ph": "",
+          "aria": null
+        },
+        {
+          "tag": "INPUT",
+          "type": "checkbox",
+          "ph": "",
+          "aria": null
+        },
+        {
+          "tag": "INPUT",
+          "type": "checkbox",
+          "ph": "",
+          "aria": null
+        },
+        {
+          "tag": "INPUT",
+          "type": "checkbox",
+          "ph": "",
+          "aria": null
+        },
+        {
+          "tag": "INPUT",
+          "type": "text",
+          "ph": "gpt-4o",
+          "aria": null
+        }
+      ],
+      "badges": "S\nSwitchboard\nrouting gateway\nOPERATE\nOverview\nCombos\nUsage\nQuota\nCONNECT\nProviders\nEndpoint & keys\nTOOLS\nToken saver\nMedia\nSkills\nAgent library\nCLI tools\nSettings\nDIAGNOSTICS\nconsole · translator\nmitm · cli tools\nENDPOINT\n127.0.0.1:22128\nConnect / Providers\nonline\nlocal gateway\n🇺🇸\ngrid_view\narrow_back\nBack to Providers\nQA Local Chat\n\n3 connections\n\nOpenAI Compatible Details\n\nChat Completions · http://127.0.0.1:22129/v1/chat/completions\n\nadd\nAdd API Key\nedit\nEdit\ndelete\nDelete\nConnections\nsync\nTest Connection One-by-One\nRound Robin\nSelect All\nkeyboard_arrow_up\nkeyboard_arrow_down\nkey\n\nQA Chat Ready\n\nsuccess\nAPI Key\n#1\nedit\nEdit\ndelete\nDelete\nkeyboard_arrow_up\nkeyboard_arrow_down\nkey\n\nQA Chat Error\n\nerror\nAPI Key\nQA synthetic saved error\n#2\nedit\nEdit\ndelete\nDelete\nkeyboard_arrow_up\nkeyboard_arrow_down\nkey\n\nQA Chat Disabled\n\ndisabled\nAPI Key\n#3\nedit\nEdit\ndelete\nDelete\nAvailable Models\nscience\nVerify models\n\nAdd OpenAI-compatible models manually or import them from the /models endpoint.\n\nModel ID\nadd\nAdd\ncloud_download\nImport models",
+      "overflow": {
+        "sw": 1440,
+        "cw": 1440
+      }
+    },
+    "providers-openai-modal.json": {
+      "body": "Providers\n\nBuilt-in providers plus your own OpenAI- or Anthropic-compatible endpoints.\n\nadd\nAdd custom provider\nplay_arrow\nTest All\n\nYOUR CUSTOM PROVIDERS\n\nQA Local Chat\n1 Connected\n1 Error (ERR)\nChat\nQA Local Responses\n1 Connected\nResponses\nQA Local Anthropic\n1 Connected\nMessages\n\nBUILT-IN PROVIDERS\n\nAlibaba\nNo connections\nAlibaba Intl\nNo connections\nAnthropic\nNo connections\nAzure OpenAI\nNo connections\nBlackbox AI\nNo connections\nCerebras\nNo connections\nChutes AI\nNo connections\nCohere\nNo connections\nCommand Code\nNo connections\nDeepSeek\nNo connections\nFireworks AI\nNo connections\nGLM (China)\nNo connections\nGLM Coding\nNo connections\nGroq\nNo connections\nHyperbolic\nNo connections\nKimi\nNo connections\nMinimax (China)\nNo connections\nMinimax Coding\nNo connections\nMistral\nNo connections\nNebius AI\nNo connections\nexpand_more\nShow all 32 providers\n✕\nClose\nAdd OpenAI Compatible\nName\n\nFriendly label (e.g. Work LiteLLM).\n\nAPI Type\nSelect an option\nChat Completions\nResponses API\nexpand_more\nBase URL\n\nBase URL ending in /v1 for your OpenAI-compatible API.\n\nAPI Key (for Check)\nModel ID (optional)\n\nIf the provider has no /models endpoint, enter a model ID to test chat/completions.\n\nCheck\nCreate\nCancel",
+      "dialogs": [],
+      "inputs": [
+        {
+          "id": "",
+          "name": "",
+          "type": "text",
+          "ph": "Search providers...",
+          "required": false,
+          "value": ""
+        },
+        {
+          "id": "",
+          "name": "",
+          "type": "text",
+          "ph": "My LiteLLM / OpenRouter / vLLM",
+          "required": false,
+          "value": ""
+        },
+        {
+          "id": "",
+          "name": "",
+          "type": "select-one",
+          "required": false,
+          "value": "chat"
+        },
+        {
+          "id": "",
+          "name": "",
+          "type": "text",
+          "ph": "https://api.openai.com/v1",
+          "required": false,
+          "value": "https://api.openai.com/v1"
+        },
+        {
+          "id": "",
+          "name": "",
+          "type": "password",
+          "ph": "",
+          "required": false,
+          "value": "[redacted]"
+        },
+        {
+          "id": "",
+          "name": "",
+          "type": "text",
+          "ph": "e.g. gpt-4, claude-3-opus",
+          "required": false,
+          "value": ""
+        }
+      ],
+      "buttons": [],
+      "active": {
+        "tag": "BODY",
+        "id": "",
+        "aria": null
+      }
+    },
+    "quota-control-states.json": {
+      "selects0": [
+        {
+          "aria": "Filter accounts by status",
+          "value": "all",
+          "options": [
+            {
+              "v": "all",
+              "t": "All accounts"
+            },
+            {
+              "v": "active",
+              "t": "Active"
+            },
+            {
+              "v": "inactive",
+              "t": "Turned off"
+            }
+          ]
+        },
+        {
+          "aria": "Accounts per page",
+          "value": "20",
+          "options": [
+            {
+              "v": "10",
+              "t": "10 / page"
+            },
+            {
+              "v": "20",
+              "t": "20 / page"
+            },
+            {
+              "v": "50",
+              "t": "50 / page"
+            },
+            {
+              "v": "100",
+              "t": "100 / page"
+            },
+            {
+              "v": "custom",
+              "t": "Custom"
+            }
+          ]
+        }
+      ],
+      "credits": {
+        "text": "Codex Reset Credit Expiry\n\nQA Codex Active\n\nclose\nNo reset credit details returned for this account.",
+        "roles": 0,
+        "active": {
+          "tag": "BODY",
+          "aria": null
+        }
+      },
+      "edit": {
+        "text": "✕\nClose\nEdit Connection\nName\n\nEmail\n\nactive@example.invalid\n\nPriority\nTest Connection\nSave\nCancel",
+        "roles": 0,
+        "fields": [
+          {
+            "type": "select-one",
+            "value": "active"
+          },
+          {
+            "type": "select-one",
+            "value": "20"
+          },
+          {
+            "type": "number",
+            "ph": "Custom",
+            "value": "20"
+          },
+          {
+            "type": "text",
+            "ph": "Account name",
+            "value": "QA Codex Active"
+          },
+          {
+            "type": "number",
+            "ph": "",
+            "value": "1"
+          }
+        ]
+      },
+      "del": {
+        "text": "Codex Reset Credit Expiry\n\nQA Codex Active\n\nclose\nNo reset credit details returned for this account.",
+        "roles": 0
+      },
+      "requests": [
+        {
+          "m": "GET",
+          "path": "/api/providers/client?page=1&pageSize=20&accountStatus=all&sort=priority"
+        },
+        {
+          "m": "GET",
+          "path": "/api/providers/client?page=1&pageSize=20&accountStatus=all&sort=priority"
+        },
+        {
+          "m": "GET",
+          "path": "/api/usage/qa-quota-active"
+        },
+        {
+          "m": "GET",
+          "path": "/api/usage/qa-quota-inactive"
+        },
+        {
+          "m": "GET",
+          "path": "/api/usage/qa-quota-active"
+        },
+        {
+          "m": "GET",
+          "path": "/api/usage/qa-quota-inactive"
+        },
+        {
+          "m": "GET",
+          "path": "/api/providers/client?page=1&pageSize=20&accountStatus=active&sort=priority"
+        },
+        {
+          "m": "GET",
+          "path": "/api/usage/qa-quota-active"
+        },
+        {
+          "m": "GET",
+          "path": "/api/usage/qa-quota-inactive"
+        },
+        {
+          "m": "GET",
+          "path": "/api/usage/qa-quota-active"
+        },
+        {
+          "m": "GET",
+          "path": "/api/usage/qa-quota-active/codex-reset-credits"
+        }
+      ],
+      "body": "S\nSwitchboard\nrouting gateway\nOPERATE\nOverview\nCombos\nUsage\nQuota\nCONNECT\nProviders\nEndpoint & keys\nTOOLS\nToken saver\nMedia\nSkills\nAgent library\nCLI tools\nSettings\nDIAGNOSTICS\nconsole · translator\nmitm · cli tools\nENDPOINT\n127.0.0.1:22128\nOperate / Quota\nonline\nlocal gateway\n🇺🇸\ngrid_view\napps\nAll Providers\nexpand_more\napps\nAll providers\ncheck\nCodex\nAll accounts\nActive\nTurned off\nhourglass_top\nExpiring first\nblock\nTurn off Empty\ncheck_circle\nTurn on Available\ntoggle_off\nAuto-refresh\nrefresh\nExpiring-first currently reorders accounts inside the current page. Cross-page ordering still follows backend pagination.\nCodex\n\nQA Codex Active\n\nactive@example.invalid\n\nrestart_alt\n0\nNo Codex reset credits available\nschedule\nView Codex reset credit expiry\nbolt\nAuto-starts the next 5h Codex window after reset by sending a tiny gpt-5.5 request. Consumes a small amount of quota.\nrefresh\nRefresh quota\nedit\nEdit connection\ndelete\nDelete connection\n2 quotas\n🟡\n5-hour\n\t\n30 / 100\n70%\n\t\nin 1d 4h 44m\n\n\n🔴\nweekly\n\t\n80 / 100\n20%\n\t\nin 8d 4h 44m\nCodex\n\nQA Codex Inactive\n\ninactive@example.invalid\n\nrestart_alt\n0\nNo Codex reset credits available\nschedule\nView Codex reset credit expiry\nbolt\nAuto-starts the next 5h Codex window after reset by sending a tiny gpt-5.5 request. Consumes a small amount of quota.\nrefresh\nRefresh quota\nedit\nEdit connection\ndelete\nDelete connection\n2 quotas\n🟡\n5-hour\n\t\n30 / 100\n70%\n\t\nin 1d 4h 44m\n\n\n🔴\nweekly\n\t\n80 / 100\n20%\n\t\nin 8d 4h 44m\nShowing 0-0 of 0\n10 / page\n20 / page\n50 / page\n100 / page\nCustom\nPage 1 / 1\nFirst Page\nchevron_left\nchevron_right\nLast Page\nCodex Reset Credit Expiry\n\nQA Codex Active\n\nclose\nNo reset credit details returned for this account."
+    }
+  }
+}
