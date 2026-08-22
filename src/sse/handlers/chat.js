@@ -8,6 +8,7 @@ import {
   extractApiKey,
 } from "../services/auth.js";
 import { cacheClaudeHeaders } from "open-sse/utils/claudeHeaderCache.js";
+import { resolveAffinitySessionId } from "open-sse/utils/sessionManager.js";
 import { getSettings, getUsageStats } from "@/lib/db/index.js";
 import { getProviderQuotaHeadroom } from "@/lib/db/repos/connectionsRepo.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
@@ -696,6 +697,12 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     provider,
     allowNativeOAuth: callOpts?.allowNativeClaudeOAuth === true,
   });
+  const sessionKey = resolveAffinitySessionId({
+    headers: request?.headers,
+    body,
+    scope: provider,
+  });
+
 
   while (true) {
     const credentials = nativeClaudeCredentials || await getProviderCredentials(
@@ -705,6 +712,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       {
         preferredConnectionId: callOpts?.preferredConnectionId || null,
         strictPreferredConnection: callOpts?.strictPreferredConnection === true,
+        sessionKey,
       },
     );
 
