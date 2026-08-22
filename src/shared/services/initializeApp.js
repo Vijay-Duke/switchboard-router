@@ -76,6 +76,11 @@ export async function initializeApp() {
     autoStartMitm();
     startQuotaAutoPing();
     startRoutingEventRetention();
+    // Proactive OAuth token refresh (long-lived providers). Module is idempotent
+    // and self-guards against non-server runtimes.
+    import("@/sse/services/backgroundTokenRefresh.js")
+      .then(({ startBackgroundTokenRefresh }) => startBackgroundTokenRefresh())
+      .catch((e) => console.log("[BackgroundTokenRefresh] scheduler start failed:", e.message));
     try {
       startAutoLearnScheduler({
         log: {

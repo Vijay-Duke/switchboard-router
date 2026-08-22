@@ -388,11 +388,16 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (!executor.noAuth && (providerResponse.status === HTTP_STATUS.UNAUTHORIZED || providerResponse.status === HTTP_STATUS.FORBIDDEN)) {
     try {
       // H7: serialize reactive 401 refresh with the same lock as proactive path
-      const newCredentials = await refreshWithRetry(
-        () => withCredentialRefreshLock(provider, credentials, () => executor.refreshCredentials(credentials, log)),
-        3,
-        log
-      );
+      const newCredentials = await refreshWithRetry(async () => {
+        const result = await withCredentialRefreshLock(provider, credentials, () => executor.refreshCredentials(credentials, log));
+        // aa0448f7: rotate refresh_token between retries — a consumed RT must not
+        // be replayed on the next attempt or the provider revokes the session.
+        if (result?.refreshToken && result.refreshToken !== credentials.refreshToken) {
+          if (result.accessToken) credentials.accessToken = result.accessToken;
+          credentials.refreshToken = result.refreshToken;
+        }
+        return result;
+      }, 3, log);
       if (newCredentials?.accessToken || newCredentials?.copilotToken) {
         log?.info?.("TOKEN", `${provider.toUpperCase()} | refreshed`);
         Object.assign(credentials, newCredentials);

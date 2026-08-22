@@ -278,18 +278,22 @@ export async function updateProviderCredentials(connectionId, newCredentials) {
  * @param {object} credentials
  * @returns {Promise<object>} updated credentials object
  */
-export async function checkAndRefreshToken(provider, credentials) {
+export async function checkAndRefreshToken(provider, credentials, options = {}) {
   let creds = { ...credentials };
   if (!creds.connectionId && creds.id) {
     creds.connectionId = creds.id;
   }
+
+  // force=true skips the on-request lead check (used by the background scheduler,
+  // which applies its own larger lead). Request path omits this.
+  const force = options?.force === true;
 
   if (provider === "cursor") {
     creds = await refreshImportedCursorCredentials(creds);
   }
 
   // ── 1. Regular access-token expiry ────────────────────────────────────────
-  if (_shouldRefreshCredentials(provider, creds)) {
+  if (force || _shouldRefreshCredentials(provider, creds)) {
     const expiresAt = creds.expiresAt ? new Date(creds.expiresAt).getTime() : null;
     const remaining = expiresAt ? expiresAt - Date.now() : null;
     const refreshLead = _getRefreshLeadMs(provider);
