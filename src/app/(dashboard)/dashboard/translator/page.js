@@ -33,12 +33,19 @@ export default function TranslatorPage() {
   const [contents, setContents] = useState({});
   const [expanded, setExpanded] = useState({ 1: true });
   const [loading, setLoading] = useState({});
-  // Detected from step 1: { provider, model, sourceFormat, targetFormat }
+  // Per-step validation errors (QA-016/QA-017) rendered as role=alert
+  const [stepErrors, setStepErrors] = useState({});
   const [meta, setMeta] = useState(null);
 
   const setLoad = (key, val) => setLoading(prev => ({ ...prev, [key]: val }));
-  const setContent = (id, val) => setContents(prev => ({ ...prev, [id]: val }));
   const toggle = (id) => setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
+  const setStepError = (id, message) => setStepErrors(prev => ({ ...prev, [id]: message }));
+  const clearStepError = (id) => setStepErrors(prev => {
+    if (!prev[id]) return prev;
+    const next = { ...prev };
+    delete next[id];
+    return next;
+  });
 
   const openNext = (nextId) => setExpanded(prev => {
     const next = {};
@@ -102,12 +109,17 @@ export default function TranslatorPage() {
         body: JSON.stringify({ step: 2, body })
       });
       const data = await res.json();
-      if (!data.success) { reportClientError(data.error); return; }
+      if (!data.success) { reportClientError(data.error); setStepError(1, data.error); return; }
       const str = JSON.stringify(data.result.body, null, 2);
       setContent(3, str);
+      clearStepError(1);
       openNext(3);
-    } catch (e) { reportClientError(e.message); }
-    setLoad("toOpenAI", false);
+    } catch (e) {
+      reportClientError(e.message);
+      setStepError(1, `Invalid JSON in Client Request: ${e.message}`);
+    } finally {
+      setLoad("toOpenAI", false);
+    }
   };
 
   // Step 3 → Step 4: OpenAI → target + build URL/headers
@@ -125,13 +137,18 @@ export default function TranslatorPage() {
         body: JSON.stringify({ step: 3, body: { ...openaiBody, provider: meta?.provider, model: meta?.model } })
       });
       const data = await res.json();
-      if (!data.success) { reportClientError(data.error); return; }
+      if (!data.success) { reportClientError(data.error); setStepError(3, data.error); return; }
       // Embed provider + model so Send works even without meta
       const step4Content = { ...data.result, provider: meta?.provider, model: meta?.model };
       setContent(4, JSON.stringify(step4Content, null, 2));
+      clearStepError(3);
       openNext(4);
-    } catch (e) { reportClientError(e.message); }
-    setLoad("toTarget", false);
+    } catch (e) {
+      reportClientError(e.message);
+      setStepError(3, `Invalid JSON in OpenAI Intermediate: ${e.message}`);
+    } finally {
+      setLoad("toTarget", false);
+    }
   };
 
   // Step 4 → Step 5: send to provider via executor
@@ -139,6 +156,11 @@ export default function TranslatorPage() {
     setLoad("send", true);
     try {
       const raw = contents[4];
+      // QA-017: an empty target request must surface visibly, not send silently
+      if (!raw || !raw.trim()) {
+        setStepError(4, "Target request is empty — build or load a request in step 4 before sending.");
+        return;
+      }
       const step4 = JSON.parse(raw);
       // Save input: 4_req_target.json
       save("4_req_target.json", raw);
@@ -149,6 +171,7 @@ export default function TranslatorPage() {
 
       if (!provider || !model) {
         reportClientError("Missing provider or model. Please run step 1 first to detect them.");
+        setStepError(4, "Missing provider or model. Please run step 1 first to detect them.");
         return;
       }
 
@@ -185,6 +208,7 @@ export default function TranslatorPage() {
       });
     } catch (e) {
       reportClientError(e.message);
+      setStepError(4, e.message);
     } finally {
       setLoad("send", false);
     }
@@ -197,18 +221,23 @@ export default function TranslatorPage() {
     copy(contents[id], `translator-step-${id}`);
   };
 
+  // QA-016: malformed JSON must surface a visible error, not be silently skipped
   const handleFormat = (id) => {
     try {
       const obj = JSON.parse(contents[id]);
       setContent(id, JSON.stringify(obj, null, 2));
-    } catch { /* not JSON, skip */ }
+      clearStepError(id);
+    } catch (e) {
+      setStepError(id, `Invalid JSON: ${e.message}`);
+    }
   };
 
   // Render action button per step
   const getAction = (stepId) => {
     if (stepId === 1) return <Button size="sm" icon="arrow_forward" loading={loading["toOpenAI"]} onClick={handleToOpenAI}>→ OpenAI</Button>;
     if (stepId === 3) return <Button size="sm" icon="arrow_forward" loading={loading["toTarget"]} onClick={handleToTarget}>→ Target</Button>;
-    if (stepId === 4) return <Button size="sm" icon="send" loading={loading["send"]} onClick={handleSend}>Send</Button>;
+    // QA-017: Send is disabled while the target request is empty
+    if (stepId === 4) return <Button size="sm" icon="send" loading={loading["send"]} disabled={!contents[4]?.trim()} onClick={handleSend}>Send</Button>;
     return null;
   };
 
@@ -268,12 +297,19 @@ export default function TranslatorPage() {
                       value={content}
                       onChange={(v) => {
                         setContent(step.id, v || "");
+                        clearStepError(step.id);
                         if (step.id === 1) detectMeta(v || "");
                       }}
                       theme="vs-dark"
                       options={EDITOR_OPTIONS}
                     />
                   </div>
+                  {stepErrors[step.id] && (
+                    <p role="alert" className="flex items-center gap-1.5 text-xs text-red-500">
+                      <span className="material-symbols-outlined text-[14px] leading-none">error</span>
+                      {stepErrors[step.id]}
+                    </p>
+                  )}
                   <div className="flex gap-2 flex-wrap">
                     <Button size="sm" variant="outline" icon="folder_open" loading={loading[`load-${step.id}`]} onClick={() => handleLoad(step.id)}>Load</Button>
                     <Button size="sm" variant="outline" icon="data_object" onClick={() => handleFormat(step.id)}>Format</Button>
