@@ -362,3 +362,50 @@ Tests:
 - `better-sqlite3` is unavailable for Node 26.7.0 on this workstation; all database proofs ran against the repository’s real `node:sqlite` adapter, including active SQLite/WAL byte scans.
 - Proof-only round-4 additions for migration failure states, real abort leases, and completion ordering passed on their first run because the corresponding production behavior was already correct; the report does not mislabel those runs as red.
 - No full suite, build, lint, formatter, scheduler, Prometheus, push, or merge command was run.
+
+## Review fix round 5
+
+Commit `8fe0896b fix: close final client key security gaps` addresses every
+item in `review-findings-round5.md`:
+
+- The policy lease exposes a test-only release observer at its idempotent
+  release boundary. Real embeddings and STT abort tests observe one effective
+  release, invoke the same lease's cleanup again, cancel the returned body,
+  and prove the count remains one before the immediate next request is
+  admitted.
+- The successful old-marker plus durable-proof sanitizer test now performs a
+  second production restart and proves the original and migration-backup
+  `db.json`/`usage.json` bytes and nanosecond mtimes remain unchanged once the
+  dedicated sanitizer marker exists.
+- Legacy authentication derives `apiKeyPrefix(raw)` and queries only active,
+  lookup-less, non-v2 rows whose indexed `keyPrefix` matches. The regression
+  seeds 64 unrelated-prefix rows with otherwise matching verifier hashes and
+  proves only the intended unparseable legacy row authenticates with
+  `rotationRequired: true`.
+- `docs/ARCHITECTURE.md` states the compatibility-verifier rotation status,
+  missing-lookup v2 rotation requirement, forward-only transition, and older
+  binary incompatibility.
+
+### Red/green evidence
+
+- RED:
+  `npm --prefix tests test -- unit/client-key-real-abort.test.js unit/db-migration-chain.test.js unit/client-key-repo.test.js`
+  - Result: **2 files failed, 1 passed; 3 expected failures**. Both real abort
+    cases lacked the release observer, and the broad legacy scan authenticated
+    the first unrelated row. The sanitizer second-restart proof passed on its
+    first run because marker-gated runtime behavior was already correct.
+- Focused GREEN: the same command.
+  - Result: **3 files passed; 20 tests passed; 0 failures**.
+- Expanded affected regression:
+  `npm --prefix tests test -- unit/client-key-repo.test.js unit/client-key-migration.test.js unit/db-migration-chain.test.js unit/client-key-policy.test.js unit/client-key-real-handler-security.test.js unit/client-key-real-abort.test.js unit/non-chat-abort.test.js`
+  - Result: **7 files passed; 44 tests passed; 0 failures**.
+
+### Self-review and scope
+
+- Reviewed the six-file implementation/test/operator-doc diff after green;
+  no correctness, security, or unrelated-scope issue remained.
+- Preserved digest lookup, asynchronous scrypt, legacy usability and rotation
+  status, policy gates, spend accounting, abort behavior, sanitization, and
+  secrecy coverage.
+- No full suite, build, lint, formatter, scheduler, Prometheus, push, or merge
+  command was run.
