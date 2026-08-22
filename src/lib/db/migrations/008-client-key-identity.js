@@ -42,7 +42,7 @@ function mergeCounter(target, incoming) {
   return target;
 }
 
-export function scrubUsageDailyData(data, keys = [], direction = "up") {
+export function scrubUsageDailyData(data, keys = [], direction = "up", resolveRaw = null) {
   const day = data && typeof data === "object" ? structuredClone(data) : {};
   if (direction === "down") {
     const source = day.byClientKey && typeof day.byClientKey === "object" ? day.byClientKey : {};
@@ -66,7 +66,7 @@ export function scrubUsageDailyData(data, keys = [], direction = "up") {
     : {};
   for (const [oldKey, entry] of Object.entries(source)) {
     const raw = typeof entry?.apiKey === "string" ? entry.apiKey : oldKey.split("|")[0];
-    const clientKeyId = resolveClientKeyId(raw, keys);
+    const clientKeyId = resolveRaw ? resolveRaw(raw) : resolveClientKeyId(raw, keys);
     const rawModel = entry?.rawModel ?? oldKey.split("|")[1] ?? "unknown";
     const provider = entry?.provider ?? oldKey.split("|")[2] ?? "unknown";
     const counter = { ...entry, clientKeyId };

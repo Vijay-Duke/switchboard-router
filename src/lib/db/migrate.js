@@ -48,6 +48,23 @@ function readJsonSafe(file) {
   try { return JSON.parse(fs.readFileSync(file, "utf-8")); } catch { return null; }
 }
 
+function buildLegacyKeyIdMap(data) {
+  const map = new Map();
+  for (const key of data?.apiKeys || []) {
+    if (typeof key?.key !== "string" || !key.id) continue;
+    const normalized = normalizeApiKeyRecordLookup(key.key);
+    if (unpackApiKeyRecord(normalized).legacy) map.set(String(key.key), key.id);
+  }
+  return map;
+}
+
+function legacyImportTargetIsEmpty(adapter) {
+  for (const table of ["settings", "providerConnections", "providerNodes", "proxyPools", "apiKeys", "combos", "usageHistory", "usageDaily", "requestDetails"]) {
+    if ((adapter.get(`SELECT COUNT(*) count FROM ${table}`)?.count || 0) !== 0) return false;
+  }
+  return true;
+}
+
 function writeJsonRestricted(file, value) {
   if (!file || !fs.existsSync(path.dirname(file))) return;
   const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
@@ -58,6 +75,7 @@ function writeJsonRestricted(file, value) {
 
 function sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir = null) {
   const keys = adapter.all(`SELECT id, key FROM apiKeys`) || [];
+  const legacyKeyIds = buildLegacyKeyIdMap(legacyMain);
   const storedById = new Map(keys.map((key) => [key.id, key.key]));
   const main = legacyMain && typeof legacyMain === "object"
     ? {
@@ -75,7 +93,7 @@ function sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir = nul
         dailySummary: Object.fromEntries(
           Object.entries(legacyUsage.dailySummary || {}).map(([dateKey, day]) => [
             dateKey,
-            scrubUsageDailyData(day, keys),
+            scrubUsageDailyData(day, keys, "up", (raw) => legacyKeyIds.get(String(raw)) || null),
           ])
         ),
       }
@@ -233,12 +251,12 @@ function importLegacyMain(adapter, data) {
   }
 }
 
-function importLegacyUsage(adapter, data) {
+function importLegacyUsage(adapter, data, legacyKeyIds = new Map()) {
   const keys = adapter.all(`SELECT id, key FROM apiKeys`) || [];
   if (!data || typeof data !== "object") return;
   for (const e of data.history || []) {
     const t = e.tokens || {};
-    const clientKeyId = resolveClientKeyId(e.apiKey, keys);
+    const clientKeyId = legacyKeyIds.get(String(e.apiKey)) || null;
     adapter.run(
       `INSERT INTO usageHistory(timestamp, provider, model, connectionId, clientKeyId, endpoint, promptTokens, completionTokens, cost, status, tokens, meta)
        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -260,7 +278,7 @@ function importLegacyUsage(adapter, data) {
   for (const [dateKey, day] of Object.entries(data.dailySummary || {})) {
     adapter.run(
       `INSERT OR REPLACE INTO usageDaily(dateKey, data) VALUES(?, ?)`,
-      [dateKey, stringifyJson(scrubUsageDailyData(day, keys))]
+      [dateKey, stringifyJson(scrubUsageDailyData(day, keys, "up", (raw) => legacyKeyIds.get(String(raw)) || null))]
     );
   }
   if (typeof data.totalRequestsLifetime === "number") {
@@ -314,16 +332,22 @@ export async function runMigrationOnce(adapter) {
     fs.writeFileSync(LEGACY_SANITIZED_MARKER, new Date().toISOString(), { mode: 0o600 });
   }
 
+  const pendingLegacyImport = hasLegacy && !alreadyImported && !migrationProof;
+  if (pendingLegacyImport && !legacyImportTargetIsEmpty(adapter)) {
+    console.error("[DB][migrate] legacy import pending but target tables are not empty; preserving sources for repair");
+    return;
+  }
 
-  if (fresh && hasLegacy && !alreadyImported) {
+  if (pendingLegacyImport) {
     const t0 = Date.now();
     const backupDir = makeBackupDir("migrate-from-json");
     for (const f of Object.values(LEGACY_FILES)) backupFile(f, backupDir);
+    const legacyKeyIds = buildLegacyKeyIdMap(legacyMain);
 
     try {
       adapter.transaction(() => {
         importLegacyMain(adapter, legacyMain);
-        importLegacyUsage(adapter, legacyUsage);
+        importLegacyUsage(adapter, legacyUsage, legacyKeyIds);
         importLegacyDisabled(adapter, legacyDisabled);
         importLegacyDetails(adapter, legacyDetails);
         rebuildPrometheusMetrics(adapter);

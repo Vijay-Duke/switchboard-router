@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import nodeCrypto from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 let tempDir;
@@ -225,12 +226,28 @@ describe("Schema migrations", () => {
     const migrationBackup = fs.readdirSync(backupRoot).find((name) => name.startsWith("migrate-from-json-"));
     expect(fs.readFileSync(path.join(backupRoot, migrationBackup, "db.json"), "utf8")).toBe(mainBytes);
     expect(fs.readFileSync(path.join(backupRoot, migrationBackup, "usage.json"), "utf8")).toBe(usageBytes);
+
+    fs.writeFileSync(mainPath, JSON.stringify({
+      settings: { repaired: true },
+      apiKeys: [{ id: "repaired", key: "legacy-one", createdAt: "2026-08-20T00:00:00.000Z" }],
+    }));
+    db.close?.();
+    delete global._dbAdapter;
+    vi.resetModules();
+    const { getAdapter: repairedAdapter } = await import("@/lib/db/driver.js");
+    const repaired = await repairedAdapter();
+    expect(repaired.get(`SELECT COUNT(*) count FROM apiKeys`).count).toBe(1);
+    expect(repaired.get(`SELECT COUNT(*) count FROM usageHistory`).count).toBe(1);
+    expect(repaired.get(`SELECT spentUsd FROM apiKeys WHERE id = 'repaired'`).spentUsd).toBe(4);
+    expect(repaired.get(`SELECT value FROM _meta WHERE key = 'migratedAt'`)?.value).toBeTruthy();
+    expect(fs.readFileSync(mainPath, "utf8")).not.toContain("legacy-one");
   });
 
   it("does not sanitize originals or old backups from a schema-stamped crash without durable import proof", async () => {
     const { getAdapter } = await import("@/lib/db/driver.js");
     const db = await getAdapter();
     expect(db.get(`SELECT value FROM _meta WHERE key = 'schemaVersion'`)?.value).toBe("9");
+    db.run(`INSERT INTO settings(id, data) VALUES(1, '{"partial":true}')`);
     db.close?.();
 
     const mainBytes = JSON.stringify({ apiKeys: [{ id: "unproved", key: "raw-unproved-secret" }] });
@@ -240,6 +257,7 @@ describe("Schema migrations", () => {
     const backupDir = path.join(tempDir, "db", "backups", "migrate-from-json-crashed");
     fs.mkdirSync(backupDir, { recursive: true });
     fs.writeFileSync(path.join(backupDir, "db.json"), mainBytes);
+
     fs.writeFileSync(path.join(backupDir, "usage.json"), usageBytes);
 
     delete global._dbAdapter;
@@ -254,6 +272,24 @@ describe("Schema migrations", () => {
     expect(fs.readFileSync(path.join(backupDir, "usage.json"), "utf8")).toBe(usageBytes);
     expect(fs.existsSync(path.join(tempDir, "db", ".legacy-secrets-sanitized"))).toBe(false);
   });
+  it("imports large legacy usage without verifier KDF work per history row", async () => {
+    const raw = "sk-legacy-large";
+    fs.writeFileSync(path.join(tempDir, "db.json"), JSON.stringify({
+      apiKeys: [{ id: "large-key", key: raw, createdAt: "2026-08-20T00:00:00.000Z" }],
+    }));
+    fs.writeFileSync(path.join(tempDir, "usage.json"), JSON.stringify({
+      history: Array.from({ length: 250 }, (_, index) => ({
+        apiKey: raw, provider: "openai", model: "gpt-5", cost: 1, timestamp: new Date(1_700_000_000_000 + index).toISOString(),
+      })),
+    }));
+    const scryptSync = vi.spyOn(nodeCrypto, "scryptSync");
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const db = await getAdapter();
+    expect(db.get(`SELECT COUNT(*) count FROM usageHistory`).count).toBe(250);
+    expect(db.get(`SELECT spentUsd FROM apiKeys WHERE id = 'large-key'`).spentUsd).toBe(250);
+    expect(scryptSync.mock.calls.length).toBeLessThanOrEqual(2);
+    scryptSync.mockRestore();
+  }, 15_000);
 
   it("auto-sync re-creates missing index when DB lacks it", async () => {
     const { getAdapter } = await import("@/lib/db/driver.js");
