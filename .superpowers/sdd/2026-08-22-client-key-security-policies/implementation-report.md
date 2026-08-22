@@ -422,3 +422,13 @@ Focused command: `npm --prefix tests test -- unit/db-migration-chain.test.js uni
 Result: **2 files passed; 13 tests passed; 0 failures**.
 
 No full suite, build, lint, scheduler, Prometheus, or unrelated changes were run.
+
+## Residual migration closure
+
+Commit `88fe0e9d fix: preserve packed legacy attribution` closes the three residual migration findings:
+
+- Legacy identity precomputation collects each distinct raw usage attribution once, matches it once against plaintext/v1/v2 legacy key records, and reuses the map for all history, daily, spend, and sanitization work. A packed-v2 key with 250 usage rows preserves `clientKeyId` and `$250` spend with exactly one verifier resolution.
+- Successful repaired import sanitizes active sources and every `migrate-from-json-*` backup, including raw backups created by prior failed attempts.
+- Empty-target safety now includes `kv`; a proofless schema-9 database with pre-existing KV state refuses retry and preserves both KV and raw rollback sources.
+
+Focused verification: `npm --prefix tests test -- unit/db-migration-chain.test.js unit/client-key-migration.test.js` → **2 files, 13 tests, 0 failures**.
