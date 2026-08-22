@@ -115,9 +115,10 @@ function extractClaudeCodeSession(userId) {
     return null;
 }
 
-// Lowercase-key lookup for raw client headers
+// Read either platform Headers or raw client headers.
 function headerValue(headers, key) {
     if (!headers || typeof headers !== "object") return null;
+    if (typeof headers.get === "function") return normalizeSessionId(headers.get(key));
     return normalizeSessionId(headers[key] ?? headers[key.toLowerCase()]);
 }
 
@@ -181,6 +182,16 @@ function assistantTextSessionId(scope, body) {
     const sessionId = generateBinaryStyleId();
     assistantSessionStore.set(hash, { sessionId, lastUsed: Date.now() });
     return sessionId;
+}
+
+/**
+ * Resolve only client- or conversation-derived affinity. Never generates an
+ * account/workspace fallback, so retries can safely carry the same key.
+ */
+export function resolveAffinitySessionId({ headers, body, scope = "" } = {}) {
+    const client = extractClientSessionId(headers, body);
+    if (client) return client;
+    return assistantTextSessionId(`${scope}:affinity`, body);
 }
 
 /**

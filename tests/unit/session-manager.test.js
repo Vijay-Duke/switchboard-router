@@ -1,6 +1,11 @@
 // A2: locks resolveSessionId priority/stickiness (codex/kiro/antigravity centralization).
 import { describe, it, expect, beforeEach } from "vitest";
-import { resolveSessionId, deriveSessionId, clearSessionStore } from "../../open-sse/utils/sessionManager.js";
+import {
+  resolveSessionId,
+  resolveAffinitySessionId,
+  deriveSessionId,
+  clearSessionStore,
+} from "../../open-sse/utils/sessionManager.js";
 
 // Assistant text must reach ASSISTANT_MIN_LEN (80) to use assistant anchor; else first user message.
 const longAssistant = "x".repeat(80);
@@ -58,5 +63,31 @@ describe("resolveSessionId", () => {
   it("workspaceId path: empty body + workspaceId set -> normalized workspaceId", () => {
     const got = resolveSessionId({ body: {}, connectionId: "conn1", workspaceId: "ws-abc" });
     expect(got).toBe("ws-abc");
+  });
+});
+
+describe("resolveAffinitySessionId", () => {
+  it("accepts platform Headers and client body fields", () => {
+    expect(resolveAffinitySessionId({
+      headers: new Headers({ "x-session-id": "header-session" }),
+      body: {},
+      scope: "anthropic",
+    })).toBe("header-session");
+    expect(resolveAffinitySessionId({
+      headers: {},
+      body: { prompt_cache_key: "cache-session" },
+      scope: "openai",
+    })).toBe("cache-session");
+  });
+
+  it("uses stable assistant history but never generates a fallback", () => {
+    const options = { headers: {}, body: bodyWithAssistant, scope: "anthropic" };
+    expect(resolveAffinitySessionId(options)).toBe(resolveAffinitySessionId(options));
+    expect(resolveAffinitySessionId({ headers: {}, body: {}, scope: "anthropic" })).toBeNull();
+    expect(resolveAffinitySessionId({
+      headers: {},
+      body: bodyWithUserOnly,
+      scope: "anthropic",
+    })).toBeNull();
   });
 });
