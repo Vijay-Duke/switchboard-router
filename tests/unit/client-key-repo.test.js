@@ -79,9 +79,12 @@ describe("client key repository", () => {
 
   it("keeps unparseable legacy keys usable and rotation-required without v2 fanout", async () => {
     const raw = "sk-legacyraw";
+    const { apiKeyPrefix, hashApiKey } = await import("@/lib/crypto/secrets.js");
+    const prefix = apiKeyPrefix(raw);
     db.run(
-      `INSERT INTO apiKeys(id, key, name, isActive, createdAt) VALUES ('legacy', ?, 'Legacy', 1, '2026-08-22T00:00:00.000Z')`,
-      [raw],
+      `INSERT INTO apiKeys(id, key, keyPrefix, name, isActive, createdAt)
+       VALUES ('legacy', ?, ?, 'Legacy', 1, '2026-08-22T00:00:00.000Z')`,
+      [raw, prefix],
     );
 
     expectSafe(await repo.authenticateApiKey(raw), true);
@@ -91,11 +94,10 @@ describe("client key repository", () => {
     expect(plaintextUpgrade.key).not.toContain(raw);
     expect(plaintextUpgrade.lookupDigest).toBeNull();
 
-    const { hashApiKey } = await import("@/lib/crypto/secrets.js");
-    db.run(`UPDATE apiKeys SET key = ? WHERE id = 'legacy'`, [`v1:sk-l…:${hashApiKey(raw)}`]);
+    db.run(`UPDATE apiKeys SET key = ? WHERE id = 'legacy'`, [`v1:${prefix}:${hashApiKey(raw)}`]);
     expectSafe(await repo.authenticateApiKey(raw), true);
     expect(db.get(`SELECT key, lookupDigest FROM apiKeys WHERE id = 'legacy'`)).toEqual({
-      key: `v1:sk-l…:${hashApiKey(raw)}`,
+      key: `v1:${prefix}:${hashApiKey(raw)}`,
       lookupDigest: null,
     });
     expect(await repo.validateApiKey(raw)).toBe(true);
@@ -103,19 +105,51 @@ describe("client key repository", () => {
     await repo.updateApiKey("legacy", { isActive: false });
     expect(await repo.authenticateApiKey(raw)).toBeNull();
   });
+
+  it("verifies only matching-prefix legacy rows when many unrelated rows exist", async () => {
+    const raw = "sk-legacy-prefix-target";
+    const { apiKeyPrefix, hashApiKey } = await import("@/lib/crypto/secrets.js");
+    const prefix = apiKeyPrefix(raw);
+    const hash = hashApiKey(raw);
+    for (let index = 0; index < 64; index += 1) {
+      db.run(
+        `INSERT INTO apiKeys(id, key, keyPrefix, name, isActive, createdAt)
+         VALUES (?, ?, ?, ?, 1, '2026-08-22T00:00:00.000Z')`,
+        [`unrelated-${index}`, `v1:other-${index}…:${hash}`, `other-${index}…`, `Unrelated ${index}`],
+      );
+    }
+    db.run(
+      `INSERT INTO apiKeys(id, key, keyPrefix, name, isActive, createdAt)
+       VALUES ('legacy-match', ?, ?, 'Legacy match', 1, '2026-08-22T00:00:00.000Z')`,
+      [`v1:${prefix}:${hash}`, prefix],
+    );
+    const allSpy = vi.spyOn(db, "all");
+
+    const authenticated = await repo.authenticateApiKey(raw);
+
+    expectSafe(authenticated, true);
+    expect(authenticated.id).toBe("legacy-match");
+    const fallbackQueries = allSpy.mock.calls.filter(([sql]) => String(sql).includes("lookupDigest IS NULL"));
+    expect(fallbackQueries).toHaveLength(1);
+    expect(fallbackQueries[0][0]).toContain("k.keyPrefix = ?");
+    expect(fallbackQueries[0][1]).toEqual([prefix]);
+    allSpy.mockRestore();
+  });
   
   it("upgrades parseable plaintext and v1 modern keys to indexed v2 digests", async () => {
     const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey.js");
-    const { apiKeyLookupDigest, hashApiKey } = await import("@/lib/crypto/secrets.js");
+    const { apiKeyLookupDigest, apiKeyPrefix, hashApiKey } = await import("@/lib/crypto/secrets.js");
     const plaintext = generateApiKeyWithMachine("1111111111111111").key;
     const v1 = generateApiKeyWithMachine("2222222222222222").key;
     db.run(
-      `INSERT INTO apiKeys(id, key, name, isActive, createdAt) VALUES ('plain-modern', ?, 'Plain', 1, '2026-08-22T00:00:00.000Z')`,
-      [plaintext],
+      `INSERT INTO apiKeys(id, key, keyPrefix, name, isActive, createdAt)
+       VALUES ('plain-modern', ?, ?, 'Plain', 1, '2026-08-22T00:00:00.000Z')`,
+      [plaintext, apiKeyPrefix(plaintext)],
     );
     db.run(
-      `INSERT INTO apiKeys(id, key, name, isActive, createdAt) VALUES ('v1-modern', ?, 'V1', 1, '2026-08-22T00:00:00.000Z')`,
-      [`v1:${v1.slice(0, 10)}…:${hashApiKey(v1)}`],
+      `INSERT INTO apiKeys(id, key, keyPrefix, name, isActive, createdAt)
+       VALUES ('v1-modern', ?, ?, 'V1', 1, '2026-08-22T00:00:00.000Z')`,
+      [`v1:${apiKeyPrefix(v1)}:${hashApiKey(v1)}`, apiKeyPrefix(v1)],
     );
 
     for (const [id, raw] of [["plain-modern", plaintext], ["v1-modern", v1]]) {

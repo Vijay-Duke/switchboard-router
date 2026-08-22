@@ -177,6 +177,12 @@ Startup claims readiness only after the local health/management endpoint respond
 - Logging: detailed request logging is opt-in and its files must be treated as
   sensitive.
 
+Client-key verifier migration is forward-only. Unparseable legacy keys remain
+on the compatibility verifier and show **Rotation required** until replaced;
+v2 records missing their lookup digest cannot authenticate and must be rotated.
+Do not roll back to an older binary: older binaries cannot authenticate v2
+keys. Prefer a forward fix, or rotate affected keys before a downgrade.
+
 Wildcard binding requires `npm run start:standalone`. The custom server derives
 the peer address from the TCP socket; forwarded headers are not trusted by the
 ordinary Next.js server.

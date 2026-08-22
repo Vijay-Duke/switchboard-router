@@ -122,6 +122,8 @@ describe.each([
   },
 ])("real $name handler abort and lease", ({ core, request, handle }) => {
   it("cancels stalled work, returns 499 before fallback, releases once, and admits the next request", async () => {
+    const releasedLeases = [];
+    policy.__setClientKeyPolicyReleaseObserverForTests((lease) => releasedLeases.push(lease));
     let notifyStarted;
     const started = new Promise((resolve) => { notifyStarted = resolve; });
     core.mockImplementationOnce(stalledCore(notifyStarted));
@@ -137,6 +139,11 @@ describe.each([
     const aborted = await first;
     expect(aborted.status).toBe(499);
     expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
+    expect(releasedLeases).toHaveLength(1);
+    releasedLeases[0].release();
+    await aborted.body.cancel("late cleanup");
+    expect(releasedLeases).toHaveLength(1);
+    policy.__setClientKeyPolicyReleaseObserverForTests(null);
 
     core.mockResolvedValueOnce({ success: true, response: new Response("ok", { status: 200 }) });
     const next = await handle(request());

@@ -5,6 +5,7 @@ import { hasValidCliToken } from "@/shared/utils/cliToken.js";
 const WINDOW_MS = 60_000;
 
 if (!global._clientKeyPolicyState) global._clientKeyPolicyState = { byId: new Map() };
+let releaseObserverForTests = null;
 
 function state() {
   return global._clientKeyPolicyState;
@@ -101,6 +102,7 @@ export async function authorizeClientKeyRequest({ settings, rawKey, request, tar
       released = true;
       const current = state().byId.get(clientKey.id);
       if (current) current.inFlight = Math.max(0, current.inFlight - 1);
+      releaseObserverForTests?.(lease);
     },
   };
 
@@ -167,6 +169,11 @@ export async function runWithClientKeyLease(lease, work) {
   });
 }
 
+export function __setClientKeyPolicyReleaseObserverForTests(observer) {
+  releaseObserverForTests = observer;
+}
+
 export function __resetClientKeyPolicyStateForTests() {
   global._clientKeyPolicyState = { byId: new Map() };
+  releaseObserverForTests = null;
 }

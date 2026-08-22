@@ -151,11 +151,33 @@ describe("Schema migrations", () => {
     db.close?.();
     delete global._dbAdapter;
     vi.resetModules();
-    const { getAdapter: restartAdapter } = await import("@/lib/db/driver.js");
-    await restartAdapter();
+    const { getAdapter: firstRestartAdapter } = await import("@/lib/db/driver.js");
+    const firstRestart = await firstRestartAdapter();
     expect(fs.readFileSync(path.join(tempDir, "db.json"), "utf8")).not.toContain("\"abc\"");
     expect(fs.readFileSync(path.join(backupRoot, oldMigrationBackup, "db.json"), "utf8")).not.toContain("\"abc\"");
     expect(fs.existsSync(path.join(tempDir, "db", ".legacy-secrets-sanitized"))).toBe(true);
+
+    const sanitizedPaths = [
+      path.join(tempDir, "db.json"),
+      path.join(tempDir, "usage.json"),
+      path.join(backupRoot, oldMigrationBackup, "db.json"),
+      path.join(backupRoot, oldMigrationBackup, "usage.json"),
+    ];
+    const sanitized = new Map(sanitizedPaths.map((file) => [file, {
+      bytes: fs.readFileSync(file),
+      mtimeNs: fs.statSync(file, { bigint: true }).mtimeNs,
+    }]));
+
+    firstRestart.close?.();
+    delete global._dbAdapter;
+    vi.resetModules();
+    const { getAdapter: secondRestartAdapter } = await import("@/lib/db/driver.js");
+    await secondRestartAdapter();
+
+    for (const file of sanitizedPaths) {
+      expect(fs.readFileSync(file)).toEqual(sanitized.get(file).bytes);
+      expect(fs.statSync(file, { bigint: true }).mtimeNs).toBe(sanitized.get(file).mtimeNs);
+    }
   }, 15_000);
 
   it("keeps originals and migration backups intact when a row import fails and the transaction rolls back", async () => {

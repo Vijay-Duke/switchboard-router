@@ -215,6 +215,7 @@ export async function authenticateApiKey(raw) {
   if (!raw || typeof raw !== "string") return null;
   const db = await getAdapter();
   const lookupDigest = apiKeyLookupDigest(raw);
+  const keyPrefix = apiKeyPrefix(raw);
   const indexed = lookupDigest
     ? db.get(`${KEY_ROWS} WHERE k.isActive = 1 AND k.lookupDigest = ?`, [lookupDigest])
     : null;
@@ -229,7 +230,8 @@ export async function authenticateApiKey(raw) {
   }
 
   const legacyRows = db.all(
-    `${KEY_ROWS} WHERE k.isActive = 1 AND k.lookupDigest IS NULL AND k.key NOT LIKE 'v2:%'`,
+    `${KEY_ROWS} WHERE k.isActive = 1 AND k.lookupDigest IS NULL AND k.keyPrefix = ? AND k.key NOT LIKE 'v2:%'`,
+    [keyPrefix],
   );
   for (const row of legacyRows) {
     const unpacked = unpackApiKeyRecord(row.key);
