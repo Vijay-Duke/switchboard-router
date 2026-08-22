@@ -32,8 +32,22 @@ export default function EndpointPageClient({ initialData }) {
   const keysQuery = useQuery({
     queryKey: queryKeys.endpoint.keys(),
     queryFn: async () => {
-      const data = await fetchJson(/** @type {any} */ ("/api/keys"));
-      return data.keys || [];
+      const fetchKeys = async () => {
+        const data = await fetchJson(/** @type {any} */ ("/api/keys"));
+        return data.keys || [];
+      };
+      let existing = await fetchKeys();
+      // Auto-provision a default key for first-time users so the endpoint works out of the box.
+      if (existing.length === 0) {
+        try {
+          await fetchJson("/api/keys", {
+            method: "POST",
+            body: JSON.stringify({ name: "Default Key" }),
+          });
+          existing = await fetchKeys();
+        } catch { /* fall through to empty render */ }
+      }
+      return existing;
     },
     initialData: initialData?.keys || [],
   });
