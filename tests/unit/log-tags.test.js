@@ -118,8 +118,9 @@ describe("createStreamController unified tagging", () => {
     const c1 = mk(); c1.handleComplete();
     const c2 = mk(); c2.handleDisconnect("client_closed");
     const c3 = mk(); c3.handleError(Object.assign(new Error("x"), { name: "AbortError" }));
-    expect(spy).toHaveBeenCalledTimes(3);
-    const lines = spy.mock.calls.map(c => c[0]);
+    // dbg("CTRL", ...) adds a 🐛 [DBG:CTRL] console line outside production — filter it.
+    const lines = spy.mock.calls.map((c) => c[0]).filter((l) => !l.includes("[DBG:"));
+    expect(lines).toHaveLength(3);
     for (const l of lines) {
       expect(l).toMatch(/ (🟢|🔵|🟣|🟡|🟠|🔴|⚪|🟤) /); // exactly one colored tag chip
       expect(l).toContain("openai/gpt-4");
@@ -152,8 +153,9 @@ describe("createStreamController unified tagging", () => {
     createStreamController({ log, provider: "p", model: "m", reqTag: "🟣" }).handleComplete();
     createStreamController({ log, provider: "p", model: "m", reqTag: "🟣" }).handleError(new Error("e1"));
     expect(seen.line[0]).toEqual(["🟣", "🌊", expect.stringContaining("COMPLETE · p/m · ")]);
-    expect(seen.errorLine[0][0]).toBe("🟣");
-    expect(seen.errorLine[0][2]).toContain("✗ ERROR: e1");
+    // errorLine contract: (tag, symbol, message-with-metadata) — symbol is a separate arg.
+    expect(seen.errorLine[0]).toEqual(["🟣", "✗", expect.stringContaining("ERROR: e1 · p/m · ")]);
+    expect(seen.errorLine[0][2]).toContain("\n    Error: e1");
   });
 
   it("sessionSeed maps to a stable color per request", () => {
@@ -168,6 +170,6 @@ describe("createStreamController unified tagging", () => {
   it("explicit reqTag wins over seed/rotation", () => {
     const spy = capture();
     createStreamController({ provider: "p", model: "m", reqTag: "⚪", sessionSeed: "sess-alpha" }).handleComplete();
-    expect(spy.mock.calls[0][0]).toContain("⚪ COMPLETE");
+    expect(spy.mock.calls[0][0]).toMatch(/⚪ 🌊 COMPLETE · p\/m · \d+ms$/);
   });
 });

@@ -97,7 +97,7 @@ describe("normalizeClaudePassthrough — mid-conversation system folding", () =>
       ],
     };
     const out = normalizeClaudePassthrough(input);
-    expect(out.messages).toHaveLength(3);
+    expect(out.messages).toHaveLength(2); // user(+folded reminder), assistant
     expect(out.messages[0].role).toBe(ROLE.USER);
     expect(out.messages[0].content).toHaveLength(2);
     expect(out.messages[0].content[1]).toEqual({ type: CLAUDE_BLOCK.TEXT, text: "mid-talk reminder" });

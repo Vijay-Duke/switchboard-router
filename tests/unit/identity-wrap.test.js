@@ -437,12 +437,14 @@ describe("confirmed client harvest", () => {
   });
 
   it("does not let a mismatched Claude version poison the current snapshot", () => {
-    const confirmedHeaders = {
-      "user-agent": "claude-cli/2.1.220 (external, cli)",
+    // Snapshot is already seeded at 2.1.220 by the earlier harvest test; a
+    // different version must be detected but never harvested.
+    const headers = {
+      "user-agent": "claude-cli/2.1.239 (external, cli)",
       "x-app": "cli",
       "anthropic-beta": "oauth-2025-04-20",
-      "x-stainless-runtime-version": "v22.19.0",
-      "x-stainless-package-version": "0.94.0",
+      "x-stainless-runtime-version": "v24.0.0",
+      "x-stainless-package-version": "0.99.0",
       "x-stainless-os": "Linux",
       "x-stainless-arch": "x64",
     };

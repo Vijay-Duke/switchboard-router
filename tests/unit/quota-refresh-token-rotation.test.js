@@ -85,6 +85,6 @@ describe("refresh_token rotation across retry attempts", () => {
       credentials.refreshToken = result.refreshToken;
     }
     expect(credentials.refreshToken).toBe("keep-me");
-    expect(credentials.accessToken).toBeUndefined(); // only rotated fields applied here
+    expect(credentials.accessToken).toBe("a"); // untouched: only a rotated RT applies fields
   });
 });

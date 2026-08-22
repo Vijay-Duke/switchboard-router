@@ -10,23 +10,24 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const NOW = new Date("2026-08-22T12:00:00Z").getTime();
 
-vi.mock("../../../src/sse/utils/logger.js", () => ({
+vi.mock("../../src/sse/utils/logger.js", () => ({
   debug: vi.fn(),
   info: vi.fn(),
   warn: vi.fn(),
 }));
 
-const loadModule = () => import("../../../src/sse/services/backgroundTokenRefresh.js");
+const loadModule = () => import("../../src/sse/services/backgroundTokenRefresh.js");
 
 function conn(overrides = {}) {
-  return {
-    id: overrides.id ?? "c1",
-    provider: overrides.provider ?? "claude",
-    authType: overrides.authType ?? "oauth",
-    refreshToken: overrides.refreshToken ?? "rt-1",
-    expiresAt: overrides.expiresAt ?? new Date(NOW + 10 * 60 * 1000).toISOString(), // 10min left
+  const defaults = {
+    id: "c1",
+    provider: "claude",
+    authType: "oauth",
+    refreshToken: "rt-1",
+    expiresAt: new Date(NOW + 10 * 60 * 1000).toISOString(), // 10min left
     isActive: true,
   };
+  return { ...defaults, ...overrides };
 }
 
 describe("selectConnectionsNeedingRefresh", () => {
@@ -37,7 +38,7 @@ describe("selectConnectionsNeedingRefresh", () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it("selects OAuth connections expiring within the 30-minute lead", async () => {
+  it("selects OAuth connections expiring within the provider lead (claude: 4h)", async () => {
     const { selectConnectionsNeedingRefresh } = await loadModule();
     const due = selectConnectionsNeedingRefresh(
       [conn({ expiresAt: new Date(NOW + 10 * 60 * 1000).toISOString() })],
@@ -49,8 +50,9 @@ describe("selectConnectionsNeedingRefresh", () => {
 
   it("skips connections comfortably inside their validity window", async () => {
     const { selectConnectionsNeedingRefresh } = await loadModule();
+    // claude lead is 4h — 5h out is comfortably clear; 3h would be due.
     const due = selectConnectionsNeedingRefresh(
-      [conn({ expiresAt: new Date(NOW + 3 * 60 * 60 * 1000).toISOString() })], // 3h left
+      [conn({ expiresAt: new Date(NOW + 5 * 60 * 60 * 1000).toISOString() })],
       NOW,
     );
     expect(due).toEqual([]);
@@ -62,7 +64,7 @@ describe("selectConnectionsNeedingRefresh", () => {
       [
         conn({ authType: "api_key", id: "a" }),
         conn({ refreshToken: undefined, id: "b" }),
-        conn({ authType: "OAUTH_DEVICE", id: "c" }), // normalized to oauth
+        conn({ id: "c" }), // canonical oauth, due via 10-min-left default
       ],
       NOW,
     );

@@ -8,12 +8,12 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../../../open-sse/utils/proxyFetch.js", () => ({
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch: vi.fn(),
 }));
 
-import { proxyAwareFetch } from "../../../open-sse/utils/proxyFetch.js";
-import { getOllamaUsage } from "../../../open-sse/services/usage/misc.js";
+import { proxyAwareFetch } from "../../open-sse/utils/proxyFetch.js";
+import { getOllamaUsage } from "../../open-sse/services/usage/misc.js";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
