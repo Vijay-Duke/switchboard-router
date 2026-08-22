@@ -494,6 +494,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   // One identity per completed request. Handlers pass it to saveUsageStats so a
   // replayed save is idempotent instead of double-counting usage.
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
   const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, clientRawRequest, onRequestSuccess, requestId, pxpipe: pxpipeSummary || undefined };
   const appendLog = (extra) => {
     if (!vaultInternal) appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });

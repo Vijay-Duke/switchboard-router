@@ -1,3 +1,19 @@
+# Unreleased
+
+## Features
+- **SSRF search guard**: outbound search/fetch tooling validates resolved upstream addresses against private/link-local ranges before connect, fail-closed on DNS ambiguity
+- **Request-details redaction**: authorization/api-key headers and credential material are redacted before request details are persisted and surfaced in the usage Request Details tab
+- **Capacity adapter**: per-model capacity/capability metadata adapter for the model picker (modality badges via `getCaps`); Hermes attachments are forwarded verbatim when the adapter is off — non-vision models may reject them (documented risk)
+- **Usage quota trackers**: extended provider quota tracking with background token-quota refresh (rotation-safe apply), Ollama usage accounting, and soft-failure cache release so tokens recover from transient OAuth/legacy endpoint errors without restart
+- **PXPIPE token saver**: opt-in compression of bulky Claude-format prompts into dense multimodal encodings via the `pxpipe-proxy` library API — fail-open engine with min-size/timeout gates, in-process loader, JSONL stats with windowed dashboard (`/dashboard/pxpipe`), setup/health controls on the Token Saver page, and per-request summaries in usage request details
+- **Session-colored logging**: unified request-lifecycle log tags (`open-sse/utils/logTags.js`) print one colored tag per request across start/upstream/fallback/done/disconnect/error lines
+
+## Fixes
+- **h2c downgrade**: JBR-style `Upgrade: h2c` requests are served as clean HTTP/1.1 — upgrade/HTTP2-Settings headers scrubbed and `Connection: close` forced; emit-hook replay retained as fallback
+- **Claude quota**: settled soft-failure promise placeholders are released from the usage cache instead of pinning a token to a stale error until restart (upstream parity fix)
+- **Video routes**: wildcard CORS removed from all video proxy endpoints
+- **Translator**: mid-conversation system blocks fold into the preceding user turn for cache stability (upstream-verified behavior); tests aligned accordingly
+
 # v0.7.0 (2026-08-22)
 
 ## Features
