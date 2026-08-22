@@ -40,6 +40,9 @@ export default function ModelSelectModal({
   title = "Select Model",
   modelAliases = EMPTY_OBJECT,
   kindFilter = null,
+  // Capacity adapter: when set ("vision" | "pdf" | "audioInput" | "videoInput"),
+  // only models with that input-modality capability are listed.
+  capFilter = null,
   addedModelValues = EMPTY_ARRAY,
   closeOnSelect = true,
   selectionHint,
@@ -359,7 +362,7 @@ export default function ModelSelectModal({
 
   // Filter combos by search query (and hide combos when kindFilter is set — combos are LLM-only by design)
   const filteredCombos = useMemo(() => {
-    if (kindFilter) return [];
+    if (kindFilter || capFilter) return [];
     const availableCombos = combos.filter((combo) => combo.name !== excludeCombo);
     if (!searchQuery.trim()) return availableCombos;
     const query = searchQuery.toLowerCase();
@@ -380,6 +383,11 @@ export default function ModelSelectModal({
     const filtered = {};
     Object.entries(groupedModels).forEach(([providerId, group]) => {
       let models = group.models;
+      // Filter by input-modality capability (vision/pdf/audioInput/videoInput).
+      if (capFilter) {
+        models = models.filter((m) => getCaps(m.value)?.[capFilter] === true);
+        if (models.length === 0) return;
+      }
       if (query) {
         const providerNameMatches = group.name.toLowerCase().includes(query);
         models = models.filter(
@@ -396,7 +404,7 @@ export default function ModelSelectModal({
     });
 
     return filtered;
-  }, [groupedModels, searchQuery, sortModels]);
+  }, [groupedModels, searchQuery, sortModels, capFilter]);
 
   const handleSelect = (model) => {
     const value = model?.value || model?.name || model;
