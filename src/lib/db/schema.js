@@ -79,6 +79,7 @@ export const TABLES = {
       isActive: "INTEGER DEFAULT 1",
       createdAt: "TEXT NOT NULL",
       keyPrefix: "TEXT",
+      lookupId: "TEXT",
       allowedModels: "TEXT",
       allowedCombos: "TEXT",
       expiresAt: "TEXT",
@@ -90,6 +91,7 @@ export const TABLES = {
     indexes: [
       "CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)",
       "CREATE INDEX IF NOT EXISTS idx_ak_prefix ON apiKeys(keyPrefix)",
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_ak_lookup_id ON apiKeys(lookupId) WHERE lookupId IS NOT NULL",
     ],
   },
   combos: {

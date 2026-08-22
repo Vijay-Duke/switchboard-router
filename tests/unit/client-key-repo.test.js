@@ -70,18 +70,18 @@ describe("client key repository", () => {
 
   it("authenticates and upgrades legacy plaintext but rejects inactive keys", async () => {
     db.run(
-      `INSERT INTO apiKeys(id, key, name, isActive, createdAt) VALUES ('legacy', 'legacy-raw-key', 'Legacy', 1, '2026-08-22T00:00:00.000Z')`
+      `INSERT INTO apiKeys(id, key, name, isActive, createdAt) VALUES ('legacy', 'sk-legacyraw', 'Legacy', 1, '2026-08-22T00:00:00.000Z')`
     );
-    expect((await repo.authenticateApiKey("legacy-raw-key")).id).toBe("legacy");
+    expect((await repo.authenticateApiKey("sk-legacyraw")).id).toBe("legacy");
     expect(db.get(`SELECT key FROM apiKeys WHERE id = 'legacy'`).key).toMatch(/^v2:/);
 
     await repo.updateApiKey("legacy", { isActive: false });
-    expect(await repo.authenticateApiKey("legacy-raw-key")).toBeNull();
+    expect(await repo.authenticateApiKey("sk-legacyraw")).toBeNull();
 
-    db.run(`UPDATE apiKeys SET isActive = 1, key = ? WHERE id = 'legacy'`, [`v1:legacy…:${(await import("@/lib/crypto/secrets.js")).hashApiKey("legacy-raw-key")}`]);
-    expect((await repo.authenticateApiKey("legacy-raw-key")).id).toBe("legacy");
+    db.run(`UPDATE apiKeys SET isActive = 1, key = ?, lookupId = NULL WHERE id = 'legacy'`, [`v1:sk-l…:${(await import("@/lib/crypto/secrets.js")).hashApiKey("sk-legacyraw")}`]);
+    expect((await repo.authenticateApiKey("sk-legacyraw")).id).toBe("legacy");
     expect(db.get(`SELECT key FROM apiKeys WHERE id = 'legacy'`).key).toMatch(/^v2:/);
-    expect(await repo.validateApiKey("legacy-raw-key")).toBe(true);
+    expect(await repo.validateApiKey("sk-legacyraw")).toBe(true);
   });
 
   it("normalizes policy arrays, updates atomically, and clears explicit fields", async () => {
@@ -180,13 +180,13 @@ describe("client key repository", () => {
     getSpy.mockRestore();
   });
 
-  it("uses indexed prefix candidates so arbitrary invalid keys run no verifier KDF", async () => {
+  it("uses a unique lookup candidate so arbitrary invalid keys run no verifier KDF", async () => {
     await repo.createApiKey("Bounded", "machine-bounded");
     const allSpy = vi.spyOn(db, "all");
     expect(await repo.authenticateApiKey("sk-unmatched-arbitrary-secret")).toBeNull();
-    const candidateCall = allSpy.mock.calls.find(([sql]) => String(sql).includes("keyPrefix = ?"));
-    expect(candidateCall).toBeDefined();
-    expect(candidateCall[1]).toEqual(["sk-unmatch…"]);
+    const lookupCall = allSpy.mock.calls.find(([sql]) => String(sql).includes("lookupId = ?"));
+    expect(lookupCall).toBeDefined();
+    expect(lookupCall[1]).toEqual(["arbitrary"]);
     allSpy.mockRestore();
   });
 });

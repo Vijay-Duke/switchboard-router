@@ -65,7 +65,10 @@ async function prompt(question) {
 }
 
 async function promptSecret(question) {
-  if (!process.stdin.isTTY) return prompt(question);
+  if (!process.stdin.isTTY) {
+    process.stderr.write("Client key secret input requires an interactive TTY; cancelled.\n");
+    return "";
+  }
   primeRawOnce();
   process.stdout.write(question);
   return new Promise((resolve) => {

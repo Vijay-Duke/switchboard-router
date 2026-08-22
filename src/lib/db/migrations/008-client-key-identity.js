@@ -6,6 +6,7 @@ import {
 
 const POLICY_COLUMNS = {
   keyPrefix: "TEXT",
+  lookupId: "TEXT",
   allowedModels: "TEXT",
   allowedCombos: "TEXT",
   expiresAt: "TEXT",
@@ -166,11 +167,13 @@ const migration = {
     addPolicyColumns(db);
     const keys = db.all(`SELECT id, key FROM apiKeys`) || [];
     for (const key of keys) {
-      const prefix = unpackApiKeyRecord(key.key).prefix;
-      db.run(`UPDATE apiKeys SET keyPrefix = ? WHERE id = ?`, [prefix || null, key.id]);
-      key.keyPrefix = prefix || null;
+      const unpacked = unpackApiKeyRecord(key.key);
+      db.run(`UPDATE apiKeys SET keyPrefix = ?, lookupId = ? WHERE id = ?`, [unpacked.prefix || null, unpacked.lookupId || null, key.id]);
+      key.keyPrefix = unpacked.prefix || null;
+      key.lookupId = unpacked.lookupId || null;
     }
     db.exec(`CREATE INDEX IF NOT EXISTS idx_ak_prefix ON apiKeys(keyPrefix)`);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ak_lookup_id ON apiKeys(lookupId) WHERE lookupId IS NOT NULL`);
     const usageColumns = columns(db, "usageHistory");
 
     if (usageColumns.has("apiKey")) {
@@ -203,7 +206,9 @@ const migration = {
     `);
     for (const key of keys) {
       if (unpackApiKeyRecord(key.key).legacy) {
-        db.run(`UPDATE apiKeys SET key = ? WHERE id = ?`, [packApiKeyRecord(String(key.key)), key.id]);
+        const packed = packApiKeyRecord(String(key.key));
+        const unpacked = unpackApiKeyRecord(packed);
+        db.run(`UPDATE apiKeys SET key = ?, keyPrefix = ?, lookupId = ? WHERE id = ?`, [packed, unpacked.prefix || null, unpacked.lookupId || null, key.id]);
       }
     }
   },

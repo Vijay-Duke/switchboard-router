@@ -201,9 +201,9 @@ function importLegacyMain(adapter, data) {
       ? packApiKeyRecord(k.key)
       : k.key;
     adapter.run(
-      `INSERT OR REPLACE INTO apiKeys(id, key, keyPrefix, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd)
-       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [k.id, storedKey, unpackApiKeyRecord(storedKey).prefix || null, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(),
+      `INSERT OR REPLACE INTO apiKeys(id, key, keyPrefix, lookupId, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd)
+       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [k.id, storedKey, unpackApiKeyRecord(storedKey).prefix || null, unpackApiKeyRecord(storedKey).lookupId || null, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(),
         k.allowedModels == null ? null : stringifyJson(k.allowedModels), k.allowedCombos == null ? null : stringifyJson(k.allowedCombos),
         k.expiresAt || null, k.rateLimitPerMinute ?? null, k.concurrencyLimit ?? null, k.spendLimitUsd ?? null, Number(k.spentUsd || 0)]
     );

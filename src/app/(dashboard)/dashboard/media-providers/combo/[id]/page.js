@@ -68,19 +68,14 @@ export default function ComboDetailPage() {
 
   const fetchAll = async () => {
     try {
-      const [comboRes, settingsRes, logsRes, keysRes, connsRes, aliasesRes] = await Promise.all([
+      const [comboRes, settingsRes, logsRes, connsRes, aliasesRes] = await Promise.all([
         fetch(`/api/combos/${id}`, { cache: "no-store" }),
         fetch("/api/settings", { cache: "no-store" }),
         fetch("/api/usage/logs", { cache: "no-store" }),
-        fetch("/api/keys", { cache: "no-store" }),
         fetch("/api/providers", { cache: "no-store" }),
         fetch("/api/models/alias", { cache: "no-store" }),
       ]);
       if (aliasesRes.ok) setModelAliases((await aliasesRes.json()).aliases || {});
-      if (keysRes.ok) {
-        const k = await keysRes.json();
-        setApiKey((k.keys || []).find((x) => x.isActive !== false)?.key || "");
-      }
       if (connsRes.ok) setConnections((await connsRes.json()).connections || []);
       if (!comboRes.ok) { setCombo(null); setLoading(false); return; }
       const c = await comboRes.json();
@@ -173,6 +168,10 @@ export default function ComboDetailPage() {
   };
 
   const handleTest = async () => {
+    if (!apiKey.trim()) {
+      setTestError("Paste a client key secret before running this example.");
+      return;
+    }
     setTesting(true);
     setTestResult(null);
     setTestError("");
@@ -337,7 +336,7 @@ export default function ComboDetailPage() {
         <Card>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
             <h2 className="text-lg font-semibold">Test Example</h2>
-            <Button size="sm" icon="play_arrow" onClick={handleTest} disabled={testing || providers.length === 0}>
+            <Button size="sm" icon="play_arrow" onClick={handleTest} disabled={testing || providers.length === 0 || !apiKey.trim()}>
               {testing ? "Running..." : "Run"}
             </Button>
           </div>

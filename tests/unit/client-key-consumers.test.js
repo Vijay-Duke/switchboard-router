@@ -21,4 +21,20 @@ describe("safe client key consumers", () => {
     expect(select).toContain("Custom secret");
     expect(select).not.toContain("value={k.key}");
   });
+
+  it("media examples require a pasted secret and never hydrate it from key lists", () => {
+    const mediaRoot = path.join(root, "src/app/(dashboard)/dashboard/media-providers");
+    const targets = [
+      "[kind]/[id]/components/EmbeddingExampleCard.js",
+      "[kind]/[id]/components/GenericExampleCard.js",
+      "[kind]/[id]/components/SttExampleCard.js",
+      "[kind]/[id]/components/TtsExampleCard.js",
+      "combo/[id]/page.js",
+    ];
+    for (const target of targets) {
+      const source = fs.readFileSync(path.join(mediaRoot, target), "utf8");
+      expect(source, target).not.toContain('fetch("/api/keys"');
+      expect(source, target).toContain("!apiKey.trim()");
+    }
+  });
 });

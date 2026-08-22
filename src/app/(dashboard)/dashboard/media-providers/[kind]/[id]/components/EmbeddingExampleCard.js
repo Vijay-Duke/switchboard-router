@@ -37,10 +37,6 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
 
   useEffect(() => {
     setLocalEndpoint(window.location.origin);
-    fetch("/api/keys")
-      .then((r) => r.json())
-      .then((d) => { setApiKey((d.keys || []).find((k) => k.isActive !== false)?.key || ""); })
-      .catch(() => {});
   }, []);
 
   const endpoint = localEndpoint;
@@ -60,7 +56,7 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
   -d '${JSON.stringify(buildBody())}'`;
 
   const handleRun = async () => {
-    if (!input.trim() || !modelFull) return;
+    if (!input.trim() || !modelFull || !apiKey.trim()) return;
     setRunning(true);
     setError("");
     setResult(null);
@@ -194,7 +190,7 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
               </button>
               <button
                 onClick={handleRun}
-                disabled={running || !input.trim() || !modelFull}
+                disabled={running || !input.trim() || !modelFull || !apiKey.trim()}
                 className="flex w-full sm:w-auto items-center justify-center gap-1.5 px-3 py-1 rounded-lg bg-primary text-on-primary text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span className="material-symbols-outlined text-[14px]" style={running ? { animation: "spin 1s linear infinite" } : undefined}>

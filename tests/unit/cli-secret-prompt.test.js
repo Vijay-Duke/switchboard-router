@@ -21,4 +21,14 @@ describe("CLI client-key prompt", () => {
     process.stdin.setRawMode = originalRaw;
     if (descriptor) Object.defineProperty(process.stdin, "isTTY", descriptor);
   });
+
+  it("rejects non-TTY secret entry without reading or echoing input", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", { value: false, configurable: true });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await expect(promptSecret("Secret: ")).resolves.toBe("");
+    expect(stderr.mock.calls.map(([value]) => String(value)).join("")).toContain("requires an interactive TTY");
+    stderr.mockRestore();
+    if (descriptor) Object.defineProperty(process.stdin, "isTTY", descriptor);
+  });
 });

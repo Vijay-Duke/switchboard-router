@@ -86,23 +86,34 @@ export function apiKeyPrefix(rawKey) {
   return rawKey.length <= 12 ? rawKey.slice(0, 4) + "…" : rawKey.slice(0, 10) + "…";
 }
 
-/** Stored form: v2:<prefix>:<saltHex>:<scryptHex>. */
-export function packApiKeyRecord(rawKey) {
+export function apiKeyLookupId(rawKey) {
+  if (!rawKey || typeof rawKey !== "string" || !rawKey.startsWith("sk-")) return null;
+  const parts = rawKey.split("-");
+  if (parts.length >= 4) return parts[parts.length - 2] || null;
+  if (parts.length >= 2) return parts[parts.length - 1] || null;
+  return null;
+}
+
+/** Stored form: v2:<lookupId>:<prefix>:<saltHex>:<scryptHex>. */
+export function packApiKeyRecord(rawKey, lookupId = apiKeyLookupId(rawKey)) {
   const salt = crypto.randomBytes(16);
   const verifier = crypto.scryptSync(rawKey, salt, 32, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
-  return `v2:${apiKeyPrefix(rawKey)}:${salt.toString("hex")}:${verifier.toString("hex")}`;
+  return `v2:${lookupId || ""}:${apiKeyPrefix(rawKey)}:${salt.toString("hex")}:${verifier.toString("hex")}`;
 }
 
 export function unpackApiKeyRecord(stored) {
-  if (!stored || typeof stored !== "string") return { version: 0, prefix: "", hash: null, salt: null, legacy: true, raw: stored };
+  if (!stored || typeof stored !== "string") return { version: 0, lookupId: null, prefix: "", hash: null, salt: null, legacy: true, raw: stored };
   const parts = stored.split(":");
+  if (stored.startsWith("v2:") && parts.length === 5) {
+    return { version: 2, lookupId: parts[1] || null, prefix: parts[2], salt: parts[3], hash: parts[4], legacy: false, raw: null };
+  }
   if (stored.startsWith("v2:") && parts.length === 4) {
-    return { version: 2, prefix: parts[1], salt: parts[2], hash: parts[3], legacy: false, raw: null };
+    return { version: 2, lookupId: null, prefix: parts[1], salt: parts[2], hash: parts[3], legacy: false, raw: null };
   }
   if (stored.startsWith("v1:") && parts.length >= 3) {
-    return { version: 1, prefix: parts[1], salt: null, hash: parts.slice(2).join(":"), legacy: false, raw: null };
+    return { version: 1, lookupId: null, prefix: parts[1], salt: null, hash: parts.slice(2).join(":"), legacy: false, raw: null };
   }
-  return { version: 0, prefix: apiKeyPrefix(stored), hash: null, salt: null, legacy: true, raw: stored };
+  return { version: 0, lookupId: apiKeyLookupId(stored), prefix: apiKeyPrefix(stored), hash: null, salt: null, legacy: true, raw: stored };
 }
 
 export function timingSafeEqualStr(a, b) {
