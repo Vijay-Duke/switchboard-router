@@ -69,6 +69,8 @@ export default function ProviderDetailPage() {
   const [showAddCustomModel, setShowAddCustomModel] = useState(false);
   const [providerStrategy, setProviderStrategy] = useState(null);
   const [providerStickyLimit, setProviderStickyLimit] = useState("");
+  const [schedulerEnabled, setSchedulerEnabled] = useState(false);
+  const [affinityMinutes, setAffinityMinutes] = useState("30");
   const [thinkingMode, setThinkingMode] = useState("auto");
   const [autoPing, setAutoPing] = useState({ enabled: false, connections: {} });
   const [suggestedModels, setSuggestedModels] = useState([]);
@@ -320,6 +322,12 @@ export default function ProviderDetailPage() {
       const override = (settingsData.providerStrategies || {})[providerId] || {};
       setProviderStrategy(override.fallbackStrategy || null);
       setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
+      const scheduler = override.accountScheduler || {};
+      setSchedulerEnabled(scheduler.enabled === true);
+      setAffinityMinutes(String(Math.max(
+        1,
+        Math.round((scheduler.sessionAffinityTtlSeconds || 1_800) / 60),
+      )));
       // Load per-provider thinking config
       const thinkingCfg = (settingsData.providerThinking || {})[providerId] || {};
       setThinkingMode(thinkingCfg.mode || "auto");
@@ -401,20 +409,23 @@ export default function ProviderDetailPage() {
       const settingsRes = await fetch("/api/settings", { cache: "no-store" });
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
       const current = settingsData.providerStrategies || {};
+      const previous = current[providerId] || {};
+      const next = { ...previous };
 
-      // Build override: null strategy means remove override, use global
-      const override = {};
-      if (strategy) override.fallbackStrategy = strategy;
+      if (strategy) {
+        next.fallbackStrategy = strategy;
+      } else {
+        delete next.fallbackStrategy;
+      }
       if (strategy === "round-robin" && stickyLimit !== "") {
-        override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
+        next.stickyRoundRobinLimit = Number(stickyLimit) || 3;
+      } else if (!strategy) {
+        delete next.stickyRoundRobinLimit;
       }
 
       const updated = { ...current };
-      if (Object.keys(override).length === 0) {
-        delete updated[providerId];
-      } else {
-        updated[providerId] = override;
-      }
+      if (Object.keys(next).length === 0) delete updated[providerId];
+      else updated[providerId] = next;
 
       await fetch("/api/settings", {
         method: "PATCH",
@@ -423,6 +434,38 @@ export default function ProviderDetailPage() {
       });
     } catch (error) {
       reportClientError("Error saving provider strategy:", error);
+    }
+  };
+
+  const saveScheduler = async (enabled, minutes) => {
+    try {
+      const settingsRes = await fetch("/api/settings", { cache: "no-store" });
+      const settingsData = settingsRes.ok ? await settingsRes.json() : {};
+      const current = settingsData.providerStrategies || {};
+      const previous = current[providerId] || {};
+      const boundedMinutes = Math.min(
+        1_440,
+        Math.max(1, Number.parseInt(minutes, 10) || 30),
+      );
+      const updated = {
+        ...current,
+        [providerId]: {
+          ...previous,
+          accountScheduler: {
+            ...(previous.accountScheduler || {}),
+            enabled,
+            sessionAffinityTtlSeconds: boundedMinutes * 60,
+          },
+        },
+      };
+
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerStrategies: updated }),
+      });
+    } catch (error) {
+      reportClientError("Error saving balanced scheduler:", error);
     }
   };
 
@@ -437,6 +480,16 @@ export default function ProviderDetailPage() {
   const handleStickyLimitChange = (value) => {
     setProviderStickyLimit(value);
     saveProviderStrategy("round-robin", value);
+  };
+
+  const handleSchedulerToggle = (enabled) => {
+    setSchedulerEnabled(enabled);
+    saveScheduler(enabled, affinityMinutes);
+  };
+
+  const handleAffinityMinutesChange = (value) => {
+    setAffinityMinutes(value);
+    saveScheduler(schedulerEnabled, value);
   };
 
   const saveThinkingConfig = async (mode) => {
@@ -1563,26 +1616,56 @@ export default function ProviderDetailPage() {
                   )}
                 </>
               )}
-              {/* Round Robin toggle */}
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs text-text-muted font-medium">Round Robin</span>
-                <Toggle
-                  checked={providerStrategy === "round-robin"}
-                  onChange={handleRoundRobinToggle}
-                />
-                {providerStrategy === "round-robin" && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-text-muted">Sticky:</span>
-                    <input
-                      type="number"
-                      min={1}
-                      value={providerStickyLimit}
-                      onChange={(e) => handleStickyLimitChange(e.target.value)}
-                      placeholder="1"
-                      className="w-14 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary"
-                    />
-                  </div>
-                )}
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-text-muted font-medium">Balanced scheduler</span>
+                  <Toggle checked={schedulerEnabled} onChange={handleSchedulerToggle} />
+                  {schedulerEnabled && (
+                    <label className="flex items-center gap-1.5 text-xs text-text-muted">
+                      Affinity
+                      <input
+                        aria-label="Session affinity minutes"
+                        type="number"
+                        min={1}
+                        max={1440}
+                        value={affinityMinutes}
+                        onChange={(event) => handleAffinityMinutesChange(event.target.value)}
+                        className="w-16 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary"
+                      />
+                      min
+                    </label>
+                  )}
+                </div>
+                <p className="max-w-xl text-xs text-text-muted">
+                  Process-local least-inflight scheduling with fresh quota signals. Sessions stay on one account and rebind on failure, cooldown, or a best-effort connection cap. Round Robin stays saved but inactive while this is on.
+                </p>
+                <div
+                  className="flex flex-wrap items-center gap-2"
+                  title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
+                >
+                  <span className="text-xs text-text-muted font-medium">Round Robin</span>
+                  <Toggle
+                    checked={providerStrategy === "round-robin"}
+                    onChange={handleRoundRobinToggle}
+                    disabled={schedulerEnabled}
+                    title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
+                  />
+                  {providerStrategy === "round-robin" && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-text-muted">Sticky:</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={providerStickyLimit}
+                        onChange={(event) => handleStickyLimitChange(event.target.value)}
+                        placeholder="1"
+                        disabled={schedulerEnabled}
+                        title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
+                        className="w-14 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

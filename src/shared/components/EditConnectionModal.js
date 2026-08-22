@@ -14,6 +14,7 @@ export default function EditConnectionModal({ isOpen, connection, onSave, onClos
     name: "",
     priority: 1,
     apiKey: "",
+    maxConcurrentRequests: "",
   });
   const [azureData, setAzureData] = useState({
     azureEndpoint: "",
@@ -35,6 +36,9 @@ export default function EditConnectionModal({ isOpen, connection, onSave, onClos
         name: connection.name || "",
         priority: connection.priority || 1,
         apiKey: "",
+        maxConcurrentRequests: connection.maxConcurrentRequests == null
+          ? ""
+          : String(connection.maxConcurrentRequests),
       });
       // Load Azure-specific data if present
       if (connection.provider === "azure" && connection.providerSpecificData) {
@@ -120,6 +124,12 @@ export default function EditConnectionModal({ isOpen, connection, onSave, onClos
       const updates = {
         name: formData.name,
         priority: formData.priority,
+        maxConcurrentRequests: formData.maxConcurrentRequests === ""
+          ? null
+          : Math.min(
+            1_024,
+            Math.max(1, Number.parseInt(formData.maxConcurrentRequests, 10) || 1),
+          ),
       };
       if (!isOAuth && formData.apiKey) {
         updates.apiKey = formData.apiKey;
@@ -202,6 +212,20 @@ export default function EditConnectionModal({ isOpen, connection, onSave, onClos
           value={formData.priority}
           onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value, 10) || 1 })}
         />
+        <Input
+          label="Concurrent request cap"
+          type="number"
+          min={1}
+          max={1024}
+          value={formData.maxConcurrentRequests}
+          onChange={(event) => setFormData({
+            ...formData,
+            maxConcurrentRequests: event.target.value,
+          })}
+          placeholder="Unlimited"
+          hint="Blank means unlimited. Balanced scheduler uses this as a process-local best-effort cap based on observed in-flight requests; brief concurrent selections may exceed it."
+        />
+
 
         {!isOAuth && (
           <>
@@ -304,6 +328,7 @@ EditConnectionModal.propTypes = {
     name: PropTypes.string,
     email: PropTypes.string,
     priority: PropTypes.number,
+    maxConcurrentRequests: PropTypes.number,
     authType: PropTypes.string,
     provider: PropTypes.string,
     providerSpecificData: PropTypes.object,

@@ -255,6 +255,8 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
   const [selectedConnection, setSelectedConnection] = useState(null);
   const [providerStrategy, setProviderStrategy] = useState(null);
   const [providerStickyLimit, setProviderStickyLimit] = useState("1");
+  const [schedulerEnabled, setSchedulerEnabled] = useState(false);
+  const [affinityMinutes, setAffinityMinutes] = useState("30");
   const [confirmState, setConfirmState] = useState(null);
   const notify = useNotificationStore((s) => s.error);
 
@@ -271,6 +273,12 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
       const override = (settingsData.providerStrategies || {})[providerId] || {};
       setProviderStrategy(override.fallbackStrategy || null);
       setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
+      const scheduler = override.accountScheduler || {};
+      setSchedulerEnabled(scheduler.enabled === true);
+      setAffinityMinutes(String(Math.max(
+        1,
+        Math.round((scheduler.sessionAffinityTtlSeconds || 1_800) / 60),
+      )));
     } catch (e) { notify(e?.message || "Failed to load connections"); }
     finally { setLoading(false); }
   }, [notify, providerId]);
@@ -283,15 +291,56 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
       if (!res.ok) throw new Error(`Failed to load settings (${res.status})`);
       const data = await res.json();
       const current = data.providerStrategies || {};
-      const override = {};
-      if (strategy) override.fallbackStrategy = strategy;
-      if (strategy === "round-robin" && stickyLimit !== "") override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
+      const previous = current[providerId] || {};
+      const next = { ...previous };
+      if (strategy) next.fallbackStrategy = strategy;
+      else delete next.fallbackStrategy;
+      if (strategy === "round-robin" && stickyLimit !== "") {
+        next.stickyRoundRobinLimit = Number(stickyLimit) || 3;
+      } else if (!strategy) {
+        delete next.stickyRoundRobinLimit;
+      }
       const updated = { ...current };
-      if (Object.keys(override).length === 0) delete updated[providerId];
-      else updated[providerId] = override;
-      const updateRes = await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ providerStrategies: updated }) });
+      if (Object.keys(next).length === 0) delete updated[providerId];
+      else updated[providerId] = next;
+      const updateRes = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerStrategies: updated }),
+      });
       if (!updateRes.ok) throw new Error(`Failed to save strategy (${updateRes.status})`);
     } catch (e) { notify(e?.message || "Failed to save provider strategy"); }
+  };
+
+  const saveScheduler = async (enabled, minutes) => {
+    try {
+      const res = await fetch("/api/settings", { cache: "no-store" });
+      if (!res.ok) throw new Error(`Failed to load settings (${res.status})`);
+      const data = await res.json();
+      const current = data.providerStrategies || {};
+      const previous = current[providerId] || {};
+      const boundedMinutes = Math.min(
+        1_440,
+        Math.max(1, Number.parseInt(minutes, 10) || 30),
+      );
+      const updated = {
+        ...current,
+        [providerId]: {
+          ...previous,
+          accountScheduler: {
+            ...(previous.accountScheduler || {}),
+            enabled,
+            sessionAffinityTtlSeconds: boundedMinutes * 60,
+          },
+        },
+      };
+      const updateRes = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerStrategies: updated }),
+      });
+      if (!updateRes.ok) throw new Error(`Failed to save scheduler (${updateRes.status})`);
+    } catch (e) { notify(e?.message || "Failed to save balanced scheduler"); }
   };
 
   const handleSwapPriority = async (i1, i2) => {
@@ -355,27 +404,72 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
       <Card>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
           <h2 className="text-lg font-semibold">Connections</h2>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-text-muted font-medium">Round Robin</span>
-            <Toggle
-              checked={providerStrategy === "round-robin"}
-              onChange={(enabled) => {
-                const strategy = enabled ? "round-robin" : null;
-                setProviderStrategy(strategy);
-                if (enabled && !providerStickyLimit) setProviderStickyLimit("1");
-                saveStrategy(strategy, enabled ? (providerStickyLimit || "1") : providerStickyLimit);
-              }}
-            />
-            {providerStrategy === "round-robin" && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-xs text-text-muted">Sticky:</span>
-                <input
-                  type="number" min={1} value={providerStickyLimit}
-                  onChange={(e) => { setProviderStickyLimit(e.target.value); saveStrategy("round-robin", e.target.value); }}
-                  className="w-16 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary"
-                />
-              </div>
-            )}
+          <div className="flex max-w-full flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-text-muted font-medium">Balanced scheduler</span>
+              <Toggle
+                checked={schedulerEnabled}
+                onChange={(enabled) => {
+                  setSchedulerEnabled(enabled);
+                  saveScheduler(enabled, affinityMinutes);
+                }}
+              />
+              {schedulerEnabled && (
+                <label className="flex items-center gap-1.5 text-xs text-text-muted">
+                  Affinity
+                  <input
+                    aria-label="Session affinity minutes"
+                    type="number"
+                    min={1}
+                    max={1440}
+                    value={affinityMinutes}
+                    onChange={(event) => {
+                      setAffinityMinutes(event.target.value);
+                      saveScheduler(schedulerEnabled, event.target.value);
+                    }}
+                    className="w-16 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary"
+                  />
+                  min
+                </label>
+              )}
+            </div>
+            <p className="max-w-xl text-xs text-text-muted">
+              Process-local least-inflight scheduling with fresh quota signals. Sessions rebind on failure, cooldown, or a best-effort connection cap. Round Robin stays saved but inactive while this is on.
+            </p>
+            <div
+              className="flex flex-wrap items-center gap-2"
+              title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
+            >
+              <span className="text-xs text-text-muted font-medium">Round Robin</span>
+              <Toggle
+                checked={providerStrategy === "round-robin"}
+                disabled={schedulerEnabled}
+                title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
+                onChange={(enabled) => {
+                  const strategy = enabled ? "round-robin" : null;
+                  setProviderStrategy(strategy);
+                  if (enabled && !providerStickyLimit) setProviderStickyLimit("1");
+                  saveStrategy(strategy, enabled ? (providerStickyLimit || "1") : providerStickyLimit);
+                }}
+              />
+              {providerStrategy === "round-robin" && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs text-text-muted">Sticky:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={providerStickyLimit}
+                    disabled={schedulerEnabled}
+                    title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
+                    onChange={(event) => {
+                      setProviderStickyLimit(event.target.value);
+                      saveStrategy("round-robin", event.target.value);
+                    }}
+                    className="w-16 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
