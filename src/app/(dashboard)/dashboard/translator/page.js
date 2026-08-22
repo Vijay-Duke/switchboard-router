@@ -46,6 +46,7 @@ export default function TranslatorPage() {
     delete next[id];
     return next;
   });
+  const setContentValue = (id, value) => setContents(prev => ({ ...prev, [id]: value }));
 
   const openNext = (nextId) => setExpanded(prev => {
     const next = {};
@@ -62,7 +63,7 @@ export default function TranslatorPage() {
       const res = await fetch(`/api/translator/load?file=${step.file}`);
       const data = await res.json();
       if (data.success) {
-        setContents(stepId, data.content);
+        setContentValue(stepId, data.content);
         if (stepId === 1) await detectMeta(data.content);
       } else {
         reportClientError(data.error || "File not found");
@@ -111,7 +112,7 @@ export default function TranslatorPage() {
       const data = await res.json();
       if (!data.success) { reportClientError(data.error); setStepError(1, data.error); return; }
       const str = JSON.stringify(data.result.body, null, 2);
-      setContents(3, str);
+      setContentValue(3, str);
       clearStepError(1);
       openNext(3);
     } catch (e) {
@@ -140,7 +141,7 @@ export default function TranslatorPage() {
       if (!data.success) { reportClientError(data.error); setStepError(3, data.error); return; }
       // Embed provider + model so Send works even without meta
       const step4Content = { ...data.result, provider: meta?.provider, model: meta?.model };
-      setContents(4, JSON.stringify(step4Content, null, 2));
+      setContentValue(4, JSON.stringify(step4Content, null, 2));
       clearStepError(3);
       openNext(4);
     } catch (e) {
@@ -197,7 +198,7 @@ export default function TranslatorPage() {
         full += decoder.decode(value, { stream: true });
       }
 
-      setContents(5, full);
+      setContentValue(5, full);
       openNext(5);
 
       // Save to logs/translator/5_res_provider.txt
@@ -225,7 +226,7 @@ export default function TranslatorPage() {
   const handleFormat = (id) => {
     try {
       const obj = JSON.parse(contents[id]);
-      setContents(id, JSON.stringify(obj, null, 2));
+      setContentValue(id, JSON.stringify(obj, null, 2));
       clearStepError(id);
     } catch (e) {
       setStepError(id, `Invalid JSON: ${e.message}`);
@@ -296,7 +297,7 @@ export default function TranslatorPage() {
                       defaultLanguage={step.lang === "text" ? "plaintext" : "json"}
                       value={content}
                       onChange={(v) => {
-                        setContents(step.id, v || "");
+                        setContentValue(step.id, v || "");
                         clearStepError(step.id);
                         if (step.id === 1) detectMeta(v || "");
                       }}

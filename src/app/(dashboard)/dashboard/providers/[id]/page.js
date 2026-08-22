@@ -1599,7 +1599,7 @@ export default function ProviderDetailPage() {
               <div className="flex flex-col gap-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs text-text-muted font-medium">Balanced scheduler</span>
-                  <Toggle checked={schedulerEnabled} onChange={handleSchedulerToggle} />
+                  <Toggle checked={schedulerEnabled} onChange={handleSchedulerToggle} aria-label="Balanced scheduler" />
                   {schedulerEnabled && (
                     <label className="flex items-center gap-1.5 text-xs text-text-muted">
                       Affinity
@@ -1624,9 +1624,10 @@ export default function ProviderDetailPage() {
                   title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
                 >
                   <span className="text-xs text-text-muted font-medium">Round Robin</span>
-                  <Toggle
-                    checked={providerStrategy === "round-robin"}
-                    onChange={handleRoundRobinToggle}
+                   <Toggle
+                     checked={providerStrategy === "round-robin"}
+                     onChange={handleRoundRobinToggle}
+                    aria-label="Round Robin"
                     disabled={schedulerEnabled}
                     title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
                   />

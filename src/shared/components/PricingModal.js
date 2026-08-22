@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useDialog } from "@/shared/hooks/useDialog.js";
 import { getDefaultPricing, formatCost } from "open-sse/providers/pricing.js";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 import { requestConfirmation } from "@/store/confirmationStore";
@@ -9,6 +10,7 @@ export default function PricingModal({ isOpen, onClose, onSave }) {
   const [pricingData, setPricingData] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const { ref: dialogRef } = useDialog({ isOpen, onClose });
 
   useEffect(() => {
     if (isOpen) {
@@ -97,13 +99,21 @@ export default function PricingModal({ isOpen, onClose, onSave }) {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-bg-base border border-border rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+      <div
+        className="bg-bg-base border border-border rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Pricing Configuration"
+        ref={dialogRef}
+        tabIndex={-1}
+      >
         {/* Header */}
         <div className="p-4 border-b border-border flex items-center justify-between">
           <h2 className="text-xl font-semibold">Pricing Configuration</h2>
           <button
             onClick={onClose}
             className="text-text-muted hover:text-text text-2xl leading-none"
+            aria-label="Close"
           >
             ×
           </button>
