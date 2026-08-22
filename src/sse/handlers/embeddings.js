@@ -4,7 +4,6 @@ import {
   markAccountUnavailable,
   clearAccountError,
   extractApiKey,
-  isValidApiKey,
 } from "../services/auth.js";
 import { getSettings } from "@/lib/db/index.js";
 import { getModelInfo } from "../services/model.js";
@@ -13,8 +12,7 @@ import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
-import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
-import { hasValidCliToken } from "@/shared/utils/cliToken.js";
+import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
 
 /**
  * Handle embeddings request for the SSE/Next.js server.
@@ -41,20 +39,16 @@ export async function handleEmbeddings(request) {
 
   log.request("POST", `${url.pathname} | ${modelStr}`);
 
-  // Log API key (masked)
-  const apiKey = extractApiKey(request);
-  if (apiKey) {
-    log.debug("AUTH", `API Key: ${log.maskKey(apiKey)}`);
-  } else {
-    log.debug("AUTH", "No API key provided (local mode)");
-  }
-
-  // Enforce API key if enabled in settings (L3 shared gate)
   const settings = await getSettings();
-  const denied = await gateRequireApiKey(settings, apiKey, {
-    isValidApiKey, log, errorResponse, HTTP_STATUS, request, hasValidCliToken,
+  const auth = await authorizeClientKeyRequest({
+    settings,
+    rawKey: extractApiKey(request),
+    request,
+    target: { kind: "model", id: modelStr },
   });
-  if (denied) return denied;
+  if (!auth.ok) return auth.response;
+  return runWithClientKeyLease(auth.lease, async () => {
+    const { clientKeyId } = auth;
 
   if (!modelStr) {
     log.warn("EMBEDDINGS", "Missing model");
@@ -112,6 +106,7 @@ export async function handleEmbeddings(request) {
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
     const result = await handleEmbeddingsCore({
+      clientKeyId,
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
@@ -142,4 +137,5 @@ export async function handleEmbeddings(request) {
 
     return result.response;
   }
+  });
 }

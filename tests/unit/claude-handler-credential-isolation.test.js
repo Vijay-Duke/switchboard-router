@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   applyJudgeScoreByRequestId: vi.fn(),
+  authorizeClientKeyRequest: vi.fn(),
   checkAndRefreshToken: vi.fn(),
   clearAccountError: vi.fn(),
   gateRequireApiKey: vi.fn(),
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   handleChatCore: vi.fn(),
   markAccountUnavailable: vi.fn(),
   setRoutingWriteHook: vi.fn(),
+  runWithClientKeyLease: vi.fn(),
   updateProviderCredentials: vi.fn(),
 }));
 
@@ -68,6 +70,11 @@ vi.mock("@/shared/utils/cliToken.js", () => ({
   hasValidCliToken: vi.fn(),
 }));
 
+vi.mock("@/sse/services/clientKeyPolicy.js", () => ({
+  authorizeClientKeyRequest: mocks.authorizeClientKeyRequest,
+  runWithClientKeyLease: mocks.runWithClientKeyLease,
+}));
+
 vi.mock("@/sse/utils/logger.js", () => ({
   debug: vi.fn(),
   error: vi.fn(),
@@ -107,6 +114,12 @@ function claudeRequest(model) {
 describe("Claude handler credential isolation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.authorizeClientKeyRequest.mockResolvedValue({
+      ok: true,
+      clientKeyId: null,
+      lease: null,
+    });
+    mocks.runWithClientKeyLease.mockImplementation(async (_lease, work) => work());
     mocks.getSettings.mockResolvedValue({
       requireApiKey: false,
       comboStrategies: {},

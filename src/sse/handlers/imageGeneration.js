@@ -3,7 +3,6 @@ import {
   markAccountUnavailable,
   clearAccountError,
   extractApiKey,
-  isValidApiKey,
 } from "../services/auth.js";
 import { getSettings } from "@/lib/db/index.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
@@ -13,8 +12,7 @@ import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleComboChat } from "open-sse/services/combo.js";
 import * as log from "../utils/logger.js";
-import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
-import { hasValidCliToken } from "@/shared/utils/cliToken.js";
+import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
 
 // Providers that don't require credentials (noAuth)
 const NO_AUTH_PROVIDERS = new Set(["sdwebui", "comfyui"]);
@@ -41,18 +39,22 @@ export async function handleImageGeneration(request) {
   const binaryOutput = url.searchParams.get("response_format") === "binary";
   const modelStr = body.model;
 
-  const apiKey = extractApiKey(request);
   const settings = await getSettings();
-  const denied = await gateRequireApiKey(settings, apiKey, {
-    isValidApiKey, log, errorResponse, HTTP_STATUS, request, hasValidCliToken,
+  const comboModels = modelStr ? await getComboModels(modelStr) : null;
+  const auth = await authorizeClientKeyRequest({
+    settings,
+    rawKey: extractApiKey(request),
+    request,
+    target: { kind: comboModels ? "combo" : "model", id: modelStr },
   });
-  if (denied) return denied;
+  if (!auth.ok) return auth.response;
+  return runWithClientKeyLease(auth.lease, async () => {
+    const { clientKeyId } = auth;
 
   if (!modelStr) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   if (!body.prompt) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: prompt");
 
   // Combo expansion: model may be a combo name → run fallback/round-robin across models
-  const comboModels = await getComboModels(modelStr);
   if (comboModels) {
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[modelStr]?.fallbackStrategy || settings.comboStrategy || "fallback";
@@ -61,7 +63,7 @@ export async function handleImageGeneration(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m, callOpts) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, signal: callOpts?.signal }),
+      handleSingleModel: (b, m, callOpts) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, signal: callOpts?.signal }),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -70,10 +72,11 @@ export async function handleImageGeneration(request) {
     });
   }
 
-  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, signal: request?.signal || null });
+  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, signal: request?.signal || null });
+  });
 }
 
-async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, signal = null } = {}) {
+async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, signal = null } = {}) {
   const modelInfo = await getModelInfo(modelStr);
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
@@ -82,6 +85,7 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
   // noAuth providers — no credential needed
   if (NO_AUTH_PROVIDERS.has(provider)) {
     const result = await handleImageGenerationCore({
+      clientKeyId,
       body,
       modelInfo: { provider, model },
       credentials: null,
@@ -118,6 +122,7 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
     const result = await handleImageGenerationCore({
+      clientKeyId,
       body,
       modelInfo: { provider, model },
       credentials: refreshedCredentials,

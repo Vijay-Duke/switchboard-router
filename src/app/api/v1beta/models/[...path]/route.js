@@ -3,13 +3,13 @@ import { handleChat } from "@/sse/handlers/chat.js";
 import {
   clearAccountError,
   getProviderCredentials,
-  isValidApiKey,
   markAccountUnavailable,
 } from "@/sse/services/auth.js";
 import { getSettings } from "@/lib/db/index.js";
 import { PROVIDER_MODELS } from "@/shared/constants/models";
 import { GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS } from "open-sse/config/runtimeConfig.js";
 import { initTranslators } from "open-sse/translator/index.js";
+import { authorizeClientKeyRequest, runWithClientKeyLease } from "@/sse/services/clientKeyPolicy.js";
 
 let initialized = false;
 const GEMINI_NATIVE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -177,22 +177,6 @@ function buildGeminiNativeUrl(requestUrl, model, action) {
   return upstreamUrl.toString();
 }
 
-async function validateGeminiNativeClientKey(request) {
-  const settings = await getSettings();
-  if (!settings.requireApiKey) return null;
-
-  const apiKey = extractGeminiClientApiKey(request);
-  if (!apiKey) {
-    return Response.json({ error: { message: "Missing API key" } }, { status: 401 });
-  }
-
-  const valid = await isValidApiKey(apiKey);
-  if (!valid) {
-    return Response.json({ error: { message: "Invalid API key" } }, { status: 401 });
-  }
-
-  return null;
-}
 
 function buildGeminiNativeAuthHeaders(credentials) {
   if (credentials?.apiKey) return { "x-goog-api-key": credentials.apiKey };
@@ -235,10 +219,19 @@ function getSafeGeminiNativeErrorText(error) {
 }
 
 async function forwardGeminiNativeRequest(request, body, model, action) {
-  const authError = await validateGeminiNativeClientKey(request);
-  if (authError) return authError;
-
+  const settings = await getSettings();
   const modelId = normalizeGeminiNativeModel(model);
+  const auth = await authorizeClientKeyRequest({
+    settings,
+    rawKey: extractGeminiClientApiKey(request),
+    request,
+    target: { kind: "model", id: `gemini/${modelId}` },
+  });
+  if (!auth.ok) return auth.response;
+  return runWithClientKeyLease(auth.lease, async () => {
+    const { clientKeyId } = auth;
+
+  void clientKeyId;
   if (!GEMINI_NATIVE_MODEL_PATTERN.test(modelId)) {
     return Response.json({ error: { message: "Invalid model" } }, { status: 400 });
   }
@@ -361,6 +354,7 @@ async function forwardGeminiNativeRequest(request, body, model, action) {
       headers: corsHeadersFrom(upstreamResponse),
     });
   }
+  });
 }
 
 /**
