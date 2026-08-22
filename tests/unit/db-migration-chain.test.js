@@ -2,7 +2,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import nodeCrypto from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 let tempDir;
@@ -240,6 +239,8 @@ describe("Schema migrations", () => {
     expect(repaired.get(`SELECT COUNT(*) count FROM usageHistory`).count).toBe(1);
     expect(repaired.get(`SELECT spentUsd FROM apiKeys WHERE id = 'repaired'`).spentUsd).toBe(4);
     expect(repaired.get(`SELECT value FROM _meta WHERE key = 'migratedAt'`)?.value).toBeTruthy();
+    expect(fs.readFileSync(path.join(backupRoot, migrationBackup, "db.json"), "utf8")).not.toContain("legacy-one");
+    expect(fs.readFileSync(path.join(backupRoot, migrationBackup, "usage.json"), "utf8")).not.toContain("legacy-one");
     expect(fs.readFileSync(mainPath, "utf8")).not.toContain("legacy-one");
   });
 
@@ -247,7 +248,7 @@ describe("Schema migrations", () => {
     const { getAdapter } = await import("@/lib/db/driver.js");
     const db = await getAdapter();
     expect(db.get(`SELECT value FROM _meta WHERE key = 'schemaVersion'`)?.value).toBe("9");
-    db.run(`INSERT INTO settings(id, data) VALUES(1, '{"partial":true}')`);
+    db.run(`INSERT INTO kv(scope, key, value) VALUES('modelAliases', 'partial', '"keep"')`);
     db.close?.();
 
     const mainBytes = JSON.stringify({ apiKeys: [{ id: "unproved", key: "raw-unproved-secret" }] });
@@ -268,27 +269,34 @@ describe("Schema migrations", () => {
     expect(restarted.get(`SELECT value FROM _meta WHERE key = 'migratedAt'`)).toBeUndefined();
     expect(fs.readFileSync(path.join(tempDir, "db.json"), "utf8")).toBe(mainBytes);
     expect(fs.readFileSync(path.join(tempDir, "usage.json"), "utf8")).toBe(usageBytes);
+    expect(restarted.get(`SELECT value FROM kv WHERE scope = 'modelAliases' AND key = 'partial'`)?.value).toBe('"keep"');
     expect(fs.readFileSync(path.join(backupDir, "db.json"), "utf8")).toBe(mainBytes);
     expect(fs.readFileSync(path.join(backupDir, "usage.json"), "utf8")).toBe(usageBytes);
     expect(fs.existsSync(path.join(tempDir, "db", ".legacy-secrets-sanitized"))).toBe(false);
   });
-  it("imports large legacy usage without verifier KDF work per history row", async () => {
+  it("imports packed-key legacy usage without verifier KDF work per history row", async () => {
     const raw = "sk-legacy-large";
+    const { matchesApiKeyRecord, packApiKeyRecord } = await import("@/lib/crypto/secrets.js");
+    const packed = packApiKeyRecord(raw);
     fs.writeFileSync(path.join(tempDir, "db.json"), JSON.stringify({
-      apiKeys: [{ id: "large-key", key: raw, createdAt: "2026-08-20T00:00:00.000Z" }],
+      apiKeys: [{ id: "large-key", key: packed, createdAt: "2026-08-20T00:00:00.000Z" }],
     }));
     fs.writeFileSync(path.join(tempDir, "usage.json"), JSON.stringify({
       history: Array.from({ length: 250 }, (_, index) => ({
-        apiKey: raw, provider: "openai", model: "gpt-5", cost: 1, timestamp: new Date(1_700_000_000_000 + index).toISOString(),
+        apiKey: raw, provider: "openai", model: "gpt-5", cost: 1,
+        timestamp: new Date(1_700_000_000_000 + index).toISOString(),
       })),
     }));
-    const scryptSync = vi.spyOn(nodeCrypto, "scryptSync");
+    const verifierResolution = vi.fn(matchesApiKeyRecord);
+    const migrationModule = await import("@/lib/db/migrate.js");
+    migrationModule.__setLegacyKeyMatcherForTests(verifierResolution);
     const { getAdapter } = await import("@/lib/db/driver.js");
     const db = await getAdapter();
     expect(db.get(`SELECT COUNT(*) count FROM usageHistory`).count).toBe(250);
+    expect(db.get(`SELECT DISTINCT clientKeyId FROM usageHistory`)).toEqual({ clientKeyId: "large-key" });
     expect(db.get(`SELECT spentUsd FROM apiKeys WHERE id = 'large-key'`).spentUsd).toBe(250);
-    expect(scryptSync.mock.calls.length).toBeLessThanOrEqual(2);
-    scryptSync.mockRestore();
+    expect(verifierResolution).toHaveBeenCalledOnce();
+    migrationModule.__setLegacyKeyMatcherForTests();
   }, 15_000);
 
   it("auto-sync re-creates missing index when DB lacks it", async () => {

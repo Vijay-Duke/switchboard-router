@@ -8,7 +8,7 @@ import { makeBackupDir, backupFile, pruneOldBackups } from "./backup.js";
 import { getAppVersion } from "./version.js";
 import { stringifyJson } from "./helpers/jsonCol.js";
 import { connToRow } from "./repos/connectionsRepo.js";
-import { normalizeApiKeyRecordLookup, packApiKeyRecord, unpackApiKeyRecord } from "@/lib/crypto/secrets.js";
+import { matchesApiKeyRecord, normalizeApiKeyRecordLookup, packApiKeyRecord, unpackApiKeyRecord } from "@/lib/crypto/secrets.js";
 import { resolveClientKeyId, scrubUsageDailyData } from "./migrations/008-client-key-identity.js";
 import { rebuildPrometheusMetrics } from "./migrations/009-prometheus-materialization.js";
 
@@ -18,6 +18,11 @@ const LEGACY_SANITIZED_MARKER = path.join(DB_DIR, ".legacy-secrets-sanitized");
 
 // Track per-adapter so reusing same adapter skips re-run, but new adapter (after reset) re-runs.
 const _migratedAdapters = new WeakSet();
+let _legacyKeyMatcher = matchesApiKeyRecord;
+
+export function __setLegacyKeyMatcherForTests(matcher = matchesApiKeyRecord) {
+  _legacyKeyMatcher = matcher;
+}
 
 // Thrown when row-count assertion fails. Outer transaction rolls back,
 // legacy db.json kept intact, marker not written → next boot retries.
@@ -48,18 +53,32 @@ function readJsonSafe(file) {
   try { return JSON.parse(fs.readFileSync(file, "utf-8")); } catch { return null; }
 }
 
-function buildLegacyKeyIdMap(data) {
+function buildLegacyKeyIdMap(data, usage) {
   const map = new Map();
+  const records = [];
   for (const key of data?.apiKeys || []) {
     if (typeof key?.key !== "string" || !key.id) continue;
     const normalized = normalizeApiKeyRecordLookup(key.key);
+    records.push({ id: key.id, stored: normalized });
     if (unpackApiKeyRecord(normalized).legacy) map.set(String(key.key), key.id);
+  }
+  const rawValues = new Set((usage?.history || []).map((entry) => entry?.apiKey).filter((raw) => typeof raw === "string" && raw !== "local-no-key"));
+  for (const day of Object.values(usage?.dailySummary || {})) {
+    for (const [counterKey, entry] of Object.entries(day?.byApiKey || {})) {
+      const raw = typeof entry?.apiKey === "string" ? entry.apiKey : counterKey.split("|")[0];
+      if (raw && raw !== "local-no-key") rawValues.add(String(raw));
+    }
+  }
+  for (const raw of rawValues) {
+    if (map.has(raw)) continue;
+    const matched = records.find((record) => _legacyKeyMatcher(record.stored, raw));
+    if (matched) map.set(raw, matched.id);
   }
   return map;
 }
 
 function legacyImportTargetIsEmpty(adapter) {
-  for (const table of ["settings", "providerConnections", "providerNodes", "proxyPools", "apiKeys", "combos", "usageHistory", "usageDaily", "requestDetails"]) {
+  for (const table of ["settings", "providerConnections", "providerNodes", "proxyPools", "apiKeys", "combos", "kv", "usageHistory", "usageDaily", "requestDetails"]) {
     if ((adapter.get(`SELECT COUNT(*) count FROM ${table}`)?.count || 0) !== 0) return false;
   }
   return true;
@@ -73,9 +92,9 @@ function writeJsonRestricted(file, value) {
   fs.chmodSync(file, 0o600);
 }
 
-function sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir = null) {
+function sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir = null, legacyKeyIds = null) {
   const keys = adapter.all(`SELECT id, key FROM apiKeys`) || [];
-  const legacyKeyIds = buildLegacyKeyIdMap(legacyMain);
+  legacyKeyIds ||= buildLegacyKeyIdMap(legacyMain, legacyUsage);
   const storedById = new Map(keys.map((key) => [key.id, key.key]));
   const main = legacyMain && typeof legacyMain === "object"
     ? {
@@ -104,7 +123,7 @@ function sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir = nul
     if (main) writeJsonRestricted(path.join(backupDir, path.basename(LEGACY_FILES.main)), main);
     if (usage) writeJsonRestricted(path.join(backupDir, path.basename(LEGACY_FILES.usage)), usage);
   }
-  if (!backupDir && fs.existsSync(BACKUPS_DIR)) {
+  if (fs.existsSync(BACKUPS_DIR)) {
     for (const entry of fs.readdirSync(BACKUPS_DIR, { withFileTypes: true })) {
       if (entry.isDirectory() && entry.name.startsWith("migrate-from-json-")) {
         const dir = path.join(BACKUPS_DIR, entry.name);
@@ -342,7 +361,7 @@ export async function runMigrationOnce(adapter) {
     const t0 = Date.now();
     const backupDir = makeBackupDir("migrate-from-json");
     for (const f of Object.values(LEGACY_FILES)) backupFile(f, backupDir);
-    const legacyKeyIds = buildLegacyKeyIdMap(legacyMain);
+    const legacyKeyIds = buildLegacyKeyIdMap(legacyMain, legacyUsage);
 
     try {
       adapter.transaction(() => {
@@ -363,7 +382,7 @@ export async function runMigrationOnce(adapter) {
     }
 
     adapter.checkpoint?.();
-    sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir);
+    sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir, legacyKeyIds);
     fs.writeFileSync(LEGACY_SANITIZED_MARKER, new Date().toISOString(), { mode: 0o600 });
     fs.writeFileSync(MIGRATED_MARKER, new Date().toISOString(), { mode: 0o600 });
     pruneOldBackups();
