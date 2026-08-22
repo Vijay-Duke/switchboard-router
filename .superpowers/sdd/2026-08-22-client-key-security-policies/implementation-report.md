@@ -432,3 +432,16 @@ Commit `88fe0e9d fix: preserve packed legacy attribution` closes the three resid
 - Empty-target safety now includes `kv`; a proofless schema-9 database with pre-existing KV state refuses retry and preserves both KV and raw rollback sources.
 
 Focused verification: `npm --prefix tests test -- unit/db-migration-chain.test.js unit/client-key-migration.test.js` → **2 files, 13 tests, 0 failures**.
+
+## Historical backup payload preservation
+
+Commit `7f23b8c7 fix: sanitize legacy backups in place` makes sanitization payload-local:
+
+- Active `db.json`/`usage.json` are sanitized from the active payload.
+- Every `migrate-from-json-*` directory reads and sanitizes its own main/usage payload, preserving its distinct settings, rows, totals, metadata, and resolvable `clientKeyId` attribution while nulling raw `apiKey`.
+- Same-second backup names receive a unique numeric suffix, preventing a repaired attempt from overwriting the failed attempt before sanitization.
+- Verifier-match results are memoized only for identical record/raw pairs during the run, so active and identical backup payloads do not repeat KDF work while distinct historical payloads retain their own resolution map.
+
+RED: the distinct-backup regression received repaired active settings in the failed backup.
+
+GREEN: `npm --prefix tests test -- unit/db-migration-chain.test.js unit/client-key-migration.test.js` → **2 files, 13 tests, 0 failures**.
