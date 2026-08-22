@@ -202,6 +202,123 @@ describe("selectScheduledConnection", () => {
     expect(other).toMatchObject({ connection: { id: "b" }, reason: "least-inflight" });
   });
 
+  it("isolates identical provider sessions by authenticated client key", () => {
+    selectScheduledConnection({
+      providerId: "p",
+      clientKeyId: "client-a",
+      candidates: [connection("a"), connection("b")],
+      sessionKey: "shared-session",
+      getInFlightCount: counts({ a: 0, b: 1 }),
+      now: NOW,
+    });
+    const otherClient = selectScheduledConnection({
+      providerId: "p",
+      clientKeyId: "client-b",
+      candidates: [connection("a"), connection("b")],
+      sessionKey: "shared-session",
+      getInFlightCount: counts({ a: 9, b: 0 }),
+      now: NOW + 1,
+    });
+    expect(otherClient).toMatchObject({
+      connection: { id: "b" },
+      reason: "least-inflight",
+      affinityRebound: false,
+    });
+  });
+
+  it("invalidates a live binding when no candidates or only capped candidates remain", () => {
+    const options = {
+      providerId: "p",
+      clientKeyId: "client-a",
+      sessionKey: "s",
+      getInFlightCount: counts({ a: 0, b: 1 }),
+      now: NOW,
+    };
+    selectScheduledConnection({
+      ...options,
+      candidates: [connection("a"), connection("b")],
+    });
+
+    expect(selectScheduledConnection({
+      ...options,
+      candidates: [],
+      now: NOW + 1,
+    })).toMatchObject({
+      connection: null,
+      reason: "no-candidates",
+      affinityRebound: true,
+    });
+
+    const recovered = selectScheduledConnection({
+      ...options,
+      candidates: [connection("a"), connection("b")],
+      getInFlightCount: counts({ a: 9, b: 0 }),
+      now: NOW + 2,
+    });
+    expect(recovered).toMatchObject({
+      connection: { id: "b" },
+      reason: "least-inflight",
+      affinityRebound: false,
+    });
+
+    expect(selectScheduledConnection({
+      ...options,
+      candidates: [
+        connection("a", { maxConcurrentRequests: 1 }),
+        connection("b", { maxConcurrentRequests: 1 }),
+      ],
+      getInFlightCount: counts({ a: 1, b: 1 }),
+      now: NOW + 3,
+    })).toMatchObject({
+      connection: null,
+      reason: "capacity-exhausted",
+      affinityRebound: true,
+    });
+    expect(selectScheduledConnection({
+      ...options,
+      candidates: [connection("a"), connection("b")],
+      getInFlightCount: counts({ a: 0, b: 9 }),
+      now: NOW + 4,
+    })).toMatchObject({
+      connection: { id: "a" },
+      reason: "least-inflight",
+      affinityRebound: false,
+    });
+  });
+
+  it("contains eviction pressure within the attacking client and provider scope", () => {
+    selectScheduledConnection({
+      providerId: "p",
+      clientKeyId: "victim",
+      candidates: [connection("a"), connection("b")],
+      sessionKey: "victim-session",
+      getInFlightCount: counts({ a: 0, b: 1 }),
+      now: NOW,
+    });
+    for (let index = 0; index < 5_001; index += 1) {
+      selectScheduledConnection({
+        providerId: "p",
+        clientKeyId: "attacker",
+        candidates: [connection("a"), connection("b")],
+        sessionKey: `attacker-${index}`,
+        getInFlightCount: counts({ a: 0, b: 1 }),
+        now: NOW + index + 1,
+      });
+    }
+    expect(selectScheduledConnection({
+      providerId: "p",
+      clientKeyId: "victim",
+      candidates: [connection("a"), connection("b")],
+      sessionKey: "victim-session",
+      getInFlightCount: counts({ a: 9, b: 0 }),
+      now: NOW + 5_003,
+    })).toMatchObject({
+      connection: { id: "a" },
+      reason: "session-affinity",
+      affinityRebound: false,
+    });
+  });
+
   it("expires affinity and scores again", () => {
     const options = {
       providerId: "p",

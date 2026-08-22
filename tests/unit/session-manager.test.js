@@ -90,4 +90,26 @@ describe("resolveAffinitySessionId", () => {
       scope: "anthropic",
     })).toBeNull();
   });
+
+  it("isolates assistant-derived affinity by authenticated client key", () => {
+    const first = resolveAffinitySessionId({
+      headers: {},
+      body: bodyWithAssistant,
+      scope: "anthropic",
+      clientKeyId: "client-a",
+    });
+    const second = resolveAffinitySessionId({
+      headers: {},
+      body: bodyWithAssistant,
+      scope: "anthropic",
+      clientKeyId: "client-b",
+    });
+    expect(first).not.toBe(second);
+    expect(resolveAffinitySessionId({
+      headers: {},
+      body: bodyWithAssistant,
+      scope: "anthropic",
+      clientKeyId: "client-a",
+    })).toBe(first);
+  });
 });

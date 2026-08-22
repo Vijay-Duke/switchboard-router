@@ -136,6 +136,41 @@ it("rebinds after exclusion and honors model cooldown filtering", async () => {
   expect(cooldown.connectionId).toBe("second");
 });
 
+it("invalidates affinity when hard filters temporarily remove every account", async () => {
+  mocks.getConnectionInFlightCount.mockReturnValue(0);
+  const first = await getProviderCredentials("test", null, "m", {
+    sessionKey: "locked-session",
+    clientKeyId: "client-a",
+  });
+  expect(first.connectionId).toBe("first");
+
+  mocks.getProviderConnections.mockResolvedValue(base.map((connection) => ({
+    ...connection,
+    modelLock_m: new Date(NOW + 60_000).toISOString(),
+  })));
+  const locked = await getProviderCredentials("test", null, "m", {
+    sessionKey: "locked-session",
+    clientKeyId: "client-a",
+  });
+  expect(locked).toMatchObject({
+    allRateLimited: true,
+    selectionReason: "no-candidates",
+    affinityRebound: true,
+  });
+
+  mocks.getProviderConnections.mockResolvedValue(base);
+  mocks.getConnectionInFlightCount.mockImplementation((id) => (id === "first" ? 9 : 0));
+  const recovered = await getProviderCredentials("test", null, "m", {
+    sessionKey: "locked-session",
+    clientKeyId: "client-a",
+  });
+  expect(recovered).toMatchObject({
+    connectionId: "second",
+    selectionReason: "least-inflight",
+    affinityRebound: false,
+  });
+});
+
 it("returns the compatibility unavailable envelope when every eligible account is capped", async () => {
   mocks.getProviderConnections.mockResolvedValue(base.map((connection) => ({
     ...connection,

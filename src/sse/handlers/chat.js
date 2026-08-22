@@ -701,6 +701,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     headers: request?.headers,
     body,
     scope: provider,
+    clientKeyId,
   });
 
 
@@ -713,6 +714,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         preferredConnectionId: callOpts?.preferredConnectionId || null,
         strictPreferredConnection: callOpts?.strictPreferredConnection === true,
         sessionKey,
+        clientKeyId,
       },
     );
 

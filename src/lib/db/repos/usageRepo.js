@@ -4,7 +4,6 @@ import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { getMeta, setMeta } from "../helpers/metaStore.js";
 
 
-const PENDING_TIMEOUT_MS = 60 * 1000;
 const RING_CAP = 50;
 const CONN_CACHE_TTL_MS = 30 * 1000;
 const PERIOD_MS = { "24h": 86400000, "7d": 604800000, "30d": 2592000000, "60d": 5184000000 };
@@ -16,14 +15,12 @@ if (!global._statsEmitter) {
   global._statsEmitter = new EventEmitter();
   global._statsEmitter.setMaxListeners(50);
 }
-if (!global._pendingTimers) global._pendingTimers = {};
 if (!global._recentRing) global._recentRing = { items: [], initialized: false };
 if (!global._connectionMapCache) global._connectionMapCache = { map: {}, ts: 0 };
 if (!global._statsEmitTimers) global._statsEmitTimers = { pending: null, update: null };
 
 const pendingRequests = global._pendingRequests;
 const lastErrorProvider = global._lastErrorProvider;
-const pendingTimers = global._pendingTimers;
 const recentRing = global._recentRing;
 const connCache = global._connectionMapCache;
 const statsEmitTimers = global._statsEmitTimers;
@@ -165,13 +162,6 @@ async function calculateCost(provider, model, tokens) {
 
 export function trackPendingRequest(model, provider, connectionId, started, error = false) {
   const modelKey = provider ? `${model} (${provider})` : model;
-  // M7: unique timer per request so concurrent same-connection/model don't share cleanup
-  const requestToken = started
-    ? `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-    : null;
-  // Pair start/end via side channel on the caller's scope is unavailable; track
-  // refcounts per connection|model and use a bag of timers instead of one shared key.
-  const groupKey = `${connectionId || "none"}|${modelKey}`;
 
   if (!pendingRequests.byModel[modelKey]) pendingRequests.byModel[modelKey] = 0;
   pendingRequests.byModel[modelKey] = Math.max(0, pendingRequests.byModel[modelKey] + (started ? 1 : -1));
@@ -189,34 +179,6 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
     }
   }
 
-  if (started) {
-    if (!pendingTimers[groupKey]) pendingTimers[groupKey] = new Set();
-    const timer = setTimeout(() => {
-      pendingTimers[groupKey]?.delete(timer);
-      if (pendingTimers[groupKey]?.size === 0) delete pendingTimers[groupKey];
-      // Only force-clear if no other live timers for this group (other concurrent requests)
-      if (!pendingTimers[groupKey] || pendingTimers[groupKey].size === 0) {
-        if (pendingRequests.byModel[modelKey] > 0) pendingRequests.byModel[modelKey] = 0;
-        if (connectionId && pendingRequests.byAccount[connectionId]?.[modelKey] > 0) {
-          pendingRequests.byAccount[connectionId][modelKey] = 0;
-        }
-      }
-      scheduleStatsEvent("pending");
-    }, PENDING_TIMEOUT_MS);
-    timer.unref?.();
-    pendingTimers[groupKey].add(timer);
-    // stash last-started token unused except to silence lint
-    void requestToken;
-  } else if (pendingTimers[groupKey]) {
-    // Clear one timer for this group (FIFO)
-    const set = pendingTimers[groupKey];
-    const first = set.values().next().value;
-    if (first) {
-      clearTimeout(first);
-      set.delete(first);
-    }
-    if (set.size === 0) delete pendingTimers[groupKey];
-  }
 
   if (!started && error && provider) {
     lastErrorProvider.provider = provider.toLowerCase();

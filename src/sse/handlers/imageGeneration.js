@@ -13,6 +13,7 @@ import { updateProviderCredentials, checkAndRefreshToken } from "../services/tok
 import { handleComboChat } from "open-sse/services/combo.js";
 import * as log from "../utils/logger.js";
 import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
+import { withConnectionInFlight } from "../services/connectionInFlight.js";
 
 // Providers that don't require credentials (noAuth)
 const NO_AUTH_PROVIDERS = new Set(["sdwebui", "comfyui"]);
@@ -105,6 +106,7 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
       preferredConnectionId,
       strictPreferredConnection,
+      clientKeyId,
     });
 
     if (!credentials || credentials.allRateLimited) {
@@ -121,38 +123,50 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
 
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
-    const result = await handleImageGenerationCore({
-      clientKeyId,
-      body,
-      modelInfo: { provider, model },
-      credentials: refreshedCredentials,
-      streamToClient: wantsStream,
-      binaryOutput,
-      abortSignal: signal,
-      onCredentialsRefreshed: async (newCreds) => {
-        await updateProviderCredentials(credentials.connectionId, {
-          accessToken: newCreds.accessToken,
-          refreshToken: newCreds.refreshToken,
-          providerSpecificData: newCreds.providerSpecificData,
-          testStatus: "active"
-        });
-      },
-      onRequestSuccess: async () => {
-        await clearAccountError(credentials.connectionId, credentials, model);
+    const attempt = await withConnectionInFlight({
+      provider,
+      model,
+      connectionId: credentials.connectionId,
+    }, async () => {
+      const result = await handleImageGenerationCore({
+        clientKeyId,
+        body,
+        modelInfo: { provider, model },
+        credentials: refreshedCredentials,
+        streamToClient: wantsStream,
+        binaryOutput,
+        abortSignal: signal,
+        onCredentialsRefreshed: async (newCreds) => {
+          await updateProviderCredentials(credentials.connectionId, {
+            accessToken: newCreds.accessToken,
+            refreshToken: newCreds.refreshToken,
+            providerSpecificData: newCreds.providerSpecificData,
+            testStatus: "active"
+          });
+        },
+        onRequestSuccess: async () => {
+          await clearAccountError(credentials.connectionId, credentials, model);
+        }
+      });
+
+      if (result.success) return result.response;
+      const { shouldFallback } = await markAccountUnavailable(
+        credentials.connectionId,
+        result.status,
+        result.error,
+        provider,
+        model,
+      );
+      if (shouldFallback) {
+        return { retry: true, error: result.error, status: result.status };
       }
+      return { finalResponse: result.response };
     });
 
-    if (result.success) return result.response;
-
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
-
-    if (shouldFallback) {
-      excludeConnectionIds.add(credentials.connectionId);
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
-    }
-
-    return result.response;
+    if (attempt instanceof Response) return attempt;
+    if (attempt.finalResponse) return attempt.finalResponse;
+    excludeConnectionIds.add(credentials.connectionId);
+    lastError = attempt.error;
+    lastStatus = attempt.status;
   }
 }

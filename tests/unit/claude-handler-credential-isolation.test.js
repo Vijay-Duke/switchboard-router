@@ -206,7 +206,12 @@ describe("Claude handler credential isolation", () => {
       "openai",
       expect.any(Set),
       "gpt-5.6",
-      { preferredConnectionId: null, strictPreferredConnection: false, sessionKey: null },
+      {
+        preferredConnectionId: null,
+        strictPreferredConnection: false,
+        sessionKey: null,
+        clientKeyId: null,
+      },
     );
     expect(mocks.checkAndRefreshToken).toHaveBeenCalledWith("openai", storedCredentials);
     expect(receivedCredentials.apiKey).toBe("stored-openai-key");
@@ -224,6 +229,11 @@ describe("Claude handler credential isolation", () => {
   });
 
   it("passes one client affinity key through every account retry", async () => {
+    mocks.authorizeClientKeyRequest.mockResolvedValue({
+      ok: true,
+      clientKeyId: "client-key-a",
+      lease: null,
+    });
     mocks.getModelInfo.mockResolvedValue({ provider: "openai", model: "gpt-5.6" });
     mocks.getProviderCredentials
       .mockResolvedValueOnce({
@@ -257,6 +267,8 @@ describe("Claude handler credential isolation", () => {
     const firstOptions = mocks.getProviderCredentials.mock.calls[0][3];
     const retryOptions = mocks.getProviderCredentials.mock.calls[1][3];
     expect(firstOptions.sessionKey).toBe("conversation-42");
+    expect(firstOptions.clientKeyId).toBe("client-key-a");
     expect(retryOptions.sessionKey).toBe(firstOptions.sessionKey);
+    expect(retryOptions.clientKeyId).toBe(firstOptions.clientKeyId);
   });
 });

@@ -102,7 +102,11 @@ describe("model probe connection pinning", () => {
       "test",
       expect.any(Set),
       "model-1",
-      { preferredConnectionId: "connection-1", strictPreferredConnection: true },
+      {
+        preferredConnectionId: "connection-1",
+        strictPreferredConnection: true,
+        clientKeyId: null,
+      },
     );
   });
 
@@ -125,7 +129,11 @@ describe("model probe connection pinning", () => {
       "test",
       expect.any(Set),
       "model-1",
-      { preferredConnectionId: "connection-1", strictPreferredConnection: true },
+      {
+        preferredConnectionId: "connection-1",
+        strictPreferredConnection: true,
+        clientKeyId: null,
+      },
     );
   });
 });

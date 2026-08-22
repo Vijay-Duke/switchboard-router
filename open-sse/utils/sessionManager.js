@@ -79,21 +79,19 @@ export function generateBinaryStyleId() {
  */
 export function clearSessionStore() {
     runtimeSessionStore.clear();
-    assistantSessionStore.clear();
 }
 
-// Conversation-stable session store: Key = hash(scope+assistant text), Value = { sessionId, lastUsed }
-const assistantSessionStore = new Map();
+// Assistant-derived sessions are deterministic, so cardinality is bounded by
+// the request itself rather than a shared process-global cache.
 const ASSISTANT_MIN_LEN = 50;
 const ASSISTANT_CAP_LEN = 50;
-const MAX_ASSISTANT_SESSIONS = 5000;
 
 // Client headers/body fields that carry an upstream session id (priority order)
 const SESSION_HEADER_KEYS = ["x-session-id", "session-id", "session_id", "x-amp-thread-id", "x-client-request-id"];
 const CLAUDE_CODE_SESSION_RE = /_session_([a-f0-9-]+)$/;
 
-function sha16(text) {
-    return crypto.createHash("sha256").update(text).digest("hex").slice(0, 16);
+function sha256(text) {
+    return crypto.createHash("sha256").update(text).digest("hex");
 }
 
 // Normalize a session id candidate (trim, length cap)
@@ -166,32 +164,33 @@ function accumulateAssistantText(body) {
     return text;
 }
 
-// Stable session id keyed on accumulated assistant text (avoids collision on identical first user prompt)
+// Stable deterministic session id keyed on scoped accumulated assistant text.
 function assistantTextSessionId(scope, body) {
     const text = accumulateAssistantText(body);
     if (text.length < ASSISTANT_MIN_LEN) return null;
-    const hash = sha16(`${scope}:${text.slice(0, ASSISTANT_CAP_LEN)}`);
-    const existing = assistantSessionStore.get(hash);
-    if (existing) {
-        existing.lastUsed = Date.now();
-        return existing.sessionId;
-    }
-    if (assistantSessionStore.size >= MAX_ASSISTANT_SESSIONS) {
-        assistantSessionStore.delete(assistantSessionStore.keys().next().value);
-    }
-    const sessionId = generateBinaryStyleId();
-    assistantSessionStore.set(hash, { sessionId, lastUsed: Date.now() });
-    return sessionId;
+    return `assistant:${sha256(JSON.stringify([
+        scope,
+        text.slice(0, ASSISTANT_CAP_LEN),
+    ]))}`;
 }
 
 /**
  * Resolve only client- or conversation-derived affinity. Never generates an
  * account/workspace fallback, so retries can safely carry the same key.
  */
-export function resolveAffinitySessionId({ headers, body, scope = "" } = {}) {
+export function resolveAffinitySessionId({
+    headers,
+    body,
+    scope = "",
+    clientKeyId = null,
+} = {}) {
     const client = extractClientSessionId(headers, body);
     if (client) return client;
-    return assistantTextSessionId(`${scope}:affinity`, body);
+    return assistantTextSessionId(JSON.stringify([
+        clientKeyId || "local-no-key",
+        scope,
+        "affinity",
+    ]), body);
 }
 
 /**
@@ -232,11 +231,3 @@ export function toNumericSessionId(sessionId) {
     return `-${n.toString()}`;
 }
 
-// Cleanup expired assistant-session entries
-const assistantCleanup = setInterval(() => {
-    const now = Date.now();
-    for (const [key, entry] of assistantSessionStore) {
-        if (now - entry.lastUsed > MEMORY_CONFIG.sessionTtlMs) assistantSessionStore.delete(key);
-    }
-}, MEMORY_CONFIG.sessionCleanupIntervalMs);
-if (assistantCleanup.unref) assistantCleanup.unref();

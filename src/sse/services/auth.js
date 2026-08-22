@@ -40,7 +40,7 @@ function withProviderSelectionLock(providerId, fn) {
  * @param {string} provider - Provider name
  * @param {Set<string>|string|null} excludeConnectionIds - Connection ID(s) to exclude (for retry with next account)
  * @param {string|null} model - Model name for per-model rate limit filtering
- * @param {{preferredConnectionId?: string|null, strictPreferredConnection?: boolean, sessionKey?: string|null}} options
+ * @param {{preferredConnectionId?: string|null, strictPreferredConnection?: boolean, sessionKey?: string|null, clientKeyId?: string|null}} options
  */
 export async function getProviderCredentials(provider, excludeConnectionIds = null, model = null, options = {}) {
   // Normalize to Set for consistent handling
@@ -76,8 +76,25 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     const connections = await getProviderConnections({ provider: providerId, isActive: true });
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
+    const settings = await getSettings();
+    // Per-provider strategy overrides global setting
+    const providerOverride = (settings.providerStrategies || {})[providerId] || {};
+    const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
+    const schedulerConfig = providerOverride.accountScheduler || {};
+    const selectNoCandidates = () => schedulerConfig.enabled === true
+      ? selectScheduledConnection({
+        providerId,
+        candidates: [],
+        sessionKey: options?.sessionKey || null,
+        clientKeyId: options?.clientKeyId || null,
+        affinityTtlMs: Number(schedulerConfig.sessionAffinityTtlSeconds) * 1_000 || undefined,
+        getInFlightCount: getConnectionInFlightCount,
+      })
+      : null;
+
 
     if (connections.length === 0) {
+      selectNoCandidates();
       log.warn("AUTH", `No credentials for ${provider}`);
       return null;
     }
@@ -88,6 +105,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       ? connections.filter((connection) => connection.id === preferredConnectionId)
       : connections;
     if (candidateConnections.length === 0) {
+      selectNoCandidates();
       log.warn("AUTH", `${provider} | requested connection is unavailable`);
       return null;
     }
@@ -110,6 +128,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     });
 
     if (availableConnections.length === 0) {
+      const noCandidates = selectNoCandidates();
       // Find earliest lock expiry across all connections for retry timing
       const lockedConns = candidateConnections.filter(c => isModelLockActive(c, model));
       const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
@@ -122,18 +141,19 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           retryAfter: earliest,
           retryAfterHuman: formatRetryAfter(earliest),
           lastError: earliestConn?.lastError || null,
-          lastErrorCode: earliestConn?.errorCode || null
+          lastErrorCode: earliestConn?.errorCode || null,
+          ...(noCandidates ? {
+            selectionReason: noCandidates.reason,
+            affinityRebound: noCandidates.affinityRebound,
+          } : {}),
         };
       }
       log.warn("AUTH", `${provider} | all ${candidateConnections.length} accounts unavailable`);
       return null;
     }
 
-    const settings = await getSettings();
-    // Per-provider strategy overrides global setting
-    const providerOverride = (settings.providerStrategies || {})[providerId] || {};
-    const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
-    const schedulerConfig = providerOverride.accountScheduler || {};
+    // Settings and provider override were loaded before hard-filter exits so a
+    // stale affinity can be invalidated even when no account remains eligible.
 
     let connection;
     let selectionReason = null;
@@ -161,6 +181,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         providerId,
         candidates: availableConnections,
         sessionKey: options?.sessionKey || null,
+        clientKeyId: options?.clientKeyId || null,
         affinityTtlMs: Number(schedulerConfig.sessionAffinityTtlSeconds) * 1_000 || undefined,
         getInFlightCount: getConnectionInFlightCount,
       });
@@ -173,6 +194,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           lastError: "All accounts are at their concurrency limits",
           lastErrorCode: 429,
           selectionReason: selected.reason,
+          affinityRebound: selected.affinityRebound,
         };
       }
       connection = selected.connection;

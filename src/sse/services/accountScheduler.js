@@ -5,17 +5,59 @@ import { QUOTA_AUTOPING_CONFIG } from "@/shared/constants/config.js";
 export const DEFAULT_AFFINITY_TTL_MS = 30 * 60 * 1000;
 export const DEFAULT_QUOTA_FRESH_MS = QUOTA_AUTOPING_CONFIG.tickIntervalMs * 2;
 const MAX_AFFINITIES = 5_000;
+const MAX_AFFINITIES_PER_SCOPE = 500;
 const state = (global.__accountSchedulerV2 ??= { affinities: new Map() });
 
-function affinityKey(providerId, sessionKey) {
+function hashTuple(parts) {
+  return crypto.createHash("sha256").update(JSON.stringify(parts)).digest("hex");
+}
+
+function affinityIdentity(providerId, clientKeyId, sessionKey) {
   if (!sessionKey) return null;
-  return crypto.createHash("sha256").update(`${providerId}\0${sessionKey}`).digest("hex");
+  const clientScope = clientKeyId || "local-no-key";
+  return {
+    key: hashTuple([String(providerId), String(clientScope), String(sessionKey)]),
+    scopeHash: hashTuple([String(providerId), String(clientScope)]),
+  };
 }
 
 function sweep(now) {
   for (const [key, entry] of state.affinities) {
     if (!entry || entry.expiresAt <= now) state.affinities.delete(key);
   }
+}
+
+function oldestKeyInScope(scopeHash) {
+  for (const [key, entry] of state.affinities) {
+    if (entry.scopeHash === scopeHash) return key;
+  }
+  return null;
+}
+
+function scopeSize(scopeHash) {
+  let total = 0;
+  for (const entry of state.affinities.values()) {
+    if (entry.scopeHash === scopeHash) total += 1;
+  }
+  return total;
+}
+
+function setAffinity(identity, connectionId, expiresAt) {
+  const exists = state.affinities.has(identity.key);
+  if (!exists && scopeSize(identity.scopeHash) >= MAX_AFFINITIES_PER_SCOPE) {
+    const oldest = oldestKeyInScope(identity.scopeHash);
+    if (oldest) state.affinities.delete(oldest);
+  }
+  if (!exists && state.affinities.size >= MAX_AFFINITIES) {
+    const oldest = oldestKeyInScope(identity.scopeHash);
+    if (oldest) state.affinities.delete(oldest);
+    else return;
+  }
+  state.affinities.set(identity.key, {
+    connectionId,
+    expiresAt,
+    scopeHash: identity.scopeHash,
+  });
 }
 
 function inFlight(candidate, getInFlightCount) {
@@ -78,6 +120,7 @@ export function selectScheduledConnection(options) {
   const {
     providerId,
     candidates = [],
+    clientKeyId = null,
     sessionKey = null,
     affinityTtlMs = DEFAULT_AFFINITY_TTL_MS,
     quotaFreshMs = DEFAULT_QUOTA_FRESH_MS,
@@ -86,17 +129,17 @@ export function selectScheduledConnection(options) {
   } = options || {};
 
   sweep(now);
+  const identity = affinityIdentity(providerId, clientKeyId, sessionKey);
+  const prior = identity ? state.affinities.get(identity.key) : null;
   if (candidates.length === 0) {
+    if (prior) state.affinities.delete(identity.key);
     return {
       connection: null,
       reason: "no-candidates",
-      affinityRebound: false,
+      affinityRebound: Boolean(prior),
       capacityLimited: false,
     };
   }
-
-  const key = affinityKey(providerId, sessionKey);
-  const prior = key ? state.affinities.get(key) : null;
   const eligible = [];
   for (const candidate of candidates) {
     const ranked = rank(candidate, getInFlightCount, now, quotaFreshMs);
@@ -107,6 +150,7 @@ export function selectScheduledConnection(options) {
   }
 
   if (eligible.length === 0) {
+    if (prior) state.affinities.delete(identity.key);
     return {
       connection: null,
       reason: "capacity-exhausted",
@@ -129,14 +173,12 @@ export function selectScheduledConnection(options) {
 
   eligible.sort(compare);
   const selected = eligible[0];
-  if (key) {
-    if (!state.affinities.has(key) && state.affinities.size >= MAX_AFFINITIES) {
-      state.affinities.delete(state.affinities.keys().next().value);
-    }
-    state.affinities.set(key, {
-      connectionId: selected.candidate.id,
-      expiresAt: now + affinityTtlMs,
-    });
+  if (identity) {
+    setAffinity(
+      identity,
+      selected.candidate.id,
+      now + affinityTtlMs,
+    );
   }
 
   return {

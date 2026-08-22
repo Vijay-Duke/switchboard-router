@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getConnectionInFlightCount,
   trackPendingRequest,
@@ -9,6 +9,10 @@ import { getConnectionInFlightCount as getFromShim } from "../../src/lib/usageDb
 beforeEach(() => {
   global._pendingRequests.byModel = {};
   global._pendingRequests.byAccount = {};
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("getConnectionInFlightCount", () => {
@@ -37,5 +41,16 @@ describe("getConnectionInFlightCount", () => {
     global._pendingRequests.byAccount.c1 = { a: 2 };
     expect(getFromDb("c1")).toBe(2);
     expect(getFromShim("c1")).toBe(2);
+  });
+
+  it("keeps work live past sixty seconds until exact completion", () => {
+    vi.useFakeTimers();
+    trackPendingRequest("opus", "anthropic", "slow", true);
+
+    vi.advanceTimersByTime(61_000);
+
+    expect(getConnectionInFlightCount("slow")).toBe(1);
+    trackPendingRequest("opus", "anthropic", "slow", false);
+    expect(getConnectionInFlightCount("slow")).toBe(0);
   });
 });
