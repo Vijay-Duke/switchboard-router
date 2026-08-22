@@ -626,6 +626,77 @@ export async function getPickSourceCounts(comboName, days = 14) {
   return counts;
 }
 
+const AUTO_METRIC_SOURCES = [
+  "router",
+  "bandit_policy",
+  "cached_route",
+  "exploration",
+  "judge_flag_escalation",
+  "fallback_rescue",
+];
+
+export async function getRoutingMetricSnapshot() {
+  const db = await getAdapter();
+  const rows = db.all(
+    `WITH terminal AS (
+       SELECT id,
+              COALESCE(requestId, CAST(id AS TEXT)) AS requestKey,
+              routerReason,
+              fallbackUsed,
+              workerStatus
+       FROM routing_events
+       WHERE (
+         meta LIKE '%"terminal":true%'
+         OR meta IS NULL
+         OR meta NOT LIKE '%"terminal"%'
+       )
+         AND (meta IS NULL OR meta NOT LIKE '%"skippedRouter":true%')
+     ),
+     per_request AS (
+       SELECT requestKey,
+              MAX(id) AS terminalId,
+              MAX(CASE WHEN fallbackUsed = 1 THEN 1 ELSE 0 END) AS fallbackUsed,
+              MAX(CASE WHEN workerStatus >= 400 THEN 1 ELSE 0 END) AS isError
+       FROM terminal
+       GROUP BY requestKey
+     ),
+     classified AS (
+       SELECT CASE
+                WHEN terminal.routerReason LIKE 'exploration%' THEN 'exploration'
+                WHEN terminal.routerReason = 'bandit_policy' THEN 'bandit_policy'
+                WHEN terminal.routerReason = 'cached_route' THEN 'cached_route'
+                WHEN terminal.routerReason = 'judge_flag_escalation' THEN 'judge_flag_escalation'
+                WHEN per_request.fallbackUsed = 1 THEN 'fallback_rescue'
+                ELSE 'router'
+              END AS source,
+              per_request.fallbackUsed,
+              per_request.isError
+       FROM per_request
+       JOIN terminal ON terminal.id = per_request.terminalId
+     )
+     SELECT source,
+            COUNT(*) AS requests,
+            SUM(isError) AS errors,
+            SUM(fallbackUsed) AS fallbacks
+     FROM classified
+     GROUP BY source`,
+  );
+  const autoDecisions = Object.fromEntries(AUTO_METRIC_SOURCES.map((source) => [source, 0]));
+  let retainedRequests = 0;
+  let retainedErrors = 0;
+  let retainedFallbacks = 0;
+
+  for (const row of rows || []) {
+    const requests = Number(row.requests) || 0;
+    retainedRequests += requests;
+    retainedErrors += Number(row.errors) || 0;
+    retainedFallbacks += Number(row.fallbacks) || 0;
+    autoDecisions[row.source] += requests;
+  }
+
+  return { retainedRequests, retainedErrors, retainedFallbacks, autoDecisions };
+}
+
 /**
  * Approximate p50 worker latency for a cluster (true percentile from raw samples).
  * Capped sample for hot-path safety.

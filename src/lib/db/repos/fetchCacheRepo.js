@@ -74,3 +74,14 @@ export async function cleanupExpiredFetchCache() {
     return 0;
   }
 }
+
+/** @param {Date} [now] */
+export async function getFetchCacheMetricSnapshot(now = new Date()) {
+  const db = await getAdapter();
+  const row = db.get(
+    `SELECT COUNT(*) AS entries, COALESCE(SUM(sizeBytes), 0) AS bytes
+     FROM fetchCache WHERE expiresAt >= ?`,
+    [now.toISOString()],
+  );
+  return { entries: Number(row?.entries) || 0, bytes: Number(row?.bytes) || 0 };
+}

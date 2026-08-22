@@ -405,6 +405,48 @@ function loadDaysInRange(adapter, maxDays) {
   return adapter.all(`SELECT dateKey, data FROM usageDaily WHERE dateKey >= ?`, [cutoffKey]);
 }
 
+export async function getUsageMetricTotals() {
+  const db = await getAdapter();
+  const byProvider = new Map();
+  const overall = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0 };
+  const fields = Object.keys(overall);
+
+  for (const row of db.all(`SELECT data FROM usageDaily`)) {
+    const day = parseJson(row.data, {}) || {};
+    for (const field of fields) overall[field] += Number(day[field]) || 0;
+    for (const [rawProvider, values] of Object.entries(day.byProvider || {})) {
+      const provider = String(rawProvider || "unknown");
+      const total = byProvider.get(provider) || {
+        provider,
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        cachedTokens: 0,
+        cost: 0,
+      };
+      for (const field of fields) total[field] += Number(values?.[field]) || 0;
+      byProvider.set(provider, total);
+    }
+  }
+
+  const attributed = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0 };
+  for (const total of byProvider.values()) {
+    for (const field of fields) attributed[field] += total[field];
+  }
+  const unknown = {
+    provider: "unknown",
+    requests: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    cachedTokens: 0,
+    cost: 0,
+  };
+  for (const field of fields) unknown[field] = Math.max(0, overall[field] - attributed[field]);
+  if (fields.some((field) => unknown[field] > 0)) byProvider.set("unknown", unknown);
+
+  return { byProvider: [...byProvider.values()].sort((a, b) => a.provider.localeCompare(b.provider)) };
+}
+
 export async function getUsageStats(period = "all") {
   const db = await getAdapter();
 
