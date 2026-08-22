@@ -1,30 +1,31 @@
 // Stream handler with disconnect detection - shared for all providers
 import { STREAM_STALL_TIMEOUT_MS, STREAM_FIRST_CHUNK_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
-
-// Get HH:MM:SS timestamp
-function getTimeString() {
-  return new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
+import { nextTag, tagForSession, line, errorLine } from "./logTags.js";
 
 /**
  * Create stream controller with abort and disconnect detection
  * @param {object} options
  * @param {function} options.onDisconnect - Callback when client disconnects
- * @param {object} options.log - Logger instance
+ * @param {object} options.log - Logger instance (log.line/log.errorLine preferred when present)
  * @param {string} options.provider - Provider name
  * @param {string} options.model - Model name
+ * @param {string} [options.reqTag] - Pre-allocated lifecycle tag; one is allocated per controller when absent
+ * @param {string} [options.sessionSeed] - Stable session key; maps to a fixed color tag
  */
-export function createStreamController({ onDisconnect, onError, log, provider, model } = {}) {
+export function createStreamController({ onDisconnect, onError, log, provider, model, reqTag = "", sessionSeed = "" } = {}) {
   const abortController = new AbortController();
   const startTime = Date.now();
   let disconnected = false;
   let abortTimeout = null;
 
-  const logStream = (status) => {
+  // One tag per request: every lifecycle line of this controller shares it.
+  // Host logger emitters win when available so caller-side level filtering applies.
+  const tag = reqTag || (sessionSeed ? tagForSession(sessionSeed) : nextTag());
+  const logStream = (symbol, status, isError = false, tail = "") => {
     const duration = Date.now() - startTime;
-    const p = provider?.toUpperCase() || "UNKNOWN";
-    console.log(`[${getTimeString()}] 🌊 [STREAM] ${p} | ${model || "unknown"} | ${duration}ms | ${status}`);
+    const emit = isError ? (log?.errorLine ?? errorLine) : (log?.line ?? line);
+    emit(tag, symbol, `${status} · ${provider}/${model} · ${duration}ms${tail}`);
   };
 
   return {
@@ -38,7 +39,7 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
       if (disconnected) return;
       disconnected = true;
 
-      logStream(`disconnect: ${reason}`);
+      logStream("⚡", `DISCONNECT: ${reason}`);
       dbg("CTRL", `${provider}/${model} | disconnect=${reason} | dur=${Date.now() - startTime}ms`);
 
       // Delay abort to allow cleanup
@@ -54,7 +55,7 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
       if (disconnected) return;
       disconnected = true;
 
-      logStream("complete");
+      logStream("🌊", "COMPLETE");
 
       if (abortTimeout) {
         clearTimeout(abortTimeout);
@@ -73,11 +74,11 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
       }
 
       if (error.name === "AbortError") {
-        logStream("aborted");
+        logStream("⚡", "ABORTED");
         return;
       }
 
-      logStream(`error: ${error.message}`);
+      logStream("✗", `ERROR: ${error.message}`, true, error.stack ? `\n    ${error.stack}` : "");
       onError?.(error);
     },
 
