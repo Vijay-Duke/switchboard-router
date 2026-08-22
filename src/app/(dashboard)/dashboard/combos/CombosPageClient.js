@@ -31,6 +31,9 @@ const EMPTY_CAPACITY_ADAPTER = {
   audioInput: { ...EMPTY_CAP_ENTRY },
   videoInput: { ...EMPTY_CAP_ENTRY },
 };
+// State/PATCH carry every capability key (visible or not) so persisting one
+// pool's config never drops hidden pools like pdf/videoInput.
+const ALL_ADAPTER_KEYS = Object.keys(EMPTY_CAPACITY_ADAPTER);
 // Backward-compat: legacy stored form was an array of {model, enabled}.
 function normalizeCapEntry(entry) {
   if (Array.isArray(entry)) {
@@ -61,7 +64,7 @@ export default function CombosPageClient({ initialData }) {
   const [capacityAdapter, setCapacityAdapter] = useState(() => {
     const raw = initialData?.settings?.capacityAdapter || {};
     const normalized = {};
-    for (const cap of CAPACITY_ADAPTER_CAPS) normalized[cap.key] = normalizeCapEntry(raw[cap.key]);
+    for (const cap of ALL_ADAPTER_KEYS) normalized[cap] = normalizeCapEntry(raw[cap]);
     return normalized;
   });
   const [confirmState, setConfirmState] = useState(null);
@@ -96,7 +99,7 @@ export default function CombosPageClient({ initialData }) {
       setComboStrategies(settingsData.comboStrategies || {});
       const rawAdapter = settingsData.capacityAdapter || {};
       const normalizedAdapter = {};
-      for (const cap of CAPACITY_ADAPTER_CAPS) normalizedAdapter[cap.key] = normalizeCapEntry(rawAdapter[cap.key]);
+      for (const cap of ALL_ADAPTER_KEYS) normalizedAdapter[cap] = normalizeCapEntry(rawAdapter[cap]);
       setCapacityAdapter(normalizedAdapter);
     } catch (error) {
       notify("Failed to fetch combo data");
