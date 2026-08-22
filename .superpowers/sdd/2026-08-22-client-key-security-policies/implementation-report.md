@@ -409,3 +409,16 @@ item in `review-findings-round5.md`:
   secrecy coverage.
 - No full suite, build, lint, formatter, scheduler, Prometheus, push, or merge
   command was run.
+
+## Final migration blocker wave
+
+Commit `9ce31f7b fix: make legacy import retryable` resolves the final two whole-branch blockers:
+
+- Pending legacy import is now derived from `hasLegacy && !alreadyImported && !migrationProof`, independent of one-boot freshness. Import proceeds only when every target table is empty. A first-start row-count rollback preserves exact source/backup bytes and markers; after repairing the source, the same schema-9 database imports successfully on the second start, writes durable `migratedAt`, rebuilds spend/metrics, sanitizes sources, and writes markers. A proofless crash with non-empty targets remains fail-closed and non-destructive.
+- A process-memory raw legacy key → client-key ID map is built from legacy main data before verifier packing. History and daily import use the map, so no raw key is persisted and no verifier KDF runs per usage row. A 250-row regression proves full attribution/spend preservation with at most the one-time key-packing KDF cost.
+
+Focused command: `npm --prefix tests test -- unit/db-migration-chain.test.js unit/client-key-migration.test.js`
+
+Result: **2 files passed; 13 tests passed; 0 failures**.
+
+No full suite, build, lint, scheduler, Prometheus, or unrelated changes were run.
