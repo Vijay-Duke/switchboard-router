@@ -104,6 +104,7 @@ Usage:
   switchboard status [options]   Show server, version, PID, and ownership status
   switchboard stop [options]     Stop the owned Switchboard instance gracefully
   switchboard restart [options]  Gracefully stop, then start Switchboard
+  switchboard xai video [options]   Generate a Grok Imagine video (MP4)
 
 Lifecycle:
   In the terminal, press Ctrl+C to stop gracefully.
@@ -126,6 +127,7 @@ Examples:
   switchboard --tray
   switchboard status
   switchboard restart --port ${defaultPort}
+  switchboard xai video --prompt "a neon city" --output video.mp4
   switchboard stop
 `;
 }

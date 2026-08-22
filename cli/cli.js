@@ -12,6 +12,20 @@ const processTools = require("./src/cli/processManager");
 const { findListeningPids } = processTools;
 const { probeSwitchboard, probeTcp, waitForSwitchboard } = require("./src/cli/serverStatus");
 
+// Subcommands (`switchboard xai video …`) run against an already-running
+// gateway and skip the launcher flow (no arg parsing, no server spawn).
+const subArgs = process.argv.slice(2);
+if (subArgs[0] === "xai" && subArgs[1] === "video") {
+  const { run: runXaiVideo } = require("./src/cli/commands/xaiVideo");
+  runXaiVideo(subArgs.slice(2))
+    .then((code) => process.exit(code))
+    .catch((error) => {
+      console.error(`Error: ${error?.message || error}`);
+      process.exit(1);
+    });
+  return;
+}
+
 let cliOptions;
 try {
   cliOptions = parseCliArgs(process.argv.slice(2));
