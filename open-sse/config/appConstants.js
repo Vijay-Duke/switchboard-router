@@ -180,10 +180,17 @@ export const OAUTH_ENDPOINTS = {
   github:    { token: PROVIDER_OAUTH["github"]?.tokenUrl, auth: PROVIDER_OAUTH["github"]?.authorizeUrl, deviceCode: PROVIDER_OAUTH["github"]?.deviceCodeUrl },
 };
 
-export function buildKimiHeaders() {
+// deviceId must stay stable per connection for the whole OAuth session — pass it
+// to keep X-Msh-Device-Id constant across calls; omit for a fresh ephemeral id.
+export function buildKimiHeaders(deviceId) {
+  const resolvedId =
+    typeof deviceId === "string" && deviceId.trim()
+      ? deviceId.trim()
+      : `kimi-${Date.now()}`;
   return {
+    "X-Msh-Platform": "switchboard",
     "X-Msh-Version": "2.1.2",
     "X-Msh-Device-Model": typeof process !== "undefined" ? `${process.platform} ${process.arch}` : "unknown",
-    "X-Msh-Device-Id": `kimi-${Date.now()}`
+    "X-Msh-Device-Id": resolvedId,
   };
 }
