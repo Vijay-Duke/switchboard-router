@@ -2,7 +2,7 @@ import { detectFormat, getTargetFormat, resolveTransport } from "../services/pro
 import { translateRequest } from "../translator/index.js";
 import { stripThinkingSuffix } from "../translator/concerns/thinkingUnified.js";
 import { FORMATS } from "../translator/formats.js";
-import { normalizeClaudePassthrough } from "../translator/formats/claude.js";
+import { normalizeClaudePassthrough, anchorClaudeCache } from "../translator/formats/claude.js";
 import { COLORS } from "../utils/stream.js";
 import { createStreamController } from "../utils/streamHandler.js";
 import { refreshWithRetry } from "../services/tokenRefresh.js";
@@ -277,6 +277,9 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       translatedBody = { ...translatedBody, stream };
     }
   }
+  // Pin cache breakpoints to the final body — every saver above can reshape
+  // system/tools/messages, and a stale anchor costs a full prefix rewrite.
+  if (passthrough && clientTool === "claude") anchorClaudeCache(translatedBody);
 
   const executor = getExecutor(provider);
   trackPendingRequest(model, provider, connectionId, true);
