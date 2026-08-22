@@ -28,7 +28,7 @@ describe("Schema migrations", () => {
   it("fresh DB → applies migrations & stamps schemaVersion", async () => {
     const { getAdapter } = await import("@/lib/db/driver.js");
     const { latestVersion } = await import("@/lib/db/migrations/index.js");
-    expect(latestVersion()).toBe(8);
+    expect(latestVersion()).toBe(9);
     const db = await getAdapter();
     const row = db.get(`SELECT value FROM _meta WHERE key='schemaVersion'`);
     expect(parseInt(row.value, 10)).toBe(latestVersion());
@@ -37,6 +37,7 @@ describe("Schema migrations", () => {
     expect(tables).toEqual(expect.arrayContaining([
       "_meta", "settings", "providerConnections", "providerNodes",
       "proxyPools", "apiKeys", "combos", "kv", "usageHistory", "usageDaily", "requestDetails",
+      "prometheusMetricState", "prometheusUsageTotals", "prometheusRoutingRequests", "prometheusRoutingTotals",
     ]));
   }, 15_000);
 
@@ -108,6 +109,14 @@ describe("Schema migrations", () => {
       history: [{ apiKey: "abc", provider: "openai", model: "gpt-5", cost: 1 }],
       dailySummary: {
         "2026-08-21": {
+          requests: 1,
+          promptTokens: 10,
+          completionTokens: 4,
+          cachedTokens: 2,
+          cost: 1,
+          byProvider: {
+            openai: { requests: 1, promptTokens: 10, completionTokens: 4, cachedTokens: 2, cost: 1 },
+          },
           byApiKey: { "abc|gpt-5|openai": { apiKey: "abc", rawModel: "gpt-5", provider: "openai", cost: 1 } },
         },
       },
@@ -130,6 +139,13 @@ describe("Schema migrations", () => {
 
     const connection = db.get(`SELECT data FROM providerConnections WHERE id = ?`, ["legacy-connection"]);
     expect(connection.data).not.toContain("legacy-access-token");
+
+    const { getUsageMetricTotals } = await import("@/lib/db/repos/usageRepo.js");
+    expect(await getUsageMetricTotals()).toEqual({
+      byProvider: [
+        { provider: "openai", requests: 1, promptTokens: 10, completionTokens: 4, cachedTokens: 2, cost: 1 },
+      ],
+    });
 
     const aliases = db.all(`SELECT * FROM kv WHERE scope='modelAliases'`);
     expect(aliases).toHaveLength(1);
@@ -214,7 +230,7 @@ describe("Schema migrations", () => {
   it("does not sanitize originals or old backups from a schema-stamped crash without durable import proof", async () => {
     const { getAdapter } = await import("@/lib/db/driver.js");
     const db = await getAdapter();
-    expect(db.get(`SELECT value FROM _meta WHERE key = 'schemaVersion'`)?.value).toBe("8");
+    expect(db.get(`SELECT value FROM _meta WHERE key = 'schemaVersion'`)?.value).toBe("9");
     db.close?.();
 
     const mainBytes = JSON.stringify({ apiKeys: [{ id: "unproved", key: "raw-unproved-secret" }] });

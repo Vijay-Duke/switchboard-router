@@ -81,10 +81,14 @@ broken local interception path cannot hang indefinitely.
 | `OBSERVABILITY_FLUSH_INTERVAL_MS` | `5000` | Maximum delay before a partial buffer flush. |
 | `OBSERVABILITY_MAX_JSON_SIZE` | `5` | Maximum size of each stored JSON field in KiB. |
 | `OBSERVABILITY_MAX_BUFFER` | `5000` | Hard cap on unflushed in-memory request-detail rows. |
+| `PROMETHEUS_METRICS_ENABLED` | unset (`false`) | Set to exactly `true` to expose the authenticated Prometheus 0.0.4 document at `GET /api/mgmt/v1/metrics`. |
 | `CLIENT_USAGE_BUFFER_TOKENS` | `0` | Optional client-visible token headroom added to usage estimates/reports. Set only for legacy clients that require a context reserve. |
 | `CURSOR_STREAM_DEBUG` | unset | Set to `1` for Cursor executor stream diagnostics. |
 | `CURSOR_PROTOBUF_DEBUG` | unset | Set to `1` for Cursor protobuf diagnostics. |
 | `DEBUG_MITM` | unset | Enables verbose MITM request diagnostics. |
+
+The Prometheus route uses existing management authentication and returns 404
+while the export is disabled.
 
 ## Provider and tool fallbacks
 

@@ -2,6 +2,9 @@ import { EventEmitter } from "events";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { getMeta, setMeta } from "../helpers/metaStore.js";
+import { runPrometheusMetricMutation, validateUsageMetricRow } from "@/lib/metrics/aggregateState.js";
+import { requireMetricNumber } from "@/lib/metrics/numeric.js";
+import { isCurrentMetricProvider } from "@/lib/metrics/providerRoster.js";
 
 
 const RING_CAP = 50;
@@ -247,6 +250,23 @@ export async function getActiveRequests() {
   return { activeRequests, recentRequests, errorProvider };
 }
 
+export function getActiveRequestMetricSnapshot() {
+  const byProvider = new Map();
+  for (const models of Object.values(pendingRequests.byAccount)) {
+    for (const [modelKey, count] of Object.entries(models)) {
+      if (count <= 0) continue;
+      const match = modelKey.match(/^(.*) \((.*)\)$/);
+      const provider = match?.[2] || "unknown";
+      byProvider.set(provider, (byProvider.get(provider) || 0) + count);
+    }
+  }
+  return {
+    activeRequests: [...byProvider.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([provider, count]) => ({ provider, count })),
+  };
+}
+
 export async function saveRequestUsage(entry) {
   try {
     const db = await getAdapter();
@@ -255,8 +275,10 @@ export async function saveRequestUsage(entry) {
     entry.cost = await calculateCost(entry.provider, entry.model, entry.tokens);
 
     const tokens = entry.tokens || {};
-    const promptTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
-    const completionTokens = tokens.completion_tokens || tokens.output_tokens || 0;
+    const promptTokens = requireMetricNumber(tokens.prompt_tokens || tokens.input_tokens || 0, "usage.promptTokens", { integer: true });
+    const completionTokens = requireMetricNumber(tokens.completion_tokens || tokens.output_tokens || 0, "usage.completionTokens", { integer: true });
+    const cachedTokens = requireMetricNumber(tokens.cached_tokens || tokens.cache_read_input_tokens || 0, "usage.cachedTokens", { integer: true });
+    const metricCost = requireMetricNumber(entry.cost, "usage.cost");
 
     let inserted = false;
 
@@ -325,6 +347,37 @@ export async function saveRequestUsage(entry) {
       aggregateEntryToDay(day, entry);
       db.run(`INSERT INTO usageDaily(dateKey, data) VALUES(?, ?) ON CONFLICT(dateKey) DO UPDATE SET data = excluded.data`, [dateKey, stringifyJson(day)]);
 
+      runPrometheusMetricMutation(db, () => {
+        const metricProvider = isCurrentMetricProvider(db, entry.provider) ? entry.provider : "unknown";
+        const existing = db.get(
+          `SELECT provider, requests, promptTokens, completionTokens, cachedTokens, cost
+           FROM prometheusUsageTotals WHERE provider = ?`,
+          [metricProvider],
+        );
+        if (existing) validateUsageMetricRow(existing);
+        if (existing) {
+          validateUsageMetricRow({
+            provider: metricProvider,
+            requests: existing.requests + 1,
+            promptTokens: existing.promptTokens + promptTokens,
+            completionTokens: existing.completionTokens + completionTokens,
+            cachedTokens: existing.cachedTokens + cachedTokens,
+            cost: existing.cost + metricCost,
+          });
+        }
+        db.run(
+          `INSERT INTO prometheusUsageTotals(provider, requests, promptTokens, completionTokens, cachedTokens, cost)
+           VALUES(?, 1, ?, ?, ?, ?)
+           ON CONFLICT(provider) DO UPDATE SET
+             requests = requests + 1,
+             promptTokens = promptTokens + excluded.promptTokens,
+             completionTokens = completionTokens + excluded.completionTokens,
+             cachedTokens = cachedTokens + excluded.cachedTokens,
+             cost = cost + excluded.cost`,
+          [metricProvider, promptTokens, completionTokens, cachedTokens, metricCost],
+        );
+      });
+
       // Atomic counter increment in same transaction
       const cur = db.get(`SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'`);
       const next = (cur ? parseInt(cur.value, 10) : 0) + 1;
@@ -377,6 +430,34 @@ function loadDaysInRange(adapter, maxDays) {
   const cutoff = new Date(today.getFullYear(), today.getMonth(), today.getDate() - maxDays + 1);
   const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
   return adapter.all(`SELECT dateKey, data FROM usageDaily WHERE dateKey >= ?`, [cutoffKey]);
+}
+
+export async function getUsageMetricTotals() {
+  const db = await getAdapter();
+  const state = db.get(`SELECT available FROM prometheusMetricState WHERE id = 1`);
+  if (state?.available !== 1) throw new Error("Prometheus metrics unavailable");
+  const rows = db.all(
+    `SELECT provider, requests, promptTokens, completionTokens, cachedTokens, cost
+     FROM prometheusUsageTotals ORDER BY provider`,
+  ) || [];
+  const integerFields = new Set(["requests", "promptTokens", "completionTokens", "cachedTokens"]);
+  const fields = [...integerFields, "cost"];
+  const byProvider = rows.map((row) => {
+    const provider = typeof row.provider === "string" && row.provider ? row.provider : null;
+    if (!provider) throw new Error("invalid Prometheus usage metric provider");
+    const result = { provider };
+    for (const field of fields) {
+      try {
+        result[field] = requireMetricNumber(row[field], `${provider}.${field}`, {
+          integer: integerFields.has(field),
+        });
+      } catch {
+        throw new Error(`invalid Prometheus usage metric: ${provider}.${field}`);
+      }
+    }
+    return result;
+  });
+  return { byProvider };
 }
 
 export async function getUsageStats(period = "all") {
