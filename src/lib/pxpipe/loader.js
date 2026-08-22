@@ -1,3 +1,4 @@
+import { statSync } from "fs";
 import { pathToFileURL } from "url";
 import { getInstallInfo, libraryEntry } from "./install.js";
 
@@ -24,8 +25,13 @@ async function doLoad() {
     err.code = "NOT_INSTALLED";
     throw err;
   }
-  // Cache-bust per version so Repair/upgrade takes effect without a server restart.
-  const url = `${pathToFileURL(libraryEntry()).href}?v=${encodeURIComponent(info.version || "0")}`;
+  // Cache-bust by version AND entry-file mtime: Repair reinstalls @latest, and
+  // when the version string is unchanged Node's ESM cache would otherwise
+  // return the previously-loaded (possibly corrupted) module for the same URL.
+  let mtimeMs = 0;
+  try { mtimeMs = statSync(libraryEntry()).mtimeMs; } catch {}
+  const bust = encodeURIComponent(`${info.version || "0"}:${Math.trunc(mtimeMs)}`);
+  const url = `${pathToFileURL(libraryEntry()).href}?v=${bust}`;
   const mod = await import(/* webpackIgnore: true */ url);
   if (typeof mod.transformAnthropicMessages !== "function") {
     throw new Error("installed pxpipe package does not export transformAnthropicMessages");
