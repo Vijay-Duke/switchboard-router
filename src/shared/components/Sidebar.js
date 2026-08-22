@@ -36,6 +36,9 @@ const NAV_SECTIONS = [
     label: "Tools",
     items: [
       { href: "/dashboard/token-saver", label: "Token saver", match: (p) => p.startsWith("/dashboard/token-saver") },
+      // PXPIPE dashboard (experimental): reachable at /dashboard/pxpipe while
+      // hidden from the nav until the feature graduates.
+      // { href: "/dashboard/pxpipe", label: "PXPIPE", match: (p) => p.startsWith("/dashboard/pxpipe") },
       // Media (image/TTS/STT/embedding/web) and Skills are separate products — never combine.
       {
         href: "/dashboard/media-providers",
