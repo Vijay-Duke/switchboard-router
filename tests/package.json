@@ -9,6 +9,7 @@
     "test:watch": "vitest --reporter=verbose"
   },
   "devDependencies": {
+    "happy-dom": "^20.11.6",
     "vitest": "^4.0.0"
   },
   "engines": {

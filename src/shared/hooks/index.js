@@ -1,3 +1,3 @@
 // Shared Hooks - Export all
 export { useTheme } from "./useTheme";
-export { useModelCaps } from "./useModelCaps";
+export { useDialog, getDialogFocusable, getNextTabTarget } from "./useDialog";
