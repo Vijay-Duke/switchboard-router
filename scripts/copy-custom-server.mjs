@@ -5,7 +5,7 @@
 //
 // Fails the build when standalone output is missing: a silent skip produces a
 // green build and an unstartable release.
-import { copyFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { findServerDir, standaloneRoot, WRAPPER } from "./standalone.mjs";
 
@@ -21,5 +21,23 @@ if (!dir) {
   process.exit(1);
 }
 
+const dist = process.env.NEXT_DIST_DIR || ".next";
+const staticSource = join(dist, "static");
+if (!existsSync(staticSource)) {
+  console.error(`[build] no static assets under ${staticSource}.`);
+  process.exit(1);
+}
+
+function replaceTree(source, destination) {
+  rmSync(destination, { recursive: true, force: true });
+  cpSync(source, destination, { recursive: true });
+}
+
 copyFileSync(WRAPPER, join(dir, WRAPPER));
+replaceTree(staticSource, join(dir, ".next", "static"));
+
+const publicSource = join(process.cwd(), "public");
+if (existsSync(publicSource)) {
+  replaceTree(publicSource, join(dir, "public"));
+}
 console.log(`[build] copied ${WRAPPER} → ${dir}`);
