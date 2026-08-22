@@ -251,3 +251,22 @@ Blocking findings from `review-findings-round1.md` were addressed in commit:
 No full suite, lint, React Doctor, build, scheduler, or Prometheus command was run.
 
 Final round-1 verification after both commits: **29 focused files passed; 180 tests passed; 0 failures**. This included every original client-key contract plus new verifier, durable-ledger/pruning, migration retry/sanitization, enabled log-file, all-handler rejection, usage-completion ordering, embeddings/STT abort, safe-consumer, application lifecycle, probe, CLI route, and dashboard regressions.
+
+## Review fix round 2
+
+Commit `f01f4f84 fix: harden client key rollback and runtime` addresses the merged round-2 findings:
+
+- CLI terminal/key menus display `keyPrefix` only; creation remains the sole one-time secret output. CLI tool setup uses a masked `promptSecret` path with a behavioral non-echo regression.
+- Historical legacy JSON costs increment `apiKeys.spentUsd` inside the import transaction.
+- Legacy source sanitization uses the independent `.legacy-secrets-sanitized` marker and requires durable `_meta.migratedAt` proof, so old successful imports are scrubbed while failed imports retain rollback sources.
+- `keyPrefix` is stored/indexed as a non-secret lookup discriminator. Authentication selects at most eight matching/legacy candidates, normally performs zero KDFs for arbitrary invalid keys, and verifies v2 candidates with asynchronous `crypto.scrypt`; synchronous scrypt remains migration/creation-only.
+- Embeddings/STT preserve abort as status 499, abort already-cancelled polling delays immediately, and handlers return before account fallback/rotation.
+- Migration/operator rollback documentation now states the verifier transition is forward-only: use a v2-compatible binary or rotate keys. `down()` explicitly proves v2 records remain non-reconstructed/non-weakened.
+- A behavioral authorization test proves awaited completed usage is visible to the immediately following spend check.
+- The prior real handler rejection, console, enabled log-file, request-detail, repository, DB/WAL, streaming EOF/error/cancel, and non-stream security coverage remains green.
+
+Round-2 focused verification:
+
+- First focused pass: **11 files, 51 tests, 0 failures**.
+- Expanded regression pass: **17 files, 85 tests, 0 failures**.
+- No full suite, lint, React Doctor, build, scheduler, or Prometheus command was run.
