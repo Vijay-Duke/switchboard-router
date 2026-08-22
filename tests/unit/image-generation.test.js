@@ -10,6 +10,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import committedVersions from "../../open-sse/identity/snapshots/versions.json" with { type: "json" };
+
+const proxyAwareFetch = vi.hoisted(() => vi.fn());
+
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
+  proxyAwareFetch,
+}));
+
+const refreshWithRetry = vi.hoisted(() => vi.fn());
+
+vi.mock("../../open-sse/services/tokenRefresh.js", () => ({
+  refreshWithRetry,
+}));
 
 // Hoisted mock for executor — must be at module top level to avoid vi.mock hoisting warning
 vi.mock("../../open-sse/executors/index.js", () => ({
@@ -18,15 +31,15 @@ vi.mock("../../open-sse/executors/index.js", () => ({
 
 import { handleImageGenerationCore } from "../../open-sse/handlers/imageGenerationCore.js";
 
-const originalFetch = global.fetch;
-
 describe("handleImageGenerationCore", () => {
   beforeEach(() => {
-    global.fetch = vi.fn();
+    proxyAwareFetch.mockReset();
+    vi.stubGlobal("fetch", vi.fn());
+    refreshWithRetry.mockReset().mockResolvedValue(null);
   });
 
   afterEach(() => {
-    global.fetch = originalFetch;
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -57,7 +70,7 @@ describe("handleImageGenerationCore", () => {
   });
 
   it("generates image with OpenAI format", async () => {
-    global.fetch.mockResolvedValueOnce(
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           created: 1234567890,
@@ -75,7 +88,7 @@ describe("handleImageGenerationCore", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(proxyAwareFetch).toHaveBeenCalledWith(
       "https://api.openai.com/v1/images/generations",
       expect.objectContaining({
         method: "POST",
@@ -84,6 +97,9 @@ describe("handleImageGenerationCore", () => {
           Authorization: "Bearer test-key",
         }),
         body: expect.stringContaining('"prompt":"A cute cat"'),
+        identity: "openai-node",
+        provider: "openai",
+        format: "openai",
       })
     );
 
@@ -93,7 +109,7 @@ describe("handleImageGenerationCore", () => {
   });
 
   it("generates image with Gemini format", async () => {
-    global.fetch.mockResolvedValueOnce(
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           candidates: [
@@ -119,7 +135,7 @@ describe("handleImageGenerationCore", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(proxyAwareFetch).toHaveBeenCalledWith(
       expect.stringContaining("generativelanguage.googleapis.com"),
       expect.objectContaining({
         method: "POST",
@@ -133,7 +149,7 @@ describe("handleImageGenerationCore", () => {
   });
 
   it("generates image with Minimax format", async () => {
-    global.fetch.mockResolvedValueOnce(
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           created: 1234567890,
@@ -151,7 +167,7 @@ describe("handleImageGenerationCore", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(proxyAwareFetch).toHaveBeenCalledWith(
       "https://api.minimaxi.com/v1/images/generations",
       expect.objectContaining({
         method: "POST",
@@ -164,25 +180,23 @@ describe("handleImageGenerationCore", () => {
 
   it("generates image with NanoBanana format", async () => {
     vi.useFakeTimers();
-    global.fetch
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ code: 200, data: { taskId: "task-123" } }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        )
+    proxyAwareFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ code: 200, data: { taskId: "task-123" } }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
       )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            data: {
-              successFlag: 1,
-              response: { resultImageUrl: "https://example.com/nanobanana.png" },
-            },
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        )
-      );
-
+    );
+    proxyAwareFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: {
+            successFlag: 1,
+            response: { resultImageUrl: "https://example.com/nanobanana.png" },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
     const pending = handleImageGenerationCore({
       body: { prompt: "A robot", n: 2, size: "1024x1792" },
       modelInfo: { provider: "nanobanana", model: "nanobanana-flash" },
@@ -194,18 +208,20 @@ describe("handleImageGenerationCore", () => {
     const result = await pending;
 
     expect(result.success).toBe(true);
-    const fetchCall = global.fetch.mock.calls[0];
+    const fetchCall = proxyAwareFetch.mock.calls[0];
     const requestBody = JSON.parse(fetchCall[1].body);
     expect(requestBody.type).toBe("TEXTTOIAMGE");
     expect(requestBody.numImages).toBe(2);
     expect(requestBody.image_size).toBe("9:16");
-    expect(global.fetch).toHaveBeenNthCalledWith(
-      2,
+    expect(proxyAwareFetch).toHaveBeenNthCalledWith(2,
       "https://api.nanobananaapi.ai/api/v1/nanobanana/record-info?taskId=task-123",
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: "Bearer test-key",
         }),
+        identity: "openai-node",
+        provider: "nanobanana",
+        format: "openai",
       })
     );
 
@@ -214,7 +230,7 @@ describe("handleImageGenerationCore", () => {
   });
 
   it("generates image with SD WebUI format", async () => {
-    global.fetch.mockResolvedValueOnce(
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({ images: ["base64sdwebui1", "base64sdwebui2"] }),
         { status: 200, headers: { "Content-Type": "application/json" } }
@@ -229,7 +245,7 @@ describe("handleImageGenerationCore", () => {
     });
 
     expect(result.success).toBe(true);
-    const fetchCall = global.fetch.mock.calls[0];
+    const fetchCall = proxyAwareFetch.mock.calls[0];
     const requestBody = JSON.parse(fetchCall[1].body);
     expect(requestBody.width).toBe(768);
     expect(requestBody.height).toBe(768);
@@ -237,10 +253,15 @@ describe("handleImageGenerationCore", () => {
 
     const responseBody = await result.response.json();
     expect(responseBody.data).toHaveLength(2);
+    expect(proxyAwareFetch.mock.calls[0][1]).toMatchObject({
+      identity: "openai-node",
+      provider: "sdwebui",
+      format: "openai",
+    });
   });
 
-  it("handles OpenRouter with HTTP-Referer header", async () => {
-    global.fetch.mockResolvedValueOnce(
+  it("handles OpenRouter without gateway branding headers", async () => {
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           created: 1234567890,
@@ -258,19 +279,22 @@ describe("handleImageGenerationCore", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(proxyAwareFetch).toHaveBeenCalledWith(
       "https://openrouter.ai/api/v1/images/generations",
       expect.objectContaining({
-        headers: expect.objectContaining({
-          "HTTP-Referer": "https://github.com/Vijay-Duke/switchboard-router",
-          "X-Title": "Switchboard",
+        headers: expect.not.objectContaining({
+          "HTTP-Referer": expect.anything(),
+          "X-Title": expect.anything(),
         }),
+        identity: "openai-node",
+        provider: "openrouter",
+        format: "openai",
       })
     );
   });
 
   it("handles Vercel AI Gateway image generation as OpenAI-compatible", async () => {
-    global.fetch.mockResolvedValueOnce(
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           created: 1234567890,
@@ -288,7 +312,7 @@ describe("handleImageGenerationCore", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(proxyAwareFetch).toHaveBeenCalledWith(
       "https://ai-gateway.vercel.sh/v1/images/generations",
       expect.objectContaining({
         method: "POST",
@@ -303,7 +327,7 @@ describe("handleImageGenerationCore", () => {
 
   it("handles HuggingFace binary response", async () => {
     const imageBuffer = new Uint8Array([0x89, 0x50, 0x4e, 0x47]); // PNG header
-    global.fetch.mockResolvedValueOnce(
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(imageBuffer, {
         status: 200,
         headers: { "Content-Type": "image/png" },
@@ -323,7 +347,7 @@ describe("handleImageGenerationCore", () => {
   });
 
   it("generates image with Codex gpt-5.5-image using current Codex version header", async () => {
-    global.fetch.mockResolvedValueOnce(
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(
         [
           "event: response.output_item.done",
@@ -350,19 +374,24 @@ describe("handleImageGenerationCore", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(global.fetch).toHaveBeenCalledWith(
+    const snapshot = committedVersions["codex-cli"];
+    expect(proxyAwareFetch).toHaveBeenCalledWith(
       "https://chatgpt.com/backend-api/codex/responses",
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
           authorization: "Bearer codex-token",
           "chatgpt-account-id": "account-123",
-          version: "0.136.0",
+          "user-agent": `codex_cli_rs/${snapshot.version}`,
+          version: snapshot.version,
         }),
+        identity: "codex-cli",
+        provider: "codex",
+        format: "openai-responses",
       })
     );
 
-    const fetchCall = global.fetch.mock.calls[0];
+    const fetchCall = proxyAwareFetch.mock.calls[0];
     const requestBody = JSON.parse(fetchCall[1].body);
     expect(requestBody.model).toBe("gpt-5.5");
     expect(requestBody.tools).toEqual([
@@ -374,7 +403,7 @@ describe("handleImageGenerationCore", () => {
   });
 
   it("generates image with Cloudflare Workers AI JSON response", async () => {
-    global.fetch.mockResolvedValueOnce(
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           result: { image: "base64cloudflare" },
@@ -397,7 +426,7 @@ describe("handleImageGenerationCore", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(proxyAwareFetch).toHaveBeenCalledWith(
       "https://api.cloudflare.com/client/v4/accounts/cf-account/ai/run/@cf/leonardo/lucid-origin",
       expect.objectContaining({
         method: "POST",
@@ -408,7 +437,7 @@ describe("handleImageGenerationCore", () => {
       })
     );
 
-    const fetchCall = global.fetch.mock.calls[0];
+    const fetchCall = proxyAwareFetch.mock.calls[0];
     const requestBody = JSON.parse(fetchCall[1].body);
     expect(requestBody.prompt).toBe("A lighthouse");
     expect(requestBody.width).toBe(1024);
@@ -419,7 +448,7 @@ describe("handleImageGenerationCore", () => {
   });
 
   it("uses multipart form data for Cloudflare FLUX.2 models", async () => {
-    global.fetch.mockResolvedValueOnce(
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           result: { image: "base64flux2" },
@@ -441,7 +470,7 @@ describe("handleImageGenerationCore", () => {
 
     expect(result.success).toBe(true);
 
-    const fetchCall = global.fetch.mock.calls[0];
+    const fetchCall = proxyAwareFetch.mock.calls[0];
     expect(fetchCall[1].headers).not.toHaveProperty("Content-Type");
     expect(fetchCall[1].body).toBeInstanceOf(FormData);
     expect(fetchCall[1].body.get("prompt")).toBe("A mountain lake");
@@ -451,16 +480,15 @@ describe("handleImageGenerationCore", () => {
   });
 
   it("resolves Cloudflare img2img and inpainting URL inputs before sending", async () => {
-    global.fetch
+    fetch
       .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "Content-Type": "image/png" } }))
-      .mockResolvedValueOnce(new Response(new Uint8Array([4, 5, 6]), { status: 200, headers: { "Content-Type": "image/png" } }))
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ result: { image: "base64inpaint" }, success: true }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
-        )
-      );
-
+      .mockResolvedValueOnce(new Response(new Uint8Array([4, 5, 6]), { status: 200, headers: { "Content-Type": "image/png" } }));
+    proxyAwareFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ result: { image: "base64inpaint" }, success: true }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
     const result = await handleImageGenerationCore({
       body: {
         prompt: "Change to a lion",
@@ -477,10 +505,10 @@ describe("handleImageGenerationCore", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(global.fetch).toHaveBeenNthCalledWith(1, "https://example.com/source.png");
-    expect(global.fetch).toHaveBeenNthCalledWith(2, "https://example.com/mask.png");
+    expect(fetch).toHaveBeenNthCalledWith(1, "https://example.com/source.png");
+    expect(fetch).toHaveBeenNthCalledWith(2, "https://example.com/mask.png");
 
-    const providerCall = global.fetch.mock.calls[2];
+    const providerCall = proxyAwareFetch.mock.calls[0];
     expect(providerCall[0]).toBe("https://api.cloudflare.com/client/v4/accounts/cf-account/ai/run/@cf/runwayml/stable-diffusion-v1-5-inpainting");
     const requestBody = JSON.parse(providerCall[1].body);
     expect(requestBody.image).toEqual([1, 2, 3]);
@@ -490,8 +518,36 @@ describe("handleImageGenerationCore", () => {
     expect(requestBody.mask_b64).toBe(Buffer.from([4, 5, 6]).toString("base64"));
   });
 
+  it("keeps media identity options on token-refresh retry", async () => {
+    const { getExecutor } = await import("../../open-sse/executors/index.js");
+    getExecutor.mockReturnValue({ refreshCredentials: vi.fn() });
+    refreshWithRetry.mockResolvedValueOnce({ accessToken: "new-token" });
+    proxyAwareFetch
+      .mockResolvedValueOnce(new Response("unauthorized", { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ created: 1, data: [] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+
+    const result = await handleImageGenerationCore({
+      body: { prompt: "retry me" },
+      modelInfo: { provider: "openai", model: "dall-e-3" },
+      credentials: { apiKey: "old-token" },
+      log: null,
+    });
+
+    expect(result.success).toBe(true);
+    expect(proxyAwareFetch).toHaveBeenCalledTimes(2);
+    expect(proxyAwareFetch.mock.calls[1][1]).toMatchObject({
+      identity: "openai-node",
+      provider: "openai",
+      format: "openai",
+    });
+  });
+
   it("handles provider error responses", async () => {
-    global.fetch.mockResolvedValueOnce(
+
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({ error: { message: "Rate limit exceeded" } }),
         { status: 429, headers: { "Content-Type": "application/json" } }
@@ -511,7 +567,7 @@ describe("handleImageGenerationCore", () => {
   });
 
   it("handles network errors", async () => {
-    global.fetch.mockRejectedValueOnce(new Error("Network timeout"));
+    proxyAwareFetch.mockRejectedValueOnce(new Error("Network timeout"));
 
     const result = await handleImageGenerationCore({
       body: { prompt: "test" },
@@ -526,7 +582,7 @@ describe("handleImageGenerationCore", () => {
   });
 
   it("calls onRequestSuccess callback on success", async () => {
-    global.fetch.mockResolvedValueOnce(
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           created: 1234567890,

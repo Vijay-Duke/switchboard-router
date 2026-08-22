@@ -74,6 +74,46 @@ describe("release trigger invariants", () => {
   });
 });
 
+describe("Claude TLS helper build contracts", () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+  const cliBuild = fs.readFileSync(path.join(repoRoot, "cli/scripts/build-cli.js"), "utf8");
+  const docker = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+  const ci = fs.readFileSync(path.join(repoRoot, ".github/workflows/ci.yml"), "utf8");
+  const release = fs.readFileSync(path.join(repoRoot, ".github/workflows/release.yml"), "utf8");
+
+  it("builds the helper before both root production builds", () => {
+    expect(pkg.scripts.build).toMatch(/^npm run build:claude-tls && /);
+    expect(pkg.scripts["build:bun"]).toMatch(/^npm run build:claude-tls && /);
+  });
+
+  it("lets the root build own the single CLI helper build", () => {
+    expect(cliBuild).not.toContain('execSync("npm run build:claude-tls"');
+    expect(cliBuild).toContain('execSync("npm run build"');
+  });
+
+  it("uses a unique temporary CLI build home outside generated-state cleanup", () => {
+    expect(cliBuild).toContain('const os = require("os")');
+    expect(cliBuild).toContain("fs.mkdtempSync(path.join(os.tmpdir(), \"switchboard-cli-build-\"))");
+    expect(cliBuild).toContain("for (const generated of [cliAppDir, buildDistDir])");
+    expect(cliBuild).not.toContain("[cliAppDir, buildHomeDir, buildDistDir]");
+    expect(cliBuild).toContain('process.once("exit"');
+    expect(cliBuild).toContain("fs.rmSync(buildHomeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })");
+    expect(cliBuild).toContain("HOME: buildHomeDir");
+    expect(cliBuild).toContain("USERPROFILE: buildHomeDir");
+    expect(cliBuild).toContain('APPDATA: path.join(buildHomeDir, "AppData", "Roaming")');
+    expect(cliBuild).toContain('LOCALAPPDATA: path.join(buildHomeDir, "AppData", "Local")');
+    expect(cliBuild).toContain('NEXT_TRACING_ROOT_MODE: "workspace"');
+  });
+
+  it("installs Go wherever a clean production build runs", () => {
+    expect(docker).toMatch(/apk --no-cache add[^\n]*\bgo\b/);
+    expect(ci).toContain("actions/setup-go@v6");
+    expect(ci).toContain("go-version: 1.25.x");
+    expect(release).toContain("actions/setup-go@v6");
+    expect(release).toContain("go-version: 1.25.x");
+  });
+});
+
 describe("GitHub Actions runtime support", () => {
   const workflows = [
     ".github/workflows/ci.yml",

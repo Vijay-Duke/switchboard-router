@@ -13,6 +13,7 @@ const moduleDefault = {
   category: "free",
   noAuth: true,
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.xiaomimimo.com/api/free-ai/openai/chat",
     noAuth: true,
   },

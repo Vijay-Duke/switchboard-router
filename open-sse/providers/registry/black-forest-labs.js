@@ -28,7 +28,7 @@ const moduleDefault = {
     { id: "flux-kontext-max", name: "FLUX Kontext Max (Edit)", params: ["size"], capabilities: ["edit"], kind: "image" },
   ],
   serviceKinds: ["image"],
-  imageConfig: { baseUrl: "https://api.bfl.ai/v1" },
+  imageConfig: { identity: "openai-node", baseUrl: "https://api.bfl.ai/v1" },
 };
 
 export default moduleDefault;

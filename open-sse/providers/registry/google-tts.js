@@ -15,6 +15,7 @@ const moduleDefault = {
   mediaPriority: 5,
   noAuth: true,
   ttsConfig: {
+    identity: "openai-node",
     baseUrl: "google-tts",
     authType: "none",
     authHeader: "none",

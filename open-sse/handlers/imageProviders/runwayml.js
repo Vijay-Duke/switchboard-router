@@ -1,8 +1,13 @@
 // Runway ML — async submit + /tasks/{id} polling
 import { sleep, nowSec, sizeToAspectRatio, POLL_INTERVAL_MS, POLL_TIMEOUT_MS } from "./_base.js";
 import { PROVIDER_MEDIA } from "../../providers/index.js";
+import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 
-const BASE_URL = PROVIDER_MEDIA["runwayml"]?.imageConfig?.baseUrl;
+const PROVIDER = "runwayml";
+const IMAGE_CFG = PROVIDER_MEDIA[PROVIDER]?.imageConfig || {};
+const TRANSPORT = { identity: IMAGE_CFG.identity || "openai-node", provider: PROVIDER, format: IMAGE_CFG.format || "openai" };
+
+const BASE_URL = IMAGE_CFG.baseUrl;
 
 const moduleDefault = {
   async: true,
@@ -33,7 +38,7 @@ const moduleDefault = {
     const deadline = Date.now() + POLL_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await sleep(POLL_INTERVAL_MS);
-      const r = await fetch(taskUrl, { headers });
+      const r = await proxyAwareFetch(taskUrl, { headers, ...TRANSPORT });
       if (!r.ok) throw new Error(`Runway status ${r.status}`);
       const s = await r.json();
       if (s.status === "SUCCEEDED") return s;

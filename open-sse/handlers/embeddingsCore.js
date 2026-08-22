@@ -6,7 +6,17 @@ import { withCredentialRefreshLock } from "../services/oauthCredentialManager.js
 import { getEmbeddingAdapter } from "./embeddingProviders/index.js";
 import { assertPublicUrlResolved } from "../utils/ssrfGuard.js";
 import { getOpenSseDeps } from "../runtimeDeps.js";
+import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { PROVIDERS, PROVIDER_MEDIA } from "../providers/index.js";
 
+function embeddingTransport(provider) {
+  const transport = PROVIDERS[provider] || {};
+  const config = PROVIDER_MEDIA[provider]?.embeddingConfig || {};
+  return {
+    identity: config.identity || transport.identity || "openai-node",
+    format: config.format || transport.format || "openai",
+  };
+}
 /**
  * Core embeddings handler — orchestrator only. Provider-specific URL/headers/body/normalize
  * live in `./embeddingProviders/{id}.js`.
@@ -22,6 +32,7 @@ export async function handleEmbeddingsCore({
   onRequestSuccess,
 }) {
   const { provider, model } = modelInfo;
+  const transport = embeddingTransport(provider);
 
   // Validate input
   const input = body.input;
@@ -61,11 +72,14 @@ export async function handleEmbeddingsCore({
   let providerResponse;
   try {
     await assertPublicUrlResolved(url, ssrfAllowHosts);
-    providerResponse = await fetch(url, {
+    providerResponse = await proxyAwareFetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(requestBody),
       redirect: "error",
+      identity: transport.identity,
+      provider,
+      format: transport.format,
     });
   } catch (error) {
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
@@ -96,11 +110,14 @@ export async function handleEmbeddingsCore({
         const retryUrl = adapter.buildUrl(model, credentials, ctx);
         await assertPublicUrlResolved(retryUrl, ssrfAllowHosts);
         await providerResponse.body?.cancel?.().catch?.(() => {});
-        providerResponse = await fetch(retryUrl, {
+        providerResponse = await proxyAwareFetch(retryUrl, {
           method: "POST",
           headers: retryHeaders,
           body: JSON.stringify(requestBody),
           redirect: "error",
+          identity: transport.identity,
+          provider,
+          format: transport.format,
         });
       } catch {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);

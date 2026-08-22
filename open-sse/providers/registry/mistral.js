@@ -14,6 +14,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.mistral.ai/v1/chat/completions",
     validateUrl: "https://api.mistral.ai/v1/models",
     quirks: {
@@ -27,7 +28,7 @@ const moduleDefault = {
     { id: "mistral-embed", name: "Mistral Embed", kind: "embedding" },
   ],
   serviceKinds: ["llm","imageToText","embedding"],
-  embeddingConfig: { baseUrl: "https://api.mistral.ai/v1/embeddings", authType: "apikey", authHeader: "bearer" },
+  embeddingConfig: { identity: "openai-node", baseUrl: "https://api.mistral.ai/v1/embeddings", authType: "apikey", authHeader: "bearer" },
 };
 
 export default moduleDefault;

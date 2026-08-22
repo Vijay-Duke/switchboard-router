@@ -14,6 +14,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.siliconflow.com/v1/chat/completions",
     validateUrl: "https://api.siliconflow.com/v1/models",
     thinkingFormat: "openai",

@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+const proxyAwareFetch = vi.hoisted(() => vi.fn());
+
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch }));
+
 import { handleTtsCore } from "../../open-sse/handlers/ttsCore.js";
 import { buildTtsProviderModels } from "../../open-sse/config/ttsModels.js";
 
-const originalFetch = global.fetch;
+
 
 function mockGeminiAudioResponse() {
-  global.fetch.mockResolvedValueOnce(
+  proxyAwareFetch.mockResolvedValueOnce(
     new Response(
       JSON.stringify({
         candidates: [
@@ -30,11 +34,7 @@ function mockGeminiAudioResponse() {
 
 describe("Gemini TTS", () => {
   beforeEach(() => {
-    global.fetch = vi.fn();
-  });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
+    proxyAwareFetch.mockReset();
   });
 
   it("uses the default Gemini TTS model when only a voice is provided", async () => {
@@ -49,11 +49,11 @@ describe("Gemini TTS", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(global.fetch.mock.calls[0][0]).toBe(
+    expect(proxyAwareFetch.mock.calls[0][0]).toBe(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=test-key"
     );
 
-    const sent = JSON.parse(global.fetch.mock.calls[0][1].body);
+    const sent = JSON.parse(proxyAwareFetch.mock.calls[0][1].body);
     expect(sent.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe("Zephyr");
     const body = await result.response.json();
     expect(body.format).toBe("wav");
@@ -72,11 +72,11 @@ describe("Gemini TTS", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(global.fetch.mock.calls[0][0]).toBe(
+    expect(proxyAwareFetch.mock.calls[0][0]).toBe(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=test-key"
     );
 
-    const sent = JSON.parse(global.fetch.mock.calls[0][1].body);
+    const sent = JSON.parse(proxyAwareFetch.mock.calls[0][1].body);
     expect(sent.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBe("Puck");
   });
 

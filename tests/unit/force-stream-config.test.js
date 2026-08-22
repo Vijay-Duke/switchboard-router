@@ -23,6 +23,7 @@ vi.mock("../../open-sse/utils/requestLogger.js", () => ({
 
 vi.mock("../../open-sse/utils/clientDetector.js", () => ({
   detectClientTool: vi.fn(() => null),
+  harvestDetectedClient: vi.fn(() => false),
   isNativePassthrough: vi.fn(() => false),
 }));
 

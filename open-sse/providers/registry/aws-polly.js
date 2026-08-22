@@ -18,6 +18,7 @@ const moduleDefault = {
     "tts"
   ],
   ttsConfig: {
+    identity: "openai-node",
     baseUrl: "https://polly.{region}.amazonaws.com/v1/speech",
     authType: "apikey",
     authHeader: "aws-sigv4",
@@ -28,14 +29,17 @@ const moduleDefault = {
         name: "Standard"
       },
       {
+        identity: "openai-node",
         id: "neural",
         name: "Neural"
       },
       {
+        identity: "openai-node",
         id: "long-form",
         name: "Long-form"
       },
       {
+        identity: "openai-node",
         id: "generative",
         name: "Generative"
       }

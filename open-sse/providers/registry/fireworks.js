@@ -15,6 +15,7 @@ const moduleDefault = {
   category: "apikey",
   authType: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.fireworks.ai/inference/v1/chat/completions",
     validateUrl: "https://api.fireworks.ai/inference/v1/models",
   },
@@ -25,7 +26,7 @@ const moduleDefault = {
     { id: "nomic-ai/nomic-embed-text-v1.5", name: "Nomic Embed Text v1.5", kind: "embedding" },
   ],
   serviceKinds: ["llm", "embedding"],
-  embeddingConfig: { baseUrl: "https://api.fireworks.ai/inference/v1/embeddings" },
+  embeddingConfig: { identity: "openai-node", baseUrl: "https://api.fireworks.ai/inference/v1/embeddings" },
 };
 
 export default moduleDefault;

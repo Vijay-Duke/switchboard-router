@@ -1,8 +1,13 @@
 // Fal.ai — async submit + queue polling
 import { sleep, nowSec, sizeToAspectRatio, POLL_INTERVAL_MS, POLL_TIMEOUT_MS } from "./_base.js";
 import { PROVIDER_MEDIA } from "../../providers/index.js";
+import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 
-const BASE_URL = PROVIDER_MEDIA["fal-ai"]?.imageConfig?.baseUrl;
+const PROVIDER = "fal-ai";
+const IMAGE_CFG = PROVIDER_MEDIA[PROVIDER]?.imageConfig || {};
+const TRANSPORT = { identity: IMAGE_CFG.identity || "openai-node", provider: PROVIDER, format: IMAGE_CFG.format || "openai" };
+
+const BASE_URL = IMAGE_CFG.baseUrl;
 
 const moduleDefault = {
   async: true,
@@ -22,11 +27,11 @@ const moduleDefault = {
     const deadline = Date.now() + POLL_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await sleep(POLL_INTERVAL_MS);
-      const r = await fetch(status_url, { headers });
+      const r = await proxyAwareFetch(status_url, { headers, ...TRANSPORT });
       if (!r.ok) throw new Error(`Fal status ${r.status}`);
       const s = await r.json();
       if (s.status === "COMPLETED") {
-        const fr = await fetch(response_url, { headers });
+        const fr = await proxyAwareFetch(response_url, { headers, ...TRANSPORT });
         return await fr.json();
       }
       if (s.status === "FAILED") throw new Error(s.error || "Fal generation failed");

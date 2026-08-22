@@ -19,10 +19,9 @@ const moduleDefault = {
   },
   category: "free",
   transport: {
+    identity: "gemini-cli",
     baseUrl: "https://cloudcode-pa.googleapis.com/v1internal",
     format: "gemini-cli",
-    cliVersion: "0.34.0",
-    apiClient: "google-genai-sdk/1.41.0 gl-node/v22.19.0",
     usage: {
       quotaUrl: "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
       loadCodeAssistUrl: "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",

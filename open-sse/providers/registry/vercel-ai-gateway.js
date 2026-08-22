@@ -19,6 +19,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://ai-gateway.vercel.sh/v1/chat/completions",
     thinkingFormat: "openai",
     retry: {
@@ -29,8 +30,8 @@ const moduleDefault = {
     },
   },
   serviceKinds: ["llm","embedding","image","imageToText","webSearch"],
-  embeddingConfig: { baseUrl: "https://ai-gateway.vercel.sh/v1/embeddings" },
-  imageConfig: { baseUrl: "https://ai-gateway.vercel.sh/v1/images/generations" },
+  embeddingConfig: { identity: "openai-node", baseUrl: "https://ai-gateway.vercel.sh/v1/embeddings" },
+  imageConfig: { identity: "openai-node", baseUrl: "https://ai-gateway.vercel.sh/v1/images/generations" },
   searchViaChat: { defaultModel: "openai/gpt-4o-mini", pricingUrl: "https://vercel.com/docs/ai-gateway/pricing" },
   modelsFetcher: { url: "https://ai-gateway.vercel.sh/v1/models", type: "openai" },
   passthroughModels: true,

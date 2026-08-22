@@ -1,11 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getProviderConnectionById: vi.fn(),
+  proxyAwareFetch: vi.fn(),
 }));
 
 vi.mock("@/models", () => ({
   getProviderConnectionById: mocks.getProviderConnectionById,
+}));
+
+vi.mock("open-sse/utils/proxyFetch.js", () => ({
+  proxyAwareFetch: mocks.proxyAwareFetch,
 }));
 
 vi.mock("next/server", () => ({
@@ -19,6 +24,13 @@ vi.mock("next/server", () => ({
   },
 }));
 
+const { GET } = await import("../../src/app/api/providers/[id]/models/route.js");
+
+beforeEach(() => {
+  mocks.getProviderConnectionById.mockReset();
+  mocks.proxyAwareFetch.mockReset();
+});
+
 describe("provider model catalog route", () => {
   it("imports the complete live CommandCode catalog", async () => {
     const liveModels = [
@@ -31,12 +43,11 @@ describe("provider model catalog route", () => {
       provider: "commandcode",
       apiKey: "user_test",
     });
-    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(new Response(
+    mocks.proxyAwareFetch.mockResolvedValue(new Response(
       JSON.stringify({ data: liveModels }),
       { status: 200, headers: { "content-type": "application/json" } },
     ));
 
-    const { GET } = await import("../../src/app/api/providers/[id]/models/route.js");
     const response = await GET(
       new Request("http://localhost/api/providers/commandcode-connection/models"),
       { params: Promise.resolve({ id: "commandcode-connection" }) },
@@ -45,15 +56,18 @@ describe("provider model catalog route", () => {
 
     expect(response.status).toBe(200);
     expect(body.models).toEqual(liveModels);
-    expect(fetchMock).toHaveBeenCalledWith(
+    expect(mocks.proxyAwareFetch).toHaveBeenCalledWith(
       "https://api.commandcode.ai/provider/v1/models",
       expect.objectContaining({
         method: "GET",
         redirect: "error",
         headers: expect.objectContaining({ Authorization: "Bearer user_test" }),
+        identity: "openai-node",
+        provider: "commandcode",
+        format: "commandcode",
       }),
+      undefined,
     );
-    fetchMock.mockRestore();
   });
 
   it("imports ClinePass models from its authenticated catalog", async () => {
@@ -66,12 +80,11 @@ describe("provider model catalog route", () => {
       provider: "clinepass",
       apiKey: "cline_test",
     });
-    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(new Response(
+    mocks.proxyAwareFetch.mockResolvedValue(new Response(
       JSON.stringify({ data: liveModels }),
       { status: 200, headers: { "content-type": "application/json" } },
     ));
 
-    const { GET } = await import("../../src/app/api/providers/[id]/models/route.js");
     const response = await GET(
       new Request("http://localhost/api/providers/clinepass-connection/models"),
       { params: Promise.resolve({ id: "clinepass-connection" }) },
@@ -80,14 +93,17 @@ describe("provider model catalog route", () => {
 
     expect(response.status).toBe(200);
     expect(body.models).toEqual(liveModels);
-    expect(fetchMock).toHaveBeenCalledWith(
+    expect(mocks.proxyAwareFetch).toHaveBeenCalledWith(
       "https://api.cline.bot/api/v1/models",
       expect.objectContaining({
         method: "GET",
         headers: expect.objectContaining({ Authorization: "Bearer cline_test" }),
+        identity: "cline",
+        provider: "clinepass",
+        format: "openai",
       }),
+      undefined,
     );
-    fetchMock.mockRestore();
   });
 
   it("falls back to the static registry when live discovery fails", async () => {
@@ -97,9 +113,8 @@ describe("provider model catalog route", () => {
       accessToken: "cursor-token",
       providerSpecificData: { machineId: "machine-id" },
     });
-    const fetchMock = vi.spyOn(global, "fetch").mockRejectedValue(new Error("offline"));
+    mocks.proxyAwareFetch.mockRejectedValue(new Error("offline"));
 
-    const { GET } = await import("../../src/app/api/providers/[id]/models/route.js");
     const response = await GET(
       new Request("http://localhost/api/providers/cursor-connection/models"),
       { params: Promise.resolve({ id: "cursor-connection" }) },
@@ -112,7 +127,16 @@ describe("provider model catalog route", () => {
       "composer-2.5",
       "composer-2.5-fast",
     ]));
-    fetchMock.mockRestore();
+    expect(mocks.proxyAwareFetch).toHaveBeenCalledWith(
+      "https://api2.cursor.sh/aiserver.v1.AiService/GetUsableModels",
+      expect.objectContaining({
+        method: "POST",
+        identity: "openai-node",
+        provider: "cursor",
+        format: "cursor",
+      }),
+      undefined,
+    );
   });
 
   it("falls back to the expanded CommandCode catalog when discovery is unavailable", async () => {
@@ -121,9 +145,8 @@ describe("provider model catalog route", () => {
       provider: "commandcode",
       apiKey: "user_test",
     });
-    const fetchMock = vi.spyOn(global, "fetch").mockRejectedValue(new Error("offline"));
+    mocks.proxyAwareFetch.mockRejectedValue(new Error("offline"));
 
-    const { GET } = await import("../../src/app/api/providers/[id]/models/route.js");
     const response = await GET(
       new Request("http://localhost/api/providers/commandcode-fallback-connection/models"),
       { params: Promise.resolve({ id: "commandcode-fallback-connection" }) },
@@ -138,6 +161,15 @@ describe("provider model catalog route", () => {
       "stepfun/Step-3.7-Flash",
       "nvidia/nemotron-3-ultra-550b-a55b",
     ]));
-    fetchMock.mockRestore();
+    expect(mocks.proxyAwareFetch).toHaveBeenCalledWith(
+      "https://api.commandcode.ai/provider/v1/models",
+      expect.objectContaining({
+        method: "GET",
+        identity: "openai-node",
+        provider: "commandcode",
+        format: "commandcode",
+      }),
+      undefined,
+    );
   });
 });

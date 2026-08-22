@@ -19,6 +19,7 @@ const moduleDefault = {
   category: "apikey",
   authType: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.hyperbolic.xyz/v1/chat/completions",
     validateUrl: "https://api.hyperbolic.xyz/v1/models",
   },

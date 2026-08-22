@@ -23,7 +23,7 @@ const nextConfig = {
   output: "standalone",
   serverExternalPackages: [
     "better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite", "node-machine-id", "bindings",
-    "open-sse"
+    "impit", "open-sse"
   ],
   // Next.js 16 blocks /_next/* cross-origin in dev by default. Without this,
   // opening the app via 127.0.0.1 or a LAN IP leaves React unhydrated — login
@@ -51,7 +51,12 @@ const nextConfig = {
   // catalog.json is read via runtime fs (process.getBuiltinModule — invisible
   // to nft tracing), so include it explicitly for every route.
   outputFileTracingIncludes: {
-    "*": ["./open-sse/providers/generated/catalog.json"],
+    "*": [
+      "./open-sse/providers/generated/catalog.json",
+      "./node_modules/impit/**/*",
+      "./node_modules/impit-*/**/*",
+      "./open-sse/identity/tls/bin/**/*",
+    ],
     "/api/skills/[id]": ["./skills/**/*"],
     "/api/skills/*": ["./skills/**/*"],
   },

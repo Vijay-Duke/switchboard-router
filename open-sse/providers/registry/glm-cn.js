@@ -14,6 +14,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions",
     headers: {},
     usage: {
@@ -21,6 +22,7 @@ const moduleDefault = {
     },
   },
   models: [
+    { id: "glm-5.3", name: "GLM 5.3" },
     { id: "glm-5.2", name: "GLM 5.2" },
     { id: "glm-5.1", name: "GLM 5.1" },
     { id: "glm-5", name: "GLM 5" },

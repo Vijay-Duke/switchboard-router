@@ -1,32 +1,22 @@
-import { createHash, randomBytes, randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { CLAUDE_TOOL_SUFFIX, CC_DEFAULT_TOOLS } from "../config/appConstants.js";
+import { getConsistentSnapshot, getDeviceProfile } from "../identity/snapshot.js";
 
-const CLAUDE_VERSION = "2.1.92";
-const CC_ENTRYPOINT = "sdk-cli";
-
-// Generate billing header matching real Claude Code 2.1.92+ format:
-// x-anthropic-billing-header: cc_version=<ver>.<build>; cc_entrypoint=sdk-cli; cch=<hash>;
-function generateBillingHeader(payload) {
+function generateBillingHeader(payload, snapshot, deviceProfile) {
   const content = JSON.stringify(payload);
   const cch = createHash("sha256").update(content).digest("hex").slice(0, 5);
-  const buildHash = randomBytes(2).toString("hex").slice(0, 3);
-  return `x-anthropic-billing-header: cc_version=${CLAUDE_VERSION}.${buildHash}; cc_entrypoint=${CC_ENTRYPOINT}; cch=${cch};`;
+  const version = snapshot?.version;
+  if (!version) throw new Error("Claude identity snapshot is missing a version");
+  const entrypoint = snapshot?.entrypoint || "cli";
+  return `x-anthropic-billing-header: cc_version=${version}.${deviceProfile.buildHash}; cc_entrypoint=${entrypoint}; cch=${cch};`;
 }
 
-// Derive a deterministic UUID-v4-shaped string from a seed (stable per account)
-function deriveUuid(seed) {
-  const h = createHash("sha256").update(seed).digest("hex");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${((parseInt(h[16], 16) & 0x3) | 0x8).toString(16)}${h.slice(17, 20)}-${h.slice(20, 32)}`;
-}
-
-// Generate fake user ID in Claude Code 2.1.92+ JSON format:
-// {"device_id":"<64hex>","account_uuid":"<uuid>","session_id":"<uuid>"}
-// device_id/account_uuid derive from apiKey (stable per account), session_id per-conversation
-function generateFakeUserID(sessionId, apiKey) {
-  const deviceId = apiKey ? createHash("sha256").update(`device:${apiKey}`).digest("hex") : randomBytes(32).toString("hex");
-  const accountUuid = apiKey ? deriveUuid(`account:${apiKey}`) : randomUUID();
-  const sessionUuid = sessionId || randomUUID();
-  return `{"device_id":"${deviceId}","account_uuid":"${accountUuid}","session_id":"${sessionUuid}"}`;
+function generateFakeUserID(sessionId, deviceProfile) {
+  return JSON.stringify({
+    device_id: deviceProfile.deviceId,
+    account_uuid: deviceProfile.accountUuid,
+    session_id: sessionId || randomUUID(),
+  });
 }
 
 /**
@@ -136,18 +126,20 @@ const CC_DECOY_TOOLS = [
  * 1. Inject billing header as first system block
  * 2. Inject fake user ID into metadata (JSON format, session_id aligned with X-Claude-Code-Session-Id)
  * Only applies when using OAuth token (sk-ant-oat).
- * @param {object} body - Claude API request body
- * @param {string} apiKey - API key or OAuth token
  * @param {string} [sessionId] - Session ID to align with X-Claude-Code-Session-Id header
+ * @param {string} [credentialId] - Stable credential identifier; defaults to apiKey
  * @returns {object} Modified body
  */
-export function applyCloaking(body, apiKey, sessionId) {
+export function applyCloaking(body, apiKey, sessionId, credentialId = apiKey) {
   if (!apiKey || !apiKey.includes("sk-ant-oat")) return body;
+
+  const snapshot = getConsistentSnapshot("claude-cli");
+  const deviceProfile = getDeviceProfile(credentialId);
 
   const result = { ...body };
 
   // Inject billing header as system[0], preserve existing system blocks
-  const billingText = generateBillingHeader(body);
+  const billingText = generateBillingHeader(body, snapshot, deviceProfile);
   const billingBlock = { type: "text", text: billingText };
 
   if (Array.isArray(result.system)) {
@@ -161,11 +153,10 @@ export function applyCloaking(body, apiKey, sessionId) {
     result.system = [billingBlock];
   }
 
-  // Inject fake user ID into metadata (session_id must match X-Claude-Code-Session-Id)
-  const existingUserId = result.metadata?.user_id;
-  if (!existingUserId) {
-    result.metadata = { ...result.metadata, user_id: generateFakeUserID(sessionId, apiKey) };
-  }
+  // The generated body identity is authoritative for impersonated OAuth requests.
+  // Native Claude Code passthrough skips this function, so an inbound official
+  // metadata value is never rewritten here.
+  result.metadata = { ...result.metadata, user_id: generateFakeUserID(sessionId, deviceProfile) };
 
   return result;
 }

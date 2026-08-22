@@ -19,6 +19,7 @@ const moduleDefault = {
   },
   category: "freeTier",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://aiplatform.googleapis.com",
     format: "vertex",
   },

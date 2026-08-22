@@ -16,6 +16,7 @@ const moduleDefault = {
   },
   category: "free",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api3.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation",
     headers: {},
     timeoutMs: 120000,

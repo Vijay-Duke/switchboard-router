@@ -1,10 +1,14 @@
 // NanoBanana API — async submit + poll record-info
 import { sleep, nowSec, sizeToAspectRatio, POLL_INTERVAL_MS, POLL_TIMEOUT_MS } from "./_base.js";
 import { PROVIDER_MEDIA } from "../../providers/index.js";
+import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 
-const IMG_CFG = PROVIDER_MEDIA["nanobanana"]?.imageConfig || {};
+const PROVIDER = "nanobanana";
+
+const IMG_CFG = PROVIDER_MEDIA[PROVIDER]?.imageConfig || {};
 const SUBMIT_URL = IMG_CFG.baseUrl;
 const POLL_BASE = IMG_CFG.pollUrl;
+const TRANSPORT = { identity: IMG_CFG.identity || "openai-node", provider: PROVIDER, format: IMG_CFG.format || "openai" };
 
 const moduleDefault = {
   async: true,
@@ -43,7 +47,7 @@ const moduleDefault = {
     const deadline = Date.now() + POLL_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await sleep(POLL_INTERVAL_MS);
-      const r = await fetch(pollUrl, { headers });
+      const r = await proxyAwareFetch(pollUrl, { headers, ...TRANSPORT });
       if (!r.ok) throw new Error(`NanoBanana status ${r.status}`);
       const s = await r.json();
       const flag = s.data?.successFlag;

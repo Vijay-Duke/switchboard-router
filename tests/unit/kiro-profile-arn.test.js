@@ -1,3 +1,7 @@
+const { proxyAwareFetch } = vi.hoisted(() => ({ proxyAwareFetch: vi.fn() }));
+
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch }));
+
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { KiroService } from "../../src/lib/oauth/services/kiro.js";
 
@@ -21,11 +25,14 @@ import { KiroService } from "../../src/lib/oauth/services/kiro.js";
  * fetchKiroProfileArn in providers.js and is covered there — not here.
  */
 describe("kiro API-key auth (KiroService.validateApiKey)", () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    proxyAwareFetch.mockReset();
+  });
   afterEach(() => vi.restoreAllMocks());
 
   it("validates an API key with a real ListAvailableModels auth check", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+    const fetchMock = proxyAwareFetch.mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({ models: [{ modelId: "claude-opus-4.8" }] }),
@@ -50,10 +57,15 @@ describe("kiro API-key auth (KiroService.validateApiKey)", () => {
     );
     // The API-key marker header is required for CodeWhisperer to accept the bearer.
     expect(init.headers.tokentype).toBe("API_KEY");
+    expect(init).toMatchObject({
+      identity: "openai-node",
+      provider: "kiro",
+      format: "kiro",
+    });
   });
 
   it("treats a 400 (bearer accepted, arg check) as a valid key", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+    proxyAwareFetch.mockResolvedValue({
       ok: false,
       status: 400,
       text: async () => '{"message":"missing profileArn"}',
@@ -65,7 +77,7 @@ describe("kiro API-key auth (KiroService.validateApiKey)", () => {
   });
 
   it("rejects an empty API key without a network call", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = proxyAwareFetch;
     const svc = new KiroService();
     await expect(svc.validateApiKey("   ")).rejects.toMatchObject({
       code: "MISSING_KEY",
@@ -74,7 +86,7 @@ describe("kiro API-key auth (KiroService.validateApiKey)", () => {
   });
 
   it("rejects a key AWS refuses (403 bearer invalid) with an AUTH_REJECTED code", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+    proxyAwareFetch.mockResolvedValue({
       ok: false,
       status: 403,
       text: async () =>
@@ -88,7 +100,7 @@ describe("kiro API-key auth (KiroService.validateApiKey)", () => {
 
   it("surfaces a clear region error when the CodeWhisperer host does not resolve", async () => {
     // Non-us-east-1 regions have no CodeWhisperer endpoint → DNS ENOTFOUND.
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(
+    proxyAwareFetch.mockRejectedValue(
       Object.assign(new TypeError("fetch failed"), {
         cause: { code: "ENOTFOUND" },
       })
@@ -100,7 +112,7 @@ describe("kiro API-key auth (KiroService.validateApiKey)", () => {
   });
 
   it("rejects a host-injecting region before any network call", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const fetchMock = proxyAwareFetch;
     const svc = new KiroService();
     await expect(
       svc.validateApiKey("some-key", "evil.com#")

@@ -18,6 +18,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://llm.chutes.ai/v1/chat/completions",
     validateUrl: "https://llm.chutes.ai/v1/models",
   },

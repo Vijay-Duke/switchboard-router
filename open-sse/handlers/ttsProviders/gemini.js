@@ -1,6 +1,7 @@
 // Gemini TTS — generateContent with AUDIO modality returns PCM L16, wrap as WAV
 import { Buffer } from "node:buffer";
 import { PROVIDER_MEDIA, PROVIDER_MODELS } from "../../providers/index.js";
+import { authenticatedMediaFetch } from "./_base.js";
 
 const TTS_CFG = PROVIDER_MEDIA["gemini"]?.ttsConfig || {};
 const TTS_BASE = TTS_CFG.baseUrl;
@@ -63,7 +64,7 @@ const moduleDefault = {
     if (!credentials?.apiKey) throw new Error("No Gemini API key configured");
     const { modelId, voiceId } = parseGeminiModelVoice(model);
     const url = `${TTS_BASE}/${modelId}:generateContent?key=${credentials.apiKey}`;
-    const res = await fetch(url, {
+    const res = await authenticatedMediaFetch("gemini", "tts", url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

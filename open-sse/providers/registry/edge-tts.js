@@ -15,6 +15,7 @@ const moduleDefault = {
   mediaPriority: 5,
   noAuth: true,
   ttsConfig: {
+    identity: "openai-node",
     baseUrl: "edge-tts",
     authType: "none",
     authHeader: "none",

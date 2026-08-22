@@ -14,6 +14,7 @@ const moduleDefault = {
   },
   category: "oauth",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://gitlab.com/api/v4/chat/completions",
     auth: {
       combined: true,

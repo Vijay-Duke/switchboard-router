@@ -16,6 +16,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "kimi",
     baseUrl: "https://api.kimi.com/coding/v1/messages",
     format: "claude",
     urlSuffix: "?beta=true",
@@ -29,11 +30,13 @@ const moduleDefault = {
   // Multi-endpoint: pick the transport matching client sourceFormat to skip translation.
   transports: [
     {
+      identity: "kimi",
       format: "openai",
       baseUrl: "https://api.kimi.com/coding/v1/chat/completions",
       auth: { combined: true, header: "Authorization", scheme: "bearer" },
     },
     {
+      identity: "kimi",
       format: "claude",
       baseUrl: "https://api.kimi.com/coding/v1/messages",
       urlSuffix: "?beta=true",

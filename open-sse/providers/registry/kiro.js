@@ -16,6 +16,7 @@ const moduleDefault = {
   },
   category: "free",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://runtime.us-east-1.kiro.dev/generateAssistantResponse",
     baseUrls: [
       "https://runtime.us-east-1.kiro.dev/generateAssistantResponse",

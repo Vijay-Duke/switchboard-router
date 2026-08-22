@@ -2,15 +2,30 @@
 
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { execSync } = require("child_process");
 
 const cliDir = path.resolve(__dirname, "..");
 const appDir = path.resolve(cliDir, "..");
 const rootDir = path.resolve(appDir, "..");
 const cliAppDir = path.join(cliDir, "app");
-const buildHomeDir = path.join(cliDir, ".build-home");
+const buildHomeDir = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-cli-build-"));
+process.once("exit", () => {
+  try {
+    fs.rmSync(buildHomeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch {}
+});
 const buildDistDirName = ".next-cli-build";
 const buildDistDir = path.join(appDir, buildDistDirName);
+const CLAUDE_TLS_TARGETS = [
+  "darwin/arm64",
+  "darwin/x64",
+  "linux/arm64",
+  "linux/x64",
+  "win32/arm64",
+  "win32/x64",
+];
+
 
 // Exclude patterns for files/folders we don't want to copy
 const EXCLUDE_PATTERNS = [
@@ -87,10 +102,11 @@ console.log("📦 Building Switchboard CLI package with Next.js...\n");
 // CLI output before Next computes its file graph or an old package is recursively
 // copied into the next one (including stale test/build data).
 console.log("0️⃣  Cleaning generated CLI build state...");
-for (const generated of [cliAppDir, buildHomeDir, buildDistDir]) {
-  if (fs.existsSync(generated)) fs.rmSync(generated, { recursive: true, force: true });
+for (const generated of [cliAppDir, buildDistDir]) {
+  if (fs.existsSync(generated)) {
+    fs.rmSync(generated, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  }
 }
-fs.mkdirSync(buildHomeDir, { recursive: true });
 fs.mkdirSync(path.join(buildHomeDir, "AppData", "Roaming"), { recursive: true });
 fs.mkdirSync(path.join(buildHomeDir, "AppData", "Local"), { recursive: true });
 console.log("✅ Cleaned\n");
@@ -107,6 +123,7 @@ if (appPkg.version !== cliPkg.version) {
 } else {
   console.log(`✅ Version already synced: ${cliPkg.version}\n`);
 }
+
 
 // Step 2: Build app with Next.js (workspace tracing root → traced node_modules in standalone).
 console.log("2️⃣  Building Next.js app...");
@@ -128,6 +145,25 @@ try {
 } catch (error) {
   console.error("❌ Next.js build failed");
   process.exit(1);
+}
+// Root build remains current-platform only. CLI releases add the other targets
+// without rebuilding the host helper that `npm run build` just produced.
+const helperBinRoot = path.join(appDir, "open-sse", "identity", "tls", "bin");
+const helperName = (platform) => platform === "win32" ? "switchboard-claude-tls.exe" : "switchboard-claude-tls";
+const hostHelperTarget = `${process.platform}/${process.arch}`;
+const missingHelperTargets = CLAUDE_TLS_TARGETS.filter((target) => target !== hostHelperTarget);
+if (missingHelperTargets.length) {
+  console.log(`1️⃣ b Building Claude TLS helpers: ${missingHelperTargets.join(", ")}...`);
+  try {
+    execSync(`node scripts/build-claude-tls-helper.mjs ${missingHelperTargets.join(" ")}`, {
+      stdio: "inherit",
+      cwd: appDir,
+    });
+    console.log("✅ Claude TLS helpers completed\n");
+  } catch (error) {
+    console.error("❌ Claude TLS helper build failed");
+    process.exit(1);
+  }
 }
 
 // Step 3: Copy Next.js standalone build to app/cli/app.
@@ -185,11 +221,11 @@ if (fs.existsSync(customServerSrc)) {
   console.warn("⚠️  custom-server.js not found — server will run without real-IP injection\n");
 }
 
-// Step 3b: Ensure sql.js (pure JS fallback) bundled in app/cli/app/node_modules.
-// Strip better-sqlite3 (native) — it lives in ~/.switchboard/runtime to avoid
-// Windows EBUSY during global CLI updates. node:sqlite (Node ≥22.5) is also
-// available as a no-install middle tier.
-console.log("3️⃣ b Configuring SQLite drivers...");
+// Step 3b: Ensure pure-JS/fallback modules are bundled in app/cli/app/node_modules.
+// Native impit bindings are CLI optionalDependencies: npm installs the package
+// matching the end user's OS/arch beside app/, where impit's normal resolution
+// can reach it. The generic impit package remains bundled in app/node_modules.
+console.log("3️⃣ b Configuring bundled modules...");
 function ensureModuleInBundle(pkg) {
   const dest = path.join(cliAppDir, "node_modules", pkg);
   if (fs.existsSync(dest)) {
@@ -210,6 +246,19 @@ function ensureModuleInBundle(pkg) {
   console.log(`✅ Bundled ${pkg}`);
 }
 ensureModuleInBundle("sql.js");
+ensureModuleInBundle("impit");
+const bundledHelperBin = path.join(cliAppDir, "open-sse", "identity", "tls", "bin");
+if (fs.existsSync(bundledHelperBin)) fs.rmSync(bundledHelperBin, { recursive: true, force: true });
+copyRecursive(helperBinRoot, bundledHelperBin);
+for (const target of CLAUDE_TLS_TARGETS) {
+  const [platform, arch] = target.split("/");
+  const binary = path.join(bundledHelperBin, platform, arch, helperName(platform));
+  if (!fs.existsSync(binary)) {
+    console.error(`❌ Missing Claude TLS helper ${target}: ${binary}`);
+    process.exit(1);
+  }
+}
+console.log("✅ Bundled all Claude TLS helpers");
 const betterDir = path.join(cliAppDir, "node_modules", "better-sqlite3");
 if (fs.existsSync(betterDir)) {
   fs.rmSync(betterDir, { recursive: true, force: true });

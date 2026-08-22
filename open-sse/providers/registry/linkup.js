@@ -17,6 +17,7 @@ const moduleDefault = {
     "webSearch"
   ],
   searchConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.linkup.so/v1/search",
     method: "POST",
     authType: "apikey",

@@ -1,6 +1,7 @@
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { OAUTH_ENDPOINTS, GEMINI_CLI_API_CLIENT, geminiCLIUserAgent } from "../config/appConstants.js";
+import { proxyAwareFetch } from "../utils/proxyFetch.js";
 
 function withoutTransportStream(body) {
   if (!body || typeof body !== "object") return body;
@@ -62,11 +63,11 @@ export class GeminiCLIExecutor extends BaseExecutor {
     return base;
   }
 
-  async refreshCredentials(credentials, log) {
+  async refreshCredentials(credentials, log, proxyOptions = null) {
     if (!credentials.refreshToken) return null;
 
     try {
-      const response = await fetch(OAUTH_ENDPOINTS.google.token, {
+      const response = await proxyAwareFetch(OAUTH_ENDPOINTS.google.token, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
         body: new URLSearchParams({
@@ -74,8 +75,11 @@ export class GeminiCLIExecutor extends BaseExecutor {
           refresh_token: credentials.refreshToken,
           client_id: this.config.clientId,
           client_secret: this.config.clientSecret
-        })
-      });
+        }),
+        identity: this.config.identity,
+        provider: this.provider,
+        format: this.config.format,
+      }, proxyOptions);
 
       if (!response.ok) return null;
 

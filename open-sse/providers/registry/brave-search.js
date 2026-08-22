@@ -17,6 +17,7 @@ const moduleDefault = {
     "webSearch"
   ],
   searchConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.search.brave.com/res/v1",
     method: "GET",
     authType: "apikey",

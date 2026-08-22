@@ -17,6 +17,7 @@ const moduleDefault = {
   authType: "cookie",
   authHint: "Paste your __Secure-next-auth.session-token cookie value from perplexity.ai",
   transport: {
+    identity: "chrome",
     baseUrl: "https://www.perplexity.ai/rest/sse/perplexity_ask",
     format: "perplexity-web",
     authType: "cookie",

@@ -2,16 +2,10 @@
  * Google usage handlers (Gemini CLI + Antigravity)
  */
 
-import { CLIENT_METADATA, getPlatformUserAgent } from "../../config/appConstants.js";
-import { ANTIGRAVITY_OAUTH_CLIENT } from "../../providers/shared.js";
+import { CLIENT_METADATA } from "../../config/appConstants.js";
 import { U, parseResetTime, normalizeCloudCodeProjectId, fetchWithTimeout } from "./shared.js";
 
-// Antigravity API config (from Quotio) — urls from registry, oauth client + dynamic UA kept here
-const ANTIGRAVITY_CONFIG = {
-  ...U("antigravity"),
-  ...ANTIGRAVITY_OAUTH_CLIENT,
-  userAgent: getPlatformUserAgent(),
-};
+const ANTIGRAVITY_CONFIG = U("antigravity");
 
 /**
  * Gemini CLI Usage — fetch per-model quota via Cloud Code Assist API.
@@ -51,6 +45,9 @@ export async function getGeminiUsage(accessToken, providerSpecificData, proxyOpt
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ project: projectId }),
+        identity: "gemini-cli",
+        provider: "gemini-cli",
+        format: "gemini",
       },
       10000,
       proxyOptions
@@ -102,6 +99,9 @@ async function getGeminiSubscriptionInfo(accessToken, proxyOptions = null) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ metadata: CLIENT_METADATA }),
+        identity: "gemini-cli",
+        provider: "gemini-cli",
+        format: "gemini",
       },
       10000,
       proxyOptions
@@ -126,15 +126,15 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
       method: "POST",
       headers: {
         "Authorization": `Bearer ${accessToken}`,
-        "User-Agent": ANTIGRAVITY_CONFIG.userAgent,
         "Content-Type": "application/json",
         "X-Client-Name": "antigravity",
-        "X-Client-Version": "1.107.0",
-        "x-request-source": "local", // MITM bypass
       },
       body: JSON.stringify({
         ...(projectId ? { project: projectId } : {})
       }),
+      identity: "antigravity",
+      provider: "antigravity",
+      format: "antigravity",
     }, 10000, proxyOptions);
 
     if (response.status === 403) {
@@ -227,11 +227,12 @@ async function getAntigravitySubscriptionInfo(accessToken, proxyOptions = null) 
       method: "POST",
       headers: {
         "Authorization": `Bearer ${accessToken}`,
-        "User-Agent": ANTIGRAVITY_CONFIG.userAgent,
         "Content-Type": "application/json",
-        "x-request-source": "local", // MITM bypass
       },
       body: JSON.stringify({ metadata: CLIENT_METADATA, mode: 1 }),
+      identity: "antigravity",
+      provider: "antigravity",
+      format: "antigravity",
     }, 10000, proxyOptions);
 
     if (!response.ok) return null;

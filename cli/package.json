@@ -41,12 +41,20 @@
   "comment_sqlite": "sql.js + better-sqlite3 are NOT bundled here. They are installed into ~/.switchboard/runtime/node_modules by hooks/postinstall.js (and re-checked at runtime by cli.js). This avoids Windows EBUSY errors when updating the global CLI, since native .node files no longer live under the locked install dir.",
   "comment_systray": "System tray uses platform-specific optionalDependencies (esbuild pattern). npm installs only the matching binary for the user's OS/arch. Windows uses PowerShell NotifyIcon (zero binary). Postinstall fallback downloads from GitHub releases if optionalDeps are skipped.",
   "optionalDependencies": {
+    "impit-darwin-arm64": "0.14.3",
+    "impit-darwin-x64": "0.14.3",
+    "impit-linux-arm64-gnu": "0.14.3",
+    "impit-linux-arm64-musl": "0.14.3",
+    "impit-linux-x64-gnu": "0.14.3",
+    "impit-linux-x64-musl": "0.14.3",
+    "impit-win32-arm64-msvc": "0.14.3",
+    "impit-win32-x64-msvc": "0.14.3",
     "switchboard-tray-darwin-arm64": "^1.0.0",
     "switchboard-tray-darwin-x64": "1.0.0",
     "switchboard-tray-linux-x64": "1.0.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.9.0"
   },
   "keywords": [
     "switchboard",

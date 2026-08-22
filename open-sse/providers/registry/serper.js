@@ -17,6 +17,7 @@ const moduleDefault = {
     "webSearch"
   ],
   searchConfig: {
+    identity: "openai-node",
     baseUrl: "https://google.serper.dev",
     method: "POST",
     authType: "apikey",

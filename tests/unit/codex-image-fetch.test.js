@@ -16,8 +16,9 @@ vi.mock("node:dns/promises", () => ({
 }));
 
 import { CodexExecutor } from "../../open-sse/executors/codex.js";
+import codexImage from "../../open-sse/handlers/imageProviders/codex.js";
+import { clearSessionStore } from "../../open-sse/utils/sessionManager.js";
 import * as proxyFetchModule from "../../open-sse/utils/proxyFetch.js";
-
 const IMAGE_1MB_BYTES = 1024 * 1024;
 const REMOTE_URL = "https://example.com/big.jpg";
 const DATA_URI = "data:image/png;base64,iVBORw0KGgo=";
@@ -53,6 +54,7 @@ describe("CodexExecutor image handling", () => {
 
   beforeEach(() => {
     originalFetch = global.fetch;
+    clearSessionStore();
   });
 
   afterEach(() => {
@@ -159,5 +161,23 @@ describe("CodexExecutor image handling", () => {
     const parsed = JSON.parse(capturedBodyString);
     const imgBlock = parsed.input[0].content.find((c) => c.type === "input_image");
     expect(imgBlock.image_url.startsWith("data:image/jpeg;base64,")).toBe(true);
+  });
+
+  it("keeps Codex image session stable for the same conversation", () => {
+    const credentials = { connectionId: "codex-account", accessToken: "token", rawHeaders: {} };
+    const body = { prompt: "draw a lighthouse", conversation_id: "conversation-a" };
+    const first = codexImage.buildHeaders(credentials, {}, "gpt-image", body);
+    const second = codexImage.buildHeaders(credentials, {}, "gpt-image", body);
+
+    expect(first.session_id).toBe(second.session_id);
+    expect(first["x-client-request-id"]).not.toBe(second["x-client-request-id"]);
+  });
+
+  it("isolates Codex image sessions across conversations", () => {
+    const credentials = { connectionId: "codex-account", accessToken: "token", rawHeaders: {} };
+    const first = codexImage.buildHeaders(credentials, {}, "gpt-image", { prompt: "one", conversation_id: "conversation-a" });
+    const second = codexImage.buildHeaders(credentials, {}, "gpt-image", { prompt: "two", conversation_id: "conversation-b" });
+
+    expect(first.session_id).not.toBe(second.session_id);
   });
 });

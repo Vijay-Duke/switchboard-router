@@ -20,6 +20,7 @@ const moduleDefault = {
   category: "apikey",
   authType: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.deepgram.com/v1/listen",
   },
   models: [
@@ -29,7 +30,7 @@ const moduleDefault = {
     { id: "nova", name: "Nova", kind: "stt" },
   ],
   serviceKinds: ["stt"],
-  sttConfig: { baseUrl: "https://api.deepgram.com/v1/listen", authType: "apikey", authHeader: "token", format: "deepgram" },
+  sttConfig: { identity: "openai-node", baseUrl: "https://api.deepgram.com/v1/listen", authType: "apikey", authHeader: "token", format: "deepgram" },
 };
 
 export default moduleDefault;

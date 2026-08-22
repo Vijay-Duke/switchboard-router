@@ -1,9 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const proxyAwareFetch = vi.hoisted(() => vi.fn());
+
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch }));
+
 import { handleFetchCore } from "../../open-sse/handlers/fetch/index.js";
 import { handleSearchCore } from "../../open-sse/handlers/search/index.js";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  proxyAwareFetch.mockReset();
+  vi.unstubAllGlobals();
+});
 
 function abortableFetch(_url, { signal }) {
   return new Promise((_resolve, reject) => {
@@ -41,10 +48,10 @@ describe("non-chat combo abort propagation", () => {
   it("aborts a dedicated search provider when the caller disconnects", async () => {
     const caller = new AbortController();
     let upstreamSignal;
-    vi.stubGlobal("fetch", vi.fn((url, init) => {
+    proxyAwareFetch.mockImplementation((url, init) => {
       upstreamSignal = init.signal;
       return abortableFetch(url, init);
-    }));
+    });
 
     const resultPromise = handleSearchCore({
       body: { query: "switchboard", max_results: 3 },

@@ -17,6 +17,7 @@ const moduleDefault = {
     "webSearch"
   ],
   searchConfig: {
+    identity: "openai-node",
     baseUrl: "https://www.googleapis.com/customsearch/v1",
     method: "GET",
     authType: "apikey",

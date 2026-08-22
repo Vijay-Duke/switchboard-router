@@ -16,6 +16,7 @@ const moduleDefault = {
   },
   category: "freeTier",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://integrate.api.nvidia.com/v1/chat/completions",
     validateUrl: "https://integrate.api.nvidia.com/v1/models",
   },
@@ -34,12 +35,13 @@ const moduleDefault = {
   ],
   serviceKinds: ["llm","tts","embedding"],
   ttsConfig: {
+    identity: "openai-node",
     baseUrl: "https://integrate.api.nvidia.com/v1/audio/speech",
     authType: "apikey",
     authHeader: "bearer",
     format: "nvidia-tts",
   },
-  embeddingConfig: { baseUrl: "https://integrate.api.nvidia.com/v1/embeddings", authType: "apikey", authHeader: "bearer" },
+  embeddingConfig: { identity: "openai-node", baseUrl: "https://integrate.api.nvidia.com/v1/embeddings", authType: "apikey", authHeader: "bearer" },
 };
 
 export default moduleDefault;

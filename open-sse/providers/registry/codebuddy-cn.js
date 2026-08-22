@@ -19,6 +19,7 @@ const moduleDefault = {
   authModes: ["oauth", "apikey"],
   hasOAuth: true,
   transport: {
+    identity: "openai-node",
     baseUrl: "https://copilot.tencent.com/v2/chat/completions",
     forceStream: true,
     // CodeBuddy is a unified OpenAI-compatible gateway: every model (GLM, Kimi,

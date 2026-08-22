@@ -1,6 +1,7 @@
 // OpenAI TTS — model format: "tts-model/voice"
 import { Buffer } from "node:buffer";
 import { PROVIDER_MEDIA } from "../../providers/index.js";
+import { authenticatedMediaFetch } from "./_base.js";
 
 const DEFAULT_TTS_MODEL = PROVIDER_MEDIA["openai"]?.ttsConfig?.defaultModel;
 
@@ -18,7 +19,7 @@ const moduleDefault = {
     }
 
     const baseUrl = (credentials.baseUrl || "https://api.openai.com").replace(/\/+$/, "");
-    const res = await fetch(`${baseUrl}/v1/audio/speech`, {
+    const res = await authenticatedMediaFetch("openai", "tts", `${baseUrl}/v1/audio/speech`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${credentials.apiKey}` },
       body: JSON.stringify({ model: ttsModel, voice, input: text }),

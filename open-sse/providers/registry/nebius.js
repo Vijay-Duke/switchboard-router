@@ -15,6 +15,7 @@ const moduleDefault = {
   category: "apikey",
   authType: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.studio.nebius.ai/v1/chat/completions",
     validateUrl: "https://api.studio.nebius.ai/v1/models",
   },
@@ -23,7 +24,7 @@ const moduleDefault = {
     { id: "Qwen/Qwen3-Embedding-8B", name: "Qwen3 Embedding 8B", kind: "embedding" },
   ],
   serviceKinds: ["llm", "embedding"],
-  embeddingConfig: { baseUrl: "https://api.tokenfactory.nebius.com/v1/embeddings" },
+  embeddingConfig: { identity: "openai-node", baseUrl: "https://api.tokenfactory.nebius.com/v1/embeddings" },
 };
 
 export default moduleDefault;

@@ -16,6 +16,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "claude-cli",
     baseUrl: "https://api.minimax.io/anthropic/v1/messages",
     format: "claude",
     urlSuffix: "?beta=true",
@@ -41,11 +42,13 @@ const moduleDefault = {
   // Multi-endpoint: pick the transport matching client sourceFormat to skip translation.
   transports: [
     {
+      identity: "claude-cli",
       format: "openai",
       baseUrl: "https://api.minimax.io/v1/chat/completions",
       auth: { combined: true, header: "Authorization", scheme: "bearer" },
     },
     {
+      identity: "claude-cli",
       format: "claude",
       baseUrl: "https://api.minimax.io/anthropic/v1/messages",
       urlSuffix: "?beta=true",
@@ -69,8 +72,8 @@ const moduleDefault = {
     { id: "speech-01-turbo", name: "Speech 01 Turbo", kind: "tts" },
   ],
   serviceKinds: ["llm","image","imageToText","webSearch","tts"],
-  ttsConfig: { baseUrl: "https://api.minimax.io/v1/t2a_v2", authType: "apikey", authHeader: "bearer", format: "minimax-tts" },
-  imageConfig: { baseUrl: "https://api.minimaxi.com/v1/images/generations" },
+  ttsConfig: { identity: "claude-cli", baseUrl: "https://api.minimax.io/v1/t2a_v2", authType: "apikey", authHeader: "bearer", format: "minimax-tts" },
+  imageConfig: { identity: "claude-cli", baseUrl: "https://api.minimaxi.com/v1/images/generations" },
   searchViaChat: {
     defaultModel: "MiniMax-M2.7",
     endpoint: "https://api.minimaxi.com/v1/text/chatcompletion_v2",

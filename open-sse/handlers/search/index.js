@@ -11,6 +11,18 @@ import { buildSearchRequest } from "./callers.js";
 import { normalizeSearchResponse } from "./normalizers.js";
 import { handleChatSearch } from "./chatSearch.js";
 import { mergeAbortSignals } from "../../utils/abort.js";
+import { proxyAwareFetch } from "../../utils/proxyFetch.js";
+import { PROVIDERS, PROVIDER_MEDIA } from "../../providers/index.js";
+
+function searchTransport(providerId, providerConfig) {
+  const transport = PROVIDERS[providerId] || {};
+  const config = PROVIDER_MEDIA[providerId]?.searchConfig || providerConfig || {};
+  return {
+    identity: config.identity || transport.identity || "openai-node",
+    provider: providerId,
+    format: config.format || transport.format || "openai",
+  };
+}
 
 const GLOBAL_TIMEOUT_MS = 15000;
 const NON_RETRIABLE = new Set([400, 401, 403, 404]);
@@ -101,10 +113,11 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
   log?.info?.("SEARCH", `${provider.id} | "${params.query.slice(0, 80)}" | type=${params.searchType}`);
 
   try {
-    const resp = await fetch(url, {
+    const resp = await proxyAwareFetch(url, {
       ...init,
       headers: sanitizeHeaders(init.headers),
       signal: mergeAbortSignals(controller.signal, abortSignal),
+      ...searchTransport(provider.id, providerConfig),
     });
     clearTimeout(timer);
     if (!resp.ok) {

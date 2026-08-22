@@ -15,6 +15,7 @@ const moduleDefault = {
   },
   category: "oauth",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.kilo.ai/api/openrouter/chat/completions",
     headers: {},
     auth: {

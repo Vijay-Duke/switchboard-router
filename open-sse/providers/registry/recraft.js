@@ -20,7 +20,7 @@ const moduleDefault = {
     { id: "recraftv2", name: "Recraft V2", params: ["n","size","style"], kind: "image" },
   ],
   serviceKinds: ["image"],
-  imageConfig: { baseUrl: "https://external.api.recraft.ai/v1/images/generations" },
+  imageConfig: { identity: "openai-node", baseUrl: "https://external.api.recraft.ai/v1/images/generations" },
 };
 
 export default moduleDefault;

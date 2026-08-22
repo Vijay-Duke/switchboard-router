@@ -1,10 +1,18 @@
 import { Readable } from "stream";
 import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
 import { dbg } from "./debugLog.js";
+import { wrapHeaders } from "../identity/wrap.js";
+import { getProfile, CLAUDE_MESSAGES_HEADER_ORDER, CLAUDE_COUNT_TOKENS_HEADER_ORDER } from "../identity/catalog.js";
+import { createClaudeCodeFetch } from "../identity/tls/claude-code.js";
+import { CLAUDE_CODE_TLS_SPEC_REV } from "../identity/tls/claude-code-spec.js";
 
-const originalFetch = globalThis.fetch;
+let _nodeFetch = globalThis.fetch;
+const originalFetch = (...args) => _nodeFetch(...args);
 const proxyDispatchers = new Map();
-
+const _impitByProxy = new Map();
+let _loadChromeFetch = loadChromeFetch;
+let _loadClaudeCodeFetch = async () => createClaudeCodeFetch();
+let _loadImpit = async () => (await import("impit")).Impit;
 // ─── TLS fingerprinting via got-scraping (browser-like JA3) ───────────────
 // Disabled: not in use. Kept commented for future re-enable.
 // Restore the original block to re-enable per-host JA3 spoofing.
@@ -247,6 +255,57 @@ async function getDispatcher(proxyUrl) {
   return dispatcher;
 }
 
+function applyIdentityWrap(url, options = {}) {
+  const accept = options.headers?.Accept || options.headers?.accept || "";
+  const stream = typeof accept === "string" && accept.includes("text/event-stream");
+  const wrapped = wrapHeaders(options.headers || {}, {
+    identity: options.identity,
+    provider: options.provider,
+    format: options.format,
+    overlay: options.overlay,
+    credentialId: options.credentialId,
+    stream: options.stream ?? stream,
+    retryCount: options.retryCount,
+    snapshot: options.snapshot,
+    requestPath: new URL(url).pathname,
+  });
+  return {
+    ...options,
+    headers: wrapped.headers,
+    _identityTls: wrapped.tls,
+    _identityAlpn: wrapped.alpn,
+    _identityTlsSpecRev: wrapped.tlsSpecRev,
+    _identityProfile: wrapped.profileId,
+  };
+}
+
+function publicFetchInit(options) {
+  const {
+    _identityTls, _identityAlpn, _identityTlsSpecRev, _identityProfile,
+    identity, provider, format, overlay, credentialId, stream, retryCount, snapshot,
+    ...init
+  } = options;
+  return init;
+}
+
+async function loadChromeFetch(proxyUrl) {
+  const key = proxyUrl || "";
+  let client = _impitByProxy.get(key);
+  if (!client) {
+    const Impit = await _loadImpit();
+    client = new Impit({ browser: "chrome", ...(proxyUrl ? { proxyUrl } : {}), followRedirects: false });
+    _impitByProxy.set(key, client);
+  }
+  return (url, init) => client.fetch(url, init);
+}
+
+export function __setTransportLoadersForTests(loaders = {}) {
+  if (loaders.nodeFetch) _nodeFetch = loaders.nodeFetch;
+  if (loaders.loadChromeFetch) _loadChromeFetch = loaders.loadChromeFetch;
+  if (loaders.loadClaudeCodeFetch) _loadClaudeCodeFetch = loaders.loadClaudeCodeFetch;
+  if (loaders.loadImpit) _loadImpit = loaders.loadImpit;
+}
+
 /**
  * Create HTTPS request with manual socket connection (bypass DNS)
  */
@@ -368,30 +427,63 @@ export async function createBypassRequest(parsedUrl, realIP, options) {
 
 export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   const targetUrl = typeof url === "string" ? url : url.toString();
+  const wrapped = applyIdentityWrap(targetUrl, options);
+  const fetchInit = publicFetchInit(wrapped);
+  const { _identityTls, _identityAlpn, _identityProfile } = wrapped;
 
-  // Vercel relay: forward request via relay headers
+  // Identity is applied before relaying. Relay-only headers exist only on this hop.
   const vercelRelayUrl = normalizeString(proxyOptions?.vercelRelayUrl);
   if (vercelRelayUrl) {
     const parsed = new URL(targetUrl);
-    const relayHeaders = {
-      ...options.headers,
-      "x-relay-target": `${parsed.protocol}//${parsed.host}`,
-      "x-relay-path": `${parsed.pathname}${parsed.search}`,
-    };
-    return originalFetch(vercelRelayUrl, { ...options, headers: relayHeaders });
+    return originalFetch(vercelRelayUrl, {
+      ...fetchInit,
+      headers: {
+        ...fetchInit.headers,
+        "x-relay-target": `${parsed.protocol}//${parsed.host}`,
+        "x-relay-path": `${parsed.pathname}${parsed.search}`,
+      },
+    });
   }
 
   const connectionProxyUrl = resolveConnectionProxyUrl(targetUrl, proxyOptions);
   const envProxyUrl = connectionProxyUrl ? null : normalizeProxyUrl(getEnvProxyUrl(targetUrl));
   const proxyUrl = connectionProxyUrl || envProxyUrl;
 
-  // MITM DNS bypass: for known MITM-intercepted hosts, resolve real IP to avoid DNS spoof
+  if (_identityTls !== "node") {
+    try {
+      const transport = {
+        profileId: _identityProfile,
+        alpn: _identityAlpn,
+        proxyUrl,
+        headerOrder: _identityProfile === "claude-cli"
+          ? (new URL(targetUrl).pathname.startsWith("/v1/messages/count_tokens")
+              ? CLAUDE_COUNT_TOKENS_HEADER_ORDER
+              : CLAUDE_MESSAGES_HEADER_ORDER)
+          : getProfile(_identityProfile)?.headerOrder || [],
+      };
+      const snapshotTlsVersion = /^claude-code-(\d+\.\d+\.\d+)$/.exec(wrapped._identityTlsSpecRev || "")?.[1]
+        || wrapped._identityTlsSpecRev;
+      if (_identityProfile === "claude-cli" && snapshotTlsVersion !== CLAUDE_CODE_TLS_SPEC_REV) {
+        throw new Error(`snapshot TLS spec ${wrapped._identityTlsSpecRev || "missing"} does not match helper ${CLAUDE_CODE_TLS_SPEC_REV}`);
+      }
+      const transportFetch = _identityTls === "chrome"
+        ? await _loadChromeFetch(proxyUrl)
+        : await _loadClaudeCodeFetch();
+      return await transportFetch(url, fetchInit, transport);
+    } catch (err) {
+      if (err?.name === "AbortError") throw err;
+      const error = new Error(`[ProxyFetch] ${_identityTls} TLS (${_identityProfile}) unavailable: ${err.message}`);
+      error.status = 503;
+      throw error;
+    }
+  }
+
+  // Existing Node/undici proxy, MITM bypass, and direct behavior remains unchanged.
   if (shouldBypassMitmDns(targetUrl)) {
     if (proxyUrl) {
-      // Proxy resolves DNS externally (not affected by /etc/hosts) — use proxy directly
       try {
         const dispatcher = await getDispatcher(proxyUrl);
-        return await originalFetch(url, { ...options, dispatcher });
+        return await originalFetch(url, { ...fetchInit, dispatcher });
       } catch (proxyError) {
         if (proxyOptions?.strictProxy === true) {
           throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
@@ -399,11 +491,10 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
         console.warn(`[ProxyFetch] Proxy failed, falling back to direct bypass: ${proxyError.message}`);
       }
     }
-    // No proxy — manually resolve real IP to bypass DNS spoof
     try {
       const parsedUrl = new URL(targetUrl);
       const realIP = await resolveRealIP(parsedUrl.hostname);
-      if (realIP) return await createBypassRequest(parsedUrl, realIP, options);
+      if (realIP) return await createBypassRequest(parsedUrl, realIP, fetchInit);
     } catch (error) {
       console.warn(`[ProxyFetch] MITM bypass failed: ${error.message}`);
     }
@@ -412,20 +503,17 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   if (proxyUrl) {
     try {
       const dispatcher = await getDispatcher(proxyUrl);
-      return await originalFetch(url, { ...options, dispatcher });
+      return await originalFetch(url, { ...fetchInit, dispatcher });
     } catch (proxyError) {
-      // If strictProxy is enabled, fail hard instead of falling back to direct
       if (proxyOptions?.strictProxy === true) {
         throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
       }
       console.warn(`[ProxyFetch] Proxy failed, falling back to direct: ${proxyError.message}`);
-      return originalFetch(url, options);
+      return originalFetch(url, fetchInit);
     }
   }
 
-  // got-scraping disabled — use native fetch directly
-  // (Re-enable per-host by wrapping with tryGotScrapingFetch when needed)
-  return originalFetch(url, options);
+  return originalFetch(url, fetchInit);
 }
 
 /**

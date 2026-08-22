@@ -26,7 +26,7 @@ const moduleDefault = {
     { id: "voyage-multilingual-2", name: "Voyage Multilingual 2", kind: "embedding" },
   ],
   serviceKinds: ["embedding"],
-  embeddingConfig: { baseUrl: "https://api.voyageai.com/v1/embeddings" },
+  embeddingConfig: { identity: "openai-node", baseUrl: "https://api.voyageai.com/v1/embeddings" },
 };
 
 export default moduleDefault;

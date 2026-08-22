@@ -5,7 +5,6 @@ import { getSettings, getProviderConnections, updateProviderConnection } from "@
 import { getClaudeUsage } from "open-sse/services/usage/claude.js";
 import { getCodexUsage } from "open-sse/services/usage/codex.js";
 import { getExecutor } from "open-sse/executors/index.js";
-import { CLAUDE_CLI_SPOOF_HEADERS } from "open-sse/providers/shared.js";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { refreshAndUpdateCredentials } from "@/app/api/usage/[connectionId]/route.js";
@@ -123,7 +122,6 @@ async function sendClaudePing(connection, providerConfig, proxyOptions, deps) {
   const res = await deps.proxyAwareFetch(CLAUDE_PING_URL, {
     method: "POST",
     headers: {
-      ...CLAUDE_CLI_SPOOF_HEADERS,
       "Authorization": `Bearer ${connection.accessToken}`,
       "content-type": "application/json",
     },
@@ -132,6 +130,12 @@ async function sendClaudePing(connection, providerConfig, proxyOptions, deps) {
       max_tokens: providerConfig.pingMaxTokens,
       messages: [{ role: "user", content: providerConfig.pingText }],
     }),
+    identity: "claude-cli",
+    provider: "claude",
+    format: "claude",
+    credentialId: connection.id,
+    stream: false,
+    retryCount: 0,
   }, proxyOptions);
   return res.ok;
 }

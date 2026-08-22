@@ -1,11 +1,11 @@
 // Generic config-driven TTS handlers — dispatched by ttsConfig.format.
 // Each handler accepts { baseUrl, apiKey, text, modelId, voiceId } and returns { base64, format }.
-import { responseToBase64, throwUpstreamError } from "./_base.js";
+import { authenticatedMediaFetch, responseToBase64, throwUpstreamError } from "./_base.js";
 import minimaxTts from "./minimax.js";
 
 // Hyperbolic: POST { text } → { audio: base64 }
-async function hyperbolic({ baseUrl, apiKey, text }) {
-  const res = await fetch(baseUrl, {
+async function hyperbolic({ provider, baseUrl, apiKey, text }) {
+  const res = await authenticatedMediaFetch(provider, "tts", baseUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify({ text }),
@@ -16,10 +16,10 @@ async function hyperbolic({ baseUrl, apiKey, text }) {
 }
 
 // Deepgram: model via query, Token auth, returns binary
-async function deepgram({ baseUrl, apiKey, text, modelId }) {
+async function deepgram({ provider, baseUrl, apiKey, text, modelId }) {
   const url = new URL(baseUrl);
   url.searchParams.set("model", modelId || "aura-asteria-en");
-  const res = await fetch(url.toString(), {
+  const res = await authenticatedMediaFetch(provider, "tts", url.toString(), {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Token ${apiKey}` },
     body: JSON.stringify({ text }),
@@ -29,8 +29,8 @@ async function deepgram({ baseUrl, apiKey, text, modelId }) {
 }
 
 // Nvidia NIM: POST { input: { text }, voice, model } → binary
-async function nvidia({ baseUrl, apiKey, text, modelId, voiceId }) {
-  const res = await fetch(baseUrl, {
+async function nvidia({ provider, baseUrl, apiKey, text, modelId, voiceId }) {
+  const res = await authenticatedMediaFetch(provider, "tts", baseUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify({ input: { text }, voice: voiceId || "default", model: modelId }),
@@ -40,9 +40,9 @@ async function nvidia({ baseUrl, apiKey, text, modelId, voiceId }) {
 }
 
 // HuggingFace: POST {baseUrl}/{modelId} { inputs: text } → binary
-async function huggingface({ baseUrl, apiKey, text, modelId }) {
+async function huggingface({ provider, baseUrl, apiKey, text, modelId }) {
   if (!modelId || modelId.includes("..")) throw new Error("Invalid HuggingFace model ID");
-  const res = await fetch(`${baseUrl}/${modelId}`, {
+  const res = await authenticatedMediaFetch(provider, "tts", `${baseUrl}/${modelId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
     body: JSON.stringify({ inputs: text }),
@@ -52,8 +52,8 @@ async function huggingface({ baseUrl, apiKey, text, modelId }) {
 }
 
 // Inworld: Basic auth, JSON { audioContent }
-async function inworld({ baseUrl, apiKey, text, modelId, voiceId }) {
-  const res = await fetch(baseUrl, {
+async function inworld({ provider, baseUrl, apiKey, text, modelId, voiceId }) {
+  const res = await authenticatedMediaFetch(provider, "tts", baseUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Basic ${apiKey}` },
     body: JSON.stringify({
@@ -70,8 +70,8 @@ async function inworld({ baseUrl, apiKey, text, modelId, voiceId }) {
 }
 
 // Cartesia: X-API-Key header
-async function cartesia({ baseUrl, apiKey, text, modelId, voiceId }) {
-  const res = await fetch(baseUrl, {
+async function cartesia({ provider, baseUrl, apiKey, text, modelId, voiceId }) {
+  const res = await authenticatedMediaFetch(provider, "tts", baseUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -90,9 +90,9 @@ async function cartesia({ baseUrl, apiKey, text, modelId, voiceId }) {
 }
 
 // PlayHT: token format "userId:apiKey", voice = s3 URL
-async function playht({ baseUrl, apiKey, text, modelId, voiceId }) {
+async function playht({ provider, baseUrl, apiKey, text, modelId, voiceId }) {
   const [userId, key] = (apiKey || ":").split(":");
-  const res = await fetch(baseUrl, {
+  const res = await authenticatedMediaFetch(provider, "tts", baseUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -135,10 +135,10 @@ async function tortoise({ baseUrl, text, voiceId }) {
 }
 
 // OpenAI-compatible upstream (qwen3-tts, etc.)
-async function openaiCompat({ baseUrl, apiKey, text, modelId, voiceId }) {
+async function openaiCompat({ provider, baseUrl, apiKey, text, modelId, voiceId }) {
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-  const res = await fetch(baseUrl, {
+  const init = {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -148,7 +148,10 @@ async function openaiCompat({ baseUrl, apiKey, text, modelId, voiceId }) {
       response_format: "mp3",
       speed: 1.0,
     }),
-  });
+  };
+  const res = apiKey
+    ? await authenticatedMediaFetch(provider, "tts", baseUrl, init)
+    : await fetch(baseUrl, init);
   if (!res.ok) await throwUpstreamError(res);
   return responseToBase64(res, "mp3");
 }

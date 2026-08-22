@@ -22,19 +22,26 @@ vi.mock("../../open-sse/executors/index.js", () => ({
 
 // Also mock tokenRefresh to avoid side effects
 vi.mock("../../open-sse/services/tokenRefresh.js", () => ({
-  refreshWithRetry: vi.fn().mockResolvedValue(null),
+  refreshWithRetry: vi.fn(),
 }));
 
 // Mock proxyFetch to avoid proxy-agent imports in test env
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
-  default: vi.fn(),
+  proxyAwareFetch: vi.fn(),
 }));
 
 vi.mock("../../open-sse/utils/ssrfGuard.js", () => ({
   assertPublicUrlResolved: vi.fn().mockResolvedValue(undefined),
 }));
 
+import { proxyAwareFetch } from "../../open-sse/utils/proxyFetch.js";
+import { refreshWithRetry } from "../../open-sse/services/tokenRefresh.js";
 import { handleEmbeddingsCore } from "../../open-sse/handlers/embeddingsCore.js";
+
+beforeEach(() => {
+  vi.mocked(proxyAwareFetch).mockReset();
+  vi.mocked(refreshWithRetry).mockReset().mockResolvedValue(null);
+});
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -85,21 +92,15 @@ function makeOptions(overrides = {}) {
 // We test body construction indirectly by verifying the fetch call payload.
 
 describe("buildEmbeddingsBody", () => {
-  beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn());
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
 
   it("single string input — includes model and input, default encoding_format=float", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions({
       body: { model: "text-embedding-ada-002", input: "Hello world" },
     }));
 
-    const [, init] = vi.mocked(fetch).mock.calls[0];
+    const [, init] = vi.mocked(proxyAwareFetch).mock.calls[0];
     const sent = JSON.parse(init.body);
     expect(sent.model).toBe("text-embedding-ada-002");
     expect(sent.input).toBe("Hello world");
@@ -107,28 +108,28 @@ describe("buildEmbeddingsBody", () => {
   });
 
   it("rejects redirects so SSRF validation cannot be bypassed", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions());
 
-    const [, init] = vi.mocked(fetch).mock.calls[0];
+    const [, init] = vi.mocked(proxyAwareFetch).mock.calls[0];
     expect(init.redirect).toBe("error");
   });
 
   it("array input — passes array as-is", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions({
       body: { model: "text-embedding-ada-002", input: ["Hello", "World"] },
     }));
 
-    const [, init] = vi.mocked(fetch).mock.calls[0];
+    const [, init] = vi.mocked(proxyAwareFetch).mock.calls[0];
     const sent = JSON.parse(init.body);
     expect(sent.input).toEqual(["Hello", "World"]);
   });
 
   it("custom encoding_format is forwarded", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions({
       body: {
@@ -138,25 +139,25 @@ describe("buildEmbeddingsBody", () => {
       },
     }));
 
-    const [, init] = vi.mocked(fetch).mock.calls[0];
+    const [, init] = vi.mocked(proxyAwareFetch).mock.calls[0];
     const sent = JSON.parse(init.body);
     expect(sent.encoding_format).toBe("base64");
   });
 
   it("no encoding_format in body → defaults to float", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions({
       body: { model: "text-embedding-ada-002", input: "test" },
     }));
 
-    const [, init] = vi.mocked(fetch).mock.calls[0];
+    const [, init] = vi.mocked(proxyAwareFetch).mock.calls[0];
     const sent = JSON.parse(init.body);
     expect(sent.encoding_format).toBe("float");
   });
 
   it("gemini single input forwards dimensions as outputDimensionality", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse({
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse({
       embedding: { values: [0.1, 0.2, 0.3] },
     }));
 
@@ -170,13 +171,13 @@ describe("buildEmbeddingsBody", () => {
       credentials: { apiKey: "gemini-key" },
     }));
 
-    const [, init] = vi.mocked(fetch).mock.calls[0];
+    const [, init] = vi.mocked(proxyAwareFetch).mock.calls[0];
     const sent = JSON.parse(init.body);
     expect(sent.outputDimensionality).toBe(1536);
   });
 
   it("gemini batch input forwards dimensions on each request", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse({
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse({
       embeddings: [
         { values: [0.1, 0.2, 0.3] },
         { values: [0.4, 0.5, 0.6] },
@@ -193,7 +194,7 @@ describe("buildEmbeddingsBody", () => {
       credentials: { apiKey: "gemini-key" },
     }));
 
-    const [, init] = vi.mocked(fetch).mock.calls[0];
+    const [, init] = vi.mocked(proxyAwareFetch).mock.calls[0];
     const sent = JSON.parse(init.body);
     expect(sent.requests).toHaveLength(2);
     expect(sent.requests[0].outputDimensionality).toBe(1536);
@@ -204,46 +205,40 @@ describe("buildEmbeddingsBody", () => {
 // ─── Test: buildEmbeddingsUrl ────────────────────────────────────────────────
 
 describe("buildEmbeddingsUrl", () => {
-  beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn());
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
 
   it("openai → https://api.openai.com/v1/embeddings", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions({
       modelInfo: { provider: "openai", model: "text-embedding-ada-002" },
       credentials: { apiKey: "sk-test" },
     }));
 
-    const [url] = vi.mocked(fetch).mock.calls[0];
+    const [url] = vi.mocked(proxyAwareFetch).mock.calls[0];
     expect(url).toBe("https://api.openai.com/v1/embeddings");
   });
 
   it("openrouter → https://openrouter.ai/api/v1/embeddings", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions({
       modelInfo: { provider: "openrouter", model: "openai/text-embedding-ada-002" },
       credentials: { apiKey: "sk-or-test" },
     }));
 
-    const [url] = vi.mocked(fetch).mock.calls[0];
+    const [url] = vi.mocked(proxyAwareFetch).mock.calls[0];
     expect(url).toBe("https://openrouter.ai/api/v1/embeddings");
   });
 
   it("vercel-ai-gateway → https://ai-gateway.vercel.sh/v1/embeddings", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions({
       modelInfo: { provider: "vercel-ai-gateway", model: "openai/text-embedding-3-small" },
       credentials: { apiKey: "vag-test-key" },
     }));
 
-    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    const [url, init] = vi.mocked(proxyAwareFetch).mock.calls[0];
     const sent = JSON.parse(init.body);
     expect(url).toBe("https://ai-gateway.vercel.sh/v1/embeddings");
     expect(init.headers.Authorization).toBe("Bearer vag-test-key");
@@ -251,7 +246,7 @@ describe("buildEmbeddingsUrl", () => {
   });
 
   it("openai-compatible-* → uses baseUrl from providerSpecificData", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions({
       modelInfo: { provider: "openai-compatible-custom", model: "embed-v1" },
@@ -261,12 +256,12 @@ describe("buildEmbeddingsUrl", () => {
       },
     }));
 
-    const [url] = vi.mocked(fetch).mock.calls[0];
+    const [url] = vi.mocked(proxyAwareFetch).mock.calls[0];
     expect(url).toBe("https://custom.ai/v1/embeddings");
   });
 
   it("openai-compatible-* strips trailing slash from baseUrl", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions({
       modelInfo: { provider: "openai-compatible-myhost", model: "embed-v1" },
@@ -276,19 +271,19 @@ describe("buildEmbeddingsUrl", () => {
       },
     }));
 
-    const [url] = vi.mocked(fetch).mock.calls[0];
+    const [url] = vi.mocked(proxyAwareFetch).mock.calls[0];
     expect(url).toBe("https://myhost.ai/v1/embeddings");
   });
 
   it("openai-compatible-* without baseUrl → falls back to api.openai.com", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions({
       modelInfo: { provider: "openai-compatible-fallback", model: "embed" },
       credentials: { apiKey: "sk-x", providerSpecificData: {} },
     }));
 
-    const [url] = vi.mocked(fetch).mock.calls[0];
+    const [url] = vi.mocked(proxyAwareFetch).mock.calls[0];
     expect(url).toBe("https://api.openai.com/v1/embeddings");
   });
 
@@ -298,7 +293,7 @@ describe("buildEmbeddingsUrl", () => {
       credentials: { apiKey: "token" },
     }));
 
-    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+    expect(vi.mocked(proxyAwareFetch)).not.toHaveBeenCalled();
     expect(result.success).toBe(false);
     expect(result.status).toBe(400);
     expect(result.error).toMatch(/does not support embeddings/i);
@@ -310,7 +305,7 @@ describe("buildEmbeddingsUrl", () => {
       credentials: { apiKey: "ag-token" },
     }));
 
-    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+    expect(vi.mocked(proxyAwareFetch)).not.toHaveBeenCalled();
     expect(result.success).toBe(false);
     expect(result.status).toBe(400);
   });
@@ -319,54 +314,53 @@ describe("buildEmbeddingsUrl", () => {
 // ─── Test: buildEmbeddingsHeaders ───────────────────────────────────────────
 
 describe("buildEmbeddingsHeaders", () => {
-  beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn());
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
 
   it("openai → Authorization: Bearer, Content-Type: application/json", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions({
       modelInfo: { provider: "openai", model: "text-embedding-ada-002" },
       credentials: { apiKey: "sk-mykey" },
     }));
 
-    const [, init] = vi.mocked(fetch).mock.calls[0];
+    const [, init] = vi.mocked(proxyAwareFetch).mock.calls[0];
     expect(init.headers["Authorization"]).toBe("Bearer sk-mykey");
     expect(init.headers["Content-Type"]).toBe("application/json");
   });
 
   it("openai — uses accessToken when apiKey is absent", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions({
       modelInfo: { provider: "openai", model: "text-embedding-ada-002" },
       credentials: { accessToken: "at-mytoken" },
     }));
 
-    const [, init] = vi.mocked(fetch).mock.calls[0];
+    const [, init] = vi.mocked(proxyAwareFetch).mock.calls[0];
     expect(init.headers["Authorization"]).toBe("Bearer at-mytoken");
   });
 
-  it("openrouter → adds HTTP-Referer and X-Title headers", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+  it("openrouter → strips gateway branding and uses media identity", async () => {
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions({
       modelInfo: { provider: "openrouter", model: "openai/text-embedding-ada-002" },
       credentials: { apiKey: "sk-or-key" },
     }));
 
-    const [, init] = vi.mocked(fetch).mock.calls[0];
-    expect(init.headers["HTTP-Referer"]).toBeDefined();
-    expect(init.headers["X-Title"]).toBeDefined();
+    const [, init] = vi.mocked(proxyAwareFetch).mock.calls[0];
+    expect(init.headers["HTTP-Referer"]).toBeUndefined();
+    expect(init.headers["X-Title"]).toBeUndefined();
     expect(init.headers["Authorization"]).toBe("Bearer sk-or-key");
+    expect(init).toMatchObject({
+      identity: "openai-node",
+      provider: "openrouter",
+      format: "openai",
+    });
   });
 
   it("openai-compatible-* → Authorization: Bearer only (no extra headers)", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     await handleEmbeddingsCore(makeOptions({
       modelInfo: { provider: "openai-compatible-local", model: "nomic-embed" },
@@ -376,19 +370,21 @@ describe("buildEmbeddingsHeaders", () => {
       },
     }));
 
-    const [, init] = vi.mocked(fetch).mock.calls[0];
+    const [, init] = vi.mocked(proxyAwareFetch).mock.calls[0];
     expect(init.headers["Authorization"]).toBe("Bearer local-key");
     expect(init.headers["HTTP-Referer"]).toBeUndefined();
     expect(init.headers["X-Title"]).toBeUndefined();
+    expect(init).toMatchObject({
+      identity: "openai-node",
+      provider: "openai-compatible-local",
+      format: "openai",
+    });
   });
 });
 
 // ─── Test: handleEmbeddingsCore — input validation ───────────────────────────
 
 describe("handleEmbeddingsCore — input validation", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
 
   it("missing input → 400 Bad Request", async () => {
     const result = await handleEmbeddingsCore(makeOptions({
@@ -426,9 +422,9 @@ describe("handleEmbeddingsCore — input validation", () => {
   });
 
   it("empty string input passes validation", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(
       makeProviderResponse(VALID_EMBEDDING_RESPONSE)
-    ));
+    );
     const result = await handleEmbeddingsCore(makeOptions({
       body: { model: "text-embedding-ada-002", input: "" },
     }));
@@ -438,14 +434,14 @@ describe("handleEmbeddingsCore — input validation", () => {
   });
 
   it("empty array input passes validation and reaches provider", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(
       makeProviderResponse(VALID_EMBEDDING_RESPONSE)
-    ));
+    );
     const result = await handleEmbeddingsCore(makeOptions({
       body: { model: "text-embedding-ada-002", input: [] },
     }));
     // Empty array is truthy → passes, fetch is called
-    expect(fetch).toHaveBeenCalledOnce();
+    expect(proxyAwareFetch).toHaveBeenCalledOnce();
     expect(result.success).toBe(true);
   });
 });
@@ -453,15 +449,9 @@ describe("handleEmbeddingsCore — input validation", () => {
 // ─── Test: handleEmbeddingsCore — success path ───────────────────────────────
 
 describe("handleEmbeddingsCore — success path", () => {
-  beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn());
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
 
   it("returns success=true with Response on 200", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     const result = await handleEmbeddingsCore(makeOptions());
 
@@ -471,7 +461,7 @@ describe("handleEmbeddingsCore — success path", () => {
   });
 
   it("response body is valid OpenAI-format JSON", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     const result = await handleEmbeddingsCore(makeOptions());
     const body = await result.response.json();
@@ -483,7 +473,7 @@ describe("handleEmbeddingsCore — success path", () => {
   });
 
   it("response does not grant wildcard cross-origin access", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     const result = await handleEmbeddingsCore(makeOptions());
 
@@ -491,7 +481,7 @@ describe("handleEmbeddingsCore — success path", () => {
   });
 
   it("response Content-Type is application/json", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 
     const result = await handleEmbeddingsCore(makeOptions());
 
@@ -499,7 +489,7 @@ describe("handleEmbeddingsCore — success path", () => {
   });
 
   it("calls onRequestSuccess callback on success", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
     const onRequestSuccess = vi.fn();
 
     await handleEmbeddingsCore(makeOptions({ onRequestSuccess }));
@@ -508,7 +498,7 @@ describe("handleEmbeddingsCore — success path", () => {
   });
 
   it("does not call onRequestSuccess on provider error", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderErrorResponse(500, "Server exploded"));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderErrorResponse(500, "Server exploded"));
     const onRequestSuccess = vi.fn();
 
     await handleEmbeddingsCore(makeOptions({ onRequestSuccess }));
@@ -518,7 +508,7 @@ describe("handleEmbeddingsCore — success path", () => {
 
   it("provider response with non-standard format is passed through as-is", async () => {
     const nonStandardBody = { embeddings: [[0.1, 0.2]], model: "custom" };
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(nonStandardBody));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(nonStandardBody));
 
     const result = await handleEmbeddingsCore(makeOptions());
     const body = await result.response.json();
@@ -530,15 +520,11 @@ describe("handleEmbeddingsCore — success path", () => {
 // ─── Test: handleEmbeddingsCore — provider error handling ────────────────────
 
 describe("handleEmbeddingsCore — provider error handling", () => {
-  beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn());
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
+  beforeEach(() => {});
+  afterEach(() => {});
 
   it("provider 400 → returns success=false with status 400", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderErrorResponse(400, "Bad model"));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderErrorResponse(400, "Bad model"));
 
     const result = await handleEmbeddingsCore(makeOptions());
 
@@ -547,7 +533,7 @@ describe("handleEmbeddingsCore — provider error handling", () => {
   });
 
   it("provider 429 → returns success=false with status 429", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderErrorResponse(429, "Rate limit exceeded"));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderErrorResponse(429, "Rate limit exceeded"));
 
     const result = await handleEmbeddingsCore(makeOptions());
 
@@ -556,7 +542,7 @@ describe("handleEmbeddingsCore — provider error handling", () => {
   });
 
   it("provider 500 → returns success=false with status 500", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderErrorResponse(500, "Internal error"));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderErrorResponse(500, "Internal error"));
 
     const result = await handleEmbeddingsCore(makeOptions());
 
@@ -565,7 +551,7 @@ describe("handleEmbeddingsCore — provider error handling", () => {
   });
 
   it("network error (fetch throws) → returns 502 Bad Gateway", async () => {
-    vi.mocked(fetch).mockRejectedValueOnce(new Error("ECONNREFUSED"));
+    vi.mocked(proxyAwareFetch).mockRejectedValueOnce(new Error("ECONNREFUSED"));
 
     const result = await handleEmbeddingsCore(makeOptions());
 
@@ -575,7 +561,7 @@ describe("handleEmbeddingsCore — provider error handling", () => {
   });
 
   it("invalid JSON from provider → returns 502", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(
       new Response("not json }{", {
         status: 200,
         headers: { "Content-Type": "text/plain" },
@@ -589,7 +575,7 @@ describe("handleEmbeddingsCore — provider error handling", () => {
   });
 
   it("error result response has OpenAI-format error body", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderErrorResponse(400, "Bad model"));
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderErrorResponse(400, "Bad model"));
 
     const result = await handleEmbeddingsCore(makeOptions());
     const body = await result.response.json();
@@ -602,46 +588,35 @@ describe("handleEmbeddingsCore — provider error handling", () => {
 // ─── Test: handleEmbeddingsCore — token refresh on 401 ───────────────────────
 
 describe("handleEmbeddingsCore — token refresh on 401/403", () => {
-  beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn());
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("on 401, attempts retry after refresh; succeeds if refresh gives new token", async () => {
-    // First call → 401 from provider
-    vi.mocked(fetch).mockResolvedValueOnce(
-      new Response(JSON.stringify({ error: "unauthorized" }), {
+  it("on 401, retries with the same media identity options after refresh", async () => {
+    vi.mocked(proxyAwareFetch)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "unauthorized" }), {
         status: 401,
         headers: { "Content-Type": "application/json" },
-      })
-    );
-    // Second call (retry) → success
-    vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+      }))
+      .mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+    vi.mocked(refreshWithRetry).mockResolvedValueOnce({ accessToken: "at-new" });
 
-    // Credentials with a refreshToken so the executor can try to refresh
-    const credentials = {
-      apiKey: "sk-old",
-      accessToken: "at-old",
-      refreshToken: "rt-valid",
-    };
-
-    // Mock executor's refreshCredentials to return new creds
     const result = await handleEmbeddingsCore(makeOptions({
-      modelInfo: { provider: "openai", model: "text-embedding-ada-002" },
-      credentials,
+      credentials: {
+        apiKey: "sk-old",
+        accessToken: "at-old",
+        refreshToken: "rt-valid",
+      },
       onCredentialsRefreshed: vi.fn(),
     }));
 
-    // The handler may or may not succeed depending on whether the executor
-    // can refresh (openai executor likely can't). What we verify is that
-    // fetch was called at least once (the initial request).
-    expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(result.success).toBe(true);
+    expect(vi.mocked(proxyAwareFetch)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(proxyAwareFetch).mock.calls[1][1]).toMatchObject({
+      identity: "openai-node",
+      provider: "openai",
+      format: "openai",
+    });
   });
 
   it("on 401 with no refresh token, falls back gracefully (no crash)", async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(
       new Response(JSON.stringify({ error: "unauthorized" }), {
         status: 401,
         headers: { "Content-Type": "application/json" },

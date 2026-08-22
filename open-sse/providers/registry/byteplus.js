@@ -19,6 +19,7 @@ const moduleDefault = {
   },
   category: "freeTier",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://ark.ap-southeast.bytepluses.com/api/coding/v3/chat/completions",
     headers: {},
   },

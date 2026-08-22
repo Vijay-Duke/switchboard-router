@@ -15,6 +15,7 @@ const moduleDefault = {
   ],
   noAuth: true,
   searchConfig: {
+    identity: "openai-node",
     baseUrl: "http://localhost:8888/search",
     method: "GET",
     authType: "none",

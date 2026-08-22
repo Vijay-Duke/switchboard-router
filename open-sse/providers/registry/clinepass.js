@@ -18,11 +18,8 @@ const moduleDefault = {
   authModes: ["oauth", "apikey"],
   hasOAuth: true,
   transport: {
+    identity: "cline",
     baseUrl: "https://api.cline.bot/api/v1/chat/completions",
-    headers: {
-      "HTTP-Referer": "https://cline.bot",
-      "X-Title": "Cline",
-    },
     auth: {
       combined: true,
       header: "Authorization",

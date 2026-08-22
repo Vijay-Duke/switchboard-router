@@ -20,98 +20,78 @@ describe("claudeHeaderCache", () => {
   beforeEach(async () => {
     // Re-import fresh module each time to reset singleton state
     vi.resetModules();
-    cacheModule = await import("open-sse/utils/claudeHeaderCache.js");
+    cacheModule = await import("../../open-sse/utils/claudeHeaderCache.js");
   });
 
   it("returns null before any headers are cached (cold start)", () => {
     expect(cacheModule.getCachedClaudeHeaders()).toBeNull();
   });
 
-  it("caches headers when user-agent contains 'claude-code'", () => {
-    cacheModule.cacheClaudeHeaders({
-      "user-agent": "claude-code/2.1.63 node/24.3.0",
-      "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
-      "anthropic-version": "2023-06-01",
-      "x-app": "cli",
-      "x-stainless-os": "MacOS",
-      "x-stainless-arch": "arm64",
-      "x-stainless-lang": "js",
-      "x-stainless-runtime": "node",
-      "x-stainless-runtime-version": "v24.3.0",
-      "x-stainless-package-version": "0.74.0",
-      "x-stainless-helper-method": "stream",
-      "x-stainless-retry-count": "0",
-      "x-stainless-timeout": "600",
-      "anthropic-dangerous-direct-browser-access": "true",
-      // Non-identity header — should NOT be captured
-      "content-type": "application/json",
-    });
+  const confirmedBody = { metadata: { user_id: '{"session_id":"session-220"}' } };
+  const confirmedHeaders = (overrides = {}) => ({
+    "user-agent": "claude-cli/2.1.220 (external, cli)",
+    "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+    "anthropic-version": "2023-06-01",
+    "x-app": "cli",
+    "x-stainless-os": "MacOS",
+    "x-stainless-arch": "arm64",
+    "x-stainless-lang": "js",
+    "x-stainless-runtime": "node",
+    "x-stainless-runtime-version": "v24.3.0",
+    "x-stainless-package-version": "0.74.0",
+    ...overrides,
+  });
 
+  it("caches only a fully confirmed current Claude request", () => {
+    expect(cacheModule.cacheClaudeHeaders(confirmedHeaders(), confirmedBody)).toBe(true);
     const cached = cacheModule.getCachedClaudeHeaders();
-    expect(cached).not.toBeNull();
-    expect(cached["user-agent"]).toBe("claude-code/2.1.63 node/24.3.0");
-    expect(cached["anthropic-beta"]).toBe("claude-code-20250219,oauth-2025-04-20");
-    expect(cached["x-app"]).toBe("cli");
-    expect(cached["x-stainless-os"]).toBe("MacOS");
-    // Non-identity header must not leak in
+    expect(cached).toMatchObject(confirmedHeaders());
     expect(cached["content-type"]).toBeUndefined();
   });
 
-  it("caches headers when user-agent contains 'claude-cli'", () => {
-    cacheModule.cacheClaudeHeaders({
-      "user-agent": "claude-cli/1.0.0",
-      "anthropic-version": "2023-06-01",
-    });
-    expect(cacheModule.getCachedClaudeHeaders()).not.toBeNull();
-    expect(cacheModule.getCachedClaudeHeaders()["user-agent"]).toBe("claude-cli/1.0.0");
-  });
-
-  it("caches headers when x-app is 'cli' (regardless of user-agent)", () => {
-    cacheModule.cacheClaudeHeaders({
-      "user-agent": "axios/1.7.0",
-      "x-app": "cli",
-      "anthropic-version": "2023-06-01",
-    });
-    expect(cacheModule.getCachedClaudeHeaders()).not.toBeNull();
-  });
-
-  it("does NOT cache headers for non-Claude clients", () => {
-    cacheModule.cacheClaudeHeaders({
-      "user-agent": "PostmanRuntime/7.43.0",
-      "anthropic-version": "2023-06-01",
-    });
+  it.each([
+    ["UA only", { "user-agent": "claude-cli/2.1.220 (external, cli)" }, confirmedBody],
+    ["missing x-app", confirmedHeaders({ "x-app": undefined }), confirmedBody],
+    ["missing beta", confirmedHeaders({ "anthropic-beta": undefined }), confirmedBody],
+    ["missing metadata", confirmedHeaders(), {}],
+    ["invalid metadata", confirmedHeaders(), { metadata: { user_id: '{"session_id":""}' } }],
+    ["non-Claude client", confirmedHeaders({ "user-agent": "PostmanRuntime/7.43.0" }), confirmedBody],
+  ])("does not cache %s", (_case, headers, body) => {
+    expect(cacheModule.cacheClaudeHeaders(headers, body)).toBe(false);
     expect(cacheModule.getCachedClaudeHeaders()).toBeNull();
   });
 
-  it("refreshes cache on each matching request", () => {
-    cacheModule.cacheClaudeHeaders({
-      "user-agent": "claude-code/2.0.0",
-      "x-stainless-package-version": "0.70.0",
-    });
-    cacheModule.cacheClaudeHeaders({
-      "user-agent": "claude-code/2.1.63",
-      "x-stainless-package-version": "0.74.0",
-    });
-    const cached = cacheModule.getCachedClaudeHeaders();
-    expect(cached["user-agent"]).toBe("claude-code/2.1.63");
-    expect(cached["x-stainless-package-version"]).toBe("0.74.0");
+  it("refreshes cache on each confirmed request", () => {
+    cacheModule.cacheClaudeHeaders(confirmedHeaders(), confirmedBody);
+    cacheModule.cacheClaudeHeaders(confirmedHeaders({ "x-stainless-package-version": "0.75.0" }), confirmedBody);
+    expect(cacheModule.getCachedClaudeHeaders()["x-stainless-package-version"]).toBe("0.75.0");
   });
 
   it("ignores calls with null or non-object headers", () => {
-    cacheModule.cacheClaudeHeaders(null);
-    cacheModule.cacheClaudeHeaders(undefined);
-    cacheModule.cacheClaudeHeaders("string");
+    expect(cacheModule.cacheClaudeHeaders(null, confirmedBody)).toBe(false);
+    expect(cacheModule.cacheClaudeHeaders(undefined, confirmedBody)).toBe(false);
+    expect(cacheModule.cacheClaudeHeaders("string", confirmedBody)).toBe(false);
     expect(cacheModule.getCachedClaudeHeaders()).toBeNull();
   });
 
-  it("only stores keys that are actually present in the headers object", () => {
-    cacheModule.cacheClaudeHeaders({
-      "user-agent": "claude-code/2.1.63",
-      // Most stainless headers absent
-    });
-    const cached = cacheModule.getCachedClaudeHeaders();
-    expect(cached["x-stainless-os"]).toBeUndefined();
-    expect(cached["user-agent"]).toBe("claude-code/2.1.63");
+  it("never stores authentication headers", () => {
+    cacheModule.cacheClaudeHeaders(confirmedHeaders({
+      authorization: "Bearer secret",
+      "x-api-key": "secret-key",
+    }), confirmedBody);
+    const serialized = JSON.stringify(cacheModule.getCachedClaudeHeaders());
+    expect(serialized).not.toContain("secret");
+    expect(serialized).not.toContain("authorization");
+    expect(serialized).not.toContain("x-api-key");
+  });
+
+  it("does not replace a confirmed cache with a mismatched Claude version", () => {
+    cacheModule.cacheClaudeHeaders(confirmedHeaders(), confirmedBody);
+    expect(cacheModule.cacheClaudeHeaders(confirmedHeaders({
+      "user-agent": "claude-cli/2.1.239 (external, cli)",
+      "anthropic-beta": "poison-beta",
+    }), confirmedBody)).toBe(false);
+    expect(cacheModule.getCachedClaudeHeaders()).toMatchObject(confirmedHeaders());
   });
 });
 
@@ -123,9 +103,10 @@ describe("DefaultExecutor.buildHeaders() — claude provider", () => {
   beforeEach(async () => {
     vi.resetModules();
     // Prime the cache with live client headers before importing executor
-    const cache = await import("open-sse/utils/claudeHeaderCache.js");
+    const cache = await import("../../open-sse/utils/claudeHeaderCache.js");
+    const body = { metadata: { user_id: '{"session_id":"session-220"}' } };
     cache.cacheClaudeHeaders({
-      "user-agent": "claude-code/2.1.63 node/24.3.0",
+      "user-agent": "claude-cli/2.1.220 (external, cli)",
       "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14",
       "anthropic-version": "2023-06-01",
       "anthropic-dangerous-direct-browser-access": "true",
@@ -139,8 +120,8 @@ describe("DefaultExecutor.buildHeaders() — claude provider", () => {
       "x-stainless-helper-method": "stream",
       "x-stainless-retry-count": "0",
       "x-stainless-timeout": "600",
-    });
-    const mod = await import("open-sse/executors/default.js");
+    }, body);
+    const mod = await import("../../open-sse/executors/default.js");
     DefaultExecutor = mod.DefaultExecutor || mod.default;
   });
 
@@ -149,7 +130,7 @@ describe("DefaultExecutor.buildHeaders() — claude provider", () => {
     const headers = executor.buildHeaders({ apiKey: "sk-test" }, true);
 
     // Live values should win over static providers.js values
-    expect(headers["user-agent"]).toBe("claude-code/2.1.63 node/24.3.0");
+    expect(headers["user-agent"]).toBe("claude-cli/2.1.220 (external, cli)");
     // Beta flags are MERGED (static + cached) to preserve required flags like oauth
     const betaFlags = headers["anthropic-beta"].split(",").map(s => s.trim());
     expect(betaFlags).toContain("claude-code-20250219");
@@ -202,7 +183,7 @@ describe("DefaultExecutor.buildHeaders() — claude provider", () => {
 
 describe("DefaultExecutor.buildHeaders() — Anthropic API provider", () => {
   it("uses bearer auth for request-scoped native Claude OAuth", async () => {
-    const { DefaultExecutor } = await import("open-sse/executors/default.js");
+    const { DefaultExecutor } = await import("../../open-sse/executors/default.js");
     const headers = new DefaultExecutor("anthropic").buildHeaders({
       accessToken: "native-claude-token",
       rawHeaders: {
@@ -220,20 +201,20 @@ describe("DefaultExecutor.buildHeaders() — Anthropic API provider", () => {
   });
 
   it("does not reuse cached Claude identity for a non-Claude request", async () => {
-    const cache = await import("open-sse/utils/claudeHeaderCache.js");
+    const cache = await import("../../open-sse/utils/claudeHeaderCache.js");
     cache.cacheClaudeHeaders({
       "user-agent": "claude-code/2.1.129",
       "x-claude-code-session-id": "previous-session",
       "anthropic-beta": "oauth-2025-04-20",
     });
-    const { DefaultExecutor } = await import("open-sse/executors/default.js");
+    const { DefaultExecutor } = await import("../../open-sse/executors/default.js");
     const headers = new DefaultExecutor("anthropic").buildHeaders({
       apiKey: "anthropic-api-key",
       rawHeaders: { "user-agent": "curl/8.0" },
     }, false);
 
     expect(headers["x-claude-code-session-id"]).toBeUndefined();
-    expect(headers["user-agent"]).toBeUndefined();
+    expect(headers["user-agent"]).toBe("curl/8.0");
     expect(headers["anthropic-beta"]).toBeUndefined();
   });
 });
@@ -244,7 +225,7 @@ describe("DefaultExecutor.buildHeaders() — claude provider cold start (no cach
   beforeEach(async () => {
     vi.resetModules();
     // Do NOT prime cache — simulate cold start
-    const mod = await import("open-sse/executors/default.js");
+    const mod = await import("../../open-sse/executors/default.js");
     DefaultExecutor = mod.DefaultExecutor || mod.default;
   });
 
@@ -273,7 +254,7 @@ describe("DefaultExecutor.buildHeaders() — anthropic-compatible stripping", ()
 
   beforeEach(async () => {
     vi.resetModules();
-    const mod = await import("open-sse/executors/default.js");
+    const mod = await import("../../open-sse/executors/default.js");
     DefaultExecutor = mod.DefaultExecutor || mod.default;
   });
 
@@ -376,7 +357,7 @@ describe("proxyAwareFetch — api.anthropic.com routing", () => {
     globalThis.fetch = fetchMock;
 
     vi.resetModules();
-    const { proxyAwareFetch } = await import("open-sse/utils/proxyFetch.js");
+    const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
 
     const res = await proxyAwareFetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -411,7 +392,7 @@ describe("proxyAwareFetch — api.anthropic.com routing", () => {
     });
 
     vi.resetModules();
-    const { proxyAwareFetch } = await import("open-sse/utils/proxyFetch.js");
+    const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
 
     const res = await proxyAwareFetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -438,7 +419,7 @@ describe("proxyAwareFetch — api.anthropic.com routing", () => {
     });
 
     vi.resetModules();
-    const { proxyAwareFetch } = await import("open-sse/utils/proxyFetch.js");
+    const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
 
     await proxyAwareFetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",

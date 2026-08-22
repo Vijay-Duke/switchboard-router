@@ -30,7 +30,7 @@ const moduleDefault = {
     { id: "openai/whisper-small", name: "Whisper Small (HF)", params: ["language"], kind: "stt" },
   ],
   serviceKinds: ["image", "stt"],
-  imageConfig: { baseUrl: "https://api-inference.huggingface.co/models" },
+  imageConfig: { identity: "openai-node", baseUrl: "https://api-inference.huggingface.co/models" },
 };
 
 export default moduleDefault;

@@ -19,6 +19,7 @@ const moduleDefault = {
   category: "apikey",
   authType: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.assemblyai.com/v1/audio/transcriptions",
     validateUrl: "https://api.assemblyai.com/v1/account",
   },
@@ -30,6 +31,7 @@ const moduleDefault = {
   ],
   serviceKinds: ["stt"],
   sttConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.assemblyai.com/v2/transcript",
     authType: "apikey",
     authHeader: "authorization",

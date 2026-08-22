@@ -19,6 +19,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://opencode.ai/zen/go/v1/chat/completions",
     headers: {},
   },

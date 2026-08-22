@@ -18,6 +18,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions",
     headers: {},
   },

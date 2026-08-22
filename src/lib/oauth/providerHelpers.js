@@ -1,8 +1,16 @@
+import { PROVIDERS as REGISTRY_PROVIDERS } from "open-sse/providers/index.js";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 import { parseKiroProfileArn } from "open-sse/utils/kiroProfileArn.js";
 
 const BASE64_BLOCK_SIZE = 4;
 const KIRO_PROFILE_DISCOVERY_TIMEOUT_MS = 10_000;
 const KIRO_COMMERCIAL_PROFILE_REGIONS = ["us-east-1", "eu-central-1"];
+
+export function getOAuthFetchProfile(provider) {
+  const profile = REGISTRY_PROVIDERS[provider];
+  if (!profile) throw new Error(`Missing provider profile: ${provider}`);
+  return { identity: profile.identity, provider, format: profile.format };
+}
 
 function validateXaiOAuthEndpoint(rawUrl, field) {
   const value = String(rawUrl || "").trim();
@@ -79,7 +87,7 @@ export async function fetchKiroProfileArn(accessToken, preferredRegion) {
     : "";
   for (const endpoint of kiroProfileDiscoveryEndpoints(preferredRegion)) {
     try {
-      const response = await fetch(endpoint, {
+      const response = await proxyAwareFetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-amz-json-1.0",
@@ -89,6 +97,7 @@ export async function fetchKiroProfileArn(accessToken, preferredRegion) {
         },
         body: JSON.stringify({ maxResults: 10 }),
         signal: AbortSignal.timeout(KIRO_PROFILE_DISCOVERY_TIMEOUT_MS),
+        ...getOAuthFetchProfile("kiro"),
       });
       if (!response.ok) continue;
       const data = await response.json();

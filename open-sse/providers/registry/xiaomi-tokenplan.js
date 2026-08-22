@@ -28,6 +28,7 @@ const moduleDefault = {
   ],
   defaultRegion: "sgp",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://token-plan-sgp.xiaomimimo.com/v1/chat/completions",
     regions: {
       sgp: "https://token-plan-sgp.xiaomimimo.com/v1",
@@ -40,10 +41,12 @@ const moduleDefault = {
   // baseUrl omitted — region-dynamic, resolved in the executor's buildUrl.
   transports: [
     {
+      identity: "openai-node",
       format: "openai",
       auth: { combined: true, header: "Authorization", scheme: "bearer" },
     },
     {
+      identity: "openai-node",
       format: "claude",
       headers: { ...CLAUDE_API_HEADERS },
       auth: { combined: true, header: "x-api-key", scheme: "raw" },

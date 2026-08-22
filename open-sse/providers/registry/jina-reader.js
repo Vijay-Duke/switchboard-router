@@ -17,6 +17,7 @@ const moduleDefault = {
     "webFetch"
   ],
   fetchConfig: {
+    identity: "openai-node",
     baseUrl: "https://r.jina.ai",
     method: "GET",
     authType: "apikey",

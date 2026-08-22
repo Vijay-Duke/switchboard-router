@@ -4,6 +4,8 @@
  * for forwarding to api.anthropic.com, replacing static hardcoded values.
  */
 
+import { isConfirmedClaudeClient } from "./clientDetector.js";
+
 const CLAUDE_IDENTITY_HEADERS = [
   "user-agent",
   "anthropic-beta",
@@ -34,7 +36,7 @@ let cachedHeaders = null;
  * @returns {object|null}
  */
 export function pickClaudeIdentityHeaders(headers) {
-  if (!headers || typeof headers !== "object" || !isClaudeCodeClient(headers)) return null;
+  if (!headers || typeof headers !== "object") return null;
   const captured = {};
   for (const key of CLAUDE_IDENTITY_HEADERS) {
     if (headers[key] !== undefined && headers[key] !== null) captured[key] = headers[key];
@@ -42,27 +44,20 @@ export function pickClaudeIdentityHeaders(headers) {
   return Object.keys(captured).length > 0 ? captured : null;
 }
 
-/**
- * Detect if request headers look like a real Claude Code client.
- * @param {object} headers - Lowercase header key/value object
- */
-function isClaudeCodeClient(headers) {
-  const ua = (headers["user-agent"] || "").toLowerCase();
-  const xApp = (headers["x-app"] || "").toLowerCase();
-  return ua.includes("claude-cli") || ua.includes("claude-code") || xApp === "cli";
-}
 
 /**
- * Store Claude Code identity headers if this looks like a real client request.
+ * Store Claude Code identity headers only after the full client signature is confirmed.
  * Called at the entry point before any translation/forwarding.
  * @param {object} headers - Lowercase header key/value object (from request.headers.entries())
+ * @param {object} body - Parsed request body
  */
-export function cacheClaudeHeaders(headers) {
+export function cacheClaudeHeaders(headers, body = {}) {
+  if (!isConfirmedClaudeClient(headers, body)) return false;
   const captured = pickClaudeIdentityHeaders(headers);
-  if (captured) {
-    cachedHeaders = captured;
-    console.log(`[ClaudeHeaders] Cached ${Object.keys(captured).length} identity headers from Claude Code client`);
-  }
+  if (!captured) return false;
+  cachedHeaders = captured;
+  console.log(`[ClaudeHeaders] Cached ${Object.keys(captured).length} identity headers from confirmed Claude Code client`);
+  return true;
 }
 
 /**

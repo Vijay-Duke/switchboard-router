@@ -26,7 +26,7 @@ const moduleDefault = {
     { id: "gen3a_turbo", name: "Gen-3 Alpha Turbo", params: [], kind: "video" },
   ],
   serviceKinds: ["image"],
-  imageConfig: { baseUrl: "https://api.dev.runwayml.com/v1" },
+  imageConfig: { identity: "openai-node", baseUrl: "https://api.dev.runwayml.com/v1" },
 };
 
 export default moduleDefault;

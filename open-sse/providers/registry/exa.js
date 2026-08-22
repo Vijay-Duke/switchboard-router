@@ -18,6 +18,7 @@ const moduleDefault = {
     "webFetch"
   ],
   searchConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.exa.ai/search",
     method: "POST",
     authType: "apikey",
@@ -34,6 +35,7 @@ const moduleDefault = {
     cacheTTLMs: 300000
   },
   fetchConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.exa.ai/contents",
     method: "POST",
     authType: "apikey",

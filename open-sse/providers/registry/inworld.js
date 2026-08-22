@@ -18,6 +18,7 @@ const moduleDefault = {
     "tts"
   ],
   ttsConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.inworld.ai/tts/v1/voice",
     authType: "apikey",
     authHeader: "basic",
@@ -28,6 +29,7 @@ const moduleDefault = {
         name: "Inworld TTS 1.5 Mini ($0.01/min)"
       },
       {
+        identity: "openai-node",
         id: "inworld-tts-1.5-max",
         name: "Inworld TTS 1.5 Max ($0.025/min)"
       }

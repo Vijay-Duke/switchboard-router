@@ -18,6 +18,7 @@ const moduleDefault = {
     "embedding"
   ],
   embeddingConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.jina.ai/v1/embeddings",
     authType: "apikey",
     authHeader: "bearer",
@@ -28,11 +29,13 @@ const moduleDefault = {
         dimensions: 1024
       },
       {
+        identity: "openai-node",
         id: "jina-embeddings-v2-base-en",
         name: "Jina Embeddings v2 Base EN",
         dimensions: 768
       },
       {
+        identity: "openai-node",
         id: "jina-embeddings-v2-base-code",
         name: "Jina Embeddings v2 Base Code",
         dimensions: 768

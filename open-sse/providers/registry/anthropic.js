@@ -16,6 +16,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "claude-cli",
     baseUrl: "https://api.anthropic.com/v1/messages",
     format: "claude",
     headers: {

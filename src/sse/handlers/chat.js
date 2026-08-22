@@ -223,7 +223,7 @@ export async function handleChat(request, clientRawRequest = null) {
       headers: Object.fromEntries(request.headers.entries())
     };
   }
-  cacheClaudeHeaders(clientRawRequest.headers);
+  cacheClaudeHeaders(clientRawRequest.headers, body);
 
   // Log request endpoint and model
   const url = new URL(request.url);
@@ -731,7 +731,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     // Ensure real project ID is available for providers that need it (P0 fix: cold miss)
     if ((provider === "antigravity" || provider === "gemini-cli") && !refreshedCredentials.projectId) {
-      const pid = await getProjectIdForConnection(credentials.connectionId, refreshedCredentials.accessToken);
+      const pid = await getProjectIdForConnection(credentials.connectionId, refreshedCredentials.accessToken, provider);
       if (pid) {
         refreshedCredentials.projectId = pid;
         // Persist to DB in background so subsequent requests have it immediately

@@ -15,6 +15,7 @@ const moduleDefault = {
   category: "apikey",
   hasProviderSpecificData: true,
   transport: {
+    identity: "openai-node",
     baseUrl: "",
     headers: {},
   },

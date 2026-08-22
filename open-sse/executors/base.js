@@ -6,6 +6,7 @@ import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
 import { assertPublicUrlResolved } from "../utils/ssrfGuard.js";
 import { getOpenSseDeps } from "../runtimeDeps.js";
+import { pickClaudeIdentityHeaders } from "../utils/claudeHeaderCache.js";
 
 // Google Gemini and Vertex select SSE with their request URL, not a JSON field.
 // Sending the generic OpenAI-style `stream` property makes those APIs reject the
@@ -188,6 +189,9 @@ export class BaseExecutor {
       const transformedBody = this.transformRequest(model, body, stream, credentials);
       const url = this.buildUrl(model, stream, urlIndex, credentials);
       const headers = this.buildHeaders(credentials, stream);
+      if (this.config?.format === "claude" && credentials?._clientSessionId) {
+        headers["X-Claude-Code-Session-Id"] = credentials._clientSessionId;
+      }
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 
@@ -223,7 +227,14 @@ export class BaseExecutor {
           headers,
           body: bodyStr,
           signal: mergedSignal,
-          redirect: "error", // H5: do not follow redirects to internal hosts
+          redirect: "error",
+          identity: this.config?.identity,
+          provider: this.provider,
+          format: this.config?.format,
+          overlay: credentials?.rawHeaders ? pickClaudeIdentityHeaders(credentials.rawHeaders) : undefined,
+          credentialId: credentials?.connectionId || credentials?.apiKey || credentials?.accessToken,
+          stream,
+          retryCount: retryAttemptsByUrl[urlIndex] || 0,
         }, proxyOptions);
         clearTimeout(connectTimer);
         const ct = response.headers?.get?.("content-type") || "";

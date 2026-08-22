@@ -1,5 +1,6 @@
 // ElevenLabs TTS — voice id with optional model_id prefix
 import { Buffer } from "node:buffer";
+import { authenticatedMediaFetch } from "./_base.js";
 
 const VOICES_TTL = 24 * 60 * 60 * 1000;
 const _voicesCache = new Map(); // by API key
@@ -10,7 +11,7 @@ export async function fetchElevenLabsVoices(apiKey) {
   const cached = _voicesCache.get(apiKey);
   if (cached && now - cached.time < VOICES_TTL) return cached.voices;
 
-  const res = await fetch("https://api.elevenlabs.io/v1/voices", {
+  const res = await authenticatedMediaFetch("elevenlabs", "tts", "https://api.elevenlabs.io/v1/voices", {
     headers: { "xi-api-key": apiKey, "Content-Type": "application/json" },
   });
   if (!res.ok) throw new Error(`ElevenLabs voices fetch failed: ${res.status}`);
@@ -28,7 +29,7 @@ const moduleDefault = {
     let voiceId = model;
     if (model && model.includes("/")) [modelId, voiceId] = model.split("/");
 
-    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+    const res = await authenticatedMediaFetch("elevenlabs", "tts", `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
       method: "POST",
       headers: { "xi-api-key": credentials.apiKey, "Content-Type": "application/json" },
       body: JSON.stringify({

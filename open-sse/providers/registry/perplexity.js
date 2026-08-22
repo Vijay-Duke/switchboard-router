@@ -19,6 +19,7 @@ const moduleDefault = {
   category: "apikey",
   authType: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.perplexity.ai/chat/completions",
     validateUrl: "https://api.perplexity.ai/models",
   },

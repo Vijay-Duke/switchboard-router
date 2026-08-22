@@ -16,6 +16,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "claude-cli",
     baseUrl: "https://api.z.ai/api/anthropic/v1/messages",
     format: "claude",
     urlSuffix: "?beta=true",
@@ -32,11 +33,13 @@ const moduleDefault = {
   // Multi-endpoint: pick the transport matching client sourceFormat to skip translation.
   transports: [
     {
+      identity: "claude-cli",
       format: "openai",
       baseUrl: "https://api.z.ai/api/coding/paas/v4/chat/completions",
       auth: { combined: true, header: "Authorization", scheme: "bearer" },
     },
     {
+      identity: "claude-cli",
       format: "claude",
       baseUrl: "https://api.z.ai/api/anthropic/v1/messages",
       urlSuffix: "?beta=true",
@@ -45,6 +48,7 @@ const moduleDefault = {
     },
   ],
   models: [
+    { id: "glm-5.3", name: "GLM 5.3" },
     { id: "glm-5.2", name: "GLM 5.2" },
     { id: "glm-5.1", name: "GLM 5.1" },
     { id: "glm-5", name: "GLM 5" },

@@ -1,5 +1,5 @@
 import { PROVIDERS, PROVIDER_OAUTH } from "../../config/providers.js";
-import { OAUTH_ENDPOINTS, GITHUB_COPILOT } from "../../config/appConstants.js";
+import { OAUTH_ENDPOINTS } from "../../config/appConstants.js";
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { dedupRefresh } from "./dedup.js";
 import { getOpenSseDeps } from "../../runtimeDeps.js";
@@ -64,7 +64,7 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
 
   return dedupRefresh(provider, refreshToken, async () => {
   try {
-    const response = await fetch(config.refreshUrl, {
+    const response = await proxyAwareFetch(config.refreshUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -76,6 +76,9 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
         client_id: config.clientId,
         client_secret: config.clientSecret,
       }),
+      identity: config.identity,
+      provider,
+      format: config.format,
     });
 
     if (!response.ok) {
@@ -113,7 +116,7 @@ export async function refreshClaudeOAuthToken(refreshToken, log) {
   if (!refreshToken) return null;
   return dedupRefresh("claude", refreshToken, async () => {
   try {
-    const response = await fetch(OAUTH_ENDPOINTS.anthropic.token, {
+    const response = await proxyAwareFetch(OAUTH_ENDPOINTS.anthropic.token, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -124,6 +127,9 @@ export async function refreshClaudeOAuthToken(refreshToken, log) {
         refresh_token: refreshToken,
         client_id: PROVIDERS.claude.clientId,
       }),
+      identity: PROVIDERS.claude?.identity,
+      provider: "claude",
+      format: PROVIDERS.claude?.format,
     });
 
     if (!response.ok) {
@@ -142,11 +148,14 @@ export async function refreshClaudeOAuthToken(refreshToken, log) {
   }, log);
 }
 
-export async function refreshGoogleToken(refreshToken, clientId, clientSecret, log) {
+export async function refreshGoogleToken(refreshToken, clientId, clientSecret, log, provider = null, proxyOptions = null) {
   if (!refreshToken) return null;
+  const resolvedProvider = provider
+    || (clientId === PROVIDERS.antigravity?.clientId ? "antigravity" : "gemini-cli");
+  const config = PROVIDERS[resolvedProvider];
   return dedupRefresh(`google:${clientId}`, refreshToken, async () => {
   try {
-    const response = await fetch(OAUTH_ENDPOINTS.google.token, {
+    const response = await proxyAwareFetch(OAUTH_ENDPOINTS.google.token, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -158,7 +167,10 @@ export async function refreshGoogleToken(refreshToken, clientId, clientSecret, l
         client_id: clientId,
         client_secret: clientSecret,
       }),
-    });
+      identity: config?.identity,
+      provider: resolvedProvider,
+      format: config?.format,
+    }, proxyOptions);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -182,7 +194,7 @@ export async function refreshQwenToken(refreshToken, log) {
   const endpoint = OAUTH_ENDPOINTS.qwen.token;
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await proxyAwareFetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -193,6 +205,9 @@ export async function refreshQwenToken(refreshToken, log) {
         refresh_token: refreshToken,
         client_id: PROVIDERS.qwen.clientId,
       }),
+      identity: PROVIDERS.qwen?.identity,
+      provider: "qwen",
+      format: PROVIDERS.qwen?.format,
     });
 
     if (response.status === 200) {
@@ -255,7 +270,7 @@ export async function refreshCodexToken(refreshToken, log) {
   if (!refreshToken) return null;
   return dedupRefresh("codex", refreshToken, async () => {
     try {
-      const response = await fetch(OAUTH_ENDPOINTS.openai.token, {
+      const response = await proxyAwareFetch(OAUTH_ENDPOINTS.openai.token, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -266,6 +281,9 @@ export async function refreshCodexToken(refreshToken, log) {
           grant_type: "refresh_token",
           refresh_token: refreshToken,
         }),
+        identity: PROVIDERS.codex?.identity,
+        provider: "codex",
+        format: PROVIDERS.codex?.format,
       });
 
       if (!response.ok) {
@@ -346,6 +364,9 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
         Accept: "application/json",
       },
       body: refreshRequest.body,
+      identity: PROVIDERS.kiro?.identity,
+      provider: "kiro",
+      format: PROVIDERS.kiro?.format,
     }, proxyOptions);
 
     if (!response.ok) {
@@ -391,6 +412,9 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
         refreshToken: refreshToken,
         grantType: "refresh_token",
       }),
+      identity: PROVIDERS.kiro?.identity,
+      provider: "kiro",
+      format: PROVIDERS.kiro?.format,
     }, proxyOptions);
 
     if (!response.ok) {
@@ -427,6 +451,9 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
     body: JSON.stringify({
       refreshToken: refreshToken,
     }),
+    identity: PROVIDERS.kiro?.identity,
+    provider: "kiro",
+    format: PROVIDERS.kiro?.format,
   }, proxyOptions);
 
   if (!response.ok) {
@@ -459,7 +486,7 @@ export async function refreshIflowToken(refreshToken, log) {
   return dedupRefresh("iflow", refreshToken, async () => {
   const basicAuth = btoa(`${PROVIDERS.iflow.clientId}:${PROVIDERS.iflow.clientSecret}`);
 
-  const response = await fetch(OAUTH_ENDPOINTS.iflow.token, {
+  const response = await proxyAwareFetch(OAUTH_ENDPOINTS.iflow.token, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -472,6 +499,9 @@ export async function refreshIflowToken(refreshToken, log) {
       client_id: PROVIDERS.iflow.clientId,
       client_secret: PROVIDERS.iflow.clientSecret,
     }),
+    identity: PROVIDERS.iflow?.identity,
+    provider: "iflow",
+    format: PROVIDERS.iflow?.format,
   });
 
   if (!response.ok) {
@@ -511,13 +541,16 @@ export async function refreshGitHubToken(refreshToken, log) {
     params.client_secret = PROVIDERS.github.clientSecret;
   }
 
-  const response = await fetch(OAUTH_ENDPOINTS.github.token, {
+  const response = await proxyAwareFetch(OAUTH_ENDPOINTS.github.token, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       Accept: "application/json",
     },
     body: new URLSearchParams(params),
+    identity: PROVIDERS.github?.identity,
+    provider: "github",
+    format: PROVIDERS.github?.format,
   });
 
   if (!response.ok) {
@@ -549,15 +582,14 @@ export async function refreshCopilotToken(githubAccessToken, log) {
   if (!githubAccessToken) return null;
   return dedupRefresh("copilot", githubAccessToken, async () => {
   try {
-    const response = await fetch(PROVIDER_OAUTH["github"]?.copilotTokenUrl, {
+    const response = await proxyAwareFetch(PROVIDER_OAUTH["github"]?.copilotTokenUrl, {
       headers: {
         "Authorization": `token ${githubAccessToken}`,
-        "User-Agent": GITHUB_COPILOT.USER_AGENT,
-        "Editor-Version": `vscode/${GITHUB_COPILOT.VSCODE_VERSION}`,
-        "Editor-Plugin-Version": `copilot-chat/${GITHUB_COPILOT.COPILOT_CHAT_VERSION}`,
         "Accept": "application/json",
-        "x-github-api-version": GITHUB_COPILOT.API_VERSION
-      }
+      },
+      identity: PROVIDERS.github?.identity,
+      provider: "github",
+      format: PROVIDERS.github?.format,
     });
 
     if (!response.ok) {
@@ -596,7 +628,7 @@ export async function refreshCodebuddyToken(refreshToken, log) {
   if (!refreshToken) return null;
   return dedupRefresh("codebuddy-cn", refreshToken, async () => {
     const oauth = PROVIDER_OAUTH["codebuddy-cn"] || {};
-    const response = await fetch(oauth.refreshUrl, {
+    const response = await proxyAwareFetch(oauth.refreshUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -605,10 +637,11 @@ export async function refreshCodebuddyToken(refreshToken, log) {
         "X-Requested-With": "XMLHttpRequest",
         "X-Domain": "copilot.tencent.com",
         "X-Refresh-Token": refreshToken,
-        "X-Auth-Refresh-Source": "plugin",
-        "X-Product": "SaaS",
       },
-      body: "{}",
+      body: JSON.stringify({ refreshToken }),
+      identity: PROVIDERS["codebuddy-cn"]?.identity,
+      provider: "codebuddy-cn",
+      format: PROVIDERS["codebuddy-cn"]?.format,
     });
 
     if (!response.ok) {

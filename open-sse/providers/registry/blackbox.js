@@ -23,6 +23,7 @@ const moduleDefault = {
     defaultMode: "auto",
   },
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.blackbox.ai/v1/chat/completions",
     thinkingFormat: "openai",
   },

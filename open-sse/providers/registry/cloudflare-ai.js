@@ -21,6 +21,7 @@ const moduleDefault = {
   category: "freeTier",
   hasProviderSpecificData: true,
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1/chat/completions",
     thinkingFormat: "openai",
   },
@@ -51,7 +52,7 @@ const moduleDefault = {
     { id: "@cf/stabilityai/stable-diffusion-xl-base-1.0", name: "SDXL Base 1.0", params: ["size"], kind: "image" },
   ],
   serviceKinds: ["llm","image"],
-  imageConfig: { baseUrl: "https://api.cloudflare.com/client/v4/accounts" },
+  imageConfig: { identity: "openai-node", baseUrl: "https://api.cloudflare.com/client/v4/accounts" },
 };
 
 export default moduleDefault;

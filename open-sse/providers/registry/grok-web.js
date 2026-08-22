@@ -17,6 +17,7 @@ const moduleDefault = {
   authType: "cookie",
   authHint: "Paste your sso= cookie value from grok.com",
   transport: {
+    identity: "chrome",
     baseUrl: "https://grok.com/rest/app-chat/conversations/new",
     format: "grok-web",
     authType: "cookie",

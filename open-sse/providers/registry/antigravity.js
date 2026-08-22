@@ -20,14 +20,12 @@ const moduleDefault = {
   category: "oauth",
   serviceKinds: ["llm", "image"],
   transport: {
+    identity: "antigravity",
     baseUrls: [
       "https://daily-cloudcode-pa.googleapis.com",
       "https://daily-cloudcode-pa.sandbox.googleapis.com",
     ],
     format: "antigravity",
-    headers: {
-      "User-Agent": "antigravity/1.107.0 darwin/arm64",
-    },
     retry: {
       // Two base URLs × exponential backoff: keep attempts low so a rate-limited
       // account falls through to the next URL/account inside a client deadline.

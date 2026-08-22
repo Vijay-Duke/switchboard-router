@@ -24,6 +24,7 @@ const moduleDefault = {
     defaultMode: "auto",
   },
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.openai.com/v1/chat/completions",
     forceStream: true,
   },
@@ -63,6 +64,7 @@ const moduleDefault = {
   ],
   serviceKinds: ["llm","embedding","tts","stt","image","imageToText","webSearch"],
   ttsConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.openai.com/v1/audio/speech",
     authType: "apikey",
     authHeader: "bearer",
@@ -70,13 +72,14 @@ const moduleDefault = {
     defaultModel: "gpt-4o-mini-tts",
   },
   sttConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.openai.com/v1/audio/transcriptions",
     authType: "apikey",
     authHeader: "bearer",
     format: "openai",
   },
-  embeddingConfig: { baseUrl: "https://api.openai.com/v1/embeddings", authType: "apikey", authHeader: "bearer" },
-  imageConfig: { baseUrl: "https://api.openai.com/v1/images/generations" },
+  embeddingConfig: { identity: "openai-node", baseUrl: "https://api.openai.com/v1/embeddings", authType: "apikey", authHeader: "bearer" },
+  imageConfig: { identity: "openai-node", baseUrl: "https://api.openai.com/v1/images/generations" },
   searchViaChat: { defaultModel: "gpt-4o-mini", pricingUrl: "https://openai.com/api/pricing" },
 };
 

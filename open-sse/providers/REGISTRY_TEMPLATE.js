@@ -2,13 +2,14 @@
  * REGISTRY ENTRY TEMPLATE — copy into registry/{id}.js when adding a new provider.
  *
  * NOT imported by registry/index.js (lives outside registry/, static-import list ignores it).
- * Delete every block your provider does not need. Only `id` + `category` are required.
+ * Delete every block your provider does not need. Required: `id`, `category`, and
+ * `transport.identity` (official-client fingerprint — see open-sse/AGENTS.md identity gate).
  * Field contract: see schema.js `@typedef RegistryEntry`. Runtime builders: providers/index.js.
  *
  * Quick recipes:
- *   - Plain API-key LLM      → id, alias, category:"apikey", display, transport{baseUrl}, models.
+ *   - Plain API-key LLM      → id, alias, category:"apikey", display, transport{baseUrl, identity}, models.
  *   - OAuth LLM (device/PKCE)→ add oauth{...}; clientId/tokenUrl auto-inject into transport.
- *   - Media-only (tts/stt/…) → drop `models`+chat baseUrl, fill media{serviceKinds, *Config}.
+ *   - Media-only (tts/stt/…) → drop `models`+chat baseUrl, fill media{serviceKinds, *Config}; still set identity on each outbound hop.
  */
 
 // import { CLAUDE_API_HEADERS, GOOGLE_OAUTH_CLIENT, OPENAI_COMPAT_BASE } from "./shared.js";
@@ -45,8 +46,11 @@ const moduleDefault = {
   transport: {
     baseUrl: "https://api.example.com/v1/chat/completions",
     format: "openai",            // "openai" | "claude" | "gemini" | "openai-responses" | ...
+    identity: "openai-node",     // REQUIRED. Catalog profile the wrap applies on every hop.
+                                 // "claude-cli" | "codex-cli" | "gemini-cli" | "openai-node" | "cline" | "chrome"
+                                 // or { profile: "openai-node", source: { npm: "@example/cli" } }
     // validateUrl: "https://api.example.com/v1/models",
-    // headers: { "User-Agent": "..." },           // static fingerprint (anti-ban) lives here.
+    // headers: { },             // auth/content-type only. UA/Stainless come from the identity snapshot.
     // auth: { header: "x-api-key", scheme: "raw" },
     // forceStream: true, urlSuffix: "?beta=true",
     // quirks: { dropOutputConfig: true },

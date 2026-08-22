@@ -31,13 +31,10 @@ const moduleDefault = {
     defaultMode: "auto",
   },
   transport: {
+    identity: "codex-cli",
     baseUrl: "https://chatgpt.com/backend-api/codex/responses",
     format: "openai-responses",
     forceStream: true,
-    headers: {
-      originator: "codex_cli_rs",
-      "User-Agent": "codex_cli_rs/0.136.0",
-    },
     usage: {
       url: "https://chatgpt.com/backend-api/wham/usage",
       resetCreditsUrl: "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits",

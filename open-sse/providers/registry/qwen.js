@@ -14,6 +14,7 @@ const moduleDefault = {
   },
   category: "oauth",
   transport: {
+    identity: "qwen",
     baseUrl: "https://portal.qwen.ai/v1/chat/completions",
   },
   models: [

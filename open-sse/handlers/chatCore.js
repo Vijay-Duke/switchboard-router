@@ -20,7 +20,7 @@ import { handleForcedSSEToJson } from "./chatCore/sseToJsonHandler.js";
 import { handleNonStreamingResponse } from "./chatCore/nonStreamingHandler.js";
 import { handleStreamingResponse, buildOnStreamComplete } from "./chatCore/streamingHandler.js";
 import { createEmptyRetryStream } from "./chatCore/emptyStreamGuard.js";
-import { detectClientTool, isNativePassthrough } from "../utils/clientDetector.js";
+import { detectClientTool, harvestDetectedClient, isNativePassthrough } from "../utils/clientDetector.js";
 import { dedupeTools } from "../utils/toolDeduper.js";
 import { stripOrphanedToolResults } from "../translator/concerns/toolCall.js";
 import { injectCaveman } from "../rtk/caveman.js";
@@ -132,6 +132,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Native passthrough: CLI tool and provider are the same ecosystem
   // Skip all translation/normalization — only model and Bearer are swapped
   const clientTool = detectClientTool(clientRawRequest?.headers || {}, body);
+  harvestDetectedClient(clientTool, clientRawRequest?.headers || {}, body);
   const passthrough = !bypassNativePassthrough && isNativePassthrough(clientTool, provider);
 
   // Expose raw client headers to translators/executors for session-id resolution

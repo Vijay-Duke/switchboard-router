@@ -12,6 +12,7 @@ import { SSE_DONE, SSE_HEADERS } from "../utils/sseConstants.js";
 import { chatChunkSse } from "../utils/sse.js";
 import { FORMATS } from "../translator/formats.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { wrapHeaders } from "../identity/wrap.js";
 import { extractNativeToolCalls } from "../utils/nativeToolCallAdapters/index.js";
 import zlib from "zlib";
 
@@ -185,7 +186,10 @@ export class CursorExecutor extends BaseExecutor {
       method: "POST",
       headers,
       body,
-      signal
+      signal,
+      identity: "cursor",
+      provider: this.provider,
+      format: this.config?.format,
     }, proxyOptions);
 
     return {
@@ -194,6 +198,14 @@ export class CursorExecutor extends BaseExecutor {
       body: Buffer.from(await response.arrayBuffer())
     };
   }
+  wrapOutboundHeaders(headers) {
+    return wrapHeaders(headers, {
+      identity: "cursor",
+      provider: this.provider,
+      format: this.config?.format,
+    }).headers;
+  }
+
 
   makeHttp2Request(url, headers, body, signal) {
     if (!http2) {
@@ -230,7 +242,7 @@ export class CursorExecutor extends BaseExecutor {
         ":path": urlObj.pathname,
         ":authority": urlObj.host,
         ":scheme": "https",
-        ...headers
+        ...this.wrapOutboundHeaders(headers),
       });
 
       req.on("response", (hdrs) => { responseHeaders = hdrs; });
