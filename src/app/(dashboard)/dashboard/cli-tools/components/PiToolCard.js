@@ -15,7 +15,7 @@ export default function PiToolCard(props) {
       supportsModelLabels
       installHint={`npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 # or: curl -fsSL https://pi.dev/install.sh | sh`}
-      runHint="After Apply: pi starts with the selected default and /model only cycles through these Switchboard models"
+      runHint="After Apply: Switchboard is one provider. /model still lists your other providers."
       buildManualConfigs={({ baseUrl, apiKey, models, defaultModel, pickerLabels }) => [
         {
           filename: "~/.pi/agent/models.json",
@@ -53,7 +53,6 @@ export default function PiToolCard(props) {
             {
               defaultProvider: "switchboard",
               defaultModel: defaultModel || models[0],
-              enabledModels: models.map((model) => `switchboard/${model}`),
             },
             null,
             2

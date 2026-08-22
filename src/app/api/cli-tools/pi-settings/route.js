@@ -94,6 +94,14 @@ const readBackup = () => readJsonFile(getBackupPath(), null);
 
 const canonicalModelIds = (models) => models.map((model) => `${PROVIDER_ID}/${model}`);
 
+/** Keep other providers visible. A switchboard-only whitelist is lifted. */
+const mergeEnabledModels = (existing, switchboardIds) => {
+  if (!Array.isArray(existing) || existing.length === 0) return undefined;
+  const others = existing.filter((id) => typeof id !== "string" || !id.startsWith(`${PROVIDER_ID}/`));
+  if (others.length === 0) return undefined;
+  return [...others, ...switchboardIds];
+};
+
 const canonicalize = (value) => {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value && typeof value === "object") {
@@ -107,11 +115,6 @@ const canonicalize = (value) => {
 const sameJson = (left, right) => (
   JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right))
 );
-
-const sameStringSet = (left, right) => Array.isArray(left)
-  && Array.isArray(right)
-  && left.length === right.length
-  && right.every((entry) => left.includes(entry));
 
 const isSnapshot = (value) => value && typeof value === "object" && typeof value.exists === "boolean";
 
@@ -181,8 +184,7 @@ async function getPiSettings() {
     const model = configuredDefault || models[0] || null;
     const baseUrl = provider?.baseUrl || null;
     const hasSwitchboard = !!(provider && isLocalBase(baseUrl));
-    const scopeConfigured = !!configuredDefault
-      && sameStringSet(piSettings.enabledModels, canonicalModelIds(models));
+    const scopeConfigured = hasSwitchboard && models.length > 0;
 
     return NextResponse.json({
       installed: true,
@@ -282,7 +284,9 @@ async function postPiSettings(request) {
     data.providers[PROVIDER_ID] = managedProvider;
     piSettings.defaultProvider = PROVIDER_ID;
     piSettings.defaultModel = activeModel;
-    piSettings.enabledModels = canonicalModelIds(models);
+    const mergedEnabled = mergeEnabledModels(piSettings.enabledModels, canonicalModelIds(models));
+    if (mergedEnabled) piSettings.enabledModels = mergedEnabled;
+    else delete piSettings.enabledModels;
     backup.managedProvider = managedProvider;
     backup.managedSettings = {
       defaultProvider: PROVIDER_ID,
