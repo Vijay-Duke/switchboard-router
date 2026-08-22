@@ -415,6 +415,7 @@ export default function AgentLibraryPage() {
             <input
               type="checkbox"
               className="accent-[var(--color-primary)]"
+              aria-label="Sync enabled"
               checked={settings.enabled !== false}
               disabled={!!busy}
               onChange={(e) => patchSettings({ enabled: e.target.checked })}
@@ -519,6 +520,7 @@ export default function AgentLibraryPage() {
                       <label className="flex items-center gap-1.5 cursor-pointer">
                         <input
                           type="checkbox"
+                          aria-label={`${a.label} skills projection`}
                           checked={t.skills !== false}
                           disabled={!a.supportsSkills || !!busy}
                           onChange={(e) =>
@@ -535,6 +537,7 @@ export default function AgentLibraryPage() {
                       <label className="flex items-center gap-1.5 cursor-pointer">
                         <input
                           type="checkbox"
+                          aria-label={`${a.label} MCP projection`}
                           checked={t.mcp !== false}
                           disabled={!a.supportsMcp || !!busy}
                           onChange={(e) =>
@@ -606,6 +609,7 @@ export default function AgentLibraryPage() {
                 <input
                   type="checkbox"
                   className="mt-0.5"
+                  aria-label="Never overwrite user-owned files"
                   checked={settings.neverOverwriteUser !== false}
                   disabled={!!busy}
                   onChange={async (e) => {
@@ -630,6 +634,7 @@ export default function AgentLibraryPage() {
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
+                  aria-label="Auto-include Switchboard product skills"
                   checked={settings.includeProductSkills !== false}
                   disabled={!!busy}
                   onChange={(e) =>
@@ -827,6 +832,7 @@ export default function AgentLibraryPage() {
               <label className="flex items-start gap-2 text-xs text-text-muted cursor-pointer mt-2">
                 <input
                   type="checkbox"
+                  aria-label="I reviewed this skill update and understand it may instruct agents to run tools or shell commands"
                   checked={updConfirm}
                   onChange={(e) => setUpdConfirm(e.target.checked)}
                 />
@@ -1058,6 +1064,7 @@ export default function AgentLibraryPage() {
               <label className="flex items-start gap-2 text-xs text-text-muted cursor-pointer">
                 <input
                   type="checkbox"
+                  aria-label="I reviewed this catalog skill and understand it may instruct agents to run tools or shell commands"
                   checked={catalogConfirm}
                   onChange={(e) => setCatalogConfirm(e.target.checked)}
                 />

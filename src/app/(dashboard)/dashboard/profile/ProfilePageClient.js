@@ -444,6 +444,7 @@ export default function ProfilePageClient({ initialData }) {
                 checked={settings.fallbackStrategy === "round-robin"}
                 onChange={() => updateFallbackStrategy(settings.fallbackStrategy === "round-robin" ? "fill-first" : "round-robin")}
                 disabled={loading}
+                aria-label="Round Robin"
               />
             </div>
 
@@ -458,6 +459,7 @@ export default function ProfilePageClient({ initialData }) {
                 </div>
                 <Input
                   type="number"
+                  aria-label="Sticky Limit"
                   min="1"
                   max="10"
                   value={settings.stickyRoundRobinLimit || 3}
@@ -480,6 +482,7 @@ export default function ProfilePageClient({ initialData }) {
                 checked={settings.comboStrategy === "round-robin"}
                 onChange={() => updateComboStrategy(settings.comboStrategy === "round-robin" ? "fallback" : "round-robin")}
                 disabled={loading}
+                aria-label="Combo Round Robin"
               />
             </div>
 
@@ -494,6 +497,7 @@ export default function ProfilePageClient({ initialData }) {
                 </div>
                 <Input
                   type="number"
+                  aria-label="Combo Sticky Limit"
                   min="1"
                   max="100"
                   value={settings.comboStickyRoundRobinLimit || 1}
@@ -534,6 +538,7 @@ export default function ProfilePageClient({ initialData }) {
                 checked={settings.outboundProxyEnabled === true}
                 onChange={() => updateOutboundProxyEnabled(!(settings.outboundProxyEnabled === true))}
                 disabled={loading || proxyLoading}
+                aria-label="Outbound Proxy"
               />
             </div>
 
@@ -606,6 +611,7 @@ export default function ProfilePageClient({ initialData }) {
               checked={observabilityEnabled}
               onChange={updateObservabilityEnabled}
               disabled={loading}
+              aria-label="Enable Observability"
             />
           </div>
         </Card>

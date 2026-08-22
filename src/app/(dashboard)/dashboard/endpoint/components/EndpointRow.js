@@ -27,7 +27,7 @@ export default function EndpointRow({ label, url, copyId, copied, onCopy, badge,
         onClick={() => onCopy(url, copyId)}
         className="p-2 hover:bg-surface-2 rounded text-text-muted hover:text-primary transition-colors shrink-0 border border-transparent hover:border-border"
         title="Copy"
-        aria-label="Copy endpoint URL"
+        aria-label={`Copy ${label} endpoint URL`}
       >
         <span className="material-symbols-outlined text-[18px] leading-none">
           {copied === copyId ? "check" : "content_copy"}
