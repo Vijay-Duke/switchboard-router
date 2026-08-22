@@ -27,7 +27,9 @@ export {
 
 // API keys
 export {
-  getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
+  CLIENT_KEY_POLICY_BOUNDS,
+  getApiKeys, getApiKeyById, createApiKey, updateApiKey, deleteApiKey,
+  authenticateApiKey, validateApiKey, getClientKeySpend, normalizeClientKeyPatch,
 } from "./repos/apiKeysRepo.js";
 
 // Combos
@@ -121,7 +123,12 @@ export async function exportDb() {
     providerConnections: db.all(`SELECT * FROM providerConnections`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, provider: r.provider, authType: r.authType, name: r.name, email: r.email, priority: r.priority, isActive: r.isActive === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt })),
+    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({
+      id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt,
+      allowedModels: parseJson(r.allowedModels, []), allowedCombos: parseJson(r.allowedCombos, []),
+      expiresAt: r.expiresAt || null, rateLimitPerMinute: r.rateLimitPerMinute ?? null,
+      concurrencyLimit: r.concurrencyLimit ?? null, spendLimitUsd: r.spendLimitUsd ?? null,
+    })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
     customModels: [],
@@ -184,8 +191,11 @@ export async function importDb(payload) {
         ? packApiKeyRecord(k.key)
         : k.key;
       db.run(
-        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
-        [k.id, storedKey, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString()]
+        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [k.id, storedKey, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(),
+          k.allowedModels == null ? null : stringifyJson(k.allowedModels), k.allowedCombos == null ? null : stringifyJson(k.allowedCombos),
+          k.expiresAt || null, k.rateLimitPerMinute ?? null, k.concurrencyLimit ?? null, k.spendLimitUsd ?? null]
       );
     }
     for (const c of payload.combos || []) {

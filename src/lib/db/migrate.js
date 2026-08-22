@@ -9,6 +9,7 @@ import { getAppVersion } from "./version.js";
 import { stringifyJson } from "./helpers/jsonCol.js";
 import { connToRow } from "./repos/connectionsRepo.js";
 import { packApiKeyRecord, unpackApiKeyRecord } from "@/lib/crypto/secrets.js";
+import { resolveClientKeyId, scrubUsageDailyData } from "./migrations/008-client-key-identity.js";
 
 // Marker file: prevents re-importing legacy JSON when user wipes data.sqlite.
 const MIGRATED_MARKER = path.join(DB_DIR, ".migrated-from-json");
@@ -150,11 +151,13 @@ function importLegacyMain(adapter, data) {
       ? packApiKeyRecord(k.key)
       : k.key;
     adapter.run(
-      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
-      [k.id, storedKey, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString()]
+      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd)
+       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [k.id, storedKey, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(),
+        k.allowedModels == null ? null : stringifyJson(k.allowedModels), k.allowedCombos == null ? null : stringifyJson(k.allowedCombos),
+        k.expiresAt || null, k.rateLimitPerMinute ?? null, k.concurrencyLimit ?? null, k.spendLimitUsd ?? null]
     );
   }, (k) => ({ id: k.id ?? null, name: k.name ?? null }));
-
   importWithAssertion(adapter, "combos", data.combos || [], (c) => {
     adapter.run(
       `INSERT OR REPLACE INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
@@ -178,14 +181,16 @@ function importLegacyMain(adapter, data) {
 }
 
 function importLegacyUsage(adapter, data) {
+  const keys = adapter.all(`SELECT id, key FROM apiKeys`) || [];
   if (!data || typeof data !== "object") return;
   for (const e of data.history || []) {
     const t = e.tokens || {};
     adapter.run(
-      `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO usageHistory(timestamp, provider, model, connectionId, clientKeyId, endpoint, promptTokens, completionTokens, cost, status, tokens, meta)
+       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         e.timestamp || new Date().toISOString(),
-        e.provider || null, e.model || null, e.connectionId || null, e.apiKey || null, e.endpoint || null,
+        e.provider || null, e.model || null, e.connectionId || null, resolveClientKeyId(e.apiKey, keys), e.endpoint || null,
         t.prompt_tokens || t.input_tokens || 0,
         t.completion_tokens || t.output_tokens || 0,
         e.cost || 0,
@@ -196,7 +201,10 @@ function importLegacyUsage(adapter, data) {
     );
   }
   for (const [dateKey, day] of Object.entries(data.dailySummary || {})) {
-    adapter.run(`INSERT OR REPLACE INTO usageDaily(dateKey, data) VALUES(?, ?)`, [dateKey, stringifyJson(day)]);
+    adapter.run(
+      `INSERT OR REPLACE INTO usageDaily(dateKey, data) VALUES(?, ?)`,
+      [dateKey, stringifyJson(scrubUsageDailyData(day, keys))]
+    );
   }
   if (typeof data.totalRequestsLifetime === "number") {
     setMetaSync(adapter, "totalRequestsLifetime", data.totalRequestsLifetime);

@@ -1,7 +1,6 @@
 import {
-  hashApiKey,
+  matchesApiKeyRecord,
   packApiKeyRecord,
-  timingSafeEqualStr,
   unpackApiKeyRecord,
 } from "../../crypto/secrets.js";
 
@@ -27,13 +26,7 @@ function addPolicyColumns(db) {
 
 export function resolveClientKeyId(raw, keys) {
   if (!raw || raw === "local-no-key") return null;
-  const hash = hashApiKey(String(raw));
-  for (const key of keys) {
-    const unpacked = unpackApiKeyRecord(key.key);
-    if (!unpacked.legacy && unpacked.hash && timingSafeEqualStr(unpacked.hash, hash)) return key.id;
-    if (unpacked.legacy && timingSafeEqualStr(String(unpacked.raw || ""), String(raw))) return key.id;
-  }
-  return null;
+  return keys.find((key) => matchesApiKeyRecord(key.key, String(raw)))?.id || null;
 }
 
 function mergeCounter(target, incoming) {

@@ -110,3 +110,11 @@ export function timingSafeEqualStr(a, b) {
   const bb = crypto.createHash("sha256").update(b).digest();
   return crypto.timingSafeEqual(ba, bb);
 }
+
+export function matchesApiKeyRecord(stored, raw) {
+  if (!raw || typeof raw !== "string") return false;
+  const unpacked = unpackApiKeyRecord(stored);
+  return unpacked.legacy
+    ? timingSafeEqualStr(String(unpacked.raw || ""), raw)
+    : !!unpacked.hash && timingSafeEqualStr(unpacked.hash, hashApiKey(raw));
+}
