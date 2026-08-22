@@ -27,6 +27,7 @@ const eslintConfig = defineConfig([
     "gitbook/.next/**",
     "gitbook/out/**",
     "cli/app/**",
+    ".worktrees/**",
   ]),
 ]);
 
