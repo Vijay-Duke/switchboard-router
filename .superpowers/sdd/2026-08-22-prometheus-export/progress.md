@@ -16,3 +16,7 @@ Review: Spec FAIL; Quality CHANGES_REQUIRED; Security BLOCKED.
 - Fix round 1 re-review: steady-state compact reads/single-flight passed. Still blocked by startup crash on corrupt history, loose numeric coercion, incomplete fixed-provider roster, and missing post-legacy-import aggregate rebuild.
 - Fix round 2/5 started with original implementer; list in `review-findings-round2.md`.
 - Fix round 2 complete in `30b49e1b`: corrupt-history startup recovery, strict numeric validation, fixed/custom/node provider roster, and post-legacy-import rebuild. Focused verification: 20 files / 93 tests passed.
+- Scoped correctness and security re-reviews started over `73d476f1..002e17f6`.
+- Fix round 2 re-review: Security APPROVED; startup/strict reads/roster/import rebuild passed. Correctness remains blocked because write-path SQLite arithmetic can coerce malformed compact rows before a scrape detects them.
+- Fix round 3/5 started with original implementer; list in `review-findings-round3.md`.
+- Fix round 3 complete in `efe70319`: strict pre-mutation validation, nested rollback, durable unavailable state, and preserved core writes. Focused verification: 20 files / 97 tests passed.

@@ -196,3 +196,38 @@ npx vitest run \
 - Successful fresh legacy JSON import rebuilds the compact aggregates in the same transaction, so the first scrape includes imported lifetime usage.
 - Version-8 write paths remain compatible when the metrics tables do not exist. Version-9 startup creates them before enabling collection.
 - Metrics remain unavailable after a corrupt backfill until the underlying historical data is repaired and the bounded materialization is rebuilt; core database and gateway operation remain available.
+
+## Review fix round 3
+
+Commit: `efe70319` `fix(metrics): guard aggregate mutations`
+
+### Red evidence
+
+`prometheus-repositories.test.js` failed four new mutation cases:
+
+- a normal usage write coerced existing whitespace/text/hex/fractional/negative request totals;
+- provider retirement deleted the source row and coerced a corrupt `unknown` row;
+- a normal routing insert coerced corrupt fixed routing totals;
+- combo deletion partially decremented corrupt routing totals and deleted the support row.
+
+### Green evidence
+
+Focused verification was split into bounded Vitest invocations to avoid the
+test runner's parallel transform/hook timeouts:
+
+```text
+Prometheus contracts: 6 files, 34 tests passed.
+Migration and auth: 4 files, 17 tests passed.
+Routing compatibility: 3 files, 11 tests passed.
+Provider compatibility: 3 files, 7 tests passed.
+Usage compatibility: 4 files, 28 tests passed.
+
+Total: 20 files, 97 tests passed.
+```
+
+### Fixes and remaining operational semantics
+
+- Every usage increment, routing insert/decrement/rekey, and provider retirement now runs inside a nested savepoint after strict validation of the existing compact rows and metric availability marker.
+- If any compact value or support state is malformed, the savepoint rolls back without coercing or overwriting evidence, `prometheusMetricState.available` is atomically set to 0, and the surrounding usage/routing/provider operation continues.
+- Resulting sums and decrements are validated before SQL arithmetic, preventing negative or non-finite post-mutation state.
+- With availability at 0, further metric mutations are skipped and the authenticated enabled route remains on the sanitized atomic 503 path until explicit repair/rebuild.
