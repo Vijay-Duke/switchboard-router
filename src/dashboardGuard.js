@@ -228,7 +228,12 @@ export async function proxy(request) {
 
   if (pathname.startsWith("/api/mgmt/")) {
     if (await canAccessManagementRoute(request)) return NextResponse.next();
-    return NextResponse.json({ v: 1, error: { message: "Management API: unauthorized" } }, { status: 401 });
+    // Unauthorized management responses must never be cached (QA-005) —
+    // matches the { v:1, error } envelope + no-store contract of _lib/http.js.
+    return NextResponse.json(
+      { v: 1, error: { message: "Management API: unauthorized" } },
+      { status: 401, headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   // All other /api/* (settings, keys, providers, combos writes, …) are loopback/CLI only.
