@@ -51,6 +51,12 @@ const moduleDefault = {
     { id: "kimi-latest", name: "Kimi Latest" },
   ],
   serviceKinds: ["llm","webSearch"],
+  features: {
+    usage: true,
+    // API-key connections also hit /v1/usages (x-api-key) — usageApikey
+    // lets the /api/usage route allow non-oauth authType.
+    usageApikey: true,
+  },
   searchViaChat: {
     defaultModel: "kimi-k2.5",
     endpoint: "https://api.moonshot.cn/v1/chat/completions",

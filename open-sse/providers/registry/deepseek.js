@@ -51,6 +51,10 @@ const moduleDefault = {
     { id: "deepseek-chat", name: "DeepSeek V3.2 Chat" },
     { id: "deepseek-reasoner", name: "DeepSeek V3.2 Reasoner" },
   ],
+  features: {
+    usage: true,
+    usageApikey: true,
+  },
 };
 
 export default moduleDefault;

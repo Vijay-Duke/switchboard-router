@@ -33,6 +33,7 @@ const moduleDefault = {
   serviceKinds: ["llm"],
   features: {
     usage: true,
+    usageApikey: true,
   },
 };
 
