@@ -285,3 +285,77 @@ Round-3 focused verification:
 - Lookup/repository/usage/parity pass: **3 files, 35 tests, 0 failures**.
 - Migration/consumer/prompt/abort/handler/policy/security pass: **10 files, 42 tests, 0 failures**.
 - No full suite, lint, React Doctor, build, scheduler, or Prometheus command was run.
+
+## Review fix round 4
+
+Commits:
+
+1. `28657416 fix: digest client key lookups`
+2. `cd1a80be test: prove client key runtime boundaries`
+
+### Production changes
+
+- Generated-key lookup now persists and indexes only `lookupDigest = SHA-256("sb-key-lookup:" + keyId)`. The raw 128-bit key-ID segment is absent from the packed verifier, schema column, export/import payload, active database, and WAL.
+- A modern request performs one unique indexed digest lookup and one asynchronous scrypt verification. The repository regression authenticates 12 same-machine keys, checks one digest query/one async scrypt for selected keys beyond the former eight-row cap, and proves an unknown valid modern key performs zero KDFs.
+- Plaintext/v1 records with a parseable modern key ID upgrade to v2 plus a digest. Unparseable plaintext upgrades only to the existing cheap v1 hash; unparseable v1 remains unchanged and authenticatable. Both return `rotationRequired: true`. Missing-lookup v2 remains rotation-required and unusable and is excluded from fallback scans.
+- List/detail/authentication records expose `rotationRequired` but no verifier or digest metadata. The endpoint key-management card shows a safe “Rotation required” status and explains that the compatibility verifier remains usable until replacement.
+- Migration 8, full DB import/export, and legacy JSON import use `lookupDigest`; old v2 records containing a 32-hex raw lookup segment are normalized to its domain-separated digest without recomputing the scrypt verifier.
+- The NVIDIA real translator test no longer reads `.key` from `getApiKeys`; it requires the explicitly supplied `NV_E2E_KEY`. Consumer regression coverage names repository, CLI, dashboard, media, and real-test boundaries.
+
+### Behavioral proof
+
+- `tests/unit/client-key-real-handler-security.test.js` crosses the real public `handleChat`, real `authorizeClientKeyRequest`, real lease wrapper, real chat-core non-stream/SSE completion, and real SQLite repositories. Only provider execution/account selection are local seams.
+- Non-stream and fully consumed SSE each cross a $1 ceiling with a persisted $7 completion, then immediately re-authorize and receive `client_key_spend_limit_exceeded`.
+- The same actual-handler harness covers successful non-stream, fully consumed SSE, cancelled SSE, and invalid/expired/model-allowlist/combo-allowlist/rate/concurrency/spend rejection. After each group it inspects console calls, enabled request-log files, request details, history, daily/public aggregates, active SQLite, and WAL bytes for both the full secret and its trailing 12 characters.
+- `tests/unit/client-key-real-abort.test.js` drives the real embeddings and STT public handlers through real policy acquisition at `concurrencyLimit=1`. A stalled abortable core seam observes cancellation, returns 499 before account unavailability/fallback, releases the lease, and admits the immediate next request. `non-chat-abort.test.js` additionally proves an already-aborted AssemblyAI polling delay returns 499 without a poll or two-second wait.
+- `db-migration-chain.test.js` now proves a row-count import failure rolls back earlier rows/settings, preserves exact original and migration-backup bytes, and writes neither migration nor sanitizer marker; a schema-stamped database without durable `migratedAt` also leaves originals/backups untouched. An old `.migrated-from-json` plus durable `migratedAt` and missing sanitizer marker sanitizes both the source and old migration backup exactly through the proof-gated restart path.
+- The source-text-only completion test was removed; completion/spend order is now checked only through public runtime behavior.
+
+### Exact files
+
+Production:
+
+- `src/lib/crypto/secrets.js`
+- `src/lib/db/schema.js`
+- `src/lib/db/migrations/008-client-key-identity.js`
+- `src/lib/db/repos/apiKeysRepo.js`
+- `src/lib/db/index.js`
+- `src/lib/db/migrate.js`
+- `src/app/(dashboard)/dashboard/endpoint/EndpointPageClient.js`
+- `tests/translator/real/nvidia-thinking.e2e.test.js`
+
+Tests:
+
+- `tests/unit/client-key-repo.test.js`
+- `tests/unit/client-key-migration.test.js`
+- `tests/unit/db-migration-chain.test.js`
+- `tests/unit/client-key-usage.test.js`
+- `tests/unit/client-key-consumers.test.js`
+- `tests/unit/client-key-ui.test.js`
+- `tests/unit/client-key-real-handler-security.test.js`
+- `tests/unit/client-key-real-abort.test.js`
+- `tests/unit/non-chat-abort.test.js`
+- removed `tests/unit/client-key-usage-completion.test.js`
+
+### Red/green commands and results
+
+- RED: `npm --prefix tests test -- unit/client-key-repo.test.js unit/client-key-migration.test.js unit/client-key-consumers.test.js unit/client-key-ui.test.js`
+  - Result before production edits: **4 files failed, 8 contract failures**. Missing `lookupDigest`, raw lookup-ID queries, legacy rotation status, safe UI status, and final real-test consumer all failed as expected.
+- First lookup GREEN: the same command.
+  - Result: **4 files passed, 22 tests passed, 0 failures**.
+- Migration failure-state proof: `npm --prefix tests test -- unit/db-migration-chain.test.js`
+  - Result: **1 file passed, 7 tests passed, 0 failures**. These were proof gaps rather than production defects, so the new failure/rollback/crash cases passed on their first behavioral run.
+- Real abort/lease proof: `npm --prefix tests test -- unit/client-key-real-abort.test.js unit/non-chat-abort.test.js`
+  - Result: **2 files passed, 6 tests passed, 0 failures**. The new public-handler proof passed on its first run; the underlying abort/lease implementation was already correct.
+- Real handler secrecy and completion proof: `npm --prefix tests test -- unit/client-key-real-handler-security.test.js`
+  - Result: **1 file passed, 4 tests passed, 0 failures**. The runtime behavior was already correct; this replaced the inadequate source-text completion proof.
+- Expanded focused regression: `npm --prefix tests test -- unit/client-key-repo.test.js unit/client-key-migration.test.js unit/db-migration-chain.test.js unit/db-sqlite-vs-lowdb.test.js unit/client-key-usage.test.js unit/client-key-policy.test.js unit/client-key-routes.test.js unit/client-key-ui.test.js unit/client-key-security-regression.test.js unit/client-key-handler-gates.test.js unit/client-key-real-handler-security.test.js unit/client-key-real-abort.test.js unit/non-chat-abort.test.js unit/request-logger-redaction.test.js unit/request-logger-file-security.test.js unit/client-key-consumers.test.js`
+  - Result: **16 files passed, 97 tests passed, 0 failures**.
+- Post-review focused recheck: `npm --prefix tests test -- unit/client-key-repo.test.js unit/client-key-migration.test.js unit/db-migration-chain.test.js unit/client-key-real-handler-security.test.js unit/client-key-real-abort.test.js unit/non-chat-abort.test.js`
+  - Result: **6 files passed, 32 tests passed, 0 failures**.
+
+### Concerns and scope
+
+- `better-sqlite3` is unavailable for Node 26.7.0 on this workstation; all database proofs ran against the repository’s real `node:sqlite` adapter, including active SQLite/WAL byte scans.
+- Proof-only round-4 additions for migration failure states, real abort leases, and completion ordering passed on their first run because the corresponding production behavior was already correct; the report does not mislabel those runs as red.
+- No full suite, build, lint, formatter, scheduler, Prometheus, push, or merge command was run.
