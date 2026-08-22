@@ -236,7 +236,7 @@ export function TtsExampleCard({ providerId }) {
         <h2 className="text-lg font-semibold mb-4">Example</h2>
 
         <div className="flex flex-col gap-2.5">
-          {/* Endpoint + API Key as read-only text */}
+          {/* Endpoint */}
           <Row label="Endpoint">
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
               <span className="w-full min-w-0 flex-1 px-3 py-1.5 text-sm font-mono text-text-main bg-sidebar rounded-lg truncate">
@@ -244,16 +244,24 @@ export function TtsExampleCard({ providerId }) {
               </span>
             </div>
           </Row>
-          <Row label="API Key">
-            <span className="px-3 py-1.5 text-sm font-mono text-text-main bg-sidebar rounded-lg truncate block">
-              {apiKey ? `${apiKey.slice(0, 8)}${"•".repeat(Math.min(20, apiKey.length - 8))}` : <span className="text-text-muted italic">No key configured</span>}
-            </span>
+          {/* API Key — user-entered client key secret; never hydrated from key lists */}
+          <Row label="API Key" htmlFor="tts-example-key">
+            <input
+              id="tts-example-key"
+              type="password"
+              autoComplete="off"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Paste a Switchboard client key secret (sk-...)"
+              className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary font-mono"
+            />
           </Row>
 
           {/* Model selector — prefer PROVIDER_MODELS[kind=tts], else providerModels via modelKey */}
           {config.hasModelSelector && (config.modelKey || getModelsByProviderId(providerId).some(m => getModelKind(m) === "tts")) && (
-            <Row label="Model">
+            <Row label="Model" htmlFor="tts-example-model">
               <select
+                id="tts-example-model"
                 value={selectedModel}
                 onChange={(e) => setSelectedModel(e.target.value)}
                 className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
@@ -270,8 +278,9 @@ export function TtsExampleCard({ providerId }) {
 
           {/* Language hint dropdown (Gemini) — sends body.language to guide pronunciation */}
           {config.hasLanguageHint && (
-            <Row label="Language">
+            <Row label="Language" htmlFor="tts-example-language-hint">
               <select
+                id="tts-example-language-hint"
                 value={languageHint}
                 onChange={(e) => setLanguageHint(e.target.value)}
                 className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
@@ -290,6 +299,11 @@ export function TtsExampleCard({ providerId }) {
               <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
                 <button
                   onClick={openModal}
+                  aria-haspopup="dialog"
+                  aria-expanded={modalOpen}
+                  aria-label={selectedLang
+                    ? `Language: ${languages.find((l) => l.code === selectedLang)?.name || selectedLang}. Change language`
+                    : "Select language"}
                   className="w-full min-w-0 flex-1 px-3 py-1.5 text-sm border border-border rounded-lg bg-background font-mono truncate text-left hover:border-primary/40 transition-colors"
                 >
                   {selectedLang
@@ -340,10 +354,11 @@ export function TtsExampleCard({ providerId }) {
 
           {/* Voice ID input (ElevenLabs) — manual entry or auto-fill from chip */}
           {config.hasVoiceIdInput && (
-            <Row label="Voice ID">
+            <Row label="Voice ID" htmlFor="tts-example-voice-id">
               <div className="flex flex-col gap-1">
                 <div className="relative">
                   <input
+                    id="tts-example-voice-id"
                     value={voiceId}
                     onChange={(e) => {
                       setVoiceId(e.target.value);
@@ -356,9 +371,10 @@ export function TtsExampleCard({ providerId }) {
                     <button
                       type="button"
                       onClick={() => { setVoiceId(""); setSelectedVoice(""); }}
+                      aria-label="Clear voice ID"
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-primary transition-colors"
                     >
-                      <span className="material-symbols-outlined text-[14px]">close</span>
+                      <span className="material-symbols-outlined text-[14px]" aria-hidden="true">close</span>
                     </button>
                   )}
                 </div>
@@ -368,8 +384,9 @@ export function TtsExampleCard({ providerId }) {
 
           {/* Google TTS: Language dropdown */}
           {config.hasLanguageDropdown && (
-            <Row label="Language">
+            <Row label="Language" htmlFor="tts-example-language">
               <select
+                id="tts-example-language"
                 value={selectedVoice}
                 onChange={(e) => {
                   const m = getModelsByProviderId(providerId).filter((m) => getModelKind(m) === "tts").find((m) => m.id === e.target.value);
@@ -386,9 +403,10 @@ export function TtsExampleCard({ providerId }) {
           )}
 
           {/* Input */}
-          <Row label="Input">
+          <Row label="Input" htmlFor="tts-example-input">
             <div className="relative">
               <input
+                id="tts-example-input"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 className="w-full px-3 py-1.5 pr-7 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
@@ -397,17 +415,19 @@ export function TtsExampleCard({ providerId }) {
                 <button
                   type="button"
                   onClick={() => setInput("")}
+                  aria-label="Clear input"
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-primary transition-colors"
                 >
-                  <span className="material-symbols-outlined text-[14px]">close</span>
+                  <span className="material-symbols-outlined text-[14px]" aria-hidden="true">close</span>
                 </button>
               )}
             </div>
           </Row>
 
           {/* Output Format */}
-          <Row label="Output Format">
+          <Row label="Output Format" htmlFor="tts-example-format">
             <select
+              id="tts-example-format"
               value={responseFormat}
               onChange={(e) => setResponseFormat(e.target.value)}
               className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
@@ -443,8 +463,7 @@ export function TtsExampleCard({ providerId }) {
             </div>
             <pre className="bg-sidebar rounded-lg px-3 py-2.5 text-xs font-mono text-text-main overflow-x-auto whitespace-pre-wrap break-all">{curlSnippet}</pre>
           </div>
-
-          {error && <p className="text-xs text-red-500 break-words">{error}</p>}
+          {error && <p role="alert" className="text-xs text-red-500 break-words">{error}</p>}
 
           {/* Audio player */}
           {audioUrl ? (
@@ -490,17 +509,21 @@ export function TtsExampleCard({ providerId }) {
           className="fixed inset-0 z-50 flex items-end justify-center sm:items-center"
           style={{ backgroundColor: "rgba(0,0,0,0.6)", backdropFilter: "blur(2px)" }}
           onClick={() => setModalOpen(false)}
+          onKeyDown={(e) => { if (e.key === "Escape") setModalOpen(false); }}
         >
           <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="tts-language-modal-title"
             className="border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 flex flex-col max-h-[80vh]"
             style={{ backgroundColor: "var(--color-bg)", isolation: "isolate" }}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0 rounded-t-xl">
-              <h3 className="text-sm font-semibold" data-i18n="Select Language">Select Language</h3>
-              <button onClick={() => setModalOpen(false)} className="text-text-muted hover:text-primary transition-colors">
-                <span className="material-symbols-outlined text-[20px]">close</span>
+              <h3 id="tts-language-modal-title" className="text-sm font-semibold" data-i18n="Select Language">Select Language</h3>
+              <button onClick={() => setModalOpen(false)} aria-label="Close language picker" className="text-text-muted hover:text-primary transition-colors">
+                <span className="material-symbols-outlined text-[20px]" aria-hidden="true">close</span>
               </button>
             </div>
 
@@ -508,6 +531,8 @@ export function TtsExampleCard({ providerId }) {
             <div className="px-4 py-2.5 border-b border-border shrink-0">
               <input
                 autoFocus
+                type="text"
+                aria-label="Search language"
                 value={modalSearch}
                 onChange={(e) => setModalSearch(e.target.value)}
                 placeholder="Search language..."

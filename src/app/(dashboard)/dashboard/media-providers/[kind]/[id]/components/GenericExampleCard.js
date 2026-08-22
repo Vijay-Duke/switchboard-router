@@ -221,8 +221,9 @@ export function GenericExampleCard({ providerId, kind }) {
       <div className="flex flex-col gap-2.5">
         {/* Model selector — dropdown if presets exist, else manual input for media kinds */}
         {kindModels.length > 0 ? (
-          <Row label="Model">
+          <Row label="Model" htmlFor="generic-example-model">
             <select
+              id="generic-example-model"
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
               className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
@@ -233,8 +234,9 @@ export function GenericExampleCard({ providerId, kind }) {
             </select>
           </Row>
         ) : allowManualModel ? (
-          <Row label="Model">
+          <Row label="Model" htmlFor="generic-example-model">
             <input
+              id="generic-example-model"
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
               placeholder="Enter model id (provider-specific)"
@@ -252,17 +254,24 @@ export function GenericExampleCard({ providerId, kind }) {
           </div>
         </Row>
 
-        {/* API Key */}
-        <Row label="API Key">
-          <span className="px-3 py-1.5 text-sm font-mono text-text-main bg-sidebar rounded-lg truncate block">
-            {apiKey ? `${apiKey.slice(0, 8)}${"\u2022".repeat(Math.min(20, apiKey.length - 8))}` : <span className="text-text-muted italic">No key configured</span>}
-          </span>
+        {/* API Key — user-entered client key secret; never hydrated from key lists */}
+        <Row label="API Key" htmlFor="generic-example-key">
+          <input
+            id="generic-example-key"
+            type="password"
+            autoComplete="off"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="Paste a Switchboard client key secret (sk-...)"
+            className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary font-mono"
+          />
         </Row>
 
         {/* Connection picker - only show when 2+ connections (or any with email) */}
         {connections.length > 0 && (
-          <Row label="Connection">
+          <Row label="Connection" htmlFor="generic-example-connection">
             <select
+              id="generic-example-connection"
               value={pinnedConnectionId}
               onChange={(e) => setPinnedConnectionId(e.target.value)}
               className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
@@ -281,10 +290,10 @@ export function GenericExampleCard({ providerId, kind }) {
           </Row>
         )}
 
-        {/* Input */}
-        <Row label={exConfig.inputLabel}>
+        <Row label={exConfig.inputLabel} htmlFor="generic-example-input">
           <div className="relative">
             <input
+              id="generic-example-input"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder={exConfig.inputPlaceholder}
@@ -294,9 +303,10 @@ export function GenericExampleCard({ providerId, kind }) {
               <button
                 type="button"
                 onClick={() => setInput("")}
+                aria-label={`Clear ${exConfig.inputLabel.toLowerCase()}`}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-primary transition-colors"
               >
-                <span className="material-symbols-outlined text-[14px]">close</span>
+                <span className="material-symbols-outlined text-[14px]" aria-hidden="true">close</span>
               </button>
             )}
           </div>
@@ -304,10 +314,11 @@ export function GenericExampleCard({ providerId, kind }) {
 
         {/* Reference image (only for edit-capable image models) */}
         {supportsEdit && (
-          <Row label="Ref Image (URL)">
+          <Row label="Ref Image (URL)" htmlFor="generic-example-ref-image">
             <div className="flex flex-col gap-2">
               <div className="relative">
                 <input
+                  id="generic-example-ref-image"
                   value={refImage}
                   onChange={(e) => setRefImage(e.target.value)}
                   placeholder={imageEditDefaults.image || "https://example.com/source.png"}
@@ -317,9 +328,10 @@ export function GenericExampleCard({ providerId, kind }) {
                   <button
                     type="button"
                     onClick={() => setRefImage("")}
+                    aria-label="Clear reference image URL"
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-primary transition-colors"
                   >
-                    <span className="material-symbols-outlined text-[14px]">close</span>
+                    <span className="material-symbols-outlined text-[14px]" aria-hidden="true">close</span>
                   </button>
                 )}
               </div>
@@ -340,10 +352,11 @@ export function GenericExampleCard({ providerId, kind }) {
         )}
 
         {supportsMask && (
-          <Row label="Mask (URL)">
+          <Row label="Mask (URL)" htmlFor="generic-example-mask">
             <div className="flex flex-col gap-2">
               <div className="relative">
                 <input
+                  id="generic-example-mask"
                   value={maskImage}
                   onChange={(e) => setMaskImage(e.target.value)}
                   placeholder={imageEditDefaults.mask_image || "https://example.com/mask.png"}
@@ -353,9 +366,10 @@ export function GenericExampleCard({ providerId, kind }) {
                   <button
                     type="button"
                     onClick={() => setMaskImage("")}
+                    aria-label="Clear mask image URL"
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-primary transition-colors"
                   >
-                    <span className="material-symbols-outlined text-[14px]">close</span>
+                    <span className="material-symbols-outlined text-[14px]" aria-hidden="true">close</span>
                   </button>
                 )}
               </div>
@@ -379,9 +393,10 @@ export function GenericExampleCard({ providerId, kind }) {
         {(exConfig.extraFields || [])
           .filter((f) => kindModels.length === 0 || (Array.isArray(selectedModelObj?.params) && selectedModelObj.params.includes(f.key)))
           .map((f) => (
-          <Row key={f.key} label={f.label}>
+          <Row key={f.key} label={f.label} htmlFor={`generic-example-${f.key}`}>
             {f.type === "select" ? (
               <select
+                id={`generic-example-${f.key}`}
                 value={extraValues[f.key] ?? ""}
                 onChange={(e) => setExtraValues((s) => ({ ...s, [f.key]: e.target.value }))}
                 className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
@@ -392,6 +407,7 @@ export function GenericExampleCard({ providerId, kind }) {
               </select>
             ) : f.type === "text" ? (
               <input
+                id={`generic-example-${f.key}`}
                 type="text"
                 value={extraValues[f.key] ?? ""}
                 placeholder={f.placeholder}
@@ -400,6 +416,7 @@ export function GenericExampleCard({ providerId, kind }) {
               />
             ) : (
               <input
+                id={`generic-example-${f.key}`}
                 type="number"
                 value={extraValues[f.key] ?? ""}
                 min={f.min}
@@ -413,8 +430,9 @@ export function GenericExampleCard({ providerId, kind }) {
 
         {/* Output Format toggle (image only) — last */}
         {kind === "image" && (
-          <Row label="Output Format">
+          <Row label="Output Format" htmlFor="generic-example-output-format">
             <select
+              id="generic-example-output-format"
               value={imageOutputFormat}
               onChange={(e) => setImageOutputFormat(e.target.value)}
               className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
@@ -481,7 +499,7 @@ export function GenericExampleCard({ providerId, kind }) {
         )}
 
         {/* Error */}
-        {error && <p className="text-xs text-red-500 break-words">{error}</p>}
+        {error && <p role="alert" className="text-xs text-red-500 break-words">{error}</p>}
 
         {/* Response */}
         <div>
