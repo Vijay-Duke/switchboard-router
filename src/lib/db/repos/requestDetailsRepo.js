@@ -258,8 +258,12 @@ export const flushPendingRequestDetails = async () => {
   if (writeBuffer.length > 0) await flushToDatabase();
 };
 
+const BEFORE_EXIT_HANDLER_SLOT = "__switchboardRequestDetailsBeforeExitHandler";
+
 function ensureShutdownHandler() {
-  process.off("beforeExit", flushPendingRequestDetails);
+  const previousHandler = globalThis[BEFORE_EXIT_HANDLER_SLOT];
+  if (previousHandler) process.off("beforeExit", previousHandler);
+  globalThis[BEFORE_EXIT_HANDLER_SLOT] = flushPendingRequestDetails;
   process.on("beforeExit", flushPendingRequestDetails);
 }
 
