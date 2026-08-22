@@ -24,6 +24,7 @@ export default defineConfig({
     exclude: [
       "**/node_modules/**",
       "**/.claude/**",
+      "**/.worktrees/**",
       "**/dist/**",
       // Cloud Workers live outside this checkout; run these from the cloud package.
       "**/embeddings.cloud.test.js",
