@@ -35,7 +35,7 @@ const STREAM_MODE = {
  * @param {string} options.connectionId - Connection ID for usage tracking
  * @param {object} options.body - Request body (for input token estimation)
  * @param {function} options.onStreamComplete - Callback when stream completes (content, usage)
- * @param {string} options.apiKey - API key for usage tracking
+ * @param {string} options.clientKeyId - Stable client key ID for usage tracking
  */
 export function createSSEStream(options = {}) {
   const {
@@ -49,7 +49,7 @@ export function createSSEStream(options = {}) {
     connectionId = null,
     body = null,
     onStreamComplete = null,
-    apiKey = null
+    clientKeyId = null
   } = options;
 
   let buffer = "";
@@ -423,7 +423,7 @@ export function createSSEStream(options = {}) {
       }
     },
 
-    flush(controller) {
+    async flush(controller) {
       const evtSummary = Object.entries(eventTypeCounts).map(([k, v]) => `${k}=${v}`).join(",") || "none";
       dbg("SSE", `flush | provider=${provider} | model=${model} | recvLines=${sseLineCount} | emitted=${sseEmittedCount} | events=[${evtSummary}]`);
       trackPendingRequest(model, provider, connectionId, false);
@@ -439,7 +439,7 @@ export function createSSEStream(options = {}) {
           }
 
           if (hasValidUsage(usage)) {
-            logUsage(provider, usage, model, connectionId, apiKey);
+            logUsage(provider, usage, model, connectionId, clientKeyId);
           } else {
             appendRequestLog({ model, provider, connectionId, tokens: null, status: "200 OK" }).catch(() => { });
           }
@@ -457,7 +457,7 @@ export function createSSEStream(options = {}) {
           }
 
           if (onStreamComplete) {
-            onStreamComplete({
+            await onStreamComplete({
               content: accumulatedContent,
               thinking: accumulatedThinking
             }, usage, ttftAt);
@@ -528,13 +528,13 @@ export function createSSEStream(options = {}) {
         }
 
         if (hasValidUsage(state?.usage)) {
-          logUsage(state.provider || targetFormat, state.usage, model, connectionId, apiKey);
+          logUsage(state.provider || targetFormat, state.usage, model, connectionId, clientKeyId);
         } else {
           appendRequestLog({ model, provider, connectionId, tokens: null, status: "200 OK" }).catch(() => { });
         }
         
         if (onStreamComplete) {
-          onStreamComplete({
+          await onStreamComplete({
             content: accumulatedContent,
             thinking: accumulatedThinking
           }, state?.usage, ttftAt);
@@ -546,7 +546,7 @@ export function createSSEStream(options = {}) {
   });
 }
 
-export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null) {
+export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, clientKeyId = null) {
   return createSSEStream({
     mode: STREAM_MODE.TRANSLATE,
     targetFormat,
@@ -558,11 +558,11 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
     connectionId,
     body,
     onStreamComplete,
-    apiKey
+    clientKeyId
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, clientKeyId = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
     provider,
@@ -572,6 +572,6 @@ export function createPassthroughStreamWithLogger(provider = null, reqLogger = n
     connectionId,
     body,
     onStreamComplete,
-    apiKey
+    clientKeyId
   });
 }

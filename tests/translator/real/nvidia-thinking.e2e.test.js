@@ -1,9 +1,8 @@
 // E2E: hit live local proxy → verify nvidia MiniMax M2.7 doesn't 400 on
 // unsupported "thinking" param (nvidia NIM is OpenAI-compatible).
-// Requires dev server running on NV_E2E_PORT + an active router API key in DB.
+// Requires dev server running on NV_E2E_PORT + NV_E2E_KEY set to a reusable secret.
 // RUN_E2E=1 npx vitest run --config tests/vitest.config.js tests/translator/real/nvidia-thinking.e2e.test.js
-import { describe, it, expect, beforeAll } from "vitest";
-import { getApiKeys } from "../../../src/lib/db/repos/apiKeysRepo.js";
+import { describe, it, expect } from "vitest";
 
 const PORT = process.env.NV_E2E_PORT || "20127";
 const BASE = `http://localhost:${PORT}`;
@@ -32,11 +31,7 @@ async function drain(res) {
 }
 
 maybe("nvidia thinking e2e", () => {
-  let apiKey = "";
-  beforeAll(async () => {
-    const keys = await getApiKeys();
-    apiKey = keys.find((k) => k.isActive)?.key || process.env.NV_E2E_KEY || "";
-  });
+  const apiKey = process.env.NV_E2E_KEY || "";
 
   it.each(MODELS)("%s with reasoning_effort -> no 'thinking' 400", async (model) => {
     if (!apiKey) return expect(true).toBe(true);

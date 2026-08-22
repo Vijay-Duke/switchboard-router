@@ -1,4 +1,5 @@
 import { getAdapter } from "../driver.js";
+import { requireMetricNumber } from "@/lib/metrics/numeric.js";
 
 export const MAX_ENTRY_BYTES = 5 * 1024 * 1024;
 export const MAX_ENTRIES = 200;
@@ -73,4 +74,31 @@ export async function cleanupExpiredFetchCache() {
   } catch {
     return 0;
   }
+}
+
+/** @param {Date} [now] */
+export async function getFetchCacheMetricSnapshot(now = new Date()) {
+  const db = await getAdapter();
+  const row = db.get(
+    `SELECT COUNT(*) AS entries,
+            COALESCE(SUM(sizeBytes), 0) AS bytes,
+            COALESCE(SUM(CASE
+              WHEN typeof(sizeBytes) NOT IN ('integer', 'real') OR sizeBytes < 0 THEN 1
+              ELSE 0
+            END), 0) AS invalid
+     FROM fetchCache WHERE expiresAt >= ?`,
+    [now.toISOString()],
+  );
+  let entries;
+  let bytes;
+  try {
+    entries = requireMetricNumber(row?.entries, "fetchCache.entries", { integer: true });
+    bytes = requireMetricNumber(row?.bytes, "fetchCache.bytes", { integer: true });
+    if (requireMetricNumber(row?.invalid, "fetchCache.invalid", { integer: true }) !== 0) {
+      throw new Error("invalid");
+    }
+  } catch {
+    throw new Error("invalid Prometheus cache metric");
+  }
+  return { entries, bytes };
 }

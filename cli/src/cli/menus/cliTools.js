@@ -1,5 +1,5 @@
 const api = require("../api/client");
-const { pause, confirm } = require("../utils/input");
+const { pause, confirm, promptSecret } = require("../utils/input");
 const { showStatus } = require("../utils/display");
 const { selectModelFromList } = require("../utils/modelSelector");
 const { showMenuWithBack } = require("../utils/menuHelper");
@@ -23,13 +23,12 @@ const CLAUDE_MODEL_TYPES = [
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
 /**
- * Get first available API key from server
+ * Ask for a one-time client-key secret. List APIs intentionally expose prefixes only.
  * @returns {Promise<string|null>}
  */
 async function getFirstApiKey() {
-  const result = await api.getApiKeys();
-  const keys = result.success ? (result.data.keys || []) : [];
-  return keys.length > 0 ? keys[0].key : null;
+  const secret = await promptSecret("Paste client key secret (leave empty to cancel): ");
+  return secret || null;
 }
 
 // ─── Claude Code ──────────────────────────────────────────────────────────────

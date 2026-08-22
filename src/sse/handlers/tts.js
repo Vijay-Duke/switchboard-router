@@ -1,5 +1,5 @@
 import {
-  extractApiKey, isValidApiKey,
+  extractApiKey,
   getProviderCredentials, markAccountUnavailable,
 } from "../services/auth.js";
 import { getSettings } from "@/lib/db/index.js";
@@ -10,8 +10,8 @@ import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 import { handleComboChat } from "open-sse/services/combo.js";
 import * as log from "../utils/logger.js";
-import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
-import { hasValidCliToken } from "@/shared/utils/cliToken.js";
+import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
+import { withConnectionInFlight } from "../services/connectionInFlight.js";
 
 // Derived from providers.js: any TTS provider not noAuth requires stored credentials
 const CREDENTIALED_PROVIDERS = new Set(
@@ -38,16 +38,21 @@ export async function handleTts(request) {
   log.request("POST", `${url.pathname} | ${modelStr} | format=${responseFormat}${language ? ` | lang=${language}` : ""}`);
 
   const settings = await getSettings();
-  const denied = await gateRequireApiKey(settings, extractApiKey(request), {
-    isValidApiKey, log, errorResponse, HTTP_STATUS, request, hasValidCliToken,
+  const comboModels = modelStr ? await getComboModels(modelStr) : null;
+  const auth = await authorizeClientKeyRequest({
+    settings,
+    rawKey: extractApiKey(request),
+    request,
+    target: { kind: comboModels ? "combo" : "model", id: modelStr },
   });
-  if (denied) return denied;
+  if (!auth.ok) return auth.response;
+  return runWithClientKeyLease(auth.lease, async () => {
+    const { clientKeyId } = auth;
 
   if (!modelStr) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   if (!body.input) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: input");
 
   // Combo expansion: model may be a combo name → run fallback/round-robin across models
-  const comboModels = await getComboModels(modelStr);
   if (comboModels) {
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[modelStr]?.fallbackStrategy || settings.comboStrategy || "fallback";
@@ -56,7 +61,7 @@ export async function handleTts(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m, callOpts) => handleSingleModelTts(b, m, responseFormat, language, callOpts?.signal),
+      handleSingleModel: (b, m, callOpts) => handleSingleModelTts(b, m, responseFormat, language, clientKeyId, callOpts?.signal),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -65,10 +70,11 @@ export async function handleTts(request) {
     });
   }
 
-  return handleSingleModelTts(body, modelStr, responseFormat, language, request?.signal || null);
+  return handleSingleModelTts(body, modelStr, responseFormat, language, clientKeyId, request?.signal || null);
+  });
 }
 
-async function handleSingleModelTts(body, modelStr, responseFormat, language, abortSignal = null) {
+async function handleSingleModelTts(body, modelStr, responseFormat, language, clientKeyId, abortSignal = null) {
   const modelInfo = await getModelInfo(modelStr);
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
@@ -77,7 +83,7 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, ab
 
   // noAuth providers — no credential needed
   if (!CREDENTIALED_PROVIDERS.has(provider)) {
-    const result = await handleTtsCore({ provider, model, input: body.input, responseFormat, language, abortSignal });
+    const result = await handleTtsCore({ clientKeyId, provider, model, input: body.input, responseFormat, language, abortSignal });
     if (result.success) return result.response;
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "TTS failed");
   }
@@ -88,7 +94,9 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, ab
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
+      clientKeyId,
+    });
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
@@ -102,17 +110,42 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, ab
 
     log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
 
-    const result = await handleTtsCore({ provider, model, input: body.input, credentials, responseFormat, language, abortSignal });
+    const attempt = await withConnectionInFlight({
+      provider,
+      model,
+      connectionId: credentials.connectionId,
+    }, async () => {
+      const result = await handleTtsCore({
+        clientKeyId,
+        provider,
+        model,
+        input: body.input,
+        credentials,
+        responseFormat,
+        language,
+        abortSignal,
+      });
+      if (result.success) return result.response;
 
-    if (result.success) return result.response;
+      const { shouldFallback } = await markAccountUnavailable(
+        credentials.connectionId,
+        result.status,
+        result.error,
+        provider,
+        model,
+      );
+      if (shouldFallback) {
+        return { retry: true, error: result.error, status: result.status };
+      }
+      return {
+        finalResponse: result.response || errorResponse(result.status, result.error),
+      };
+    });
 
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
-    if (shouldFallback) {
-      excludeConnectionIds.add(credentials.connectionId);
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
-    }
-    return result.response || errorResponse(result.status, result.error);
+    if (attempt instanceof Response) return attempt;
+    if (attempt.finalResponse) return attempt.finalResponse;
+    excludeConnectionIds.add(credentials.connectionId);
+    lastError = attempt.error;
+    lastStatus = attempt.status;
   }
 }

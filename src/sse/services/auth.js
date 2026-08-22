@@ -1,10 +1,16 @@
-import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "@/lib/db/index.js";
+import {
+  getProviderConnections,
+  updateProviderConnection,
+  getSettings,
+  getConnectionInFlightCount,
+} from "@/lib/db/index.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import * as log from "../utils/logger.js";
 import { extractGatewayApiKey } from "@/shared/utils/gatewayApiKey.js";
+import { selectScheduledConnection } from "./accountScheduler.js";
 
 // M1: per-provider mutex — unrelated providers select credentials in parallel
 const selectionMutexByProvider = new Map();
@@ -34,7 +40,7 @@ function withProviderSelectionLock(providerId, fn) {
  * @param {string} provider - Provider name
  * @param {Set<string>|string|null} excludeConnectionIds - Connection ID(s) to exclude (for retry with next account)
  * @param {string|null} model - Model name for per-model rate limit filtering
- * @param {{preferredConnectionId?: string|null, strictPreferredConnection?: boolean}} options
+ * @param {{preferredConnectionId?: string|null, strictPreferredConnection?: boolean, sessionKey?: string|null, clientKeyId?: string|null}} options
  */
 export async function getProviderCredentials(provider, excludeConnectionIds = null, model = null, options = {}) {
   // Normalize to Set for consistent handling
@@ -70,8 +76,25 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     const connections = await getProviderConnections({ provider: providerId, isActive: true });
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
+    const settings = await getSettings();
+    // Per-provider strategy overrides global setting
+    const providerOverride = (settings.providerStrategies || {})[providerId] || {};
+    const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
+    const schedulerConfig = providerOverride.accountScheduler || {};
+    const selectNoCandidates = () => schedulerConfig.enabled === true
+      ? selectScheduledConnection({
+        providerId,
+        candidates: [],
+        sessionKey: options?.sessionKey || null,
+        clientKeyId: options?.clientKeyId || null,
+        affinityTtlMs: Number(schedulerConfig.sessionAffinityTtlSeconds) * 1_000 || undefined,
+        getInFlightCount: getConnectionInFlightCount,
+      })
+      : null;
+
 
     if (connections.length === 0) {
+      selectNoCandidates();
       log.warn("AUTH", `No credentials for ${provider}`);
       return null;
     }
@@ -82,6 +105,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       ? connections.filter((connection) => connection.id === preferredConnectionId)
       : connections;
     if (candidateConnections.length === 0) {
+      selectNoCandidates();
       log.warn("AUTH", `${provider} | requested connection is unavailable`);
       return null;
     }
@@ -104,6 +128,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     });
 
     if (availableConnections.length === 0) {
+      const noCandidates = selectNoCandidates();
       // Find earliest lock expiry across all connections for retry timing
       const lockedConns = candidateConnections.filter(c => isModelLockActive(c, model));
       const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
@@ -116,28 +141,69 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           retryAfter: earliest,
           retryAfterHuman: formatRetryAfter(earliest),
           lastError: earliestConn?.lastError || null,
-          lastErrorCode: earliestConn?.errorCode || null
+          lastErrorCode: earliestConn?.errorCode || null,
+          ...(noCandidates ? {
+            selectionReason: noCandidates.reason,
+            affinityRebound: noCandidates.affinityRebound,
+          } : {}),
         };
       }
       log.warn("AUTH", `${provider} | all ${candidateConnections.length} accounts unavailable`);
       return null;
     }
 
-    const settings = await getSettings();
-    // Per-provider strategy overrides global setting
-    const providerOverride = (settings.providerStrategies || {})[providerId] || {};
-    const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
+    // Settings and provider override were loaded before hard-filter exits so a
+    // stale affinity can be invalidated even when no account remains eligible.
 
     let connection;
-    // Pin to preferred connection if specified and available
+    let selectionReason = null;
+    let affinityRebound = false;
+
+    // Pin to a preferred connection when it is available and below its
+    // process-local best-effort cap.
     if (preferredConnectionId) {
-      connection = availableConnections.find((c) => c.id === preferredConnectionId);
-      if (connection) {
-        log.info("AUTH", `${provider} | pinned to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
+      const preferred = availableConnections.find((candidate) => candidate.id === preferredConnectionId);
+      if (preferred) {
+        const cap = Number(preferred.maxConcurrentRequests);
+        const isCapped = schedulerConfig.enabled === true
+          && Number.isInteger(cap)
+          && cap > 0
+          && getConnectionInFlightCount(preferred.id) >= cap;
+        if (!isCapped) {
+          connection = preferred;
+          selectionReason = "explicit-pin";
+        }
       }
     }
+
+    if (!connection && schedulerConfig.enabled === true) {
+      const selected = selectScheduledConnection({
+        providerId,
+        candidates: availableConnections,
+        sessionKey: options?.sessionKey || null,
+        clientKeyId: options?.clientKeyId || null,
+        affinityTtlMs: Number(schedulerConfig.sessionAffinityTtlSeconds) * 1_000 || undefined,
+        getInFlightCount: getConnectionInFlightCount,
+      });
+      if (!selected.connection && selected.capacityLimited) {
+        return {
+          allRateLimited: true,
+          capacityLimited: true,
+          retryAfter: new Date(Date.now() + 1_000).toISOString(),
+          retryAfterHuman: "retry after an in-flight request completes",
+          lastError: "All accounts are at their concurrency limits",
+          lastErrorCode: 429,
+          selectionReason: selected.reason,
+          affinityRebound: selected.affinityRebound,
+        };
+      }
+      connection = selected.connection;
+      selectionReason = selected.reason;
+      affinityRebound = selected.affinityRebound;
+    }
+
     if (connection) {
-      // skip strategy
+      // Explicit pin or Scheduler v2 selection already won.
     } else if (strategy === "round-robin") {
       const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
 
@@ -177,11 +243,17 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           consecutiveUseCount: 1
         });
       }
+      selectionReason = "round-robin";
     } else {
       // Default: fill-first (already sorted by priority in getProviderConnections)
       connection = availableConnections[0];
+      selectionReason = "fill-first";
     }
 
+    log.info(
+      "AUTH",
+      `${provider} | selected ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"}) selection=${selectionReason} rebound=${affinityRebound}`,
+    );
     const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
 
     return {
@@ -209,7 +281,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       testStatus: connection.testStatus,
       lastError: connection.lastError,
       // Pass full connection for clearAccountError to read modelLock_* keys
-      _connection: connection
+      _connection: connection,
+      selectionReason,
+      affinityRebound,
     };
   });
 }
@@ -313,12 +387,4 @@ export async function clearAccountError(connectionId, currentConnection, model =
  */
 export function extractApiKey(request) {
   return extractGatewayApiKey(request.headers);
-}
-
-/**
- * Validate API key (optional - for local use can skip)
- */
-export async function isValidApiKey(apiKey) {
-  if (!apiKey) return false;
-  return await validateApiKey(apiKey);
 }

@@ -1,5 +1,5 @@
 import {
-  extractApiKey, isValidApiKey,
+  extractApiKey,
   getProviderCredentials, markAccountUnavailable,
 } from "../services/auth.js";
 import { getSettings } from "@/lib/db/index.js";
@@ -9,8 +9,8 @@ import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 import * as log from "../utils/logger.js";
-import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
-import { hasValidCliToken } from "@/shared/utils/cliToken.js";
+import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
+import { withConnectionInFlight } from "../services/connectionInFlight.js";
 
 // Providers requiring credentials for STT
 const CREDENTIALED_PROVIDERS = new Set(
@@ -33,10 +33,15 @@ export async function handleStt(request) {
   log.request("POST", `/v1/audio/transcriptions | ${modelStr}`);
 
   const settings = await getSettings();
-  const denied = await gateRequireApiKey(settings, extractApiKey(request), {
-    isValidApiKey, log, errorResponse, HTTP_STATUS, request, hasValidCliToken,
+  const auth = await authorizeClientKeyRequest({
+    settings,
+    rawKey: extractApiKey(request),
+    request,
+    target: { kind: "model", id: modelStr },
   });
-  if (denied) return denied;
+  if (!auth.ok) return auth.response;
+  return runWithClientKeyLease(auth.lease, async () => {
+    const { clientKeyId } = auth;
 
   if (!modelStr) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   if (!formData.get("file")) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: file");
@@ -49,7 +54,7 @@ export async function handleStt(request) {
 
   // noAuth providers
   if (!CREDENTIALED_PROVIDERS.has(provider)) {
-    const result = await handleSttCore({ provider, model, formData, sttConfig: AI_PROVIDERS[provider]?.sttConfig });
+    const result = await handleSttCore({ clientKeyId, provider, model, formData, sttConfig: AI_PROVIDERS[provider]?.sttConfig, abortSignal: request.signal });
     if (result.success) return result.response;
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "STT failed");
   }
@@ -63,6 +68,7 @@ export async function handleStt(request) {
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
       preferredConnectionId,
       strictPreferredConnection,
+      clientKeyId,
     });
 
     if (!credentials || credentials.allRateLimited) {
@@ -77,17 +83,45 @@ export async function handleStt(request) {
 
     log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
 
-    const result = await handleSttCore({ provider, model, formData, credentials, sttConfig: AI_PROVIDERS[provider]?.sttConfig });
+    const attempt = await withConnectionInFlight({
+      provider,
+      model,
+      connectionId: credentials.connectionId,
+    }, async () => {
+      const result = await handleSttCore({
+        clientKeyId,
+        provider,
+        model,
+        formData,
+        credentials,
+        sttConfig: AI_PROVIDERS[provider]?.sttConfig,
+        abortSignal: request.signal,
+      });
+      if (result.success) return result.response;
+      if (result.status === 499 || request.signal.aborted) {
+        return { finalResponse: result.response };
+      }
 
-    if (result.success) return result.response;
+      const { shouldFallback } = await markAccountUnavailable(
+        credentials.connectionId,
+        result.status,
+        result.error,
+        provider,
+        model,
+      );
+      if (shouldFallback) {
+        return { retry: true, error: result.error, status: result.status };
+      }
+      return {
+        finalResponse: result.response || errorResponse(result.status, result.error),
+      };
+    });
 
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
-    if (shouldFallback) {
-      excludeConnectionIds.add(credentials.connectionId);
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
-    }
-    return result.response || errorResponse(result.status, result.error);
+    if (attempt instanceof Response) return attempt;
+    if (attempt.finalResponse) return attempt.finalResponse;
+    excludeConnectionIds.add(credentials.connectionId);
+    lastError = attempt.error;
+    lastStatus = attempt.status;
   }
+  });
 }

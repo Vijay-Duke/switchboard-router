@@ -35,10 +35,6 @@ export function SttExampleCard({ providerId }) {
 
   useEffect(() => {
     setLocalEndpoint(window.location.origin);
-    fetch("/api/keys")
-      .then((r) => r.json())
-      .then((d) => { setApiKey((d.keys || []).find((k) => k.isActive !== false)?.key || ""); })
-      .catch(() => {});
     const loadCustom = () => {
       fetch("/api/models/custom", { cache: "no-store" })
         .then((r) => r.json())
@@ -66,7 +62,7 @@ export function SttExampleCard({ providerId }) {
   -F "model=${modelFull}"${allowedParams.includes("language") && language ? ` \\\n  -F "language=${language}"` : ""}${allowedParams.includes("response_format") ? ` \\\n  -F "response_format=${responseFormat}"` : ""}${allowedParams.includes("temperature") && temperature ? ` \\\n  -F "temperature=${temperature}"` : ""}${allowedParams.includes("prompt") && prompt ? ` \\\n  -F "prompt=${prompt}"` : ""}`;
 
   const handleRun = async () => {
-    if (!audioFile || !modelFull) return;
+    if (!audioFile || !modelFull || !apiKey.trim()) return;
     setRunning(true);
     setError("");
     setResult(null);
@@ -232,7 +228,7 @@ export function SttExampleCard({ providerId }) {
               </button>
               <button
                 onClick={handleRun}
-                disabled={running || !audioFile || !modelFull}
+                disabled={running || !audioFile || !modelFull || !apiKey.trim()}
                 className="flex w-full sm:w-auto items-center justify-center gap-1.5 px-3 py-1 rounded-lg bg-primary text-on-primary text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <span className="material-symbols-outlined text-[14px]" style={running ? { animation: "spin 1s linear infinite" } : undefined}>

@@ -30,6 +30,7 @@ export async function handleEmbeddingsCore({
   log,
   onCredentialsRefreshed,
   onRequestSuccess,
+  abortSignal,
 }) {
   const { provider, model } = modelInfo;
   const transport = embeddingTransport(provider);
@@ -77,11 +78,15 @@ export async function handleEmbeddingsCore({
       headers,
       body: JSON.stringify(requestBody),
       redirect: "error",
+      signal: abortSignal,
       identity: transport.identity,
       provider,
       format: transport.format,
     });
   } catch (error) {
+    if (error?.name === "AbortError" || abortSignal?.aborted) {
+      return createErrorResult(499, "Embeddings request aborted");
+    }
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
     log?.debug?.("EMBEDDINGS", `Fetch error: ${errMsg}`);
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
@@ -115,11 +120,15 @@ export async function handleEmbeddingsCore({
           headers: retryHeaders,
           body: JSON.stringify(requestBody),
           redirect: "error",
+          signal: abortSignal,
           identity: transport.identity,
           provider,
           format: transport.format,
         });
-      } catch {
+      } catch (error) {
+        if (error?.name === "AbortError" || abortSignal?.aborted) {
+          return createErrorResult(499, "Embeddings request aborted");
+        }
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);
       }
     } else {

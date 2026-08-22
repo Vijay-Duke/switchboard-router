@@ -54,7 +54,7 @@ export default function HermesToolCard({
 
   useEffect(() => {
     if (apiKeys?.length > 0 && !selectedApiKey) {
-      setSelectedApiKey(apiKeys[0].key);
+      setSelectedApiKey(apiKeys[0].keySecret);
     }
   }, [apiKeys, selectedApiKey]);
 
@@ -138,7 +138,7 @@ export default function HermesToolCard({
     setMessage(null);
     try {
       const keyToUse = selectedApiKey?.trim()
-        || (apiKeys?.length > 0 ? apiKeys[0].key : null)
+        || (apiKeys?.length > 0 ? apiKeys[0].keySecret : null)
         || (!cloudEnabled ? "sk_switchboard" : null);
 
       const res = await fetch(ENDPOINT, {

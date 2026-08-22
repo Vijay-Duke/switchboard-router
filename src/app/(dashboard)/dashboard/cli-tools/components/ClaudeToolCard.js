@@ -160,7 +160,7 @@ export default function ClaudeToolCard({
 
   useEffect(() => {
     if (apiKeys?.length > 0 && !selectedApiKey) {
-      setSelectedApiKey(apiKeys[0].key);
+      setSelectedApiKey(apiKeys[0].keySecret);
     }
   }, [apiKeys, selectedApiKey]);
 
@@ -264,9 +264,9 @@ export default function ClaudeToolCard({
           hasInitializedFullCatalogModels.current = true;
           fullCatalogDraftTouchedRef.current = false;
           const savedKey = apiKeys?.find(
-            (key) => fingerprintClaudeGatewayKey(key.key) === data.gatewayKeyFingerprint,
+            (key) => fingerprintClaudeGatewayKey(key.keySecret) === data.gatewayKeyFingerprint,
           );
-          if (savedKey) setSelectedApiKey(savedKey.key);
+          if (savedKey) setSelectedApiKey(savedKey.keySecret);
           if (data.configured && typeof data.baseUrl === "string") {
             setCustomBaseUrl(data.baseUrl);
           }
@@ -316,7 +316,7 @@ export default function ClaudeToolCard({
       // Only set selectedApiKey if it exists in apiKeys list
       const tokenFromFile = env.ANTHROPIC_AUTH_TOKEN
         || readSwitchboardKeyFromCustomHeaders(env.ANTHROPIC_CUSTOM_HEADERS);
-      if (tokenFromFile && apiKeys?.some(k => k.key === tokenFromFile)) {
+      if (tokenFromFile && apiKeys?.some(k => k.keySecret === tokenFromFile)) {
         setSelectedApiKey(tokenFromFile);
       }
     }
@@ -367,7 +367,7 @@ export default function ClaudeToolCard({
     try {
       // Get key from dropdown, fallback to first key or sk_switchboard for localhost
       const keyToUse = selectedApiKey?.trim()
-        || (apiKeys?.length > 0 ? apiKeys[0].key : null)
+        || (apiKeys?.length > 0 ? apiKeys[0].keySecret : null)
         || (!cloudEnabled ? "sk_switchboard" : null);
 
       if (!keyToUse) {
@@ -473,7 +473,7 @@ export default function ClaudeToolCard({
         Object.entries(restoredMappings).forEach(([alias, value]) => onModelMappingChange(alias, value));
         const restoredToken = restoredEnv.ANTHROPIC_AUTH_TOKEN;
         setSelectedApiKey(
-          restoredToken && apiKeys?.some((key) => key.key === restoredToken)
+          restoredToken && apiKeys?.some((key) => key.keySecret === restoredToken)
             ? restoredToken
             : "",
         );
@@ -628,7 +628,7 @@ export default function ClaudeToolCard({
   const hybridConfigured = configStatus === "configured"
     && claudeStatus?.routingMode === CLAUDE_ROUTING_MODES.PASS_THROUGH;
   const effectiveSelectedApiKey = selectedApiKey?.trim()
-    || apiKeys?.[0]?.key
+    || apiKeys?.[0]?.keySecret
     || (!cloudEnabled ? "sk_switchboard" : "");
   const fullCatalogDirty = Boolean(
     fullCatalogProfile?.configured

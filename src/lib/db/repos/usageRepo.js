@@ -2,14 +2,11 @@ import { EventEmitter } from "events";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { getMeta, setMeta } from "../helpers/metaStore.js";
+import { runPrometheusMetricMutation, validateUsageMetricRow } from "@/lib/metrics/aggregateState.js";
+import { requireMetricNumber } from "@/lib/metrics/numeric.js";
+import { isCurrentMetricProvider } from "@/lib/metrics/providerRoster.js";
 
-function maskApiKey(key) {
-  if (!key || typeof key !== "string") return null;
-  if (key.length <= 8) return key.charAt(0) + "***";
-  return key.slice(0, 8) + "***";
-}
 
-const PENDING_TIMEOUT_MS = 60 * 1000;
 const RING_CAP = 50;
 const CONN_CACHE_TTL_MS = 30 * 1000;
 const PERIOD_MS = { "24h": 86400000, "7d": 604800000, "30d": 2592000000, "60d": 5184000000 };
@@ -21,14 +18,12 @@ if (!global._statsEmitter) {
   global._statsEmitter = new EventEmitter();
   global._statsEmitter.setMaxListeners(50);
 }
-if (!global._pendingTimers) global._pendingTimers = {};
 if (!global._recentRing) global._recentRing = { items: [], initialized: false };
 if (!global._connectionMapCache) global._connectionMapCache = { map: {}, ts: 0 };
 if (!global._statsEmitTimers) global._statsEmitTimers = { pending: null, update: null };
 
 const pendingRequests = global._pendingRequests;
 const lastErrorProvider = global._lastErrorProvider;
-const pendingTimers = global._pendingTimers;
 const recentRing = global._recentRing;
 const connCache = global._connectionMapCache;
 const statsEmitTimers = global._statsEmitTimers;
@@ -95,7 +90,7 @@ function aggregateEntryToDay(day, entry) {
   day.byProvider = ensureNullProto(day.byProvider || {});
   day.byModel = ensureNullProto(day.byModel || {});
   day.byAccount = ensureNullProto(day.byAccount || {});
-  day.byApiKey = ensureNullProto(day.byApiKey || {});
+  day.byClientKey = ensureNullProto(day.byClientKey || {});
   day.byEndpoint = ensureNullProto(day.byEndpoint || {});
 
   if (entry.provider) addToCounter(day.byProvider, entry.provider, vals);
@@ -107,9 +102,9 @@ function aggregateEntryToDay(day, entry) {
     addToCounter(day.byAccount, entry.connectionId, { ...vals, meta: { rawModel: entry.model, provider: entry.provider } });
   }
 
-  const apiKeyVal = entry.apiKey && typeof entry.apiKey === "string" ? entry.apiKey : "local-no-key";
-  const akModelKey = `${apiKeyVal}|${entry.model}|${entry.provider || "unknown"}`;
-  addToCounter(day.byApiKey, akModelKey, { ...vals, meta: { rawModel: entry.model, provider: entry.provider, apiKey: entry.apiKey || null } });
+  const clientKeyId = entry.clientKeyId && typeof entry.clientKeyId === "string" ? entry.clientKeyId : null;
+  const clientKey = `${clientKeyId || "local-no-key"}|${entry.model}|${entry.provider || "unknown"}`;
+  addToCounter(day.byClientKey, clientKey, { ...vals, meta: { rawModel: entry.model, provider: entry.provider, clientKeyId } });
 
   const endpoint = entry.endpoint || "Unknown";
   const epKey = `${endpoint}|${entry.model}|${entry.provider || "unknown"}`;
@@ -141,10 +136,10 @@ async function ensureRingInitialized() {
   recentRing.initialized = true;
   try {
     const db = await getAdapter();
-    const rows = db.all(`SELECT timestamp, provider, model, connectionId, apiKey, endpoint, cost, status, tokens FROM usageHistory ORDER BY id DESC LIMIT ?`, [RING_CAP]);
+    const rows = db.all(`SELECT timestamp, provider, model, connectionId, clientKeyId, endpoint, cost, status, tokens FROM usageHistory ORDER BY id DESC LIMIT ?`, [RING_CAP]);
     recentRing.items = rows.reverse().map((r) => ({
       timestamp: r.timestamp, provider: r.provider, model: r.model, connectionId: r.connectionId,
-      apiKey: r.apiKey, endpoint: r.endpoint, cost: r.cost, status: r.status,
+      clientKeyId: r.clientKeyId, endpoint: r.endpoint, cost: r.cost, status: r.status,
       tokens: parseJson(r.tokens, {}),
     }));
   } catch {}
@@ -170,13 +165,6 @@ async function calculateCost(provider, model, tokens) {
 
 export function trackPendingRequest(model, provider, connectionId, started, error = false) {
   const modelKey = provider ? `${model} (${provider})` : model;
-  // M7: unique timer per request so concurrent same-connection/model don't share cleanup
-  const requestToken = started
-    ? `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-    : null;
-  // Pair start/end via side channel on the caller's scope is unavailable; track
-  // refcounts per connection|model and use a bag of timers instead of one shared key.
-  const groupKey = `${connectionId || "none"}|${modelKey}`;
 
   if (!pendingRequests.byModel[modelKey]) pendingRequests.byModel[modelKey] = 0;
   pendingRequests.byModel[modelKey] = Math.max(0, pendingRequests.byModel[modelKey] + (started ? 1 : -1));
@@ -194,34 +182,6 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
     }
   }
 
-  if (started) {
-    if (!pendingTimers[groupKey]) pendingTimers[groupKey] = new Set();
-    const timer = setTimeout(() => {
-      pendingTimers[groupKey]?.delete(timer);
-      if (pendingTimers[groupKey]?.size === 0) delete pendingTimers[groupKey];
-      // Only force-clear if no other live timers for this group (other concurrent requests)
-      if (!pendingTimers[groupKey] || pendingTimers[groupKey].size === 0) {
-        if (pendingRequests.byModel[modelKey] > 0) pendingRequests.byModel[modelKey] = 0;
-        if (connectionId && pendingRequests.byAccount[connectionId]?.[modelKey] > 0) {
-          pendingRequests.byAccount[connectionId][modelKey] = 0;
-        }
-      }
-      scheduleStatsEvent("pending");
-    }, PENDING_TIMEOUT_MS);
-    timer.unref?.();
-    pendingTimers[groupKey].add(timer);
-    // stash last-started token unused except to silence lint
-    void requestToken;
-  } else if (pendingTimers[groupKey]) {
-    // Clear one timer for this group (FIFO)
-    const set = pendingTimers[groupKey];
-    const first = set.values().next().value;
-    if (first) {
-      clearTimeout(first);
-      set.delete(first);
-    }
-    if (set.size === 0) delete pendingTimers[groupKey];
-  }
 
   if (!started && error && provider) {
     lastErrorProvider.provider = provider.toLowerCase();
@@ -231,6 +191,18 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
   const t = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
   console.log(`[${t}] [PENDING] ${started ? "START" : "END"}${error ? " (ERROR)" : ""} | provider=${provider} | model=${model}`);
   scheduleStatsEvent("pending");
+}
+
+export function getConnectionInFlightCount(connectionId) {
+  const models = pendingRequests.byAccount[connectionId];
+  if (!models) return 0;
+
+  let total = 0;
+  for (const modelKey in models) {
+    const count = Number(models[modelKey]);
+    if (Number.isFinite(count) && count > 0) total += count;
+  }
+  return total;
 }
 
 export async function getActiveRequests() {
@@ -278,6 +250,23 @@ export async function getActiveRequests() {
   return { activeRequests, recentRequests, errorProvider };
 }
 
+export function getActiveRequestMetricSnapshot() {
+  const byProvider = new Map();
+  for (const models of Object.values(pendingRequests.byAccount)) {
+    for (const [modelKey, count] of Object.entries(models)) {
+      if (count <= 0) continue;
+      const match = modelKey.match(/^(.*) \((.*)\)$/);
+      const provider = match?.[2] || "unknown";
+      byProvider.set(provider, (byProvider.get(provider) || 0) + count);
+    }
+  }
+  return {
+    activeRequests: [...byProvider.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([provider, count]) => ({ provider, count })),
+  };
+}
+
 export async function saveRequestUsage(entry) {
   try {
     const db = await getAdapter();
@@ -286,8 +275,10 @@ export async function saveRequestUsage(entry) {
     entry.cost = await calculateCost(entry.provider, entry.model, entry.tokens);
 
     const tokens = entry.tokens || {};
-    const promptTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
-    const completionTokens = tokens.completion_tokens || tokens.output_tokens || 0;
+    const promptTokens = requireMetricNumber(tokens.prompt_tokens || tokens.input_tokens || 0, "usage.promptTokens", { integer: true });
+    const completionTokens = requireMetricNumber(tokens.completion_tokens || tokens.output_tokens || 0, "usage.completionTokens", { integer: true });
+    const cachedTokens = requireMetricNumber(tokens.cached_tokens || tokens.cache_read_input_tokens || 0, "usage.cachedTokens", { integer: true });
+    const metricCost = requireMetricNumber(entry.cost, "usage.cost");
 
     let inserted = false;
 
@@ -295,7 +286,7 @@ export async function saveRequestUsage(entry) {
     // better-sqlite3 is sync → no JS yield mid-transaction → no race in same process.
     db.transaction(() => {
       // Idempotency by request identity, not by content. The old guard matched
-      // on (timestamp, provider, model, connectionId, apiKey, tokens), but an
+      // on (timestamp, provider, model, connectionId, clientKeyId, tokens), but an
       // ISO timestamp only has millisecond resolution: two genuinely distinct
       // requests with the same model and token counts finishing in the same
       // millisecond were silently merged, undercounting usage under load.
@@ -309,14 +300,20 @@ export async function saveRequestUsage(entry) {
       }
 
       db.run(
-        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta, requestId) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, clientKeyId, endpoint, promptTokens, completionTokens, cost, status, tokens, meta, requestId) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           entry.timestamp, entry.provider || null, entry.model || null,
-          entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
+          entry.connectionId || null, entry.clientKeyId || null, entry.endpoint || null,
           promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
           stringifyJson(tokens), stringifyJson({}), requestId,
         ]
       );
+      if (entry.clientKeyId) {
+        db.run(
+          `UPDATE apiKeys SET spentUsd = spentUsd + ? WHERE id = ?`,
+          [Number(entry.cost || 0), entry.clientKeyId]
+        );
+      }
 
       // H8: maintain row count in _meta — avoid full-table COUNT(*) on every insert.
       const maxHist = parseInt(process.env.USAGE_HISTORY_MAX || "50000", 10);
@@ -345,10 +342,41 @@ export async function saveRequestUsage(entry) {
       const row = db.get(`SELECT data FROM usageDaily WHERE dateKey = ?`, [dateKey]);
       const day = row ? parseJson(row.data, {}) : {
         requests: 0, promptTokens: 0, completionTokens: 0, cost: 0,
-        byProvider: {}, byModel: {}, byAccount: {}, byApiKey: {}, byEndpoint: {},
+        byProvider: {}, byModel: {}, byAccount: {}, byClientKey: {}, byEndpoint: {},
       };
       aggregateEntryToDay(day, entry);
       db.run(`INSERT INTO usageDaily(dateKey, data) VALUES(?, ?) ON CONFLICT(dateKey) DO UPDATE SET data = excluded.data`, [dateKey, stringifyJson(day)]);
+
+      runPrometheusMetricMutation(db, () => {
+        const metricProvider = isCurrentMetricProvider(db, entry.provider) ? entry.provider : "unknown";
+        const existing = db.get(
+          `SELECT provider, requests, promptTokens, completionTokens, cachedTokens, cost
+           FROM prometheusUsageTotals WHERE provider = ?`,
+          [metricProvider],
+        );
+        if (existing) validateUsageMetricRow(existing);
+        if (existing) {
+          validateUsageMetricRow({
+            provider: metricProvider,
+            requests: existing.requests + 1,
+            promptTokens: existing.promptTokens + promptTokens,
+            completionTokens: existing.completionTokens + completionTokens,
+            cachedTokens: existing.cachedTokens + cachedTokens,
+            cost: existing.cost + metricCost,
+          });
+        }
+        db.run(
+          `INSERT INTO prometheusUsageTotals(provider, requests, promptTokens, completionTokens, cachedTokens, cost)
+           VALUES(?, 1, ?, ?, ?, ?)
+           ON CONFLICT(provider) DO UPDATE SET
+             requests = requests + 1,
+             promptTokens = promptTokens + excluded.promptTokens,
+             completionTokens = completionTokens + excluded.completionTokens,
+             cachedTokens = cachedTokens + excluded.cachedTokens,
+             cost = cost + excluded.cost`,
+          [metricProvider, promptTokens, completionTokens, cachedTokens, metricCost],
+        );
+      });
 
       // Atomic counter increment in same transaction
       const cur = db.get(`SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'`);
@@ -385,11 +413,11 @@ export async function getUsageHistory(filter = {}) {
   if (endIso) { conds.push("timestamp <= ?"); params.push(endIso); }
 
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-  const rows = db.all(`SELECT timestamp, provider, model, connectionId, apiKey, endpoint, cost, status, tokens FROM usageHistory ${where} ORDER BY id ASC`, params);
+  const rows = db.all(`SELECT timestamp, provider, model, connectionId, clientKeyId, endpoint, cost, status, tokens FROM usageHistory ${where} ORDER BY id ASC`, params);
 
   return rows.map((r) => ({
     timestamp: r.timestamp, provider: r.provider, model: r.model,
-    connectionId: r.connectionId, apiKeyMasked: maskApiKey(r.apiKey), endpoint: r.endpoint,
+    connectionId: r.connectionId, clientKeyId: r.clientKeyId, endpoint: r.endpoint,
     cost: r.cost, status: r.status, tokens: parseJson(r.tokens, {}),
   }));
 }
@@ -402,6 +430,34 @@ function loadDaysInRange(adapter, maxDays) {
   const cutoff = new Date(today.getFullYear(), today.getMonth(), today.getDate() - maxDays + 1);
   const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
   return adapter.all(`SELECT dateKey, data FROM usageDaily WHERE dateKey >= ?`, [cutoffKey]);
+}
+
+export async function getUsageMetricTotals() {
+  const db = await getAdapter();
+  const state = db.get(`SELECT available FROM prometheusMetricState WHERE id = 1`);
+  if (state?.available !== 1) throw new Error("Prometheus metrics unavailable");
+  const rows = db.all(
+    `SELECT provider, requests, promptTokens, completionTokens, cachedTokens, cost
+     FROM prometheusUsageTotals ORDER BY provider`,
+  ) || [];
+  const integerFields = new Set(["requests", "promptTokens", "completionTokens", "cachedTokens"]);
+  const fields = [...integerFields, "cost"];
+  const byProvider = rows.map((row) => {
+    const provider = typeof row.provider === "string" && row.provider ? row.provider : null;
+    if (!provider) throw new Error("invalid Prometheus usage metric provider");
+    const result = { provider };
+    for (const field of fields) {
+      try {
+        result[field] = requireMetricNumber(row[field], `${provider}.${field}`, {
+          integer: integerFields.has(field),
+        });
+      } catch {
+        throw new Error(`invalid Prometheus usage metric: ${provider}.${field}`);
+      }
+    }
+    return result;
+  });
+  return { byProvider };
 }
 
 export async function getUsageStats(period = "all") {
@@ -426,8 +482,8 @@ export async function getUsageStats(period = "all") {
 
   let allApiKeys = [];
   try { allApiKeys = await getApiKeys(); } catch {}
-  const apiKeyMap = {};
-  for (const k of allApiKeys) apiKeyMap[k.key] = { name: k.name, id: k.id, createdAt: k.createdAt };
+  const clientKeyMap = {};
+  for (const key of allApiKeys) clientKeyMap[key.id] = { name: key.name, createdAt: key.createdAt };
 
   // recentRequests from live history (last 100 entries enough for 20 deduped)
   const recentRows = db.all(`SELECT timestamp, provider, model, tokens, status FROM usageHistory ORDER BY id DESC LIMIT 100`);
@@ -456,7 +512,7 @@ export async function getUsageStats(period = "all") {
   const stats = {
     totalRequests: 0,
     totalPromptTokens: 0, totalCompletionTokens: 0, totalCachedTokens: 0, totalCost: 0,
-    // Keys derive from request data (model, endpoint, apiKey). With a normal
+    // Keys derive from request data (model, endpoint, clientKeyId). With a normal
     // prototype, a row keyed "__proto__" makes `if (!byModel[k])` see
     // Object.prototype and the initializer writes onto it. Same guard the
     // daily aggregator already applies.
@@ -566,24 +622,27 @@ export async function getUsageStats(period = "all") {
         if (dateKey > (stats.byAccount[accountKey].lastUsed || "")) stats.byAccount[accountKey].lastUsed = dateKey;
       }
 
-      for (const [akKey, ak] of Object.entries(day.byApiKey || {})) {
-        const rawModel = ak.rawModel || "";
-        const provider = ak.provider || "";
+      for (const [clientKeyCounter, keyUsage] of Object.entries(day.byClientKey || {})) {
+        const rawModel = keyUsage.rawModel || "";
+        const provider = keyUsage.provider || "";
         const providerDisplayName = providerNodeNameMap[provider] || provider;
-        const apiKeyVal = ak.apiKey;
-        const keyInfo = apiKeyVal ? apiKeyMap[apiKeyVal] : null;
-        const keyName = keyInfo?.name || (apiKeyVal ? apiKeyVal.slice(0, 8) + "..." : "Local (No API Key)");
-        const apiKeyMasked = maskApiKey(apiKeyVal);
-        const apiKeyKey = apiKeyMasked || "local-no-key";
-        if (!stats.byApiKey[akKey]) {
-          stats.byApiKey[akKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel, provider: providerDisplayName, apiKeyMasked, keyName, apiKeyKey, lastUsed: dateKey };
+        const clientKeyId = keyUsage.clientKeyId || null;
+        const keyInfo = clientKeyId ? clientKeyMap[clientKeyId] : null;
+        const keyName = clientKeyId
+          ? (keyInfo?.name || `Deleted key (${clientKeyId.slice(0, 8)})`)
+          : "Local (No API Key)";
+        if (!stats.byApiKey[clientKeyCounter]) {
+          stats.byApiKey[clientKeyCounter] = {
+            requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0,
+            rawModel, provider: providerDisplayName, clientKeyId, keyName, lastUsed: dateKey,
+          };
         }
-        stats.byApiKey[akKey].requests += ak.requests || 0;
-        stats.byApiKey[akKey].promptTokens += ak.promptTokens || 0;
-        stats.byApiKey[akKey].completionTokens += ak.completionTokens || 0;
-        stats.byApiKey[akKey].cachedTokens += ak.cachedTokens || 0;
-        stats.byApiKey[akKey].cost += ak.cost || 0;
-        if (dateKey > (stats.byApiKey[akKey].lastUsed || "")) stats.byApiKey[akKey].lastUsed = dateKey;
+        stats.byApiKey[clientKeyCounter].requests += keyUsage.requests || 0;
+        stats.byApiKey[clientKeyCounter].promptTokens += keyUsage.promptTokens || 0;
+        stats.byApiKey[clientKeyCounter].completionTokens += keyUsage.completionTokens || 0;
+        stats.byApiKey[clientKeyCounter].cachedTokens += keyUsage.cachedTokens || 0;
+        stats.byApiKey[clientKeyCounter].cost += keyUsage.cost || 0;
+        if (dateKey > (stats.byApiKey[clientKeyCounter].lastUsed || "")) stats.byApiKey[clientKeyCounter].lastUsed = dateKey;
       }
 
       for (const [epKey, ep] of Object.entries(day.byEndpoint || {})) {
@@ -606,7 +665,7 @@ export async function getUsageStats(period = "all") {
     // Overlay precise lastUsed timestamps from history
     const overlayCutoff = maxDays ? Date.now() - maxDays * 86400000 : 0;
     const histRows = db.all(
-      `SELECT timestamp, provider, model, connectionId, apiKey, endpoint FROM usageHistory WHERE timestamp >= ?`,
+      `SELECT timestamp, provider, model, connectionId, clientKeyId, endpoint FROM usageHistory WHERE timestamp >= ?`,
       [new Date(overlayCutoff).toISOString()]
     );
     for (const e of histRows) {
@@ -620,10 +679,10 @@ export async function getUsageStats(period = "all") {
         if (stats.byAccount[accountKey] && new Date(ts) > new Date(stats.byAccount[accountKey].lastUsed)) stats.byAccount[accountKey].lastUsed = ts;
       }
 
-      const apiKeyKey = (e.apiKey && typeof e.apiKey === "string")
-        ? `${e.apiKey}|${e.model}|${e.provider || "unknown"}`
-        : "local-no-key";
-      if (stats.byApiKey[apiKeyKey] && new Date(ts) > new Date(stats.byApiKey[apiKeyKey].lastUsed)) stats.byApiKey[apiKeyKey].lastUsed = ts;
+      const clientKeyCounter = `${e.clientKeyId || "local-no-key"}|${e.model}|${e.provider || "unknown"}`;
+      if (stats.byApiKey[clientKeyCounter] && new Date(ts) > new Date(stats.byApiKey[clientKeyCounter].lastUsed)) {
+        stats.byApiKey[clientKeyCounter].lastUsed = ts;
+      }
 
       const endpoint = e.endpoint || "Unknown";
       const endpointKey = `${endpoint}|${e.model}|${e.provider || "unknown"}`;
@@ -640,7 +699,7 @@ export async function getUsageStats(period = "all") {
       cutoff = new Date(Date.now() - PERIOD_MS["24h"]).toISOString();
     }
     const filtered = db.all(
-      `SELECT timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, tokens FROM usageHistory WHERE timestamp >= ?`,
+      `SELECT timestamp, provider, model, connectionId, clientKeyId, endpoint, promptTokens, completionTokens, cost, tokens FROM usageHistory WHERE timestamp >= ?`,
       [cutoff]
     );
 
@@ -690,25 +749,25 @@ export async function getUsageStats(period = "all") {
         if (new Date(r.timestamp) > new Date(stats.byAccount[accountKey].lastUsed)) stats.byAccount[accountKey].lastUsed = r.timestamp;
       }
 
-      if (r.apiKey && typeof r.apiKey === "string") {
-        const keyInfo = apiKeyMap[r.apiKey];
-        const keyName = keyInfo?.name || r.apiKey.slice(0, 8) + "...";
-        const apiKeyMasked = maskApiKey(r.apiKey);
-        const akKey = `${apiKeyMasked}|${r.model}|${r.provider || "unknown"}`;
-        if (!stats.byApiKey[akKey]) {
-          stats.byApiKey[akKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, apiKeyMasked, keyName, apiKeyKey: apiKeyMasked, lastUsed: r.timestamp };
-        }
-        const ake = stats.byApiKey[akKey];
-        ake.requests++; ake.promptTokens += promptTokens; ake.completionTokens += completionTokens; ake.cachedTokens += cachedTokens; ake.cost += entryCost;
-        if (new Date(r.timestamp) > new Date(ake.lastUsed)) ake.lastUsed = r.timestamp;
-      } else {
-        if (!stats.byApiKey["local-no-key"]) {
-          stats.byApiKey["local-no-key"] = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, apiKeyMasked: null, keyName: "Local (No API Key)", apiKeyKey: "local-no-key", lastUsed: r.timestamp };
-        }
-        const ake = stats.byApiKey["local-no-key"];
-        ake.requests++; ake.promptTokens += promptTokens; ake.completionTokens += completionTokens; ake.cachedTokens += cachedTokens; ake.cost += entryCost;
-        if (new Date(r.timestamp) > new Date(ake.lastUsed)) ake.lastUsed = r.timestamp;
+      const clientKeyId = r.clientKeyId || null;
+      const keyInfo = clientKeyId ? clientKeyMap[clientKeyId] : null;
+      const keyName = clientKeyId
+        ? (keyInfo?.name || `Deleted key (${clientKeyId.slice(0, 8)})`)
+        : "Local (No API Key)";
+      const clientKeyCounter = `${clientKeyId || "local-no-key"}|${r.model}|${r.provider || "unknown"}`;
+      if (!stats.byApiKey[clientKeyCounter]) {
+        stats.byApiKey[clientKeyCounter] = {
+          requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0,
+          rawModel: r.model, provider: providerDisplayName, clientKeyId, keyName, lastUsed: r.timestamp,
+        };
       }
+      const keyUsage = stats.byApiKey[clientKeyCounter];
+      keyUsage.requests++;
+      keyUsage.promptTokens += promptTokens;
+      keyUsage.completionTokens += completionTokens;
+      keyUsage.cachedTokens += cachedTokens;
+      keyUsage.cost += entryCost;
+      if (new Date(r.timestamp) > new Date(keyUsage.lastUsed)) keyUsage.lastUsed = r.timestamp;
 
       const endpoint = r.endpoint || "Unknown";
       const epKey = `${endpoint}|${r.model}|${r.provider || "unknown"}`;

@@ -25,8 +25,8 @@ function renderHeader(port, keys, { networkExposed = false } = {}) {
   if (!keys || keys.length === 0) {
     lines.push(`Key:      ${COLORS.dim}No API keys yet${COLORS.reset}`);
   } else {
-    lines.push(`Key:      ${COLORS.cyan}${keys[0].key}${COLORS.reset}`);
-    keys.slice(1).forEach(k => lines.push(`          ${COLORS.cyan}${k.key}${COLORS.reset}`));
+    lines.push(`Key:      ${COLORS.cyan}${keys[0].keyPrefix || "prefix unavailable"}${COLORS.reset}`);
+    keys.slice(1).forEach(k => lines.push(`          ${COLORS.cyan}${k.keyPrefix || "prefix unavailable"}${COLORS.reset}`));
   }
   return lines.join("\n");
 }

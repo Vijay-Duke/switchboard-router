@@ -4,7 +4,6 @@ import {
   markAccountUnavailable,
   clearAccountError,
   extractApiKey,
-  isValidApiKey,
 } from "../services/auth.js";
 import { getSettings, getCombos } from "@/lib/db/index.js";
 import { AI_PROVIDERS, resolveProviderId } from "@/shared/constants/providers.js";
@@ -14,12 +13,12 @@ import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleComboChat, getComboModelsFromData } from "open-sse/services/combo.js";
-import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
-import { hasValidCliToken } from "@/shared/utils/cliToken.js";
+import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
 import { getFetchCache } from "@/lib/db/repos/fetchCacheRepo.js";
 import {
   buildSearchCacheKey, cacheLiveResponse, fetchCacheHitResponse, getFetchCacheTtlMs,
 } from "../utils/fetchCache.js";
+import { withConnectionInFlight } from "../services/connectionInFlight.js";
 
 /**
  * Handle web search request for the SSE/Next.js server.
@@ -46,20 +45,18 @@ export async function handleSearch(request) {
 
   log.request("POST", `${url.pathname} | ${providerInput}`);
 
-  // Log API key (masked)
-  const apiKey = extractApiKey(request);
-  if (apiKey) {
-    log.debug("AUTH", `API Key: ${log.maskKey(apiKey)}`);
-  } else {
-    log.debug("AUTH", "No API key provided (local mode)");
-  }
-
-  // Enforce API key if enabled in settings (L3 shared gate)
   const settings = await getSettings();
-  const denied = await gateRequireApiKey(settings, apiKey, {
-    isValidApiKey, log, errorResponse, HTTP_STATUS, request, hasValidCliToken,
+  const combos = providerInput ? await getCombos() : [];
+  const comboModels = providerInput ? getComboModelsFromData(providerInput, combos) : null;
+  const auth = await authorizeClientKeyRequest({
+    settings,
+    rawKey: extractApiKey(request),
+    request,
+    target: { kind: comboModels ? "combo" : "model", id: providerInput },
   });
-  if (denied) return denied;
+  if (!auth.ok) return auth.response;
+  return runWithClientKeyLease(auth.lease, async () => {
+    const { clientKeyId } = auth;
 
   if (!providerInput || typeof providerInput !== "string") {
     log.warn("SEARCH", "Missing provider/model");
@@ -96,8 +93,6 @@ export async function handleSearch(request) {
   const cacheResponse = async (response) => cache ? cacheLiveResponse(response, cache, log) : response;
 
   // Combo expansion: providerInput may be a combo name → run fallback/round-robin across providers
-  const combos = await getCombos();
-  const comboModels = getComboModelsFromData(providerInput, combos);
   if (comboModels) {
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[providerInput]?.fallbackStrategy || settings.comboStrategy || "fallback";
@@ -106,7 +101,7 @@ export async function handleSearch(request) {
     return cacheResponse(await handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m, callOpts) => handleSingleProviderSearch(b, m, request, apiKey, settings, callOpts),
+      handleSingleModel: (b, m, callOpts) => handleSingleProviderSearch(b, m, request, clientKeyId, settings, callOpts),
       log,
       comboName: providerInput,
       comboStrategy,
@@ -116,11 +111,12 @@ export async function handleSearch(request) {
   }
 
   return cacheResponse(await handleSingleProviderSearch(
-    body, providerInput, request, apiKey, settings, { signal: request?.signal || null },
+    body, providerInput, request, clientKeyId, settings, { signal: request?.signal || null },
   ));
+  });
 }
 
-async function handleSingleProviderSearch(body, providerInput, request, apiKey, settings, callOpts = null) {
+async function handleSingleProviderSearch(body, providerInput, request, clientKeyId, settings, callOpts = null) {
   const query = body.query;
   const providerId = resolveProviderId(providerInput);
   const resolvedProvider = AI_PROVIDERS[providerId];
@@ -163,6 +159,7 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
   if (resolvedProvider.noAuth) {
     log.info("AUTH", `\x1b[32m${providerId} no-auth mode\x1b[0m`);
     const result = await handleSearchCore({
+      clientKeyId,
       body: coreBody,
       provider: resolvedProvider,
       providerConfig,
@@ -180,7 +177,9 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(providerId, excludeConnectionIds);
+    const credentials = await getProviderCredentials(providerId, excludeConnectionIds, null, {
+      clientKeyId,
+    });
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
@@ -199,40 +198,52 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
 
     log.info("AUTH", `\x1b[32mUsing ${providerId} account: ${credentials.connectionName}\x1b[0m`);
 
-    const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
 
-    const result = await handleSearchCore({
-      body: coreBody,
-      provider: resolvedProvider,
-      providerConfig,
-      credentials: refreshedCredentials,
-      log,
-      abortSignal: callOpts?.signal || request?.signal || null,
-      onCredentialsRefreshed: async (newCreds) => {
-        await updateProviderCredentials(credentials.connectionId, {
-          accessToken: newCreds.accessToken,
-          refreshToken: newCreds.refreshToken,
-          providerSpecificData: newCreds.providerSpecificData,
-          testStatus: "active"
-        });
-      },
-      onRequestSuccess: async () => {
-        await clearAccountError(credentials.connectionId, credentials);
+    const attempt = await withConnectionInFlight({
+      provider: providerId,
+      model: providerId,
+      connectionId: credentials.connectionId,
+    }, async () => {
+      const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
+      const result = await handleSearchCore({
+        clientKeyId,
+        body: coreBody,
+        provider: resolvedProvider,
+        providerConfig,
+        credentials: refreshedCredentials,
+        log,
+        abortSignal: callOpts?.signal || request?.signal || null,
+        onCredentialsRefreshed: async (newCreds) => {
+          await updateProviderCredentials(credentials.connectionId, {
+            accessToken: newCreds.accessToken,
+            refreshToken: newCreds.refreshToken,
+            providerSpecificData: newCreds.providerSpecificData,
+            testStatus: "active"
+          });
+        },
+        onRequestSuccess: async () => {
+          await clearAccountError(credentials.connectionId, credentials);
+        }
+      });
+
+      if (result.success) return result.response;
+      const { shouldFallback } = await markAccountUnavailable(
+        credentials.connectionId,
+        result.status,
+        result.error,
+        providerId,
+      );
+      if (shouldFallback) {
+        return { retry: true, error: result.error, status: result.status };
       }
+      return { finalResponse: result.response };
     });
 
-    if (result.success) return result.response;
-
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, providerId);
-
-    if (shouldFallback) {
-      log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);
-      excludeConnectionIds.add(credentials.connectionId);
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
-    }
-
-    return result.response;
+    if (attempt instanceof Response) return attempt;
+    if (attempt.finalResponse) return attempt.finalResponse;
+    log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${attempt.status}), trying fallback`);
+    excludeConnectionIds.add(credentials.connectionId);
+    lastError = attempt.error;
+    lastStatus = attempt.status;
   }
 }

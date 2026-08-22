@@ -6,7 +6,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { existsSync } from "fs";
 import {
-  cleanupProviderConnections, getSettings, updateSettings, getApiKeys,
+  cleanupProviderConnections, getSettings, updateSettings,
   deleteOldRoutingEvents, cleanupExpiredFetchCache, cleanupExpiredVault,
 } from "@/lib/db/index.js";
 import { getMitmStatus, startMitm, loadEncryptedPassword, initDbHooks, restoreToolDNS, removeAllDNSEntriesSync } from "@/mitm/manager";
@@ -134,11 +134,13 @@ async function autoStartMitm() {
       return;
     }
 
-    const keys = await getApiKeys();
-    const activeKey = keys.find((k) => k.isActive !== false);
+    if (settings.requireApiKey) {
+      console.log("[InitApp] MITM requires an explicitly supplied client-key secret; skipping auto-start");
+      return;
+    }
 
     console.log("[InitApp] MITM was enabled, auto-starting...");
-    await startMitm(activeKey?.key || "sk_switchboard", password);
+    await startMitm("sk_switchboard", password);
     console.log("[InitApp] MITM auto-started");
     try {
       await restoreToolDNS(password);

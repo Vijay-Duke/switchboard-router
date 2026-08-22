@@ -6,6 +6,7 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch }));
 
 import { handleFetchCore } from "../../open-sse/handlers/fetch/index.js";
 import { handleSearchCore } from "../../open-sse/handlers/search/index.js";
+import { handleSttCore } from "../../open-sse/handlers/sttCore.js";
 
 afterEach(() => {
   proxyAwareFetch.mockReset();
@@ -69,5 +70,54 @@ describe("non-chat combo abort propagation", () => {
 
     await expect(resultPromise).resolves.toMatchObject({ success: false, status: 504 });
     expect(upstreamSignal.aborted).toBe(true);
+  });
+
+  it("aborts STT provider fetch when the caller disconnects", async () => {
+    const caller = new AbortController();
+    let upstreamSignal;
+    proxyAwareFetch.mockImplementation((url, init) => {
+      upstreamSignal = init.signal;
+      return abortableFetch(url, init);
+    });
+    const formData = new FormData();
+    formData.append("file", new Blob(["audio"], { type: "audio/wav" }), "audio.wav");
+    const resultPromise = handleSttCore({
+      provider: "deepgram",
+      model: "nova",
+      formData,
+      credentials: { apiKey: "provider-key" },
+      sttConfig: { format: "deepgram", baseUrl: "https://example.com/listen", authHeader: "token" },
+      abortSignal: caller.signal,
+    });
+    await vi.waitFor(() => expect(upstreamSignal).toBeDefined());
+    caller.abort();
+    await expect(resultPromise).resolves.toMatchObject({ success: false });
+    expect(upstreamSignal.aborted).toBe(true);
+  });
+
+  it("rejects an already-aborted AssemblyAI polling delay without polling or waiting", async () => {
+    const caller = new AbortController();
+    proxyAwareFetch
+      .mockResolvedValueOnce(Response.json({ upload_url: "https://upload.test/audio" }))
+      .mockImplementationOnce(async () => {
+        caller.abort();
+        return Response.json({ id: "transcript-1" });
+      });
+    const formData = new FormData();
+    formData.append("file", new Blob(["audio"], { type: "audio/wav" }), "audio.wav");
+
+    const startedAt = Date.now();
+    const result = await handleSttCore({
+      provider: "assemblyai",
+      model: "universal",
+      formData,
+      credentials: { apiKey: "provider-key" },
+      sttConfig: { format: "assemblyai", baseUrl: "https://api.assemblyai.com/v2/transcript", authHeader: "authorization" },
+      abortSignal: caller.signal,
+    });
+
+    expect(result).toMatchObject({ success: false, status: 499 });
+    expect(proxyAwareFetch).toHaveBeenCalledTimes(2);
+    expect(Date.now() - startedAt).toBeLessThan(500);
   });
 });

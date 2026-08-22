@@ -47,6 +47,30 @@ function findInvalidProviderPreference(comboStrategies) {
   return null;
 }
 
+function findInvalidAccountScheduler(providerStrategies) {
+  if (!providerStrategies || typeof providerStrategies !== "object" || Array.isArray(providerStrategies)) {
+    return "providerStrategies must be an object.";
+  }
+
+  for (const [providerId, strategy] of Object.entries(providerStrategies)) {
+    if (!strategy || typeof strategy !== "object" || Array.isArray(strategy)) continue;
+    const scheduler = strategy.accountScheduler;
+    if (scheduler === undefined) continue;
+    if (!scheduler || typeof scheduler !== "object" || Array.isArray(scheduler)) {
+      return `Provider "${providerId}" accountScheduler must be an object.`;
+    }
+    if (typeof scheduler.enabled !== "boolean") {
+      return `Provider "${providerId}" accountScheduler.enabled must be boolean.`;
+    }
+    const ttl = scheduler.sessionAffinityTtlSeconds;
+    if (!Number.isInteger(ttl) || ttl < 60 || ttl > 86_400) {
+      return `Provider "${providerId}" accountScheduler.sessionAffinityTtlSeconds must be an integer from 60 to 86400.`;
+    }
+  }
+
+  return null;
+}
+
 const SETTINGS_RESPONSE_HEADERS = {
   "Cache-Control": "no-store",
 };
@@ -151,6 +175,16 @@ export async function PATCH(request) {
         return NextResponse.json(
           { error: invalidProviderPreference },
           { status: 400, headers: SETTINGS_RESPONSE_HEADERS }
+        );
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, "providerStrategies")) {
+      const invalidScheduler = findInvalidAccountScheduler(body.providerStrategies);
+      if (invalidScheduler) {
+        return NextResponse.json(
+          { error: invalidScheduler },
+          { status: 400, headers: SETTINGS_RESPONSE_HEADERS },
         );
       }
     }

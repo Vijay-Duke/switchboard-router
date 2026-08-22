@@ -3,6 +3,7 @@ import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { encryptSecret, decryptSecret } from "@/lib/crypto/secrets.js";
 import { QUOTA_AUTOPING_CONFIG } from "@/shared/constants/config.js";
+import { retirePrometheusProviderInTx } from "@/lib/metrics/providerRoster.js";
 
 export const DEFAULT_QUOTA_FRESH_MS = QUOTA_AUTOPING_CONFIG.tickIntervalMs * 2;
 
@@ -160,6 +161,7 @@ function reorderInTx(db, providerId) {
   });
 }
 
+
 export async function createProviderConnection(data) {
   const db = await getAdapter();
   const now = new Date().toISOString();
@@ -248,6 +250,9 @@ export async function updateProviderConnection(id, data) {
     const existing = rowToConn(row);
     const merged = { ...existing, ...data, updatedAt: new Date().toISOString() };
     upsert(db, merged);
+    if (existing.provider !== merged.provider) {
+      retirePrometheusProviderInTx(db, existing.provider);
+    }
     if (data.priority !== undefined) reorderInTx(db, existing.provider);
     result = merged;
   });
@@ -262,6 +267,7 @@ export async function deleteProviderConnection(id) {
     if (!row) return;
     db.run(`DELETE FROM providerConnections WHERE id = ?`, [id]);
     reorderInTx(db, row.provider);
+    retirePrometheusProviderInTx(db, row.provider);
     ok = true;
   });
   return ok;
@@ -269,9 +275,13 @@ export async function deleteProviderConnection(id) {
 
 export async function deleteProviderConnectionsByProvider(providerId) {
   const db = await getAdapter();
-  const before = db.get(`SELECT COUNT(*) AS n FROM providerConnections WHERE provider = ?`, [providerId]);
-  db.run(`DELETE FROM providerConnections WHERE provider = ?`, [providerId]);
-  return before?.n || 0;
+  let count = 0;
+  db.transaction(() => {
+    count = db.get(`SELECT COUNT(*) AS n FROM providerConnections WHERE provider = ?`, [providerId])?.n || 0;
+    db.run(`DELETE FROM providerConnections WHERE provider = ?`, [providerId]);
+    retirePrometheusProviderInTx(db, providerId);
+  });
+  return count;
 }
 
 export async function reorderProviderConnections(providerId) {

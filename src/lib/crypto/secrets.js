@@ -86,21 +86,52 @@ export function apiKeyPrefix(rawKey) {
   return rawKey.length <= 12 ? rawKey.slice(0, 4) + "…" : rawKey.slice(0, 10) + "…";
 }
 
-/** Stored form: v1:<prefix>:<hash> */
-export function packApiKeyRecord(rawKey) {
-  return `v1:${apiKeyPrefix(rawKey)}:${hashApiKey(rawKey)}`;
+export function apiKeyLookupDigestFromKeyId(keyId) {
+  if (typeof keyId !== "string" || !/^[a-f0-9]{32}$/.test(keyId)) return null;
+  return crypto.createHash("sha256").update(`sb-key-lookup:${keyId}`).digest("hex");
+}
+
+export function apiKeyLookupDigest(rawKey) {
+  if (typeof rawKey !== "string") return null;
+  const parts = rawKey.split("-");
+  if (parts.length !== 4 || parts[0] !== "sk" || !parts[1] || !/^[a-f0-9]{8}$/.test(parts[3])) return null;
+  return apiKeyLookupDigestFromKeyId(parts[2]);
+}
+
+/** Stored forms: v2:<lookupDigest>:<prefix>:<saltHex>:<scryptHex> or cheap legacy v1. */
+export function packApiKeyRecord(rawKey, lookupDigest = apiKeyLookupDigest(rawKey)) {
+  if (!lookupDigest) {
+    // Low-entropy legacy keys remain on the cheap verifier until explicit rotation.
+    return `v1:${apiKeyPrefix(rawKey)}:${hashApiKey(rawKey)}`;
+  }
+  const salt = crypto.randomBytes(16);
+  const verifier = crypto.scryptSync(rawKey, salt, 32, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+  return `v2:${lookupDigest}:${apiKeyPrefix(rawKey)}:${salt.toString("hex")}:${verifier.toString("hex")}`;
+}
+
+export function normalizeApiKeyRecordLookup(stored) {
+  if (typeof stored !== "string" || !stored.startsWith("v2:")) return stored;
+  const parts = stored.split(":");
+  if (parts.length !== 5 || !/^[a-f0-9]{32}$/.test(parts[1])) return stored;
+  const digest = apiKeyLookupDigestFromKeyId(parts[1]);
+  return `v2:${digest}:${parts[2]}:${parts[3]}:${parts[4]}`;
 }
 
 export function unpackApiKeyRecord(stored) {
-  if (!stored || typeof stored !== "string") return { prefix: "", hash: null, legacy: true, raw: stored };
-  if (stored.startsWith("v1:")) {
-    const parts = stored.split(":");
-    // v1:prefix:hash — prefix may contain "…" only
-    if (parts.length >= 3) {
-      return { prefix: parts[1], hash: parts.slice(2).join(":"), legacy: false, raw: null };
-    }
+  if (!stored || typeof stored !== "string") return { version: 0, lookupDigest: null, prefix: "", hash: null, salt: null, legacy: true, raw: stored };
+  const normalized = normalizeApiKeyRecordLookup(stored);
+  const parts = normalized.split(":");
+  if (normalized.startsWith("v2:") && parts.length === 5) {
+    const lookupDigest = /^[a-f0-9]{64}$/.test(parts[1]) ? parts[1] : null;
+    return { version: 2, lookupDigest, prefix: parts[2], salt: parts[3], hash: parts[4], legacy: false, raw: null };
   }
-  return { prefix: apiKeyPrefix(stored), hash: null, legacy: true, raw: stored };
+  if (normalized.startsWith("v2:") && parts.length === 4) {
+    return { version: 2, lookupDigest: null, prefix: parts[1], salt: parts[2], hash: parts[3], legacy: false, raw: null };
+  }
+  if (normalized.startsWith("v1:") && parts.length >= 3) {
+    return { version: 1, lookupDigest: null, prefix: parts[1], salt: null, hash: parts.slice(2).join(":"), legacy: false, raw: null };
+  }
+  return { version: 0, lookupDigest: apiKeyLookupDigest(normalized), prefix: apiKeyPrefix(normalized), hash: null, salt: null, legacy: true, raw: normalized };
 }
 
 export function timingSafeEqualStr(a, b) {
@@ -109,4 +140,36 @@ export function timingSafeEqualStr(a, b) {
   const ba = crypto.createHash("sha256").update(a).digest();
   const bb = crypto.createHash("sha256").update(b).digest();
   return crypto.timingSafeEqual(ba, bb);
+}
+
+export function matchesApiKeyRecord(stored, raw) {
+  if (!raw || typeof raw !== "string") return false;
+  const unpacked = unpackApiKeyRecord(stored);
+  if (unpacked.legacy) return timingSafeEqualStr(String(unpacked.raw || ""), raw);
+  if (unpacked.version === 1) return !!unpacked.hash && timingSafeEqualStr(unpacked.hash, hashApiKey(raw));
+  if (!unpacked.salt || !unpacked.hash) return false;
+  try {
+    const actual = crypto.scryptSync(raw, Buffer.from(unpacked.salt, "hex"), 32, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+    return timingSafeEqualStr(actual.toString("hex"), unpacked.hash);
+  } catch {
+    return false;
+  }
+}
+
+export async function matchesApiKeyRecordAsync(stored, raw) {
+  if (!raw || typeof raw !== "string") return false;
+  const unpacked = unpackApiKeyRecord(stored);
+  if (unpacked.version !== 2) return matchesApiKeyRecord(stored, raw);
+  if (!unpacked.salt || !unpacked.hash) return false;
+  try {
+    const actual = await new Promise((resolve, reject) => {
+      crypto.scrypt(raw, Buffer.from(unpacked.salt, "hex"), 32, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, value) => {
+        if (error) reject(error);
+        else resolve(value);
+      });
+    });
+    return timingSafeEqualStr(actual.toString("hex"), unpacked.hash);
+  } catch {
+    return false;
+  }
 }

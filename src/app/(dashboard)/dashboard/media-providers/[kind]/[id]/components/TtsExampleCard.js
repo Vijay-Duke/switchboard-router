@@ -63,10 +63,6 @@ export function TtsExampleCard({ providerId }) {
 
   useEffect(() => {
     setLocalEndpoint(window.location.origin);
-    fetch("/api/keys")
-      .then((r) => r.json())
-      .then((d) => { setApiKey((d.keys || []).find((k) => k.isActive !== false)?.key || ""); })
-      .catch(() => {});
 
     // Pre-select default voice based on provider config
     if (config.voiceSource === "hardcoded") {
@@ -196,7 +192,7 @@ export function TtsExampleCard({ providerId }) {
   ${responseFormat === "json" ? "" : "--output speech.mp3"}`;
 
   const handleRun = async () => {
-    if (!input.trim() || !modelFull) return;
+    if (!input.trim() || !modelFull || !apiKey.trim()) return;
     setRunning(true);
     setError("");
     setAudioUrl("");
@@ -435,7 +431,7 @@ export function TtsExampleCard({ providerId }) {
                 </button>
                 <button
                   onClick={handleRun}
-                  disabled={running || !input.trim() || !modelFull}
+                  disabled={running || !input.trim() || !modelFull || !apiKey.trim()}
                   className="flex w-full sm:w-auto items-center justify-center gap-1.5 px-3 py-1 rounded-lg bg-primary text-on-primary text-xs font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <span className="material-symbols-outlined text-[14px]" style={running ? { animation: "spin 1s linear infinite" } : undefined}>

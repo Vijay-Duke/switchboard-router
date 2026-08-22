@@ -51,7 +51,7 @@ const URL_CONTROLLED_STREAM_FORMATS = new Set([
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  * @param {AbortSignal} [options.abortSignal] - Optional external abort (e.g. router timeout)
  */
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, onUpstreamEmptyExhausted, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, vaultEnabled, vaultThresholdKB, vaultTtlHours, vaultConversationId, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, sourceFormatOverride, providerThinking, bypassNativePassthrough, vaultInternal, abortSignal }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, onUpstreamEmptyExhausted, clientRawRequest, connectionId, userAgent, clientKeyId, ccFilterNaming, rtkEnabled, vaultEnabled, vaultThresholdKB, vaultTtlHours, vaultConversationId, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, sourceFormatOverride, providerThinking, bypassNativePassthrough, vaultInternal, abortSignal }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
 
@@ -464,7 +464,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // One identity per completed request. Handlers pass it to saveUsageStats so a
   // replayed save is idempotent instead of double-counting usage.
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, requestId };
+  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, clientRawRequest, onRequestSuccess, requestId };
   const appendLog = (extra) => {
     if (!vaultInternal) appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });
   };

@@ -1,6 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/db/index.js";
+import { deleteApiKey, getApiKeyById, normalizeClientKeyPatch, updateApiKey } from "@/lib/db/index.js";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
@@ -19,21 +19,25 @@ export async function GET(request, { params }) {
 
 // PUT /api/keys/[id] - Update key
 export async function PUT(request, { params }) {
+  let patch;
+  try {
+    patch = normalizeClientKeyPatch(await request.json());
+  } catch (error) {
+    return NextResponse.json({
+      error: {
+        message: error?.message || "Invalid client key policy",
+        code: "invalid_client_key_policy",
+      },
+    }, { status: 400 });
+  }
+
   try {
     const { id } = await params;
-    const body = await request.json();
-    const { isActive } = body;
-
     const existing = await getApiKeyById(id);
     if (!existing) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
-
-    const updateData = {};
-    if (isActive !== undefined) updateData.isActive = isActive;
-
-    const updated = await updateApiKey(id, updateData);
-
+    const updated = await updateApiKey(id, patch);
     return NextResponse.json({ key: updated });
   } catch (error) {
     console.log("Error updating key:", error);

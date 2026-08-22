@@ -8,6 +8,7 @@ import { Card, Button, Input, Modal, Toggle, ConfirmModal } from "@/shared/compo
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import EndpointRow from "./components/EndpointRow";
 import SecurityWarning from "./components/SecurityWarning";
+import KeyPolicyModal from "./components/KeyPolicyModal";
 import { queryKeys } from "@/shared/query/keys";
 import { fetchJson } from "@/shared/query/fetchJson";
 import { useNotificationStore } from "@/store/notificationStore";
@@ -50,7 +51,7 @@ export default function EndpointPageClient({ initialData }) {
   const [newKeyName, setNewKeyName] = useState("");
   const [createdKey, setCreatedKey] = useState(/** @type {string|null} */ (null));
   const [confirmState, setConfirmState] = useState(/** @type {any} */ (null));
-  const [visibleKeys, setVisibleKeys] = useState(() => new Set());
+  const [editingKey, setEditingKey] = useState(/** @type {any} */ (null));
 
   // Client-only origin so SSR/hydrate don't stick on bare "/v1"
   const [baseUrl, setBaseUrl] = useState("/v1");
@@ -108,25 +109,19 @@ export default function EndpointPageClient({ initialData }) {
     onError: () => notify("Failed to toggle API key"),
   });
 
-  /**
-   * @param {string} [fullKey]
-   */
-  const maskKey = (fullKey) => {
-    if (!fullKey || fullKey.length <= 10) return fullKey || "";
-    return fullKey.slice(0, 6) + "•".repeat(fullKey.length - 10) + fullKey.slice(-4);
-  };
+  const updateKeyMutation = useMutation({
+    mutationFn: (/** @type {{ id: string, patch: Record<string, any> }} */ { id, patch }) =>
+      fetchJson(`/api/keys/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(patch),
+      }),
+    onSuccess: () => {
+      setEditingKey(null);
+      queryClient.invalidateQueries({ queryKey: queryKeys.endpoint.keys() });
+    },
+    onError: () => notify("Failed to update API key policy"),
+  });
 
-  /**
-   * @param {string} keyId
-   */
-  const toggleKeyVisibility = (keyId) => {
-    setVisibleKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(keyId)) next.delete(keyId);
-      else next.add(keyId);
-      return next;
-    });
-  };
 
   const handleRequireApiKeyChange = () => {
     if (!requireApiKey) {
@@ -215,29 +210,32 @@ export default function EndpointPageClient({ initialData }) {
               >
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium">{key.name}</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <code className="text-xs text-text-muted font-mono">
-                      {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() => toggleKeyVisibility(key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                      title={visibleKeys.has(key.id) ? "Hide key" : "Show key"}
-                    >
-                      <span className="material-symbols-outlined text-[14px]">
-                        {visibleKeys.has(key.id) ? "visibility_off" : "visibility"}
+                  <div className="flex flex-wrap items-center gap-2 mt-1">
+                    <code className="text-xs text-text-muted font-mono">{key.keyPrefix}</code>
+                    {key.rotationRequired ? (
+                      <span
+                        className="rounded-full bg-orange-500/10 px-2 py-0.5 text-[11px] text-orange-600"
+                        title="This legacy key remains usable through its compatibility verifier until you create a replacement."
+                      >
+                        Rotation required
                       </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => copy(key.key, key.id)}
-                      className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                    >
-                      <span className="material-symbols-outlined text-[14px]">
-                        {copied === key.id ? "check" : "content_copy"}
+                    ) : null}
+                    {(key.allowedModels?.length || key.allowedCombos?.length) ? (
+                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-primary">Restricted targets</span>
+                    ) : (
+                      <span className="rounded-full bg-black/5 px-2 py-0.5 text-[11px] text-text-muted dark:bg-white/5">All targets</span>
+                    )}
+                    {key.rateLimitPerMinute ? (
+                      <span className="rounded-full bg-black/5 px-2 py-0.5 text-[11px] text-text-muted dark:bg-white/5">{key.rateLimitPerMinute}/min</span>
+                    ) : null}
+                    {key.concurrencyLimit ? (
+                      <span className="rounded-full bg-black/5 px-2 py-0.5 text-[11px] text-text-muted dark:bg-white/5">{key.concurrencyLimit} concurrent</span>
+                    ) : null}
+                    {key.spendLimitUsd != null ? (
+                      <span className="rounded-full bg-black/5 px-2 py-0.5 text-[11px] text-text-muted dark:bg-white/5">
+                        ${Number(key.spentUsd || 0).toFixed(2)} / ${Number(key.spendLimitUsd).toFixed(2)}
                       </span>
-                    </button>
+                    ) : null}
                   </div>
                   <p className="text-xs text-text-muted mt-1">
                     Created {new Date(key.createdAt).toLocaleDateString()}
@@ -267,6 +265,14 @@ export default function EndpointPageClient({ initialData }) {
                     }}
                     title={key.isActive ? "Pause key" : "Resume key"}
                   />
+                  <button
+                    type="button"
+                    onClick={() => setEditingKey(key)}
+                    className="p-2 hover:bg-primary/10 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                    title="Edit key policy"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">edit</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() =>
@@ -361,6 +367,14 @@ export default function EndpointPageClient({ initialData }) {
           </Button>
         </div>
       </Modal>
+
+      <KeyPolicyModal
+        apiKey={editingKey}
+        isOpen={!!editingKey}
+        isSaving={updateKeyMutation.isPending}
+        onClose={() => setEditingKey(null)}
+        onSave={(patch) => updateKeyMutation.mutate({ id: editingKey.id, patch })}
+      />
 
       <ConfirmModal
         isOpen={!!confirmState}

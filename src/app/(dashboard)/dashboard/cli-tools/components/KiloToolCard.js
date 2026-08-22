@@ -28,7 +28,7 @@ export default function KiloToolCard({ tool, isExpanded, onToggle, baseUrl, apiK
   const initialized = useRef(false);
 
   useEffect(() => {
-    if (apiKeys?.length > 0 && !selectedApiKey) setSelectedApiKey(apiKeys[0].key);
+    if (apiKeys?.length > 0 && !selectedApiKey) setSelectedApiKey(apiKeys[0].keySecret);
   }, [apiKeys, selectedApiKey]);
 
   useEffect(() => {

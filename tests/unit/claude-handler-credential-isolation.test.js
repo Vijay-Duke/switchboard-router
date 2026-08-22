@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   applyJudgeScoreByRequestId: vi.fn(),
+  authorizeClientKeyRequest: vi.fn(),
   checkAndRefreshToken: vi.fn(),
   clearAccountError: vi.fn(),
   gateRequireApiKey: vi.fn(),
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   handleChatCore: vi.fn(),
   markAccountUnavailable: vi.fn(),
   setRoutingWriteHook: vi.fn(),
+  runWithClientKeyLease: vi.fn(),
   updateProviderCredentials: vi.fn(),
 }));
 
@@ -68,6 +70,11 @@ vi.mock("@/shared/utils/cliToken.js", () => ({
   hasValidCliToken: vi.fn(),
 }));
 
+vi.mock("@/sse/services/clientKeyPolicy.js", () => ({
+  authorizeClientKeyRequest: mocks.authorizeClientKeyRequest,
+  runWithClientKeyLease: mocks.runWithClientKeyLease,
+}));
+
 vi.mock("@/sse/utils/logger.js", () => ({
   debug: vi.fn(),
   error: vi.fn(),
@@ -84,7 +91,7 @@ vi.mock("open-sse/handlers/chatCore.js", () => ({
 const { DefaultExecutor } = await import("../../open-sse/executors/default.js");
 const { handleChat } = await import("../../src/sse/handlers/chat.js");
 
-function claudeRequest(model) {
+function claudeRequest(model, sessionId = null) {
   return new Request("http://localhost/v1/messages", {
     method: "POST",
     headers: {
@@ -94,6 +101,7 @@ function claudeRequest(model) {
       "x-switchboard-claude-mode": "pass-through",
       "user-agent": "claude-code/2.1.129",
       "x-app": "cli",
+      ...(sessionId ? { "x-session-id": sessionId } : {}),
     },
     body: JSON.stringify({
       model,
@@ -107,6 +115,12 @@ function claudeRequest(model) {
 describe("Claude handler credential isolation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.authorizeClientKeyRequest.mockResolvedValue({
+      ok: true,
+      clientKeyId: null,
+      lease: null,
+    });
+    mocks.runWithClientKeyLease.mockImplementation(async (_lease, work) => work());
     mocks.getSettings.mockResolvedValue({
       requireApiKey: false,
       comboStrategies: {},
@@ -192,7 +206,12 @@ describe("Claude handler credential isolation", () => {
       "openai",
       expect.any(Set),
       "gpt-5.6",
-      { preferredConnectionId: null, strictPreferredConnection: false },
+      {
+        preferredConnectionId: null,
+        strictPreferredConnection: false,
+        sessionKey: null,
+        clientKeyId: null,
+      },
     );
     expect(mocks.checkAndRefreshToken).toHaveBeenCalledWith("openai", storedCredentials);
     expect(receivedCredentials.apiKey).toBe("stored-openai-key");
@@ -207,5 +226,49 @@ describe("Claude handler credential isolation", () => {
     );
     expect(mocks.updateProviderCredentials).not.toHaveBeenCalled();
     expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
+  });
+
+  it("passes one client affinity key through every account retry", async () => {
+    mocks.authorizeClientKeyRequest.mockResolvedValue({
+      ok: true,
+      clientKeyId: "client-key-a",
+      lease: null,
+    });
+    mocks.getModelInfo.mockResolvedValue({ provider: "openai", model: "gpt-5.6" });
+    mocks.getProviderCredentials
+      .mockResolvedValueOnce({
+        apiKey: "first-key",
+        connectionId: "first",
+        connectionName: "First",
+        providerSpecificData: {},
+      })
+      .mockResolvedValueOnce({
+        apiKey: "second-key",
+        connectionId: "second",
+        connectionName: "Second",
+        providerSpecificData: {},
+      });
+    mocks.handleChatCore
+      .mockResolvedValueOnce({
+        success: false,
+        response: Response.json({ error: "limited" }, { status: 429 }),
+        status: 429,
+        error: "limited",
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        response: Response.json({ ok: true }),
+      });
+
+    const response = await handleChat(claudeRequest("claude-switchboard-gpt", "conversation-42"));
+
+    expect(response.status).toBe(200);
+    expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(2);
+    const firstOptions = mocks.getProviderCredentials.mock.calls[0][3];
+    const retryOptions = mocks.getProviderCredentials.mock.calls[1][3];
+    expect(firstOptions.sessionKey).not.toBe("conversation-42");
+    expect(firstOptions.clientKeyId).toBe("client-key-a");
+    expect(retryOptions.sessionKey).toBe(firstOptions.sessionKey);
+    expect(retryOptions.clientKeyId).toBe(firstOptions.clientKeyId);
   });
 });

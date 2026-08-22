@@ -1,5 +1,4 @@
 // @ts-check
-import { getApiKeys } from "@/lib/db/index.js";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 import { CLI_TOKEN_HEADER, getCliToken } from "@/shared/utils/cliToken.js";
 import { mergeAbortSignals } from "open-sse/utils/abort.js";
@@ -40,16 +39,10 @@ function createSilentWavFile() {
 }
 
 async function getInternalHeaders() {
-  let apiKey = null;
-  try {
-    const keys = await getApiKeys();
-    apiKey = keys.find((k) => k.isActive !== false)?.key || null;
-  } catch {}
-
-  const headers = { "Content-Type": "application/json" };
-  if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-  headers[CLI_TOKEN_HEADER] = await getCliToken();
-  return headers;
+  return {
+    "Content-Type": "application/json",
+    [CLI_TOKEN_HEADER]: await getCliToken(),
+  };
 }
 
 function timeoutSignal(timeoutMs, externalSignal = null) {

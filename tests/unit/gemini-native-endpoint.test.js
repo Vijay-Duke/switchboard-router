@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   handleChat: vi.fn(),
   getSettings: vi.fn(),
-  isValidApiKey: vi.fn(),
+  authorizeClientKeyRequest: vi.fn(),
+  runWithClientKeyLease: vi.fn(),
   getProviderCredentials: vi.fn(),
   markAccountUnavailable: vi.fn(),
   clearAccountError: vi.fn(),
@@ -15,13 +16,17 @@ vi.mock("@/sse/handlers/chat.js", () => ({
 
 vi.mock("@/sse/services/auth.js", () => ({
   getProviderCredentials: mocks.getProviderCredentials,
-  isValidApiKey: mocks.isValidApiKey,
   markAccountUnavailable: mocks.markAccountUnavailable,
   clearAccountError: mocks.clearAccountError,
 }));
 
 vi.mock("@/lib/db/index.js", () => ({
   getSettings: mocks.getSettings,
+}));
+
+vi.mock("@/sse/services/clientKeyPolicy.js", () => ({
+  authorizeClientKeyRequest: mocks.authorizeClientKeyRequest,
+  runWithClientKeyLease: mocks.runWithClientKeyLease,
 }));
 
 const { GET } = await import("../../src/app/api/v1beta/models/route.js");
@@ -60,7 +65,12 @@ describe("Gemini native v1beta endpoint", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getSettings.mockResolvedValue({ requireApiKey: true });
-    mocks.isValidApiKey.mockResolvedValue(true);
+    mocks.authorizeClientKeyRequest.mockResolvedValue({
+      ok: true,
+      clientKeyId: "client-key-id",
+      lease: { release: vi.fn() },
+    });
+    mocks.runWithClientKeyLease.mockImplementation(async (_lease, work) => work());
     mocks.getProviderCredentials.mockResolvedValue({
       apiKey: "real-gemini-key",
       connectionId: "gemini-conn",
@@ -122,7 +132,10 @@ describe("Gemini native v1beta endpoint", () => {
       params: Promise.resolve({ path: ["gemini-2.5-flash-preview-tts:generateContent"] }),
     });
 
-    expect(mocks.isValidApiKey).toHaveBeenCalledWith("client-router-key");
+    expect(mocks.authorizeClientKeyRequest).toHaveBeenCalledWith(expect.objectContaining({
+      rawKey: "client-router-key",
+      target: { kind: "model", id: "gemini/gemini-2.5-flash-preview-tts" },
+    }));
     expect(global.fetch.mock.calls[0][1].headers["x-goog-api-key"]).toBe("real-gemini-key");
     expect(global.fetch.mock.calls[0][1].headers["x-goog-api-key"]).not.toBe("client-router-key");
   });

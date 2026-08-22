@@ -27,7 +27,7 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
 
   useEffect(() => {
     if (apiKeys?.length > 0 && !selectedApiKey) {
-      setSelectedApiKey(apiKeys[0].key);
+      setSelectedApiKey(apiKeys[0].keySecret);
     }
   }, [apiKeys, selectedApiKey]);
 

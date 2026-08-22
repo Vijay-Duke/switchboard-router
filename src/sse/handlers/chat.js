@@ -6,9 +6,9 @@ import {
   markAccountUnavailable,
   clearAccountError,
   extractApiKey,
-  isValidApiKey,
 } from "../services/auth.js";
 import { cacheClaudeHeaders } from "open-sse/utils/claudeHeaderCache.js";
+import { resolveAffinitySessionId } from "open-sse/utils/sessionManager.js";
 import { getSettings, getUsageStats } from "@/lib/db/index.js";
 import { getProviderQuotaHeadroom } from "@/lib/db/repos/connectionsRepo.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
@@ -42,8 +42,7 @@ import { applyRatingSideEffects } from "../routing/ratingSideEffects.js";
 import { resolveWorkerCaps } from "../routing/comboCaps.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
-import { gateRequireApiKey } from "../utils/requireApiKeyGate.js";
-import { hasValidCliToken } from "@/shared/utils/cliToken.js";
+import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
 import { getNativeClaudeCredentials } from "../services/claudePassThrough.js";
 import {
   insertRoutingEvent,
@@ -235,22 +234,26 @@ export async function handleChat(request, clientRawRequest = null) {
   const effort = body.reasoning_effort || body.reasoning?.effort || null;
   log.request("POST", `${url.pathname} | ${modelStr} | ${msgCount} msgs${toolCount ? ` | ${toolCount} tools` : ""}${effort ? ` | effort=${effort}` : ""}`);
 
-  // Log API key (masked)
-  const authHeader = request.headers.get("Authorization");
-  const apiKey = extractApiKey(request);
-  if (authHeader && apiKey) {
-    const masked = log.maskKey(apiKey);
-    log.debug("AUTH", `API Key: ${masked}`);
-  } else {
-    log.debug("AUTH", "No API key provided (local mode)");
-  }
-
-  // Enforce API key if enabled in settings (L3 shared gate)
   const settings = await getSettings();
-  const denied = await gateRequireApiKey(settings, apiKey, {
-    isValidApiKey, log, errorResponse, HTTP_STATUS, request, hasValidCliToken,
+  const comboModels = modelStr ? await getComboModels(modelStr) : null;
+  const auth = await authorizeClientKeyRequest({
+    settings,
+    rawKey: extractApiKey(request),
+    request,
+    target: { kind: comboModels ? "combo" : "model", id: modelStr },
   });
-  if (denied) return denied;
+  if (!auth.ok) return auth.response;
+  if (clientRawRequest?.headers) {
+    const gatewayHeaders = new Set(["authorization", "x-switchboard-key", "x-api-key", "x-goog-api-key"]);
+    clientRawRequest = {
+      ...clientRawRequest,
+      headers: Object.fromEntries(
+        Object.entries(clientRawRequest.headers).filter(([name]) => !gatewayHeaders.has(name.toLowerCase()))
+      ),
+    };
+  }
+  return runWithClientKeyLease(auth.lease, async () => {
+    const { clientKeyId } = auth;
 
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
@@ -276,7 +279,7 @@ export async function handleChat(request, clientRawRequest = null) {
     if ((hasPendingAsks() || mentionsAsk) && Array.isArray(body.messages) && body.messages.length) {
       const wire = detectFormatByEndpoint(new URL(request.url).pathname, body);
       const isOpenAiWire = wire === "openai";
-      const apiKeyHash = hashKey(apiKey);
+      const apiKeyHash = hashKey(clientKeyId || "local-no-key");
       const info = conversationInfo(body.messages);
       const conversationFp = conversationFingerprint(info.firstUserText, apiKeyHash);
       const pending = isOpenAiWire ? matchPendingAsk(apiKeyHash, conversationFp) : null;
@@ -309,7 +312,6 @@ export async function handleChat(request, clientRawRequest = null) {
   }
 
   // Check if model is a combo (has multiple models with fallback)
-  const comboModels = await getComboModels(modelStr);
   if (comboModels) {
     // Check for combo-specific strategy first, fallback to global
     const comboStrategies = settings.comboStrategies || {};
@@ -328,7 +330,7 @@ export async function handleChat(request, clientRawRequest = null) {
             const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
             cleanRawReq = { ...clientRawRequest, body: cleanBody };
           }
-          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, {
+          return handleSingleModelChat(b, m, cleanRawReq, request, clientKeyId, {
             ...opts,
             signal: opts.signal || null,
           });
@@ -350,7 +352,7 @@ export async function handleChat(request, clientRawRequest = null) {
         try {
           const wire = detectFormatByEndpoint(new URL(request.url).pathname, body);
           const info = conversationInfo(body.messages);
-          const apiKeyHash = hashKey(apiKey);
+          const apiKeyHash = hashKey(clientKeyId || "local-no-key");
           feedbackCtx = {
             apiKeyHash,
             conversationFp: conversationFingerprint(info.firstUserText, apiKeyHash),
@@ -392,7 +394,7 @@ export async function handleChat(request, clientRawRequest = null) {
         body,
         models: [...workerModels, ...(comboModels.includes(routerId) ? [routerId] : [])],
         handleSingleModel: (b, m, callOpts) =>
-          handleSingleModelChat(b, m, clientRawRequest, request, apiKey, {
+          handleSingleModelChat(b, m, clientRawRequest, request, clientKeyId, {
             ...(callOpts || {}),
             comboDepth: 0,
           }),
@@ -431,7 +433,7 @@ export async function handleChat(request, clientRawRequest = null) {
       body,
       models: comboModels,
       handleSingleModel: (b, m, callOpts) =>
-        handleSingleModelChat(b, m, clientRawRequest, request, apiKey, callOpts),
+        handleSingleModelChat(b, m, clientRawRequest, request, clientKeyId, callOpts),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -450,7 +452,7 @@ export async function handleChat(request, clientRawRequest = null) {
   } catch {}
   const vaultActive = !!(settings.tokenSaver?.vault) && Array.isArray(body.tools) && body.tools.length > 0 && (wire === "openai" || wire === "claude");
   if (!vaultActive) {
-    return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, {
+    return handleSingleModelChat(body, modelStr, clientRawRequest, request, clientKeyId, {
       signal: request?.signal || null,
       preferredConnectionId,
       strictPreferredConnection,
@@ -459,9 +461,9 @@ export async function handleChat(request, clientRawRequest = null) {
   }
 
   try {
-    const conversationId = vaultConversationId(body.messages, hashKey(apiKey));
+    const conversationId = vaultConversationId(body.messages, hashKey(clientKeyId || "local-no-key"));
     if (!conversationId) {
-      return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, {
+      return handleSingleModelChat(body, modelStr, clientRawRequest, request, clientKeyId, {
         signal: request?.signal || null,
         preferredConnectionId,
         strictPreferredConnection,
@@ -477,7 +479,7 @@ export async function handleChat(request, clientRawRequest = null) {
         modelStr,
         clientRawRequest,
         request,
-        apiKey,
+        clientKeyId,
         { signal: request?.signal || null, preferredConnectionId, strictPreferredConnection, allowNativeClaudeOAuth: true, vaultInternal: !!options?.vaultInternal, vaultStore: true, vaultConversationId: conversationId },
       ),
       body,
@@ -487,13 +489,14 @@ export async function handleChat(request, clientRawRequest = null) {
       log,
     });
   } catch {
-    return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, {
+    return handleSingleModelChat(body, modelStr, clientRawRequest, request, clientKeyId, {
       signal: request?.signal || null,
       preferredConnectionId,
       strictPreferredConnection,
       allowNativeClaudeOAuth: true,
     });
   }
+  });
 }
 
 /**
@@ -508,7 +511,7 @@ export async function handleChat(request, clientRawRequest = null) {
  * @param {boolean} [callOpts.vaultInternal] - Suppress duplicate client request-log rows
  * @param {boolean} [callOpts.allowNativeClaudeOAuth] - Permit direct request-scoped Claude subscription credentials
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, callOpts = null) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, clientKeyId = null, callOpts = null) {
   const modelInfo = await getModelInfo(modelStr);
   const autoDepth = callOpts?.autoDepth || 0;
   const comboDepth = callOpts?.comboDepth || 0;
@@ -543,7 +546,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
               cleanRawReq = { ...clientRawRequest, body: cleanBody };
             }
-            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, {
+            return handleSingleModelChat(b, m, cleanRawReq, request, clientKeyId, {
               ...(callOpts || {}),
               ...opts,
               signal: opts.signal || callOpts?.signal || null,
@@ -573,7 +576,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           try {
             const wire = detectFormatByEndpoint(new URL(request.url).pathname, body);
             const info = conversationInfo(body.messages);
-            const apiKeyHash = hashKey(apiKey);
+            const apiKeyHash = hashKey(clientKeyId || "local-no-key");
             feedbackCtx = {
               apiKeyHash,
               conversationFp: conversationFingerprint(info.firstUserText, apiKeyHash),
@@ -619,7 +622,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             ...(comboModels.includes(routerId) ? [routerId] : []),
           ],
           handleSingleModel: (b, m, opts) =>
-            handleSingleModelChat(b, m, clientRawRequest, request, apiKey, {
+            handleSingleModelChat(b, m, clientRawRequest, request, clientKeyId, {
               ...(opts || {}),
               comboDepth,
             }),
@@ -658,7 +661,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         body,
         models: comboModels,
         handleSingleModel: (b, m, opts) =>
-          handleSingleModelChat(b, m, clientRawRequest, request, apiKey, opts),
+          handleSingleModelChat(b, m, clientRawRequest, request, clientKeyId, opts),
         log,
         comboName: modelStr,
         comboStrategy,
@@ -694,6 +697,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     provider,
     allowNativeOAuth: callOpts?.allowNativeClaudeOAuth === true,
   });
+  const sessionKey = resolveAffinitySessionId({
+    headers: request?.headers,
+    body,
+    scope: provider,
+    clientKeyId,
+  });
+
 
   while (true) {
     const credentials = nativeClaudeCredentials || await getProviderCredentials(
@@ -703,6 +713,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       {
         preferredConnectionId: callOpts?.preferredConnectionId || null,
         strictPreferredConnection: callOpts?.strictPreferredConnection === true,
+        sessionKey,
+        clientKeyId,
       },
     );
 
@@ -762,7 +774,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       clientRawRequest,
       connectionId: credentials.connectionId,
       userAgent,
-      apiKey,
+      clientKeyId,
       ccFilterNaming: !!chatSettings.ccFilterNaming,
       rtkEnabled: bypassFilters ? false : !!chatSettings.rtkEnabled,
       // Store is scoped to the single-model vault loop, which is the only path

@@ -143,6 +143,38 @@ describe("DB SQLite layer — public API parity", () => {
     expect(connectionRaw).not.toContain("import-client-secret");
     expect(keyRaw).not.toBe("sk-imported-key");
     expect(await sqliteDb.validateApiKey("sk-imported-key")).toBe(true);
+    const imported = await sqliteDb.getApiKeyById("imported-key");
+    expect(imported).not.toHaveProperty("key");
+    expect(imported).toEqual(expect.objectContaining({
+      allowedModels: [],
+      allowedCombos: [],
+      expiresAt: null,
+      rateLimitPerMinute: null,
+      concurrencyLimit: null,
+      spendLimitUsd: null,
+    }));
+  });
+
+  it("exportDb and importDb preserve client key policies", async () => {
+    const created = await sqliteDb.createApiKey("Policy backup", "machine-policy");
+    await sqliteDb.updateApiKey(created.id, {
+      allowedModels: ["gpt-5"],
+      allowedCombos: ["fast"],
+      expiresAt: "2026-12-01T00:00:00.000Z",
+      rateLimitPerMinute: 10,
+      concurrencyLimit: 2,
+      spendLimitUsd: 25,
+    });
+    const backup = await sqliteDb.exportDb();
+    await sqliteDb.importDb(backup);
+    expect(await sqliteDb.getApiKeyById(created.id)).toEqual(expect.objectContaining({
+      allowedModels: ["gpt-5"],
+      allowedCombos: ["fast"],
+      expiresAt: "2026-12-01T00:00:00.000Z",
+      rateLimitPerMinute: 10,
+      concurrencyLimit: 2,
+      spendLimitUsd: 25,
+    }));
   });
 
   it("providerNodes: CRUD", async () => {

@@ -1,0 +1,291 @@
+{
+  "audit": "2026-08-22 full UI functional audit",
+  "surface": "S1-core",
+  "sanitization": {
+    "absoluteQaRoot": "<QA_ROOT>",
+    "credentials": "masked",
+    "cookies": "not captured",
+    "images": "omitted; text/DOM/network evidence was sufficient and avoids incidental UI state"
+  },
+  "sourceFindings": [
+    {
+      "severity": "P2",
+      "route": "/dashboard",
+      "control": "Menu > Theme",
+      "preconditions": "S1 isolated browser; settled dashboard; root initially dark",
+      "steps": [
+        "Open Menu",
+        "Activate Theme",
+        "Inspect persisted theme and document root"
+      ],
+      "expected": "Selecting light theme removes the dark class and visibly renders the light theme.",
+      "actual": "The persisted theme changes to light, but document.documentElement retains the dark class and the UI remains dark.",
+      "evidence": [
+        "theme-toggle-stuck-dark.json"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard|Theme|select-light|root-remains-dark"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/endpoint",
+      "control": "Create API Key / shared Modal and confirmation surfaces",
+      "preconditions": "S1 isolated browser; desktop; seeded keys",
+      "steps": [
+        "Focus Create Key",
+        "Open Create API Key",
+        "Inspect active element and dialog semantics",
+        "Tab/Escape",
+        "Repeat on one-time key, delete, shutdown, changelog and request-details drawer"
+      ],
+      "expected": "A modal has dialog semantics, moves focus inside, traps focus, closes on Escape where applicable, and returns focus to its opener.",
+      "actual": "The overlays have no role=dialog, leave focus on the opener/background, expose background links, and return focus to document body instead of the opener; Language and Change Log also ignore Escape.",
+      "evidence": [
+        "endpoint-create-modal-focus.json"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/endpoint|Create API Key|open-modal|no-dialog-focus-management"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/usage?tab=overview",
+      "control": "24h period / usage statistics",
+      "preconditions": "Today data loaded; synthetic GET /api/usage/stats?period=24h returns marked 500",
+      "steps": [
+        "Record Today total requests",
+        "Intercept 24h stats with X-QA-Synthetic-State: 1 and status 500",
+        "Select 24h"
+      ],
+      "expected": "The failed period is not presented as current data; show an error/retry or explicit stale state.",
+      "actual": "24h becomes visually selected, the prior Today value (23) remains unchanged, and no error, retry, or stale indicator appears.",
+      "evidence": [
+        "usage-stats-500-stale.json"
+      ],
+      "console": "none",
+      "network": "500 synthetic; X-QA-Synthetic-State: 1",
+      "fingerprint": "/dashboard/usage?tab=overview|24h|stats-500|stale-prior-period-without-error"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/usage?tab=details",
+      "control": "Request details results",
+      "preconditions": "synthetic GET /api/usage/request-details returns marked 500",
+      "steps": [
+        "Open Details",
+        "Trigger a refetch",
+        "Return 500 with X-QA-Synthetic-State: 1"
+      ],
+      "expected": "Show a distinguishable error with a usable retry path.",
+      "actual": "The table says No request details found, indistinguishable from a successful empty result, with no error or retry.",
+      "evidence": [
+        "usage-details-500-empty.json"
+      ],
+      "console": "none",
+      "network": "500 synthetic; X-QA-Synthetic-State: 1",
+      "fingerprint": "/dashboard/usage?tab=details|Request details results|request-500|error-rendered-as-empty"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/usage?tab=details",
+      "control": "Start Date / End Date",
+      "preconditions": "populated request details",
+      "steps": [
+        "Set Start Date to 2026-08-23T00:00",
+        "Set End Date to 2026-08-22T00:00",
+        "Wait for results"
+      ],
+      "expected": "Reject or clearly explain that Start Date must not be after End Date.",
+      "actual": "The inverted range is accepted and the table displays No request details found without validation or error text.",
+      "evidence": [
+        "usage-invalid-date-range.json"
+      ],
+      "console": "none",
+      "network": "request completed; no client validation",
+      "fingerprint": "/dashboard/usage?tab=details|Start Date / End Date|submit-inverted-range|empty-without-validation"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/usage?tab=logs",
+      "control": "Auto Refresh (3s)",
+      "preconditions": "direct logs URL; populated logs",
+      "steps": [
+        "Inspect accessibility tree and DOM",
+        "Try keyboard navigation",
+        "Activate with pointer twice"
+      ],
+      "expected": "The toggle is a keyboard-focusable switch/checkbox with a name and state.",
+      "actual": "It is a click-only DIV with tabIndex -1, no role, and no aria-checked. Pointer toggling works, but keyboard and assistive technology cannot operate or determine its state.",
+      "evidence": [
+        "usage-logs-autorefresh.json"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/usage?tab=logs|Auto Refresh (3s)|keyboard-navigation|click-only-div"
+    },
+    {
+      "severity": "P2",
+      "route": "/dashboard/usage?tab=overview",
+      "control": "Sortable usage table headers and expandable group rows",
+      "preconditions": "usage table rendered",
+      "steps": [
+        "Inspect sortable TH elements and grouped TR elements",
+        "Attempt to reach them with Tab"
+      ],
+      "expected": "Sort and expand actions are keyboard-focusable and expose sort/expanded state.",
+      "actual": "Clickable TH and TR elements have tabIndex -1 and no button role; sortable headers expose only visual arrows and grouped rows expose no keyboard action.",
+      "evidence": [],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/usage?tab=overview|Usage table headers|keyboard-navigation|clickable-table-elements-not-focusable"
+    },
+    {
+      "severity": "P3",
+      "route": "/dashboard",
+      "control": "Mobile navigation drawer",
+      "preconditions": "320x568 and 390x844",
+      "steps": [
+        "Open mobile menu",
+        "Press Escape",
+        "Inspect backdrop semantics",
+        "Close with Close menu"
+      ],
+      "expected": "Escape closes the drawer and the visual backdrop has an equivalent accessible dismissal action.",
+      "actual": "Escape leaves the drawer open; the full-screen backdrop is a click-only DIV with no role, name, or keyboard focus. The named Close menu button works.",
+      "evidence": [
+        "endpoint-create-modal-focus.json"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard|Mobile navigation drawer|press-escape|drawer-stays-open-and-backdrop-inaccessible"
+    },
+    {
+      "severity": "P3",
+      "route": "/dashboard/endpoint",
+      "control": "Key row icon actions and shared header/pagination icon actions",
+      "preconditions": "seeded endpoint page and usage pagination",
+      "steps": [
+        "Inspect accessibility names for reveal, copy, delete, switches, language, menu, previous and next"
+      ],
+      "expected": "Every icon-only action has a stable, purpose-specific accessible name including row context where needed.",
+      "actual": "Several controls expose only Material Symbols text such as visibility, content_copy, delete, grid_view, chevron_left/right, or no name at all; repeated key-row actions are indistinguishable by key.",
+      "evidence": [
+        "endpoint-create-modal-focus.json"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/endpoint|Key row icon actions|accessibility-inspection|missing-purposeful-accessible-names"
+    },
+    {
+      "severity": "P3",
+      "route": "/dashboard/usage",
+      "control": "Overview/Details, periods, pagination and request collapsibles",
+      "preconditions": "usage overview/details populated",
+      "steps": [
+        "Inspect current Overview/period/page",
+        "Open request collapsible",
+        "Inspect ARIA state"
+      ],
+      "expected": "Selected tab/period/page and expanded sections expose programmatic current/pressed/selected/expanded state.",
+      "actual": "Segmented buttons have no tab role or aria-pressed/selected, pagination has no aria-current, and collapsible section buttons have no aria-expanded/controls.",
+      "evidence": [
+        "usage-details-500-empty.json"
+      ],
+      "console": "none",
+      "network": "none",
+      "fingerprint": "/dashboard/usage|Usage selection controls|accessibility-inspection|state-not-programmatically-exposed"
+    }
+  ],
+  "artifacts": {
+    "endpoint-create-modal-focus.json": {
+      "route": "/dashboard/endpoint",
+      "control": "Create Key",
+      "dialogRoleCount": 0,
+      "focusAfterOpen": "Create Key opener remains focused",
+      "visibleBackgroundLinks": 17,
+      "escapeCloses": true,
+      "focusAfterEscape": "document body (focus not returned to opener)",
+      "redaction": "No key values, cookies, headers, personal paths, or personal data captured"
+    },
+    "theme-toggle-stuck-dark.json": {
+      "route": "/dashboard",
+      "control": "Menu > Theme",
+      "before": {
+        "rootHasDarkClass": true,
+        "storedTheme": null
+      },
+      "after": {
+        "rootHasDarkClass": true,
+        "storedTheme": "light"
+      },
+      "restore": {
+        "storedTheme": "dark"
+      },
+      "console": "none observed",
+      "redaction": "No credentials, cookies, headers, personal paths, or personal data captured"
+    },
+    "usage-details-500-empty.json": {
+      "route": "/dashboard/usage?tab=details",
+      "request": "GET /api/usage/request-details?...",
+      "syntheticResponse": {
+        "status": 500,
+        "header": "X-QA-Synthetic-State: 1",
+        "body": {
+          "error": "QA forced request details error"
+        }
+      },
+      "observedState": "No request details found",
+      "errorOrRetryVisible": false,
+      "console": "none observed",
+      "redaction": "No request bodies, credentials, cookies, headers beyond the synthetic marker, personal paths, or personal data captured"
+    },
+    "usage-invalid-date-range.json": {
+      "route": "/dashboard/usage?tab=details",
+      "synthetic": false,
+      "startDate": "2026-08-23T00:00",
+      "endDate": "2026-08-22T00:00",
+      "clearFiltersEnabled": true,
+      "observedState": "No request details found",
+      "validationOrErrorText": false,
+      "console": "none observed",
+      "redaction": "No request bodies, credentials, cookies, headers, personal paths, or personal data captured"
+    },
+    "usage-logs-autorefresh.json": {
+      "route": "/dashboard/usage?tab=logs",
+      "control": "Auto Refresh (3s)",
+      "element": "DIV",
+      "role": null,
+      "tabIndex": -1,
+      "ariaChecked": null,
+      "pointerToggleOff": true,
+      "pointerToggleRestoreOn": true,
+      "keyboardReachable": false,
+      "console": "none observed",
+      "redaction": "No log rows, credentials, cookies, headers, personal paths, or personal data captured"
+    },
+    "usage-stats-500-stale.json": {
+      "route": "/dashboard/usage?tab=overview",
+      "request": "GET /api/usage/stats?period=24h",
+      "syntheticResponse": {
+        "status": 500,
+        "header": "X-QA-Synthetic-State: 1",
+        "body": {
+          "error": "QA forced usage error"
+        }
+      },
+      "before": {
+        "period": "Today",
+        "totalRequests": 23
+      },
+      "after": {
+        "periodVisuallySelected": "24h",
+        "totalRequests": 23,
+        "errorOrRetryVisible": false,
+        "staleIndicatorVisible": false
+      },
+      "console": "none observed",
+      "redaction": "No credentials, cookies, authorization headers, request bodies, personal paths, or personal data captured"
+    }
+  }
+}
