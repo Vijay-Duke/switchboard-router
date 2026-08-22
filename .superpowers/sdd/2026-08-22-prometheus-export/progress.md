@@ -12,3 +12,7 @@ Review: Spec FAIL; Quality CHANGES_REQUIRED; Security BLOCKED.
 - Ruling: bounded collection outweighs the original no-migration preference; a narrow compact aggregate migration/materialization is allowed. Cost if wrong: added write-path/migration complexity for an opt-in exporter.
 - Fix round 1/5 started with original implementer; list in `review-findings-round1.md`.
 - Fix round 1 complete in `7a0727d7`: migration-backed bounded snapshots, corrupt-source rejection, current provider roster, and 1s single-flight cache. Focused verification: 13 files / 55 tests passed.
+- Scoped correctness and security re-reviews started over `ef1e11d0..73d476f1`.
+- Fix round 1 re-review: steady-state compact reads/single-flight passed. Still blocked by startup crash on corrupt history, loose numeric coercion, incomplete fixed-provider roster, and missing post-legacy-import aggregate rebuild.
+- Fix round 2/5 started with original implementer; list in `review-findings-round2.md`.
+- Fix round 2 complete in `30b49e1b`: corrupt-history startup recovery, strict numeric validation, fixed/custom/node provider roster, and post-legacy-import rebuild. Focused verification: 20 files / 93 tests passed.

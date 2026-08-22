@@ -147,3 +147,52 @@ npx vitest run \
 - Provider labels are limited to the current configured roster plus `unknown`; deleted, retired, and unconfigured provider history cannot create permanent series.
 - Concurrent scrapes share an in-flight collection and reuse a completed process-local snapshot for at most one second. Failed collections are not cached.
 - `prometheusRoutingRequests` retains one support row per retained request so deletion can update the fixed totals; it follows routing retention and is never read by a scrape.
+
+## Review fix round 2
+
+Commit: `30b49e1b` `fix(metrics): harden aggregate recovery`
+
+### Red evidence
+
+- A real version-8 database with malformed `usageDaily` JSON caused migration 009 to throw before the route could respond.
+- Strict numeric tests initially failed because the shared validator did not exist; repository behavior accepted whitespace, hex-like text, fractional integer fields, negative values, and arbitrary SQLite text through `Number(...)`.
+- Provider-roster tests collapsed fixed Anthropic and a current provider-node ID to `unknown`; deleting the last Anthropic connection incorrectly retired its built-in lifetime counter, while deleting a custom provider node failed to retire its counter.
+- The fresh legacy JSON import regression returned an empty compact usage snapshot because migration 009 ran before the import.
+- Focused client-key usage tests exposed compatibility with isolated version-8 fixtures that do not yet contain the metrics tables.
+
+### Green evidence
+
+```text
+npx vitest run \
+  unit/prometheus-numeric.test.js \
+  unit/prometheus-corrupt-startup-route.test.js \
+  unit/prometheus-materialization.test.js \
+  unit/prometheus-repositories.test.js \
+  unit/prometheus-metrics.test.js \
+  unit/prometheus-metrics-route.test.js \
+  unit/mgmt-api-auth.test.js \
+  unit/mgmt-api-masking.test.js \
+  unit/db-migration-chain.test.js \
+  unit/client-key-migration.test.js \
+  unit/routing-repo-atomic.test.js \
+  unit/routing-stats.test.js \
+  unit/routing-stats-route.test.js \
+  unit/connections-secret-hardening.test.js \
+  unit/connection-secret-redaction.test.js \
+  unit/compatible-provider-connections.test.js \
+  unit/usage-repo-hardening.test.js \
+  unit/usage-request-id.test.js \
+  unit/client-key-usage.test.js \
+  unit/cached-token-usage.test.js
+
+20 files passed; 93 tests passed.
+```
+
+### Fixes and remaining operational semantics
+
+- Migration 009 now records `prometheusMetricState.available=0` and completes startup when historical materialization is corrupt. A real version-8 startup test proves the authenticated enabled route returns sanitized HTTP 503 without partial text or exception details.
+- Numeric validation accepts only JavaScript finite non-negative numbers. Request/token/routing/cache integer fields must also be integers; strings, whitespace, hex-like text, fractions, infinities, NaN, and negatives are rejected.
+- The bounded provider roster is the union of fixed registry IDs, current custom connection IDs, current provider-node IDs, and `unknown`. Built-ins survive connection deletion; deleted custom IDs roll into `unknown`.
+- Successful fresh legacy JSON import rebuilds the compact aggregates in the same transaction, so the first scrape includes imported lifetime usage.
+- Version-8 write paths remain compatible when the metrics tables do not exist. Version-9 startup creates them before enabling collection.
+- Metrics remain unavailable after a corrupt backfill until the underlying historical data is repaired and the bounded materialization is rebuilt; core database and gateway operation remain available.
