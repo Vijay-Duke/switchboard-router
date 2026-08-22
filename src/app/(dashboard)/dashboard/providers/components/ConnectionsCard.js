@@ -434,7 +434,7 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
               )}
             </div>
             <p className="max-w-xl text-xs text-text-muted">
-              Process-local least-inflight scheduling with fresh quota signals. Sessions rebind on failure, cooldown, or a best-effort connection cap. Round Robin stays saved but inactive while this is on.
+              Process-local least-inflight scheduling with fresh quota signals. Sessions stay on one account and rebind on failure, cooldown, or a best-effort connection cap. Caps use observed in-flight counts, so simultaneous selections can briefly exceed them. Round Robin stays saved but inactive while this is on.
             </p>
             <div
               className="flex flex-wrap items-center gap-2"

@@ -25,8 +25,8 @@ function inFlight(candidate, getInFlightCount) {
 
 function quota(candidate, now, freshMs) {
   const snapshot = candidate.lastQuota;
-  const at = Number(snapshot?.at);
-  const remainingPercentage = Number(snapshot?.remainingPercentage);
+  const at = snapshot?.at;
+  const remainingPercentage = snapshot?.remainingPercentage;
   if (!Number.isFinite(at) || now - at > freshMs || !Number.isFinite(remainingPercentage)) {
     return { tier: 1, remaining: -1, resetAt: Infinity };
   }
@@ -47,8 +47,8 @@ function rank(candidate, getInFlightCount, now, freshMs) {
     candidate,
     inFlight: inFlight(candidate, getInFlightCount),
     quota: quota(candidate, now, freshMs),
-    priority: Number.isFinite(Number(candidate.priority))
-      ? Number(candidate.priority)
+    priority: Number.isFinite(candidate.priority)
+      ? candidate.priority
       : Number.MAX_SAFE_INTEGER,
     id: String(candidate.id),
   };
@@ -97,12 +97,14 @@ export function selectScheduledConnection(options) {
 
   const key = affinityKey(providerId, sessionKey);
   const prior = key ? state.affinities.get(key) : null;
-  const eligible = candidates
-    .map((candidate) => rank(candidate, getInFlightCount, now, quotaFreshMs))
-    .filter(({ candidate, inFlight: count }) => {
-      const cap = Number(candidate.maxConcurrentRequests);
-      return !Number.isInteger(cap) || cap <= 0 || count < cap;
-    });
+  const eligible = [];
+  for (const candidate of candidates) {
+    const ranked = rank(candidate, getInFlightCount, now, quotaFreshMs);
+    const cap = candidate.maxConcurrentRequests;
+    if (!Number.isInteger(cap) || cap <= 0 || ranked.inFlight < cap) {
+      eligible.push(ranked);
+    }
+  }
 
   if (eligible.length === 0) {
     return {

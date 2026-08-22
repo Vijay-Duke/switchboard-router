@@ -123,6 +123,43 @@ describe("selectScheduledConnection", () => {
     });
   });
 
+  it("does not treat a string cap as a positive integer cap", () => {
+    const result = selectScheduledConnection({
+      providerId: "p",
+      candidates: [connection("legacy", { maxConcurrentRequests: "1" })],
+      getInFlightCount: counts({ legacy: 1 }),
+      now: NOW,
+    });
+    expect(result).toMatchObject({ connection: { id: "legacy" }, capacityLimited: false });
+  });
+
+  it("treats non-numeric priority and quota values as unknown", () => {
+    const result = selectScheduledConnection({
+      providerId: "p",
+      candidates: [
+        connection("missing", {
+          priority: null,
+          lastQuota: { at: NOW, remainingPercentage: null },
+        }),
+        connection("finite", {
+          priority: 1,
+          lastQuota: { at: NOW, remainingPercentage: 0 },
+        }),
+      ],
+      getInFlightCount: counts({}),
+      now: NOW,
+    });
+    expect(result).toMatchObject({ connection: { id: "missing" }, reason: "quota-headroom" });
+
+    const priorities = selectScheduledConnection({
+      providerId: "p",
+      candidates: [connection("unset", { priority: null }), connection("set", { priority: 2 })],
+      getInFlightCount: counts({}),
+      now: NOW,
+    });
+    expect(priorities).toMatchObject({ connection: { id: "set" }, reason: "priority" });
+  });
+
   it("keeps a session on its healthy account even when another account becomes less busy", () => {
     const first = selectScheduledConnection({
       providerId: "p",
