@@ -37,7 +37,7 @@ export function useModelCaps() {
     // Fallback: compute caps for dynamic models (passthrough/custom/suggested) not in static list
     const provider = key.includes("/") ? key.slice(0, key.indexOf("/")) : null;
     const c = getCapabilitiesForModel(provider, bare);
-    return { vision: c.vision, search: c.search, reasoning: c.reasoning };
+    return { vision: c.vision, search: c.search, reasoning: c.reasoning, pdf: c.pdf, audioInput: c.audioInput, videoInput: c.videoInput };
   };
 
   return { getCaps };

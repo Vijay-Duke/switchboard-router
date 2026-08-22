@@ -25,7 +25,7 @@ export async function GET() {
           ...m,
           fullModel,
           alias: modelAliases[fullModel] || m.model,
-          caps: { vision: c.vision, search: c.search, reasoning: c.reasoning },
+          caps: { vision: c.vision, search: c.search, reasoning: c.reasoning, pdf: c.pdf, audioInput: c.audioInput, videoInput: c.videoInput },
         };
       });
 
