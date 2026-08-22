@@ -501,7 +501,10 @@ describe("CLI catalog routes write native client schemas", () => {
       theme: "dark",
       defaultProvider: "switchboard",
       defaultModel: payload.defaultModel,
-      enabledModels: payload.models.map((model) => `switchboard/${model}`),
+      enabledModels: [
+        "zai/glm-4.5-air",
+        ...payload.models.map((model) => `switchboard/${model}`),
+      ],
     });
     const status = await (await GET()).json();
     expect(status.settings.defaultModel).toBe(payload.defaultModel);
@@ -576,7 +579,7 @@ describe("CLI catalog routes write native client schemas", () => {
     const settings = JSON.parse(await fs.readFile(path.join(piDir, "settings.json"), "utf8"));
     const catalog = config.providers.switchboard.models.map((entry) => entry.id);
     expect([first, second]).toContainEqual(catalog);
-    expect(settings.enabledModels).toEqual(catalog.map((model) => `switchboard/${model}`));
+    expect(settings.enabledModels).toBeUndefined();
     expect(settings.defaultModel).toBe(catalog[0]);
     expect((await DELETE()).status).toBe(200);
   });
