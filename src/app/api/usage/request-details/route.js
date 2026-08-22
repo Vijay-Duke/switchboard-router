@@ -5,13 +5,19 @@ import { getRequestDetails } from "@/lib/db/index.js";
 /**
  * GET /api/usage/request-details
  * Query parameters: page, pageSize (1-100), provider, model, connectionId, status, startDate, endDate
+ * @param {Request} request - Incoming request with pagination/filter query params.
+ * @returns {Promise<Response>} Paginated request details with conversation payloads redacted.
  */
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
     
-    const page = parseInt(searchParams.get("page")) || 1;
-    const pageSize = parseInt(searchParams.get("pageSize")) || 20;
+    // NaN-safe parsing: absent/non-numeric params fall back to defaults
+    // instead of poisoning downstream arithmetic with NaN.
+    const pageRaw = parseInt(searchParams.get("page") ?? "", 10);
+    const page = Number.isNaN(pageRaw) ? 1 : pageRaw;
+    const pageSizeRaw = parseInt(searchParams.get("pageSize") ?? "", 10);
+    const pageSize = Number.isNaN(pageSizeRaw) ? 20 : pageSizeRaw;
     const provider = searchParams.get("provider");
     const model = searchParams.get("model");
     const connectionId = searchParams.get("connectionId");
@@ -46,8 +52,23 @@ export async function GET(request) {
     if (endDate) filter.endDate = endDate;
     
     const result = await getRequestDetails(filter);
-    
-    return NextResponse.json(result);
+
+    // Redact conversation payloads: the stored details include full request
+    // bodies (user prompts, tool calls) and provider responses. Returning them
+    // wholesale lets any dashboard-authenticated user (or, if requireLogin is
+    // disabled, anyone) read every user's conversation history. Keep the
+    // metadata (model, tokens, latency, status) but drop message content.
+    const redactedDetails = (result.details || []).map((d) => {
+      const redacted = { ...d };
+      for (const key of ["request", "providerRequest", "providerResponse", "response"]) {
+        if (redacted[key] !== undefined) {
+          redacted[key] = { redacted: true };
+        }
+      }
+      return redacted;
+    });
+
+    return NextResponse.json({ ...result, details: redactedDetails });
   } catch (error) {
     console.error("[API] Failed to get request details:", error);
     return NextResponse.json(
