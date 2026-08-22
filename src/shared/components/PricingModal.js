@@ -10,7 +10,7 @@ export default function PricingModal({ isOpen, onClose, onSave }) {
   const [pricingData, setPricingData] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const { ref: dialogRef } = useDialog({ isOpen, onClose });
+  const dialogRef = useDialog({ isOpen, onClose });
 
   useEffect(() => {
     if (isOpen) {
