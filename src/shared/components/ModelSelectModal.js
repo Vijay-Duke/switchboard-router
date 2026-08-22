@@ -367,7 +367,7 @@ export default function ModelSelectModal({
     if (!searchQuery.trim()) return availableCombos;
     const query = searchQuery.toLowerCase();
     return availableCombos.filter((combo) => combo.name.toLowerCase().includes(query));
-  }, [combos, searchQuery, kindFilter, excludeCombo]);
+  }, [combos, searchQuery, kindFilter, excludeCombo, capFilter]);
 
   // Sort models alphabetically, with added models floated to top
   const sortModels = useCallback((models) => {
@@ -404,7 +404,7 @@ export default function ModelSelectModal({
     });
 
     return filtered;
-  }, [groupedModels, searchQuery, sortModels, capFilter]);
+  }, [groupedModels, searchQuery, sortModels, capFilter, getCaps]);
 
   const handleSelect = (model) => {
     const value = model?.value || model?.name || model;
