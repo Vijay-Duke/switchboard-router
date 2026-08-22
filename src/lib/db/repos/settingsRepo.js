@@ -28,6 +28,10 @@ const DEFAULT_SETTINGS = {
   cavemanLevel: "full",
   ponytailEnabled: false,
   ponytailLevel: "full",
+  pxpipeEnabled: false,
+  pxpipeAutoInstall: true,
+  pxpipeMinChars: 25000,
+  pxpipeTimeoutMs: 15000,
   // C1: non-loopback /v1 requires an API key by default (LAN-open was the prior insecure default)
   requireApiKey: true,
   // Hosts the user has explicitly trusted past the SSRF guard (e.g. an internal

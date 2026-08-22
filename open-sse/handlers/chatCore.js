@@ -29,6 +29,7 @@ import { compressMessages, formatRtkLog } from "../rtk/index.js";
 import { storeToVault, clampVaultThresholdKB } from "../rtk/vault.js";
 import { recordVaultStore } from "../rtk/vaultStats.js";
 import { compressWithHeadroom, formatHeadroomLog, formatHeadroomSizeLog, isHeadroomPhantomSavings } from "../rtk/headroom.js";
+import { compressWithPxpipe, formatPxpipeLog } from "../rtk/pxpipe.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { stripUnsupportedModalities } from "../translator/concerns/modality.js";
 import { prefetchRemoteImages } from "../translator/concerns/prefetch.js";
@@ -51,7 +52,7 @@ const URL_CONTROLLED_STREAM_FORMATS = new Set([
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  * @param {AbortSignal} [options.abortSignal] - Optional external abort (e.g. router timeout)
  */
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, onUpstreamEmptyExhausted, clientRawRequest, connectionId, userAgent, clientKeyId, ccFilterNaming, rtkEnabled, vaultEnabled, vaultThresholdKB, vaultTtlHours, vaultConversationId, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, sourceFormatOverride, providerThinking, bypassNativePassthrough, vaultInternal, abortSignal }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, onUpstreamEmptyExhausted, clientRawRequest, connectionId, userAgent, clientKeyId, ccFilterNaming, rtkEnabled, vaultEnabled, vaultThresholdKB, vaultTtlHours, vaultConversationId, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, bypassNativePassthrough, vaultInternal, abortSignal }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
 
@@ -256,6 +257,25 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     log?.debug?.("PONYTAIL", `${ponytailLevel} | ${finalFormat}`);
   }
 
+  // PXPIPE: render bulky Claude-format context as images; fail-open on any error.
+  let pxpipeSummary = null;
+  if (pxpipeEnabled) {
+    const pxpipeResult = await compressWithPxpipe(translatedBody, {
+      enabled: true,
+      format: finalFormat,
+      model: upstreamModel,
+      minChars: pxpipeMinChars,
+      timeoutMs: pxpipeTimeoutMs,
+      transform: pxpipeTransform,
+    });
+    pxpipeSummary = pxpipeResult.summary;
+    const pxpipeLine = formatPxpipeLog(pxpipeSummary);
+    if (pxpipeLine) log?.info?.("PXPIPE", pxpipeLine);
+    else log?.debug?.("PXPIPE", `skipped: ${pxpipeSummary?.reason || "unknown"}`);
+    if (pxpipeResult.body) translatedBody = pxpipeResult.body;
+    try { if (onPxpipeEvent) onPxpipeEvent({ provider, model, ...pxpipeSummary }); } catch { /* stats must never break the request */ }
+  }
+
   // Google transport APIs select streaming through their URL, not request JSON.
   // Keep the separate `stream` argument for the executor, while removing a
   // generic OpenAI-style field that Gemini-family schemas reject as unknown.
@@ -358,7 +378,6 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
   } catch (error) {
     trackPendingRequest(model, provider, connectionId, false, true);
-    if (!vaultInternal) appendRequestLog({ model, provider, connectionId, status: `FAILED ${error.name === "AbortError" ? 499 : HTTP_STATUS.BAD_GATEWAY}` }).catch(() => { });
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId,
       latency: { ttft: 0, total: Date.now() - requestStartTime },
@@ -366,7 +385,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       request: extractRequestConfig(body, stream),
       providerRequest: translatedBody || null,
       response: { error: error.message || String(error), status: error.name === "AbortError" ? 499 : 502, thinking: null },
-      status: "error"
+      status: "error",
+      pxpipe: pxpipeSummary || undefined
     })).catch(() => { });
 
     if (error.name === "AbortError") {
@@ -412,7 +432,6 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (!providerResponse.ok) {
     trackPendingRequest(model, provider, connectionId, false, true);
     const { statusCode, message, resetsAtMs } = await parseUpstreamError(providerResponse, executor);
-    if (!vaultInternal) appendRequestLog({ model, provider, connectionId, status: `FAILED ${statusCode}` }).catch(() => { });
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId,
       latency: { ttft: 0, total: Date.now() - requestStartTime },
@@ -420,7 +439,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       request: extractRequestConfig(body, stream),
       providerRequest: finalBody || translatedBody || null,
       response: { error: message, status: statusCode, thinking: null },
-      status: "error"
+      status: "error",
+      pxpipe: pxpipeSummary || undefined
     })).catch(() => { });
 
     const errMsg = formatProviderError(new Error(message), provider, model, statusCode);
@@ -463,8 +483,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   // One identity per completed request. Handlers pass it to saveUsageStats so a
   // replayed save is idempotent instead of double-counting usage.
-  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, clientRawRequest, onRequestSuccess, requestId };
+  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, clientRawRequest, onRequestSuccess, requestId, pxpipe: pxpipeSummary || undefined };
   const appendLog = (extra) => {
     if (!vaultInternal) appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });
   };

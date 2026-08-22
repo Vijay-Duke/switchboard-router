@@ -14,6 +14,8 @@ import { getProviderQuotaHeadroom } from "@/lib/db/repos/connectionsRepo.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
+import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader";
+import { appendPxpipeEvent } from "@/lib/pxpipe/events";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { handleComboChat, handleFusionChat } from "open-sse/services/combo.js";
 import { handleAutoChat, invalidateCachedRoutes } from "open-sse/routing/handleAutoChat.js";
@@ -796,6 +798,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       cavemanLevel: chatSettings.cavemanLevel || "full",
       ponytailEnabled: bypassFilters ? false : !!chatSettings.ponytailEnabled,
       ponytailLevel: chatSettings.ponytailLevel || "full",
+      pxpipeEnabled: bypassFilters ? false : !!chatSettings.pxpipeEnabled,
+      pxpipeMinChars: chatSettings.pxpipeMinChars,
+      pxpipeTimeoutMs: chatSettings.pxpipeTimeoutMs,
+      pxpipeTransform: (bypassFilters ? false : !!chatSettings.pxpipeEnabled)
+        ? await getPxpipeTransform()
+        : null,
+      onPxpipeEvent: appendPxpipeEvent,
       providerThinking,
       sourceFormatOverride,
       bypassNativePassthrough: !!callOpts?.bypassNativePassthrough,
