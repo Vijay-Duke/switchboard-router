@@ -24,7 +24,10 @@ function colorLine(line) {
 export default function ConsoleLogClient() {
   const [logs, setLogs] = useState([]);
   const [connected, setConnected] = useState(false);
+  const [streamError, setStreamError] = useState(false);
+  const [retry, setRetry] = useState(0);
   const logRef = useRef(null);
+  const esRef = useRef(null);
 
   const handleClear = async () => {
     try {
@@ -35,10 +38,16 @@ export default function ConsoleLogClient() {
     }
   };
 
+  // QA-011: surface a visible disconnected state with a reconnect affordance.
+  // The effect re-runs when `retry` changes so Reconnect can force a new stream.
   useEffect(() => {
     const es = new EventSource("/api/translator/console-logs/stream");
+    esRef.current = es;
 
-    es.onopen = () => setConnected(true);
+    es.onopen = () => {
+      setConnected(true);
+      setStreamError(false);
+    };
 
     es.onmessage = (e) => {
       const msg = JSON.parse(e.data);
@@ -59,10 +68,23 @@ export default function ConsoleLogClient() {
       }
     };
 
-    es.onerror = () => setConnected(false);
+    es.onerror = () => {
+      setConnected(false);
+      setStreamError(true);
+    };
 
-    return () => es.close();
-  }, []);
+    return () => {
+      es.close();
+      esRef.current = null;
+    };
+  }, [retry]);
+
+  const handleReconnect = () => {
+    esRef.current?.close();
+    setStreamError(false);
+    setConnected(false);
+    setRetry((n) => n + 1);
+  };
 
   // Auto-scroll to bottom on new logs
   useEffect(() => {
@@ -73,17 +95,44 @@ export default function ConsoleLogClient() {
   return (
     <div className="">
       <Card>
-        <div className="flex items-center justify-end px-4 pt-3 pb-2">
+        <div className="flex items-center justify-end gap-2 px-4 pt-3 pb-2">
+          <span
+            className={`text-xs font-mono mr-auto ${connected ? "text-green-500" : "text-text-muted"}`}
+            role="status"
+            aria-live="polite"
+          >
+            {connected ? "connected" : streamError ? "disconnected" : "connecting"}
+          </span>
+          {streamError && (
+            <Button size="sm" variant="outline" icon="refresh" onClick={handleReconnect}>
+              Reconnect
+            </Button>
+          )}
           <Button size="sm" variant="outline" icon="delete" onClick={handleClear}>
             Clear
           </Button>
         </div>
+        {streamError && (
+          <div
+            role="alert"
+            className="mx-4 mb-2 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-500"
+          >
+            <span className="material-symbols-outlined text-[16px] leading-none mt-0.5">error</span>
+            <span>
+              Console stream disconnected — the log view is paused and new logs are not being
+              received.
+            </span>
+          </div>
+        )}
         <div
           ref={logRef}
           className="bg-black rounded-b-lg p-4 text-xs font-mono h-[calc(100vh-220px)] overflow-y-auto"
+          aria-label="Console log stream"
         >
           {logs.length === 0 ? (
-            <span className="text-text-muted">No console logs yet.</span>
+            <span className="text-text-muted">
+              {streamError ? "No console logs received yet (disconnected)." : "No console logs yet."}
+            </span>
           ) : (
             <div className="space-y-0.5">
               {logs.map((line, i) => (
