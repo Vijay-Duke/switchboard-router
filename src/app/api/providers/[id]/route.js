@@ -89,6 +89,16 @@ export async function PUT(request, { params }) {
     if (!existing) {
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
     }
+    if (Object.prototype.hasOwnProperty.call(body, "maxConcurrentRequests")) {
+      const cap = body.maxConcurrentRequests;
+      if (cap !== null && (!Number.isInteger(cap) || cap < 1 || cap > 1_024)) {
+        return NextResponse.json(
+          { error: "maxConcurrentRequests must be null or an integer from 1 to 1024" },
+          { status: 400 },
+        );
+      }
+    }
+
 
     const proxyConfig = normalizeProxyConfig(body);
     if (proxyConfig.error) {
@@ -110,6 +120,9 @@ export async function PUT(request, { params }) {
     if (testStatus !== undefined) updateData.testStatus = testStatus;
     if (lastError !== undefined) updateData.lastError = lastError;
     if (lastErrorAt !== undefined) updateData.lastErrorAt = lastErrorAt;
+    if (Object.prototype.hasOwnProperty.call(body, "maxConcurrentRequests")) {
+      updateData.maxConcurrentRequests = body.maxConcurrentRequests;
+    }
 
     if (
       shouldMergeProviderSpecificData(

@@ -18,6 +18,7 @@ import { getFetchCache } from "@/lib/db/repos/fetchCacheRepo.js";
 import {
   buildSearchCacheKey, cacheLiveResponse, fetchCacheHitResponse, getFetchCacheTtlMs,
 } from "../utils/fetchCache.js";
+import { withConnectionInFlight } from "../services/connectionInFlight.js";
 
 /**
  * Handle web search request for the SSE/Next.js server.
@@ -176,7 +177,9 @@ async function handleSingleProviderSearch(body, providerInput, request, clientKe
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(providerId, excludeConnectionIds);
+    const credentials = await getProviderCredentials(providerId, excludeConnectionIds, null, {
+      clientKeyId,
+    });
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
@@ -195,41 +198,52 @@ async function handleSingleProviderSearch(body, providerInput, request, clientKe
 
     log.info("AUTH", `\x1b[32mUsing ${providerId} account: ${credentials.connectionName}\x1b[0m`);
 
-    const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
 
-    const result = await handleSearchCore({
-      clientKeyId,
-      body: coreBody,
-      provider: resolvedProvider,
-      providerConfig,
-      credentials: refreshedCredentials,
-      log,
-      abortSignal: callOpts?.signal || request?.signal || null,
-      onCredentialsRefreshed: async (newCreds) => {
-        await updateProviderCredentials(credentials.connectionId, {
-          accessToken: newCreds.accessToken,
-          refreshToken: newCreds.refreshToken,
-          providerSpecificData: newCreds.providerSpecificData,
-          testStatus: "active"
-        });
-      },
-      onRequestSuccess: async () => {
-        await clearAccountError(credentials.connectionId, credentials);
+    const attempt = await withConnectionInFlight({
+      provider: providerId,
+      model: providerId,
+      connectionId: credentials.connectionId,
+    }, async () => {
+      const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
+      const result = await handleSearchCore({
+        clientKeyId,
+        body: coreBody,
+        provider: resolvedProvider,
+        providerConfig,
+        credentials: refreshedCredentials,
+        log,
+        abortSignal: callOpts?.signal || request?.signal || null,
+        onCredentialsRefreshed: async (newCreds) => {
+          await updateProviderCredentials(credentials.connectionId, {
+            accessToken: newCreds.accessToken,
+            refreshToken: newCreds.refreshToken,
+            providerSpecificData: newCreds.providerSpecificData,
+            testStatus: "active"
+          });
+        },
+        onRequestSuccess: async () => {
+          await clearAccountError(credentials.connectionId, credentials);
+        }
+      });
+
+      if (result.success) return result.response;
+      const { shouldFallback } = await markAccountUnavailable(
+        credentials.connectionId,
+        result.status,
+        result.error,
+        providerId,
+      );
+      if (shouldFallback) {
+        return { retry: true, error: result.error, status: result.status };
       }
+      return { finalResponse: result.response };
     });
 
-    if (result.success) return result.response;
-
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, providerId);
-
-    if (shouldFallback) {
-      log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);
-      excludeConnectionIds.add(credentials.connectionId);
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
-    }
-
-    return result.response;
+    if (attempt instanceof Response) return attempt;
+    if (attempt.finalResponse) return attempt.finalResponse;
+    log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${attempt.status}), trying fallback`);
+    excludeConnectionIds.add(credentials.connectionId);
+    lastError = attempt.error;
+    lastStatus = attempt.status;
   }
 }

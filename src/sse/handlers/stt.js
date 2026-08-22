@@ -10,6 +10,7 @@ import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 import * as log from "../utils/logger.js";
 import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
+import { withConnectionInFlight } from "../services/connectionInFlight.js";
 
 // Providers requiring credentials for STT
 const CREDENTIALED_PROVIDERS = new Set(
@@ -67,6 +68,7 @@ export async function handleStt(request) {
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
       preferredConnectionId,
       strictPreferredConnection,
+      clientKeyId,
     });
 
     if (!credentials || credentials.allRateLimited) {
@@ -81,19 +83,45 @@ export async function handleStt(request) {
 
     log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
 
-    const result = await handleSttCore({ clientKeyId, provider, model, formData, credentials, sttConfig: AI_PROVIDERS[provider]?.sttConfig, abortSignal: request.signal });
+    const attempt = await withConnectionInFlight({
+      provider,
+      model,
+      connectionId: credentials.connectionId,
+    }, async () => {
+      const result = await handleSttCore({
+        clientKeyId,
+        provider,
+        model,
+        formData,
+        credentials,
+        sttConfig: AI_PROVIDERS[provider]?.sttConfig,
+        abortSignal: request.signal,
+      });
+      if (result.success) return result.response;
+      if (result.status === 499 || request.signal.aborted) {
+        return { finalResponse: result.response };
+      }
 
-    if (result.success) return result.response;
-    if (result.status === 499 || request.signal.aborted) return result.response;
+      const { shouldFallback } = await markAccountUnavailable(
+        credentials.connectionId,
+        result.status,
+        result.error,
+        provider,
+        model,
+      );
+      if (shouldFallback) {
+        return { retry: true, error: result.error, status: result.status };
+      }
+      return {
+        finalResponse: result.response || errorResponse(result.status, result.error),
+      };
+    });
 
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
-    if (shouldFallback) {
-      excludeConnectionIds.add(credentials.connectionId);
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
-    }
-    return result.response || errorResponse(result.status, result.error);
+    if (attempt instanceof Response) return attempt;
+    if (attempt.finalResponse) return attempt.finalResponse;
+    excludeConnectionIds.add(credentials.connectionId);
+    lastError = attempt.error;
+    lastStatus = attempt.status;
   }
   });
 }

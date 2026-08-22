@@ -5,12 +5,14 @@ const mocks = vi.hoisted(() => ({
   getSettings: vi.fn(),
   resolveConnectionProxyConfig: vi.fn(),
   updateProviderConnection: vi.fn(),
+  getConnectionInFlightCount: vi.fn(),
 }));
 
 vi.mock("@/lib/db/index.js", () => ({
   getProviderConnections: mocks.getProviderConnections,
   getSettings: mocks.getSettings,
   updateProviderConnection: mocks.updateProviderConnection,
+  getConnectionInFlightCount: mocks.getConnectionInFlightCount,
   validateApiKey: vi.fn(),
 }));
 
@@ -19,6 +21,7 @@ vi.mock("@/lib/network/connectionProxy", () => ({
 }));
 
 vi.mock("@/shared/constants/providers.js", () => ({
+  AI_PROVIDERS: {},
   FREE_PROVIDERS: {},
   resolveProviderId: (provider) => provider,
 }));
@@ -64,5 +67,50 @@ describe("preferred provider connection selection", () => {
     );
 
     expect(credentials.connectionId).toBe("first");
+  });
+
+  it("keeps fill-first behavior when balanced scheduling is disabled", async () => {
+    mocks.getSettings.mockResolvedValue({
+      fallbackStrategy: "fill-first",
+      providerStrategies: { test: { accountScheduler: { enabled: false } } },
+    });
+
+    const credentials = await getProviderCredentials("test", null, "model-1");
+
+    expect(credentials).toMatchObject({
+      connectionId: "first",
+      selectionReason: "fill-first",
+      affinityRebound: false,
+    });
+    expect(mocks.getConnectionInFlightCount).not.toHaveBeenCalled();
+    expect(mocks.updateProviderConnection).not.toHaveBeenCalled();
+  });
+
+  it("keeps sticky round-robin selection and persistence when scheduling is missing", async () => {
+    const current = {
+      ...CONNECTIONS[1],
+      lastUsedAt: "2026-08-22T11:59:00.000Z",
+      consecutiveUseCount: 1,
+    };
+    mocks.getProviderConnections.mockResolvedValue([
+      { ...CONNECTIONS[0], lastUsedAt: "2026-08-22T11:00:00.000Z" },
+      current,
+    ]);
+    mocks.getSettings.mockResolvedValue({
+      fallbackStrategy: "round-robin",
+      stickyRoundRobinLimit: 3,
+    });
+
+    const credentials = await getProviderCredentials("test", null, "model-1");
+
+    expect(credentials).toMatchObject({
+      connectionId: "second",
+      selectionReason: "round-robin",
+    });
+    expect(mocks.updateProviderConnection).toHaveBeenCalledWith("second", {
+      lastUsedAt: expect.any(String),
+      consecutiveUseCount: 2,
+    });
+    expect(mocks.getConnectionInFlightCount).not.toHaveBeenCalled();
   });
 });

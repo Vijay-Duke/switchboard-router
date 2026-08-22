@@ -19,6 +19,7 @@ import { getFetchCache } from "@/lib/db/repos/fetchCacheRepo.js";
 import {
   buildFetchCacheKey, cacheLiveResponse, fetchCacheHitResponse, getFetchCacheTtlMs,
 } from "../utils/fetchCache.js";
+import { withConnectionInFlight } from "../services/connectionInFlight.js";
 
 /**
  * Handle web fetch (URL extraction) request for the SSE/Next.js server.
@@ -186,7 +187,9 @@ async function handleSingleProviderFetch(body, providerInput, request, clientKey
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(providerId, excludeConnectionIds);
+    const credentials = await getProviderCredentials(providerId, excludeConnectionIds, null, {
+      clientKeyId,
+    });
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
@@ -205,47 +208,64 @@ async function handleSingleProviderFetch(body, providerInput, request, clientKey
 
     log.info("AUTH", `\x1b[32mUsing ${providerId} account: ${credentials.connectionName}\x1b[0m`);
 
-    const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
 
-    const result = await handleFetchCore({
-      clientKeyId,
-      url: targetUrl,
-      format,
-      maxCharacters,
-      provider: resolvedProvider.id,
-      providerConfig,
-      credentials: refreshedCredentials,
-      log,
-      abortSignal: callOpts?.signal || request?.signal || null,
-      onCredentialsRefreshed: async (newCreds) => {
-        await updateProviderCredentials(credentials.connectionId, {
-          accessToken: newCreds.accessToken,
-          refreshToken: newCreds.refreshToken,
-          providerSpecificData: newCreds.providerSpecificData,
-          testStatus: "active"
+    const attempt = await withConnectionInFlight({
+      provider: providerId,
+      model: providerId,
+      connectionId: credentials.connectionId,
+    }, async () => {
+      const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
+      const result = await handleFetchCore({
+        clientKeyId,
+        url: targetUrl,
+        format,
+        maxCharacters,
+        provider: resolvedProvider.id,
+        providerConfig,
+        credentials: refreshedCredentials,
+        log,
+        abortSignal: callOpts?.signal || request?.signal || null,
+        onCredentialsRefreshed: async (newCreds) => {
+          await updateProviderCredentials(credentials.connectionId, {
+            accessToken: newCreds.accessToken,
+            refreshToken: newCreds.refreshToken,
+            providerSpecificData: newCreds.providerSpecificData,
+            testStatus: "active"
+          });
+        },
+        onRequestSuccess: async () => {
+          await clearAccountError(credentials.connectionId, credentials);
+        }
+      });
+
+      if (result.success) {
+        return new Response(JSON.stringify(result.data), {
+          headers: { "Content-Type": "application/json" }
         });
-      },
-      onRequestSuccess: async () => {
-        await clearAccountError(credentials.connectionId, credentials);
       }
+
+      const { shouldFallback } = await markAccountUnavailable(
+        credentials.connectionId,
+        result.status,
+        result.error,
+        providerId,
+      );
+      if (shouldFallback) {
+        return { retry: true, error: result.error, status: result.status };
+      }
+      return {
+        finalResponse: errorResponse(
+          result.status || HTTP_STATUS.BAD_GATEWAY,
+          result.error || "Fetch failed",
+        ),
+      };
     });
 
-    if (result.success) {
-      return new Response(JSON.stringify(result.data), {
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, providerId);
-
-    if (shouldFallback) {
-      log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);
-      excludeConnectionIds.add(credentials.connectionId);
-      lastError = result.error;
-      lastStatus = result.status;
-      continue;
-    }
-
-    return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "Fetch failed");
+    if (attempt instanceof Response) return attempt;
+    if (attempt.finalResponse) return attempt.finalResponse;
+    log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${attempt.status}), trying fallback`);
+    excludeConnectionIds.add(credentials.connectionId);
+    lastError = attempt.error;
+    lastStatus = attempt.status;
   }
 }

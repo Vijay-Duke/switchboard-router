@@ -91,7 +91,7 @@ vi.mock("open-sse/handlers/chatCore.js", () => ({
 const { DefaultExecutor } = await import("../../open-sse/executors/default.js");
 const { handleChat } = await import("../../src/sse/handlers/chat.js");
 
-function claudeRequest(model) {
+function claudeRequest(model, sessionId = null) {
   return new Request("http://localhost/v1/messages", {
     method: "POST",
     headers: {
@@ -101,6 +101,7 @@ function claudeRequest(model) {
       "x-switchboard-claude-mode": "pass-through",
       "user-agent": "claude-code/2.1.129",
       "x-app": "cli",
+      ...(sessionId ? { "x-session-id": sessionId } : {}),
     },
     body: JSON.stringify({
       model,
@@ -205,7 +206,12 @@ describe("Claude handler credential isolation", () => {
       "openai",
       expect.any(Set),
       "gpt-5.6",
-      { preferredConnectionId: null, strictPreferredConnection: false },
+      {
+        preferredConnectionId: null,
+        strictPreferredConnection: false,
+        sessionKey: null,
+        clientKeyId: null,
+      },
     );
     expect(mocks.checkAndRefreshToken).toHaveBeenCalledWith("openai", storedCredentials);
     expect(receivedCredentials.apiKey).toBe("stored-openai-key");
@@ -220,5 +226,49 @@ describe("Claude handler credential isolation", () => {
     );
     expect(mocks.updateProviderCredentials).not.toHaveBeenCalled();
     expect(mocks.markAccountUnavailable).not.toHaveBeenCalled();
+  });
+
+  it("passes one client affinity key through every account retry", async () => {
+    mocks.authorizeClientKeyRequest.mockResolvedValue({
+      ok: true,
+      clientKeyId: "client-key-a",
+      lease: null,
+    });
+    mocks.getModelInfo.mockResolvedValue({ provider: "openai", model: "gpt-5.6" });
+    mocks.getProviderCredentials
+      .mockResolvedValueOnce({
+        apiKey: "first-key",
+        connectionId: "first",
+        connectionName: "First",
+        providerSpecificData: {},
+      })
+      .mockResolvedValueOnce({
+        apiKey: "second-key",
+        connectionId: "second",
+        connectionName: "Second",
+        providerSpecificData: {},
+      });
+    mocks.handleChatCore
+      .mockResolvedValueOnce({
+        success: false,
+        response: Response.json({ error: "limited" }, { status: 429 }),
+        status: 429,
+        error: "limited",
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        response: Response.json({ ok: true }),
+      });
+
+    const response = await handleChat(claudeRequest("claude-switchboard-gpt", "conversation-42"));
+
+    expect(response.status).toBe(200);
+    expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(2);
+    const firstOptions = mocks.getProviderCredentials.mock.calls[0][3];
+    const retryOptions = mocks.getProviderCredentials.mock.calls[1][3];
+    expect(firstOptions.sessionKey).not.toBe("conversation-42");
+    expect(firstOptions.clientKeyId).toBe("client-key-a");
+    expect(retryOptions.sessionKey).toBe(firstOptions.sessionKey);
+    expect(retryOptions.clientKeyId).toBe(firstOptions.clientKeyId);
   });
 });

@@ -40,4 +40,36 @@ describe("enabled request log files", () => {
     expect(bytes).not.toContain(rawKey.slice(-12));
     expect(bytes.match(/\[redacted\]/g)).toHaveLength(4);
   });
+
+  it("redacts every raw affinity identifier from headers and nested request bodies", async () => {
+    const rawSession = "raw-affinity-session-do-not-persist-9472";
+    const logger = await createRequestLogger("openai", "codex", "gpt-5");
+    const body = {
+      prompt_cache_key: rawSession,
+      session_id: rawSession,
+      conversation_id: rawSession,
+      metadata: {
+        user_id: rawSession,
+        sessionId: rawSession,
+      },
+      request: { sessionId: rawSession },
+    };
+    const headers = {
+      "x-session-id": rawSession,
+      "session-id": rawSession,
+      "x-client-request-id": rawSession,
+    };
+
+    logger.logClientRawRequest("/v1/responses", body, headers);
+    logger.logRawRequest(body, headers);
+    logger.logOpenAIRequest(body);
+    logger.logTargetRequest("https://example.test", headers, body);
+    logger.logError(new Error("failed"), body);
+
+    const bytes = fs.readdirSync(logger.sessionPath)
+      .map((name) => fs.readFileSync(path.join(logger.sessionPath, name), "utf8"))
+      .join("\\n");
+    expect(bytes).not.toContain(rawSession);
+    expect(bytes).toContain("[redacted]");
+  });
 });
