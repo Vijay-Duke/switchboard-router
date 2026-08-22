@@ -38,7 +38,7 @@ function applyAuth(headers, desc, credentials) {
 
 // Provider-specific header quirks kept as small hooks (not pure auth).
 const HEADER_HOOKS = {
-  kimiHeaders: (h) => Object.assign(h, buildKimiHeaders()),
+  kimiHeaders: (h, c) => Object.assign(h, buildKimiHeaders(c?.providerSpecificData?.deviceId)),
   clineHeaders: (h, c) => Object.assign(h, buildClineHeaders(c.apiKey || c.accessToken)),
   kilocodeOrg: (h, c) => { if (c.providerSpecificData?.orgId) h["X-Kilocode-OrganizationID"] = c.providerSpecificData.orgId; },
 };
@@ -228,7 +228,7 @@ export class DefaultExecutor extends BaseExecutor {
       kiro: () => this.refreshKiro(credentials.refreshToken, proxyOptions),
       cline: () => this.refreshCline(credentials.refreshToken, proxyOptions),
       clinepass: () => this.refreshCline(credentials.refreshToken, proxyOptions),
-      "kimi-coding": () => this.refreshKimiCoding(credentials.refreshToken, proxyOptions),
+      "kimi-coding": () => this.refreshKimiCoding(credentials, proxyOptions),
       kilocode: () => this.refreshKilocode(credentials.refreshToken, proxyOptions)
     };
 
@@ -323,8 +323,9 @@ export class DefaultExecutor extends BaseExecutor {
     return { accessToken, refreshToken: data?.refreshToken || refreshToken, expiresIn };
   }
 
-  async refreshKimiCoding(refreshToken, proxyOptions = null) {
-    const kimiHeaders = buildKimiHeaders();
+  async refreshKimiCoding(credentials, proxyOptions = null) {
+    const deviceId = credentials?.providerSpecificData?.deviceId;
+    const kimiHeaders = buildKimiHeaders(deviceId);
     const response = await proxyAwareFetch(PROVIDERS["kimi-coding"].refreshUrl, {
       method: "POST",
       headers: {
@@ -332,14 +333,20 @@ export class DefaultExecutor extends BaseExecutor {
         "Accept": "application/json",
         ...kimiHeaders
       },
-      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: PROVIDERS["kimi-coding"].clientId }),
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: credentials.refreshToken, client_id: PROVIDERS["kimi-coding"].clientId }),
       identity: PROVIDERS["kimi-coding"]?.identity,
       provider: "kimi-coding",
       format: PROVIDERS["kimi-coding"]?.format,
     }, proxyOptions);
     if (!response.ok) return null;
     const tokens = await response.json();
-    return { accessToken: tokens.access_token, refreshToken: tokens.refresh_token || refreshToken, expiresIn: tokens.expires_in };
+    // Carry the stable device id forward so persisted credentials keep it.
+    return {
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token || credentials.refreshToken,
+      expiresIn: tokens.expires_in,
+      ...(deviceId ? { providerSpecificData: { ...credentials.providerSpecificData, deviceId } } : {}),
+    };
   }
 
   async refreshKilocode(refreshToken, proxyOptions = null) {
