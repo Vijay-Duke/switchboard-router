@@ -270,3 +270,18 @@ Round-2 focused verification:
 - First focused pass: **11 files, 51 tests, 0 failures**.
 - Expanded regression pass: **17 files, 85 tests, 0 failures**.
 - No full suite, lint, React Doctor, build, scheduler, or Prometheus command was run.
+
+## Review fix round 3
+
+Commit `5cc3a91f fix: use unique client key lookups` completes the lookup and remaining consumer corrections:
+
+- Media embedding/generic/STT/TTS and combo examples no longer hydrate secrets from `/api/keys`; execution stays disabled until a raw secret is pasted.
+- Generated-key lookup uses the embedded random key-ID segment, persisted in indexed nullable `lookupId`. New v2 records embed the lookup ID; production selects one v2 candidate and performs one asynchronous scrypt. Legacy/v1 fallback uses cheap matching only and upgrades when a parseable lookup exists. Missing-lookup v2 records remain explicitly rotation-required.
+- Non-TTY secret prompting now rejects with a clear message and reads/echoes no input; TTY masking remains behaviorally covered.
+- Historical import spend, sanitizer proof state, 499 abort handling, forward-only rollback, and behavioral completion-to-next-spend ordering remain green.
+
+Round-3 focused verification:
+
+- Lookup/repository/usage/parity pass: **3 files, 35 tests, 0 failures**.
+- Migration/consumer/prompt/abort/handler/policy/security pass: **10 files, 42 tests, 0 failures**.
+- No full suite, lint, React Doctor, build, scheduler, or Prometheus command was run.
