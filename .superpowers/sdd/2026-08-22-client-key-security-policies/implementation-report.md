@@ -354,6 +354,9 @@ Tests:
 - Post-review focused recheck: `npm --prefix tests test -- unit/client-key-repo.test.js unit/client-key-migration.test.js unit/db-migration-chain.test.js unit/client-key-real-handler-security.test.js unit/client-key-real-abort.test.js unit/non-chat-abort.test.js`
   - Result: **6 files passed, 32 tests passed, 0 failures**.
 
+- Final committed focused verification: the expanded focused regression command above.
+  - Result: **16 files passed, 98 tests passed, 0 failures** after adding the explicit missing-lookup v2 unusable/rotation-required case.
+
 ### Concerns and scope
 
 - `better-sqlite3` is unavailable for Node 26.7.0 on this workstation; all database proofs ran against the repository’s real `node:sqlite` adapter, including active SQLite/WAL byte scans.
