@@ -1,4 +1,5 @@
 // @ts-check
+import { initTranslators } from "open-sse/translator/index.js";
 import { handleChat } from "@/sse/handlers/chat.js";
 import { corsPreflightResponse } from "@/shared/utils/cors.js";
 

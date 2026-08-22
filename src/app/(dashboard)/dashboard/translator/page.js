@@ -62,7 +62,7 @@ export default function TranslatorPage() {
       const res = await fetch(`/api/translator/load?file=${step.file}`);
       const data = await res.json();
       if (data.success) {
-        setContent(stepId, data.content);
+        setContents(stepId, data.content);
         if (stepId === 1) await detectMeta(data.content);
       } else {
         reportClientError(data.error || "File not found");
@@ -111,7 +111,7 @@ export default function TranslatorPage() {
       const data = await res.json();
       if (!data.success) { reportClientError(data.error); setStepError(1, data.error); return; }
       const str = JSON.stringify(data.result.body, null, 2);
-      setContent(3, str);
+      setContents(3, str);
       clearStepError(1);
       openNext(3);
     } catch (e) {
@@ -140,7 +140,7 @@ export default function TranslatorPage() {
       if (!data.success) { reportClientError(data.error); setStepError(3, data.error); return; }
       // Embed provider + model so Send works even without meta
       const step4Content = { ...data.result, provider: meta?.provider, model: meta?.model };
-      setContent(4, JSON.stringify(step4Content, null, 2));
+      setContents(4, JSON.stringify(step4Content, null, 2));
       clearStepError(3);
       openNext(4);
     } catch (e) {
@@ -197,7 +197,7 @@ export default function TranslatorPage() {
         full += decoder.decode(value, { stream: true });
       }
 
-      setContent(5, full);
+      setContents(5, full);
       openNext(5);
 
       // Save to logs/translator/5_res_provider.txt
@@ -225,7 +225,7 @@ export default function TranslatorPage() {
   const handleFormat = (id) => {
     try {
       const obj = JSON.parse(contents[id]);
-      setContent(id, JSON.stringify(obj, null, 2));
+      setContents(id, JSON.stringify(obj, null, 2));
       clearStepError(id);
     } catch (e) {
       setStepError(id, `Invalid JSON: ${e.message}`);
@@ -296,7 +296,7 @@ export default function TranslatorPage() {
                       defaultLanguage={step.lang === "text" ? "plaintext" : "json"}
                       value={content}
                       onChange={(v) => {
-                        setContent(step.id, v || "");
+                        setContents(step.id, v || "");
                         clearStepError(step.id);
                         if (step.id === 1) detectMeta(v || "");
                       }}
