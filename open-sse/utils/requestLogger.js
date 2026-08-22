@@ -62,13 +62,42 @@ async function createLogSession(sourceFormat, targetFormat, model) {
   }
 }
 
+const SESSION_IDENTIFIER_KEYS = new Set([
+  "prompt_cache_key",
+  "session_id",
+  "sessionid",
+  "conversation_id",
+  "conversationid",
+  "user_id",
+  "userid",
+  "request_id",
+  "requestid",
+  "x_session_id",
+  "x_amp_thread_id",
+  "x_client_request_id",
+]);
+
+export function redactSessionIdentifiers(value) {
+  if (Array.isArray(value)) return value.map(redactSessionIdentifiers);
+  if (!value || typeof value !== "object") return value;
+
+  const redacted = {};
+  for (const [key, nested] of Object.entries(value)) {
+    const normalized = key.toLowerCase().replaceAll("-", "_");
+    redacted[key] = SESSION_IDENTIFIER_KEYS.has(normalized)
+      ? "[redacted]"
+      : redactSessionIdentifiers(nested);
+  }
+  return redacted;
+}
+
 // Write JSON file
 function writeJsonFile(sessionPath, filename, data) {
   if (!fs || !sessionPath) return;
   
   try {
     const filePath = path.join(sessionPath, filename);
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    fs.writeFileSync(filePath, JSON.stringify(redactSessionIdentifiers(data), null, 2));
   } catch (err) {
     console.log(`[LOG] Failed to write ${filename}:`, err.message);
   }
