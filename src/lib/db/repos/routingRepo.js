@@ -21,42 +21,122 @@ function notifyWrite(comboName) {
   }
 }
 
+function isMetricTerminal(event) {
+  const meta = event.meta;
+  if (meta && typeof meta === "object") {
+    if (meta.skippedRouter === true) return false;
+    if (Object.prototype.hasOwnProperty.call(meta, "terminal") && meta.terminal !== true) return false;
+  }
+  return true;
+}
+
+function routingMetricSource(routerReason, fallbackUsed) {
+  if (String(routerReason).startsWith("exploration")) return "exploration";
+  if (routerReason === "bandit_policy") return "bandit_policy";
+  if (routerReason === "cached_route") return "cached_route";
+  if (routerReason === "judge_flag_escalation") return "judge_flag_escalation";
+  if (fallbackUsed) return "fallback_rescue";
+  return "router";
+}
+
+function adjustRoutingMetricTotal(db, state, direction) {
+  db.run(
+    `UPDATE prometheusRoutingTotals
+     SET requests = requests + ?,
+         errors = errors + ?,
+         fallbacks = fallbacks + ?
+     WHERE source = ?`,
+    [direction, direction * Number(state.isError), direction * Number(state.fallbackUsed), state.source],
+  );
+}
+
+function updateRoutingMetricForInsert(db, event, id, timestamp) {
+  if (!isMetricTerminal(event)) return;
+  const requestKey = String(event.requestId || id);
+  const previous = db.get(`SELECT * FROM prometheusRoutingRequests WHERE requestKey = ?`, [requestKey]);
+  if (previous) adjustRoutingMetricTotal(db, previous, -1);
+  const fallbackUsed = previous?.fallbackUsed === 1 || event.fallbackUsed ? 1 : 0;
+  const isError = previous?.isError === 1 || Number(event.workerStatus) >= 400 ? 1 : 0;
+  const state = {
+    requestKey,
+    comboName: event.comboName || null,
+    timestamp,
+    terminalId: id,
+    source: routingMetricSource(event.routerReason, fallbackUsed),
+    isError,
+    fallbackUsed,
+  };
+  db.run(
+    `INSERT INTO prometheusRoutingRequests(requestKey, comboName, timestamp, terminalId, source, isError, fallbackUsed)
+     VALUES(?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(requestKey) DO UPDATE SET
+       comboName = excluded.comboName,
+       timestamp = excluded.timestamp,
+       terminalId = excluded.terminalId,
+       source = excluded.source,
+       isError = excluded.isError,
+       fallbackUsed = excluded.fallbackUsed`,
+    [state.requestKey, state.comboName, state.timestamp, state.terminalId, state.source, state.isError, state.fallbackUsed],
+  );
+  adjustRoutingMetricTotal(db, state, 1);
+}
+
+function deleteRoutingMetricRequests(db, where, params) {
+  const rows = db.all(
+    `SELECT source, COUNT(*) AS requests, SUM(isError) AS errors, SUM(fallbackUsed) AS fallbacks
+     FROM prometheusRoutingRequests WHERE ${where} GROUP BY source`,
+    params,
+  ) || [];
+  for (const row of rows) {
+    db.run(
+      `UPDATE prometheusRoutingTotals
+       SET requests = requests - ?, errors = errors - ?, fallbacks = fallbacks - ?
+       WHERE source = ?`,
+      [Number(row.requests), Number(row.errors) || 0, Number(row.fallbacks) || 0, row.source],
+    );
+  }
+  db.run(`DELETE FROM prometheusRoutingRequests WHERE ${where}`, params);
+}
+
 /** @param {Record<string, any>} event */
 export async function insertRoutingEvent(event) {
   const db = await getAdapter();
-  db.run(
-    `INSERT INTO routing_events(
-      timestamp, comboName, sessionId, requestId, requestFingerprint, cluster,
-      routerModel, pickedWorker, alternates, routerReason, routerConfidence,
-      routerLatencyMs, workerStatus, workerLatencyMs, fallbackUsed, retries,
-      tokensIn, tokensOut, outcomeScore, objective, learningVersionId, meta
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [
-      event.timestamp || nowIso(),
-      event.comboName,
-      event.sessionId || null,
-      event.requestId || null,
-      event.requestFingerprint || null,
-      event.cluster || null,
-      event.routerModel || null,
-      event.pickedWorker || null,
-      event.alternates != null ? stringifyJson(event.alternates) : null,
-      event.routerReason || null,
-      event.routerConfidence || null,
-      event.routerLatencyMs ?? null,
-      event.workerStatus ?? null,
-      event.workerLatencyMs ?? null,
-      // Request-level: did this chat use any fallback/rescue (not "this worker retried")
-      event.fallbackUsed ? 1 : 0,
-      event.retries ?? 0,
-      event.tokensIn ?? null,
-      event.tokensOut ?? null,
-      event.outcomeScore ?? null,
-      event.objective || null,
-      event.learningVersionId || null,
-      event.meta != null ? stringifyJson(event.meta) : null,
-    ]
-  );
+  const timestamp = event.timestamp || nowIso();
+  db.transaction(() => {
+    const result = db.run(
+      `INSERT INTO routing_events(
+        timestamp, comboName, sessionId, requestId, requestFingerprint, cluster,
+        routerModel, pickedWorker, alternates, routerReason, routerConfidence,
+        routerLatencyMs, workerStatus, workerLatencyMs, fallbackUsed, retries,
+        tokensIn, tokensOut, outcomeScore, objective, learningVersionId, meta
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        timestamp,
+        event.comboName,
+        event.sessionId || null,
+        event.requestId || null,
+        event.requestFingerprint || null,
+        event.cluster || null,
+        event.routerModel || null,
+        event.pickedWorker || null,
+        event.alternates != null ? stringifyJson(event.alternates) : null,
+        event.routerReason || null,
+        event.routerConfidence || null,
+        event.routerLatencyMs ?? null,
+        event.workerStatus ?? null,
+        event.workerLatencyMs ?? null,
+        event.fallbackUsed ? 1 : 0,
+        event.retries ?? 0,
+        event.tokensIn ?? null,
+        event.tokensOut ?? null,
+        event.outcomeScore ?? null,
+        event.objective || null,
+        event.learningVersionId || null,
+        event.meta != null ? stringifyJson(event.meta) : null,
+      ],
+    );
+    updateRoutingMetricForInsert(db, event, result.lastInsertRowid, timestamp);
+  });
   // Do NOT notifyWrite here — event inserts are high-frequency and would
   // thrash the 15s stats/learning cache on every auto request. Learning
   // version create/promote/rollback, retention, delete, and rekey still
@@ -638,62 +718,34 @@ const AUTO_METRIC_SOURCES = [
 export async function getRoutingMetricSnapshot() {
   const db = await getAdapter();
   const rows = db.all(
-    `WITH terminal AS (
-       SELECT id,
-              COALESCE(requestId, CAST(id AS TEXT)) AS requestKey,
-              routerReason,
-              fallbackUsed,
-              workerStatus
-       FROM routing_events
-       WHERE (
-         meta LIKE '%"terminal":true%'
-         OR meta IS NULL
-         OR meta NOT LIKE '%"terminal"%'
-       )
-         AND (meta IS NULL OR meta NOT LIKE '%"skippedRouter":true%')
-     ),
-     per_request AS (
-       SELECT requestKey,
-              MAX(id) AS terminalId,
-              MAX(CASE WHEN fallbackUsed = 1 THEN 1 ELSE 0 END) AS fallbackUsed,
-              MAX(CASE WHEN workerStatus >= 400 THEN 1 ELSE 0 END) AS isError
-       FROM terminal
-       GROUP BY requestKey
-     ),
-     classified AS (
-       SELECT CASE
-                WHEN terminal.routerReason LIKE 'exploration%' THEN 'exploration'
-                WHEN terminal.routerReason = 'bandit_policy' THEN 'bandit_policy'
-                WHEN terminal.routerReason = 'cached_route' THEN 'cached_route'
-                WHEN terminal.routerReason = 'judge_flag_escalation' THEN 'judge_flag_escalation'
-                WHEN per_request.fallbackUsed = 1 THEN 'fallback_rescue'
-                ELSE 'router'
-              END AS source,
-              per_request.fallbackUsed,
-              per_request.isError
-       FROM per_request
-       JOIN terminal ON terminal.id = per_request.terminalId
-     )
-     SELECT source,
-            COUNT(*) AS requests,
-            SUM(isError) AS errors,
-            SUM(fallbackUsed) AS fallbacks
-     FROM classified
-     GROUP BY source`,
-  );
+    `SELECT source, requests, errors, fallbacks FROM prometheusRoutingTotals ORDER BY source`,
+  ) || [];
+  if (rows.length !== AUTO_METRIC_SOURCES.length) {
+    throw new Error("invalid Prometheus routing metric source set");
+  }
   const autoDecisions = Object.fromEntries(AUTO_METRIC_SOURCES.map((source) => [source, 0]));
+  const seen = new Set();
   let retainedRequests = 0;
   let retainedErrors = 0;
   let retainedFallbacks = 0;
-
-  for (const row of rows || []) {
-    const requests = Number(row.requests) || 0;
-    retainedRequests += requests;
-    retainedErrors += Number(row.errors) || 0;
-    retainedFallbacks += Number(row.fallbacks) || 0;
-    autoDecisions[row.source] += requests;
+  for (const row of rows) {
+    if (!AUTO_METRIC_SOURCES.includes(row.source) || seen.has(row.source)) {
+      throw new Error("invalid Prometheus routing metric source");
+    }
+    seen.add(row.source);
+    const values = {};
+    for (const field of ["requests", "errors", "fallbacks"]) {
+      const value = Number(row[field]);
+      if (!Number.isFinite(value) || value < 0) {
+        throw new Error(`invalid Prometheus routing metric: ${row.source}.${field}`);
+      }
+      values[field] = value;
+    }
+    autoDecisions[row.source] = values.requests;
+    retainedRequests += values.requests;
+    retainedErrors += values.errors;
+    retainedFallbacks += values.fallbacks;
   }
-
   return { retainedRequests, retainedErrors, retainedFallbacks, autoDecisions };
 }
 
@@ -723,19 +775,29 @@ export async function getClusterLatencyP50(comboName, cluster, days = 14, sample
 export async function deleteOldRoutingEvents(days = 90) {
   const db = await getAdapter();
   const cutoff = new Date(Date.now() - days * 86400000).toISOString();
-  const info = db.run(`DELETE FROM routing_events WHERE timestamp < ?`, [cutoff]);
+  let changes = 0;
+  db.transaction(() => {
+    deleteRoutingMetricRequests(db, "timestamp < ?", [cutoff]);
+    const info = db.run(`DELETE FROM routing_events WHERE timestamp < ?`, [cutoff]);
+    changes = info?.changes ?? 0;
+  });
   notifyWrite(null);
-  return info?.changes ?? 0;
+  return changes;
 }
 
 /** Drop events + learning versions for a combo (rename/delete hygiene). */
 export async function deleteRoutingDataForCombo(comboName) {
   if (!comboName) return { events: 0, versions: 0 };
   const db = await getAdapter();
-  const ev = db.run(`DELETE FROM routing_events WHERE comboName = ?`, [comboName]);
-  const ver = db.run(`DELETE FROM router_learning_versions WHERE comboName = ?`, [comboName]);
+  let events = 0;
+  let versions = 0;
+  db.transaction(() => {
+    deleteRoutingMetricRequests(db, "comboName = ?", [comboName]);
+    events = db.run(`DELETE FROM routing_events WHERE comboName = ?`, [comboName])?.changes ?? 0;
+    versions = db.run(`DELETE FROM router_learning_versions WHERE comboName = ?`, [comboName])?.changes ?? 0;
+  });
   notifyWrite(comboName);
-  return { events: ev?.changes ?? 0, versions: ver?.changes ?? 0 };
+  return { events, versions };
 }
 
 /** Re-key routing rows when a combo is renamed so insights stay attached. */
@@ -745,6 +807,7 @@ export async function rekeyRoutingDataForCombo(oldName, newName) {
   db.transaction(() => {
     db.run(`UPDATE routing_events SET comboName = ? WHERE comboName = ?`, [newName, oldName]);
     db.run(`UPDATE router_learning_versions SET comboName = ? WHERE comboName = ?`, [newName, oldName]);
+    db.run(`UPDATE prometheusRoutingRequests SET comboName = ? WHERE comboName = ?`, [newName, oldName]);
   });
   notifyWrite(oldName);
   notifyWrite(newName);

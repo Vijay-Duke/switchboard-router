@@ -160,6 +160,29 @@ function reorderInTx(db, providerId) {
   });
 }
 
+function retirePrometheusProviderInTx(db, provider) {
+  if (!provider || provider === "unknown") return;
+  if (db.get(`SELECT 1 AS configured FROM providerConnections WHERE provider = ? LIMIT 1`, [provider])) return;
+  const row = db.get(
+    `SELECT requests, promptTokens, completionTokens, cachedTokens, cost
+     FROM prometheusUsageTotals WHERE provider = ?`,
+    [provider],
+  );
+  if (!row) return;
+  db.run(
+    `INSERT INTO prometheusUsageTotals(provider, requests, promptTokens, completionTokens, cachedTokens, cost)
+     VALUES('unknown', ?, ?, ?, ?, ?)
+     ON CONFLICT(provider) DO UPDATE SET
+       requests = requests + excluded.requests,
+       promptTokens = promptTokens + excluded.promptTokens,
+       completionTokens = completionTokens + excluded.completionTokens,
+       cachedTokens = cachedTokens + excluded.cachedTokens,
+       cost = cost + excluded.cost`,
+    [row.requests, row.promptTokens, row.completionTokens, row.cachedTokens, row.cost],
+  );
+  db.run(`DELETE FROM prometheusUsageTotals WHERE provider = ?`, [provider]);
+}
+
 export async function createProviderConnection(data) {
   const db = await getAdapter();
   const now = new Date().toISOString();
@@ -248,6 +271,9 @@ export async function updateProviderConnection(id, data) {
     const existing = rowToConn(row);
     const merged = { ...existing, ...data, updatedAt: new Date().toISOString() };
     upsert(db, merged);
+    if (existing.provider !== merged.provider) {
+      retirePrometheusProviderInTx(db, existing.provider);
+    }
     if (data.priority !== undefined) reorderInTx(db, existing.provider);
     result = merged;
   });
@@ -262,6 +288,7 @@ export async function deleteProviderConnection(id) {
     if (!row) return;
     db.run(`DELETE FROM providerConnections WHERE id = ?`, [id]);
     reorderInTx(db, row.provider);
+    retirePrometheusProviderInTx(db, row.provider);
     ok = true;
   });
   return ok;
@@ -269,9 +296,13 @@ export async function deleteProviderConnection(id) {
 
 export async function deleteProviderConnectionsByProvider(providerId) {
   const db = await getAdapter();
-  const before = db.get(`SELECT COUNT(*) AS n FROM providerConnections WHERE provider = ?`, [providerId]);
-  db.run(`DELETE FROM providerConnections WHERE provider = ?`, [providerId]);
-  return before?.n || 0;
+  let count = 0;
+  db.transaction(() => {
+    count = db.get(`SELECT COUNT(*) AS n FROM providerConnections WHERE provider = ?`, [providerId])?.n || 0;
+    db.run(`DELETE FROM providerConnections WHERE provider = ?`, [providerId]);
+    retirePrometheusProviderInTx(db, providerId);
+  });
+  return count;
 }
 
 export async function reorderProviderConnections(providerId) {

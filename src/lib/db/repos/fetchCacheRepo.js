@@ -79,9 +79,19 @@ export async function cleanupExpiredFetchCache() {
 export async function getFetchCacheMetricSnapshot(now = new Date()) {
   const db = await getAdapter();
   const row = db.get(
-    `SELECT COUNT(*) AS entries, COALESCE(SUM(sizeBytes), 0) AS bytes
+    `SELECT COUNT(*) AS entries,
+            COALESCE(SUM(sizeBytes), 0) AS bytes,
+            SUM(CASE
+              WHEN typeof(sizeBytes) NOT IN ('integer', 'real') OR sizeBytes < 0 THEN 1
+              ELSE 0
+            END) AS invalid
      FROM fetchCache WHERE expiresAt >= ?`,
     [now.toISOString()],
   );
-  return { entries: Number(row?.entries) || 0, bytes: Number(row?.bytes) || 0 };
+  const entries = Number(row?.entries);
+  const bytes = Number(row?.bytes);
+  if (Number(row?.invalid) > 0 || !Number.isFinite(entries) || entries < 0 || !Number.isFinite(bytes) || bytes < 0) {
+    throw new Error("invalid Prometheus cache metric");
+  }
+  return { entries, bytes };
 }

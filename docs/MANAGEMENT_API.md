@@ -262,6 +262,8 @@ Success is Prometheus text format
 Unauthorized callers receive 401, authenticated callers receive 404 while the
 export is disabled, and any collection failure returns 503 without partial
 metrics.
+Concurrent scrapes share a process-local snapshot for at most one second; the
+HTTP response itself remains `no-store`.
 
 The export contains lifetime usage request/token/cost counters; live
 active-request, connection-state/cooldown, and cache-occupancy gauges; and

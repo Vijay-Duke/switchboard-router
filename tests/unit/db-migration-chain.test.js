@@ -28,7 +28,7 @@ describe("Schema migrations", () => {
   it("fresh DB → applies migrations & stamps schemaVersion", async () => {
     const { getAdapter } = await import("@/lib/db/driver.js");
     const { latestVersion } = await import("@/lib/db/migrations/index.js");
-    expect(latestVersion()).toBe(8);
+    expect(latestVersion()).toBe(9);
     const db = await getAdapter();
     const row = db.get(`SELECT value FROM _meta WHERE key='schemaVersion'`);
     expect(parseInt(row.value, 10)).toBe(latestVersion());
@@ -37,6 +37,7 @@ describe("Schema migrations", () => {
     expect(tables).toEqual(expect.arrayContaining([
       "_meta", "settings", "providerConnections", "providerNodes",
       "proxyPools", "apiKeys", "combos", "kv", "usageHistory", "usageDaily", "requestDetails",
+      "prometheusUsageTotals", "prometheusRoutingRequests", "prometheusRoutingTotals",
     ]));
   }, 15_000);
 
@@ -214,7 +215,7 @@ describe("Schema migrations", () => {
   it("does not sanitize originals or old backups from a schema-stamped crash without durable import proof", async () => {
     const { getAdapter } = await import("@/lib/db/driver.js");
     const db = await getAdapter();
-    expect(db.get(`SELECT value FROM _meta WHERE key = 'schemaVersion'`)?.value).toBe("8");
+    expect(db.get(`SELECT value FROM _meta WHERE key = 'schemaVersion'`)?.value).toBe("9");
     db.close?.();
 
     const mainBytes = JSON.stringify({ apiKeys: [{ id: "unproved", key: "raw-unproved-secret" }] });

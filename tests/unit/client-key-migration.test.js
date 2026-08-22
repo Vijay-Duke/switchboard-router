@@ -167,8 +167,8 @@ describe("migration 8 client key identity scrub", () => {
     expect(db.all(`PRAGMA table_info(usageHistory)`).map((column) => column.name)).toContain("clientKeyId");
 
     m008.afterUp = originalAfterUp;
-    expect(runVersionedMigrations(db)).toEqual({ applied: 1, from: 7, to: 8 });
-    expect(db.get(`SELECT value FROM _meta WHERE key = 'schemaVersion'`).value).toBe("8");
+    expect(runVersionedMigrations(db)).toEqual({ applied: 2, from: 7, to: 9 });
+    expect(db.get(`SELECT value FROM _meta WHERE key = 'schemaVersion'`).value).toBe("9");
     db.close();
   });
 
@@ -181,7 +181,7 @@ describe("migration 8 client key identity scrub", () => {
     await expect(runMigrationOnce(db)).rejects.toThrow("vacuum failed once");
     m008.afterUp = originalAfterUp;
     await expect(runMigrationOnce(db)).resolves.toBeUndefined();
-    expect(db.get(`SELECT value FROM _meta WHERE key = 'schemaVersion'`).value).toBe("8");
+    expect(db.get(`SELECT value FROM _meta WHERE key = 'schemaVersion'`).value).toBe("9");
     db.close();
   });
 

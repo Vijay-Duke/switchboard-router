@@ -20,6 +20,7 @@ function deps(overrides = {}) {
       { id: "cool", provider: "openai", isActive: true, testStatus: "unavailable", modelLock_gpt: "2026-08-22T13:00:00.000Z" },
       { id: "bad", provider: "anthropic", isActive: true, testStatus: "error", lastError: "DO-NOT-EXPORT-ERROR" },
       { id: "off", provider: "anthropic", isActive: false, testStatus: "error" },
+      { id: "quoted", provider: "quoted\"provider\\line\nnext", isActive: true, testStatus: "ok" },
     ],
     getActiveRequests: async () => ({ activeRequests: [
       { provider: "openai", model: "DO-NOT-EXPORT-MODEL", account: "DO-NOT-EXPORT-ACCOUNT", count: 2 },
@@ -93,6 +94,52 @@ describe("Prometheus collector", () => {
       "DO-NOT-EXPORT-ERROR", "DO-NOT-EXPORT-MODEL", "DO-NOT-EXPORT-ACCOUNT",
       "client_key_id", "connection_id", "model=", "combo=", "endpoint=",
     ]) expect(text).not.toContain(forbidden);
+  });
+
+  it("collapses providers outside the current configured roster into unknown", async () => {
+    const text = await collectPrometheusMetrics(deps({
+      getUsageMetricTotals: async () => ({ byProvider: [
+        { provider: "openai", requests: 2, promptTokens: 20, completionTokens: 8, cachedTokens: 1, cost: 1 },
+        { provider: "retired-a", requests: 3, promptTokens: 30, completionTokens: 12, cachedTokens: 2, cost: 2 },
+        { provider: "retired-b", requests: 4, promptTokens: 40, completionTokens: 16, cachedTokens: 3, cost: 3 },
+      ] }),
+      getProviderConnections: async () => [
+        { id: "current", provider: "openai", isActive: true, testStatus: "ok" },
+      ],
+      getActiveRequests: async () => ({ activeRequests: [
+        { provider: "openai", count: 1 },
+        { provider: "retired-a", count: 2 },
+        { provider: "retired-b", count: 3 },
+      ] }),
+    }));
+
+    expect(text).toContain('switchboard_usage_requests_total{provider="openai"} 2');
+    expect(text).toContain('switchboard_usage_requests_total{provider="unknown"} 7');
+    expect(text).toContain('switchboard_active_requests{provider="unknown"} 5');
+    expect(text).not.toContain("retired-a");
+    expect(text).not.toContain("retired-b");
+  });
+
+  it("coalesces concurrent collection and reuses a short-lived snapshot", async () => {
+    let reads = 0;
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const shared = deps({
+      getUsageMetricTotals: async () => {
+        reads += 1;
+        await gate;
+        return { byProvider: [] };
+      },
+    });
+
+    const first = collectPrometheusMetrics(shared);
+    const second = collectPrometheusMetrics(shared);
+    expect(reads).toBe(1);
+    release();
+    const [firstText, secondText] = await Promise.all([first, second]);
+    expect(secondText).toBe(firstText);
+    expect(await collectPrometheusMetrics(shared)).toBe(firstText);
+    expect(reads).toBe(1);
   });
 
   it("rejects the whole collection when any source fails", async () => {

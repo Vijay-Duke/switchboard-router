@@ -300,6 +300,7 @@ export async function saveRequestUsage(entry) {
     const tokens = entry.tokens || {};
     const promptTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
     const completionTokens = tokens.completion_tokens || tokens.output_tokens || 0;
+    const cachedTokens = tokens.cached_tokens || tokens.cache_read_input_tokens || 0;
 
     let inserted = false;
 
@@ -368,6 +369,22 @@ export async function saveRequestUsage(entry) {
       aggregateEntryToDay(day, entry);
       db.run(`INSERT INTO usageDaily(dateKey, data) VALUES(?, ?) ON CONFLICT(dateKey) DO UPDATE SET data = excluded.data`, [dateKey, stringifyJson(day)]);
 
+      const metricProvider = entry.provider
+        && db.get(`SELECT 1 AS configured FROM providerConnections WHERE provider = ? LIMIT 1`, [entry.provider])
+        ? entry.provider
+        : "unknown";
+      db.run(
+        `INSERT INTO prometheusUsageTotals(provider, requests, promptTokens, completionTokens, cachedTokens, cost)
+         VALUES(?, 1, ?, ?, ?, ?)
+         ON CONFLICT(provider) DO UPDATE SET
+           requests = requests + 1,
+           promptTokens = promptTokens + excluded.promptTokens,
+           completionTokens = completionTokens + excluded.completionTokens,
+           cachedTokens = cachedTokens + excluded.cachedTokens,
+           cost = cost + excluded.cost`,
+        [metricProvider, promptTokens, completionTokens, cachedTokens, Number(entry.cost) || 0],
+      );
+
       // Atomic counter increment in same transaction
       const cur = db.get(`SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'`);
       const next = (cur ? parseInt(cur.value, 10) : 0) + 1;
@@ -424,44 +441,25 @@ function loadDaysInRange(adapter, maxDays) {
 
 export async function getUsageMetricTotals() {
   const db = await getAdapter();
-  const byProvider = new Map();
-  const overall = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0 };
-  const fields = Object.keys(overall);
-
-  for (const row of db.all(`SELECT data FROM usageDaily`)) {
-    const day = parseJson(row.data, {}) || {};
-    for (const field of fields) overall[field] += Number(day[field]) || 0;
-    for (const [rawProvider, values] of Object.entries(day.byProvider || {})) {
-      const provider = String(rawProvider || "unknown");
-      const total = byProvider.get(provider) || {
-        provider,
-        requests: 0,
-        promptTokens: 0,
-        completionTokens: 0,
-        cachedTokens: 0,
-        cost: 0,
-      };
-      for (const field of fields) total[field] += Number(values?.[field]) || 0;
-      byProvider.set(provider, total);
+  const rows = db.all(
+    `SELECT provider, requests, promptTokens, completionTokens, cachedTokens, cost
+     FROM prometheusUsageTotals ORDER BY provider`,
+  ) || [];
+  const fields = ["requests", "promptTokens", "completionTokens", "cachedTokens", "cost"];
+  const byProvider = rows.map((row) => {
+    const provider = typeof row.provider === "string" && row.provider ? row.provider : null;
+    if (!provider) throw new Error("invalid Prometheus usage metric provider");
+    const result = { provider };
+    for (const field of fields) {
+      const value = Number(row[field]);
+      if (!Number.isFinite(value) || value < 0) {
+        throw new Error(`invalid Prometheus usage metric: ${provider}.${field}`);
+      }
+      result[field] = value;
     }
-  }
-
-  const attributed = { requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0 };
-  for (const total of byProvider.values()) {
-    for (const field of fields) attributed[field] += total[field];
-  }
-  const unknown = {
-    provider: "unknown",
-    requests: 0,
-    promptTokens: 0,
-    completionTokens: 0,
-    cachedTokens: 0,
-    cost: 0,
-  };
-  for (const field of fields) unknown[field] = Math.max(0, overall[field] - attributed[field]);
-  if (fields.some((field) => unknown[field] > 0)) byProvider.set("unknown", unknown);
-
-  return { byProvider: [...byProvider.values()].sort((a, b) => a.provider.localeCompare(b.provider)) };
+    return result;
+  });
+  return { byProvider };
 }
 
 export async function getUsageStats(period = "all") {

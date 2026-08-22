@@ -59,16 +59,28 @@ function connectionState(connection, nowMs) {
   return "ready";
 }
 
-export async function collectPrometheusMetrics(injected = {}) {
-  const deps = {
-    getUsageMetricTotals,
-    getRoutingMetricSnapshot,
-    getFetchCacheMetricSnapshot,
-    getProviderConnections,
-    getActiveRequests,
-    now: () => new Date(),
-    ...injected,
-  };
+const SNAPSHOT_TTL_MS = 1000;
+const DEFAULT_CACHE_KEY = {};
+const snapshotStates = new WeakMap();
+const defaultDeps = {
+  getUsageMetricTotals,
+  getRoutingMetricSnapshot,
+  getFetchCacheMetricSnapshot,
+  getProviderConnections,
+  getActiveRequests,
+  now: () => new Date(),
+};
+
+function snapshotState(key) {
+  let state = snapshotStates.get(key);
+  if (!state) {
+    state = { text: null, expiresAt: 0, inFlight: null };
+    snapshotStates.set(key, state);
+  }
+  return state;
+}
+
+async function collectOnce(deps) {
   const now = deps.now();
   const [usage, routing, cache, connections, active] = await Promise.all([
     deps.getUsageMetricTotals(),
@@ -78,12 +90,6 @@ export async function collectPrometheusMetrics(injected = {}) {
     deps.getActiveRequests(),
   ]);
 
-  const activeByProvider = new Map();
-  for (const request of active.activeRequests || []) {
-    const key = provider(request.provider);
-    activeByProvider.set(key, (activeByProvider.get(key) || 0) + (Number(request.count) || 0));
-  }
-
   const providers = new Set();
   const stateCounts = new Map();
   for (const connection of connections || []) {
@@ -92,30 +98,55 @@ export async function collectPrometheusMetrics(injected = {}) {
     const key = `${providerId}\u0000${connectionState(connection, now.getTime())}`;
     stateCounts.set(key, (stateCounts.get(key) || 0) + 1);
   }
+  const boundedProvider = (value) => {
+    const candidate = provider(value);
+    return candidate === "unknown" || providers.has(candidate) ? candidate : "unknown";
+  };
 
-  const usageRows = usage.byProvider || [];
+  const activeByProvider = new Map();
+  for (const request of active.activeRequests || []) {
+    const key = boundedProvider(request.provider);
+    activeByProvider.set(key, (activeByProvider.get(key) || 0) + finite(request.count));
+  }
+
+  const usageFields = ["requests", "promptTokens", "completionTokens", "cachedTokens", "cost"];
+  const usageByProvider = new Map();
+  for (const row of usage.byProvider || []) {
+    const key = boundedProvider(row.provider);
+    const total = usageByProvider.get(key) || {
+      provider: key,
+      requests: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      cachedTokens: 0,
+      cost: 0,
+    };
+    for (const field of usageFields) total[field] += finite(row[field]);
+    usageByProvider.set(key, total);
+  }
+  const usageRows = [...usageByProvider.values()].sort((a, b) => a.provider.localeCompare(b.provider));
   const families = [
     family(
       "switchboard_usage_requests_total",
       "Completed usage records accumulated for the gateway.",
       "counter",
-      usageRows.map((row) => ({ labels: { provider: provider(row.provider) }, value: row.requests })),
+      usageRows.map((row) => ({ labels: { provider: row.provider }, value: row.requests })),
     ),
     family(
       "switchboard_usage_tokens_total",
       "Tokens recorded for completed usage; cached is the provider-reported cache-read subset.",
       "counter",
       usageRows.flatMap((row) => [
-        { labels: { provider: provider(row.provider), direction: "input" }, value: row.promptTokens },
-        { labels: { provider: provider(row.provider), direction: "output" }, value: row.completionTokens },
-        { labels: { provider: provider(row.provider), direction: "cached" }, value: row.cachedTokens },
+        { labels: { provider: row.provider, direction: "input" }, value: row.promptTokens },
+        { labels: { provider: row.provider, direction: "output" }, value: row.completionTokens },
+        { labels: { provider: row.provider, direction: "cached" }, value: row.cachedTokens },
       ]),
     ),
     family(
       "switchboard_usage_cost_usd_total",
       "Calculated US dollar cost accumulated for completed usage records.",
       "counter",
-      usageRows.map((row) => ({ labels: { provider: provider(row.provider) }, value: row.cost })),
+      usageRows.map((row) => ({ labels: { provider: row.provider }, value: row.cost })),
     ),
     family(
       "switchboard_active_requests",
@@ -172,4 +203,23 @@ export async function collectPrometheusMetrics(injected = {}) {
     ),
   ];
   return `${families.flat().join("\n")}\n`;
+}
+
+export function collectPrometheusMetrics(injected) {
+  const cacheKey = injected || DEFAULT_CACHE_KEY;
+  const state = snapshotState(cacheKey);
+  const currentTime = Date.now();
+  if (state.text != null && state.expiresAt > currentTime) return Promise.resolve(state.text);
+  if (state.inFlight) return state.inFlight;
+  const deps = injected ? { ...defaultDeps, ...injected } : defaultDeps;
+  state.inFlight = collectOnce(deps)
+    .then((text) => {
+      state.text = text;
+      state.expiresAt = Date.now() + SNAPSHOT_TTL_MS;
+      return text;
+    })
+    .finally(() => {
+      state.inFlight = null;
+    });
+  return state.inFlight;
 }
