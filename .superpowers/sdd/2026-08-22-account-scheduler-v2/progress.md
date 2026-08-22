@@ -11,3 +11,15 @@ Completed:
 - Real UI QA covered both provider surfaces, nested-setting preservation, 1/1440-minute affinity, Round Robin disable/restore semantics, cap 1/null persistence, direct invalid-cap rejection, and 375px overflow.
 - Full suite/build/lint/format were skipped by assignment.
 - See `implementation-report.md` for evidence, commits, scope audit, and operational concerns.
+
+Review: Spec FAIL; Quality CHANGES_REQUIRED; Security BLOCKED.
+- Important: non-chat consumers are uncounted; >60s live work is forgotten; stale affinity survives no/all-capped candidates; affinity/log state lacks client-key isolation/redaction; global FIFO allows cross-scope eviction; provider settings save can overwrite after failed GET.
+- Fix round 1/5 started with original implementer; list in `review-findings-round1.md`.
+
+Review fix round 1 complete:
+- Added exact response-aware lifecycle counting for every non-chat/native-Gemini scheduler consumer and removed 60-second force clearing.
+- Invalidated zero/all-capped affinity, scoped derivation/storage/eviction by canonical provider and client key, and made assistant affinity stateless.
+- Redacted session carriers from request-log files and Codex debug output.
+- Made both scheduler settings surfaces read-merge-PATCH transactionally and update visible state only after success.
+- Focused proof: 24 files, 132 tests passed; React Doctor reported only the existing provider-component state-count warnings.
+- Commits: `4c147f7a`, `394188f9`, `b43bb5d1`, `37276586`.

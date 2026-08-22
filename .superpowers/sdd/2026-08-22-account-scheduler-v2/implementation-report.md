@@ -179,3 +179,33 @@ A live two-account upstream streaming smoke was not run because this isolated wo
 - Affinity is process-local and intentionally disappears on restart. Multiple processes maintain independent bindings.
 - Cleanup is lazy on scheduler selection/insertion; there is no background worker.
 - The full repository suite, production build, lint, and formatter were intentionally not run under the assignment constraints.
+
+## Review fix round 1
+
+The merged correctness/security review found seven blocking gaps. Round 1 closes all findings:
+
+- Added shared `withConnectionInFlight` lifecycle tracking to embeddings, image, STT, TTS, search, fetch, and native Gemini. Tracking begins before token refresh/upstream work, releases immediately for retries/errors/aborts, and wraps successful response bodies so EOF, stream error, or client cancel releases exactly once.
+- Removed the 60-second force-clear timer. Exact request completion now exclusively owns pending-count release; work still live after 61 seconds remains counted.
+- Scheduler selection now invalidates live affinity before `no-candidates` and `capacity-exhausted` returns. Auth invokes that invalidation even when exclusions/locks/deactivation/deletion remove every candidate, and exposes truthful reason/rebound metadata on the locked envelope.
+- Affinity derivation and hashing use unambiguous tuples containing canonical provider, authenticated `clientKeyId` (or explicit `local-no-key`), and session source. Raw client session values are hashed at derivation and hashed again for scheduler storage.
+- Affinity capacity is partitioned per canonical-provider/client scope (500 entries) with the 5,000 global guard retained. Scope pressure evicts from the offending scope; a new scope is not allowed to evict established scopes under global pressure. Assistant-history affinity is deterministic and stateless, eliminating its prior global cache/eviction channel.
+- Request-log session headers and nested body carriers are fully redacted at JSON and legacy error sinks. Codex debug logs report only `session=resolved|pending`, never an identifier.
+- Both provider control surfaces now use a tested read-merge-PATCH helper. Failed GET performs no PATCH; failed PATCH rejects; UI state changes only after successful persistence, so visible toggles/inputs roll back by remaining unchanged.
+
+### Round 1 TDD evidence
+
+- RED: focused review run produced **2 missing-module suites and 10 expected failures**: absent lifecycle/settings helpers, 60-second count loss, cross-client affinity collision, stale binding retention, cross-scope FIFO eviction, hard-filter metadata loss, missing chat client scope, raw request-log/Codex identifiers, and unscoped assistant derivation.
+- GREEN: the focused round-1 proof passed **24 files, 132 tests, 0 failures**.
+- The non-chat integration test holds an embeddings response body open at cap 1, proves an overlapping request receives 429 without entering provider core, consumes EOF to release, then proves the next request is admitted.
+- Fake-clock coverage proves a live request remains counted beyond 60 seconds. A second same-model refcount proves stream cancellation releases exactly once rather than decrementing unrelated work.
+- Request-log coverage enables disk logging and verifies the full raw identifier is absent across client, source, intermediate, target, and error files. Codex console coverage separately verifies absence from debug output.
+- React Doctor on the round-1 diff reported only the two pre-existing many-`useState` architecture warnings in the provider components; no scheduler correctness or accessibility failure.
+
+Focused command scope included scheduler/auth/session/refcount tests, all new round-1 tests, client-key abort behavior, native Gemini streaming/non-streaming, changed non-chat handler imports/abort paths, settings/routes, database parity, proxy, and dashboard regressions. Full suite/build/lint/format remained intentionally skipped.
+
+### Round 1 commits
+
+1. `4c147f7a` — `fix: track scheduler consumers safely`
+2. `394188f9` — `fix: redact scheduler session identifiers`
+3. `b43bb5d1` — `fix: save scheduler settings transactionally`
+4. `37276586` — `fix: scope and count provider work precisely`
