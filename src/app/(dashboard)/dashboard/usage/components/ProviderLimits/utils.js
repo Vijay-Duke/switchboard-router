@@ -465,6 +465,7 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "kimi":
+      case "kimi-coding":
         // Weekly / Ratelimit from /v1/usages. remainingPercentage only.
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
