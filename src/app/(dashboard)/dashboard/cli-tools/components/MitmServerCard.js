@@ -182,9 +182,10 @@ export default function MitmServerCard({ apiKeys, cloudEnabled, onStatusChange }
           {/* Base URL + API Key — same row pattern as Claude Code / cli-tools */}
           <div className="flex flex-col gap-2">
             <div className="grid gap-1 sm:grid-cols-[8rem_auto_1fr] sm:items-center sm:gap-2">
-              <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Switchboard Base URL</span>
-              <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
+              <label htmlFor="mitm-router-base-url" className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Switchboard Base URL</label>
+              <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline" aria-hidden="true">arrow_forward</span>
               <input
+                id="mitm-router-base-url"
                 type="text"
                 value={mitmRouterBaseUrl}
                 onChange={(e) => setMitmRouterBaseUrl(e.target.value)}
@@ -195,9 +196,10 @@ export default function MitmServerCard({ apiKeys, cloudEnabled, onStatusChange }
             </div>
             {!isRunning && (
               <div className="grid gap-1 sm:grid-cols-[8rem_auto_1fr] sm:items-center sm:gap-2">
-                <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">API Key</span>
-                <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
+                <label htmlFor="mitm-api-key" className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">API Key</label>
+                <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline" aria-hidden="true">arrow_forward</span>
                 <input
+                  id="mitm-api-key"
                   type="text"
                   list="mitm-api-keys"
                   value={selectedApiKey}
@@ -290,20 +292,21 @@ export default function MitmServerCard({ apiKeys, cloudEnabled, onStatusChange }
       >
         <div className="flex flex-col gap-4">
           <div className="flex items-start gap-3 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-            <span className="material-symbols-outlined text-yellow-500 text-[20px]">warning</span>
+            <span className="material-symbols-outlined text-yellow-500 text-[20px]" aria-hidden="true">warning</span>
             <p className="text-xs text-text-muted">Required for SSL certificate and server startup</p>
           </div>
           <Input
+            label="Sudo password"
             type="password"
+            autoFocus
             placeholder="Enter sudo password"
-            aria-label="Sudo password"
             value={sudoPassword}
             onChange={(e) => setSudoPassword(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !loading) handleConfirmPassword(); }}
           />
           {modalError && (
             <div role="alert" className="flex items-center gap-2 px-2 py-1.5 rounded text-xs bg-red-500/10 text-red-600">
-              <span className="material-symbols-outlined text-[14px]">error</span>
+              <span className="material-symbols-outlined text-[14px]" aria-hidden="true">error</span>
               <span>{modalError}</span>
             </div>
           )}
