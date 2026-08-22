@@ -87,4 +87,31 @@ describe("non-chat combo abort propagation", () => {
     await expect(resultPromise).resolves.toMatchObject({ success: false });
     expect(upstreamSignal.aborted).toBe(true);
   });
+
+  it("rejects an already-aborted AssemblyAI polling delay without polling or waiting", async () => {
+    const caller = new AbortController();
+    const fetchSpy = vi.fn()
+      .mockResolvedValueOnce(Response.json({ upload_url: "https://upload.test/audio" }))
+      .mockImplementationOnce(async () => {
+        caller.abort();
+        return Response.json({ id: "transcript-1" });
+      });
+    vi.stubGlobal("fetch", fetchSpy);
+    const formData = new FormData();
+    formData.append("file", new Blob(["audio"], { type: "audio/wav" }), "audio.wav");
+
+    const startedAt = Date.now();
+    const result = await handleSttCore({
+      provider: "assemblyai",
+      model: "universal",
+      formData,
+      credentials: { apiKey: "provider-key" },
+      sttConfig: { format: "assemblyai", baseUrl: "https://api.assemblyai.com/v2/transcript", authHeader: "authorization" },
+      abortSignal: caller.signal,
+    });
+
+    expect(result).toMatchObject({ success: false, status: 499 });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(Date.now() - startedAt).toBeLessThan(500);
+  });
 });
