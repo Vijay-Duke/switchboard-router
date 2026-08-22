@@ -238,6 +238,15 @@ describe("Schema migrations", () => {
       history: [{ apiKey: "legacy-two", cost: 9, provider: "old-provider" }],
       dailySummary: { "2025-01-01": { requests: 9, cost: 9, byApiKey: { "legacy-two|old|old-provider": { apiKey: "legacy-two", cost: 9 } } } },
     }));
+    const collisionBackup = path.join(backupRoot, "migrate-from-json-same-id-collision");
+    fs.mkdirSync(collisionBackup, { recursive: true });
+    fs.writeFileSync(path.join(collisionBackup, "db.json"), JSON.stringify({
+      settings: { sentinel: "same-id-collision" },
+      apiKeys: [{ id: "repaired", key: "legacy-collision", createdAt: "2025-02-01T00:00:00.000Z" }],
+    }));
+    fs.writeFileSync(path.join(collisionBackup, "usage.json"), JSON.stringify({
+      history: [{ apiKey: "legacy-collision", cost: 11, provider: "collision-provider" }],
+    }));
 
     fs.writeFileSync(mainPath, JSON.stringify({
       settings: { repaired: true },
@@ -268,6 +277,21 @@ describe("Schema migrations", () => {
     expect(olderUsage.totalRequestsLifetime).toBe(77);
     expect(olderUsage.history[0]).toEqual(expect.objectContaining({ apiKey: null, clientKeyId: "older-key", cost: 9, provider: "old-provider" }));
     expect(olderUsage.dailySummary["2025-01-01"]).toEqual(expect.objectContaining({ requests: 9, cost: 9 }));
+    const { matchesApiKeyRecord, unpackApiKeyRecord } = await import("@/lib/crypto/secrets.js");
+    const olderStored = olderMain.apiKeys[0].key;
+    expect(unpackApiKeyRecord(olderStored).legacy).toBe(false);
+    expect(matchesApiKeyRecord(olderStored, "legacy-two")).toBe(true);
+    expect(matchesApiKeyRecord(olderStored, "legacy-one")).toBe(false);
+
+    const collisionMain = JSON.parse(fs.readFileSync(path.join(collisionBackup, "db.json"), "utf8"));
+    const collisionUsage = JSON.parse(fs.readFileSync(path.join(collisionBackup, "usage.json"), "utf8"));
+    const collisionStored = collisionMain.apiKeys[0].key;
+    expect(collisionMain.settings).toEqual({ sentinel: "same-id-collision" });
+    expect(unpackApiKeyRecord(collisionStored).legacy).toBe(false);
+    expect(matchesApiKeyRecord(collisionStored, "legacy-collision")).toBe(true);
+    expect(matchesApiKeyRecord(collisionStored, "legacy-one")).toBe(false);
+    expect(collisionUsage.history[0]).toEqual(expect.objectContaining({ apiKey: null, clientKeyId: "repaired", cost: 11 }));
+    expect(fs.readFileSync(path.join(collisionBackup, "db.json"), "utf8")).not.toContain("legacy-collision");
     expect(fs.readFileSync(path.join(olderBackup, "db.json"), "utf8")).not.toContain("legacy-two");
     expect(fs.readFileSync(path.join(olderBackup, "usage.json"), "utf8")).not.toContain("legacy-two");
   });

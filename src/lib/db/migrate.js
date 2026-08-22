@@ -96,14 +96,21 @@ function writeJsonRestricted(file, value) {
   fs.chmodSync(file, 0o600);
 }
 
-function sanitizeLegacyPayload(legacyMain, legacyUsage, keys, storedById, legacyKeyIds = null, matchCache = new Map()) {
+function sanitizePayloadKey(key, storedById, useCurrentVerifier) {
+  if (useCurrentVerifier && storedById.has(key.id)) return storedById.get(key.id);
+  if (typeof key.key !== "string") return null;
+  const normalized = normalizeApiKeyRecordLookup(key.key);
+  return unpackApiKeyRecord(normalized).legacy ? packApiKeyRecord(normalized) : normalized;
+}
+
+function sanitizeLegacyPayload(legacyMain, legacyUsage, keys, storedById, legacyKeyIds = null, matchCache = new Map(), useCurrentVerifier = false) {
   const keyIds = legacyKeyIds || buildLegacyKeyIdMap(legacyMain, legacyUsage, matchCache);
   const main = legacyMain && typeof legacyMain === "object"
     ? {
         ...legacyMain,
         apiKeys: (legacyMain.apiKeys || []).map((key) => ({
           ...key,
-          key: storedById.get(key.id) || null,
+          key: sanitizePayloadKey(key, storedById, useCurrentVerifier),
         })),
       }
     : null;
@@ -126,10 +133,10 @@ function sanitizeLegacyPayload(legacyMain, legacyUsage, keys, storedById, legacy
   return { main, usage };
 }
 
-function sanitizeLegacySources(adapter, legacyMain, legacyUsage, _backupDir = null, legacyKeyIds = null, matchCache = new Map()) {
+function sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir = null, legacyKeyIds = null, matchCache = new Map()) {
   const keys = adapter.all(`SELECT id, key FROM apiKeys`) || [];
   const storedById = new Map(keys.map((key) => [key.id, key.key]));
-  const active = sanitizeLegacyPayload(legacyMain, legacyUsage, keys, storedById, legacyKeyIds, matchCache);
+  const active = sanitizeLegacyPayload(legacyMain, legacyUsage, keys, storedById, legacyKeyIds, matchCache, true);
   if (active.main) writeJsonRestricted(LEGACY_FILES.main, active.main);
   if (active.usage) writeJsonRestricted(LEGACY_FILES.usage, active.usage);
 
@@ -141,7 +148,8 @@ function sanitizeLegacySources(adapter, legacyMain, legacyUsage, _backupDir = nu
     const usagePath = path.join(dir, path.basename(LEGACY_FILES.usage));
     const backupMain = readJsonSafe(mainPath);
     const backupUsage = readJsonSafe(usagePath);
-    const sanitized = sanitizeLegacyPayload(backupMain, backupUsage, keys, storedById, null, matchCache);
+    const useCurrentVerifier = Boolean(backupDir) && path.resolve(dir) === path.resolve(backupDir);
+    const sanitized = sanitizeLegacyPayload(backupMain, backupUsage, keys, storedById, null, matchCache, useCurrentVerifier);
     if (sanitized.main) writeJsonRestricted(mainPath, sanitized.main);
     if (sanitized.usage) writeJsonRestricted(usagePath, sanitized.usage);
   }
