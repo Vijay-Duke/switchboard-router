@@ -5,6 +5,7 @@ import { getStatusVariant as getConnectionStatusVariant } from "@/shared/utils/c
 import PropTypes from "prop-types";
 import { Card, Badge, Button, Modal, Toggle, EditConnectionModal, ConfirmModal } from "@/shared/components";
 import { useNotificationStore } from "@/store/notificationStore";
+import { patchProviderStrategy } from "@/shared/utils/providerStrategySettings";
 
 // ── CooldownTimer ──────────────────────────────────────────────
 function CooldownTimer({ until }) {
@@ -287,60 +288,63 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
 
   const saveStrategy = async (strategy, stickyLimit) => {
     try {
-      const res = await fetch("/api/settings", { cache: "no-store" });
-      if (!res.ok) throw new Error(`Failed to load settings (${res.status})`);
-      const data = await res.json();
-      const current = data.providerStrategies || {};
-      const previous = current[providerId] || {};
-      const next = { ...previous };
-      if (strategy) next.fallbackStrategy = strategy;
-      else delete next.fallbackStrategy;
-      if (strategy === "round-robin" && stickyLimit !== "") {
-        next.stickyRoundRobinLimit = Number(stickyLimit) || 3;
-      } else if (!strategy) {
-        delete next.stickyRoundRobinLimit;
-      }
-      const updated = { ...current };
-      if (Object.keys(next).length === 0) delete updated[providerId];
-      else updated[providerId] = next;
-      const updateRes = await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerStrategies: updated }),
+      await patchProviderStrategy(providerId, (previous) => {
+        const next = { ...previous };
+        if (strategy) next.fallbackStrategy = strategy;
+        else delete next.fallbackStrategy;
+        if (strategy === "round-robin" && stickyLimit !== "") {
+          next.stickyRoundRobinLimit = Number(stickyLimit) || 3;
+        } else if (!strategy) {
+          delete next.stickyRoundRobinLimit;
+        }
+        return next;
       });
-      if (!updateRes.ok) throw new Error(`Failed to save strategy (${updateRes.status})`);
-    } catch (e) { notify(e?.message || "Failed to save provider strategy"); }
+      return true;
+    } catch (e) {
+      notify(e?.message || "Failed to save provider strategy");
+      return false;
+    }
   };
 
   const saveScheduler = async (enabled, minutes) => {
+    const boundedMinutes = Math.min(
+      1_440,
+      Math.max(1, Number.parseInt(minutes, 10) || 30),
+    );
     try {
-      const res = await fetch("/api/settings", { cache: "no-store" });
-      if (!res.ok) throw new Error(`Failed to load settings (${res.status})`);
-      const data = await res.json();
-      const current = data.providerStrategies || {};
-      const previous = current[providerId] || {};
-      const boundedMinutes = Math.min(
-        1_440,
-        Math.max(1, Number.parseInt(minutes, 10) || 30),
-      );
-      const updated = {
-        ...current,
-        [providerId]: {
-          ...previous,
-          accountScheduler: {
-            ...(previous.accountScheduler || {}),
-            enabled,
-            sessionAffinityTtlSeconds: boundedMinutes * 60,
-          },
+      await patchProviderStrategy(providerId, (previous) => ({
+        ...previous,
+        accountScheduler: {
+          ...(previous.accountScheduler || {}),
+          enabled,
+          sessionAffinityTtlSeconds: boundedMinutes * 60,
         },
-      };
-      const updateRes = await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerStrategies: updated }),
-      });
-      if (!updateRes.ok) throw new Error(`Failed to save scheduler (${updateRes.status})`);
-    } catch (e) { notify(e?.message || "Failed to save balanced scheduler"); }
+      }));
+      return true;
+    } catch (e) {
+      notify(e?.message || "Failed to save balanced scheduler");
+      return false;
+    }
+  };
+
+  const handleSchedulerToggle = async (enabled) => {
+    if (await saveScheduler(enabled, affinityMinutes)) setSchedulerEnabled(enabled);
+  };
+
+  const handleAffinityMinutesChange = async (value) => {
+    if (await saveScheduler(schedulerEnabled, value)) setAffinityMinutes(value);
+  };
+
+  const handleRoundRobinToggle = async (enabled) => {
+    const strategy = enabled ? "round-robin" : null;
+    const sticky = enabled ? (providerStickyLimit || "1") : providerStickyLimit;
+    if (!await saveStrategy(strategy, sticky)) return;
+    setProviderStrategy(strategy);
+    if (enabled && !providerStickyLimit) setProviderStickyLimit("1");
+  };
+
+  const handleStickyLimitChange = async (value) => {
+    if (await saveStrategy("round-robin", value)) setProviderStickyLimit(value);
   };
 
   const handleSwapPriority = async (i1, i2) => {
@@ -409,10 +413,7 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
               <span className="text-xs text-text-muted font-medium">Balanced scheduler</span>
               <Toggle
                 checked={schedulerEnabled}
-                onChange={(enabled) => {
-                  setSchedulerEnabled(enabled);
-                  saveScheduler(enabled, affinityMinutes);
-                }}
+                onChange={handleSchedulerToggle}
               />
               {schedulerEnabled && (
                 <label className="flex items-center gap-1.5 text-xs text-text-muted">
@@ -423,10 +424,7 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
                     min={1}
                     max={1440}
                     value={affinityMinutes}
-                    onChange={(event) => {
-                      setAffinityMinutes(event.target.value);
-                      saveScheduler(schedulerEnabled, event.target.value);
-                    }}
+                    onChange={(event) => handleAffinityMinutesChange(event.target.value)}
                     className="w-16 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary"
                   />
                   min
@@ -445,12 +443,7 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
                 checked={providerStrategy === "round-robin"}
                 disabled={schedulerEnabled}
                 title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
-                onChange={(enabled) => {
-                  const strategy = enabled ? "round-robin" : null;
-                  setProviderStrategy(strategy);
-                  if (enabled && !providerStickyLimit) setProviderStickyLimit("1");
-                  saveStrategy(strategy, enabled ? (providerStickyLimit || "1") : providerStickyLimit);
-                }}
+                onChange={handleRoundRobinToggle}
               />
               {providerStrategy === "round-robin" && (
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -461,10 +454,7 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
                     value={providerStickyLimit}
                     disabled={schedulerEnabled}
                     title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
-                    onChange={(event) => {
-                      setProviderStickyLimit(event.target.value);
-                      saveStrategy("round-robin", event.target.value);
-                    }}
+                    onChange={(event) => handleStickyLimitChange(event.target.value)}
                     className="w-16 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
                   />
                 </div>

@@ -31,6 +31,7 @@ import VerifyModelsPanel from "./VerifyModelsPanel";
 import { getProviderModelToolbarActions } from "./providerModelActions";
 import { canonicalModelId } from "@/lib/model-probe/canonicalId.js";
 import { reportClientError } from "@/shared/utils/clientFeedback";
+import { patchProviderStrategy } from "@/shared/utils/providerStrategySettings";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
 
@@ -406,90 +407,69 @@ export default function ProviderDetailPage() {
 
   const saveProviderStrategy = async (strategy, stickyLimit) => {
     try {
-      const settingsRes = await fetch("/api/settings", { cache: "no-store" });
-      const settingsData = settingsRes.ok ? await settingsRes.json() : {};
-      const current = settingsData.providerStrategies || {};
-      const previous = current[providerId] || {};
-      const next = { ...previous };
-
-      if (strategy) {
-        next.fallbackStrategy = strategy;
-      } else {
-        delete next.fallbackStrategy;
-      }
-      if (strategy === "round-robin" && stickyLimit !== "") {
-        next.stickyRoundRobinLimit = Number(stickyLimit) || 3;
-      } else if (!strategy) {
-        delete next.stickyRoundRobinLimit;
-      }
-
-      const updated = { ...current };
-      if (Object.keys(next).length === 0) delete updated[providerId];
-      else updated[providerId] = next;
-
-      await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerStrategies: updated }),
+      await patchProviderStrategy(providerId, (previous) => {
+        const next = { ...previous };
+        if (strategy) next.fallbackStrategy = strategy;
+        else delete next.fallbackStrategy;
+        if (strategy === "round-robin" && stickyLimit !== "") {
+          next.stickyRoundRobinLimit = Number(stickyLimit) || 3;
+        } else if (!strategy) {
+          delete next.stickyRoundRobinLimit;
+        }
+        return next;
       });
+      return true;
     } catch (error) {
       reportClientError("Error saving provider strategy:", error);
+      return false;
     }
   };
 
   const saveScheduler = async (enabled, minutes) => {
+    const boundedMinutes = Math.min(
+      1_440,
+      Math.max(1, Number.parseInt(minutes, 10) || 30),
+    );
     try {
-      const settingsRes = await fetch("/api/settings", { cache: "no-store" });
-      const settingsData = settingsRes.ok ? await settingsRes.json() : {};
-      const current = settingsData.providerStrategies || {};
-      const previous = current[providerId] || {};
-      const boundedMinutes = Math.min(
-        1_440,
-        Math.max(1, Number.parseInt(minutes, 10) || 30),
-      );
-      const updated = {
-        ...current,
-        [providerId]: {
-          ...previous,
-          accountScheduler: {
-            ...(previous.accountScheduler || {}),
-            enabled,
-            sessionAffinityTtlSeconds: boundedMinutes * 60,
-          },
+      await patchProviderStrategy(providerId, (previous) => ({
+        ...previous,
+        accountScheduler: {
+          ...(previous.accountScheduler || {}),
+          enabled,
+          sessionAffinityTtlSeconds: boundedMinutes * 60,
         },
-      };
-
-      await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerStrategies: updated }),
-      });
+      }));
+      return true;
     } catch (error) {
       reportClientError("Error saving balanced scheduler:", error);
+      return false;
     }
   };
 
-  const handleRoundRobinToggle = (enabled) => {
+  const handleRoundRobinToggle = async (enabled) => {
     const strategy = enabled ? "round-robin" : null;
     const sticky = enabled ? (providerStickyLimit || "1") : providerStickyLimit;
+    if (!await saveProviderStrategy(strategy, sticky)) return;
     if (enabled && !providerStickyLimit) setProviderStickyLimit("1");
     setProviderStrategy(strategy);
-    saveProviderStrategy(strategy, sticky);
   };
 
-  const handleStickyLimitChange = (value) => {
-    setProviderStickyLimit(value);
-    saveProviderStrategy("round-robin", value);
+  const handleStickyLimitChange = async (value) => {
+    if (await saveProviderStrategy("round-robin", value)) {
+      setProviderStickyLimit(value);
+    }
   };
 
-  const handleSchedulerToggle = (enabled) => {
-    setSchedulerEnabled(enabled);
-    saveScheduler(enabled, affinityMinutes);
+  const handleSchedulerToggle = async (enabled) => {
+    if (await saveScheduler(enabled, affinityMinutes)) {
+      setSchedulerEnabled(enabled);
+    }
   };
 
-  const handleAffinityMinutesChange = (value) => {
-    setAffinityMinutes(value);
-    saveScheduler(schedulerEnabled, value);
+  const handleAffinityMinutesChange = async (value) => {
+    if (await saveScheduler(schedulerEnabled, value)) {
+      setAffinityMinutes(value);
+    }
   };
 
   const saveThinkingConfig = async (mode) => {
