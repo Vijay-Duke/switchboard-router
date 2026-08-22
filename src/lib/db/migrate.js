@@ -53,7 +53,7 @@ function readJsonSafe(file) {
   try { return JSON.parse(fs.readFileSync(file, "utf-8")); } catch { return null; }
 }
 
-function buildLegacyKeyIdMap(data, usage) {
+function buildLegacyKeyIdMap(data, usage, matchCache = new Map()) {
   const map = new Map();
   const records = [];
   for (const key of data?.apiKeys || []) {
@@ -71,7 +71,11 @@ function buildLegacyKeyIdMap(data, usage) {
   }
   for (const raw of rawValues) {
     if (map.has(raw)) continue;
-    const matched = records.find((record) => _legacyKeyMatcher(record.stored, raw));
+    const matched = records.find((record) => {
+      const cacheKey = `${record.id}\u0000${record.stored}\u0000${raw}`;
+      if (!matchCache.has(cacheKey)) matchCache.set(cacheKey, _legacyKeyMatcher(record.stored, raw));
+      return matchCache.get(cacheKey);
+    });
     if (matched) map.set(raw, matched.id);
   }
   return map;
@@ -92,10 +96,8 @@ function writeJsonRestricted(file, value) {
   fs.chmodSync(file, 0o600);
 }
 
-function sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir = null, legacyKeyIds = null) {
-  const keys = adapter.all(`SELECT id, key FROM apiKeys`) || [];
-  legacyKeyIds ||= buildLegacyKeyIdMap(legacyMain, legacyUsage);
-  const storedById = new Map(keys.map((key) => [key.id, key.key]));
+function sanitizeLegacyPayload(legacyMain, legacyUsage, keys, storedById, legacyKeyIds = null, matchCache = new Map()) {
+  const keyIds = legacyKeyIds || buildLegacyKeyIdMap(legacyMain, legacyUsage, matchCache);
   const main = legacyMain && typeof legacyMain === "object"
     ? {
         ...legacyMain,
@@ -108,29 +110,40 @@ function sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir = nul
   const usage = legacyUsage && typeof legacyUsage === "object"
     ? {
         ...legacyUsage,
-        history: (legacyUsage.history || []).map((entry) => ({ ...entry, apiKey: null, clientKeyId: null })),
+        history: (legacyUsage.history || []).map((entry) => ({
+          ...entry,
+          apiKey: null,
+          clientKeyId: keyIds.get(String(entry.apiKey)) || entry.clientKeyId || null,
+        })),
         dailySummary: Object.fromEntries(
           Object.entries(legacyUsage.dailySummary || {}).map(([dateKey, day]) => [
             dateKey,
-            scrubUsageDailyData(day, keys, "up", (raw) => legacyKeyIds.get(String(raw)) || null),
+            scrubUsageDailyData(day, keys, "up", (raw) => keyIds.get(String(raw)) || null),
           ])
         ),
       }
     : null;
-  if (main) writeJsonRestricted(LEGACY_FILES.main, main);
-  if (usage) writeJsonRestricted(LEGACY_FILES.usage, usage);
-  if (backupDir) {
-    if (main) writeJsonRestricted(path.join(backupDir, path.basename(LEGACY_FILES.main)), main);
-    if (usage) writeJsonRestricted(path.join(backupDir, path.basename(LEGACY_FILES.usage)), usage);
-  }
-  if (fs.existsSync(BACKUPS_DIR)) {
-    for (const entry of fs.readdirSync(BACKUPS_DIR, { withFileTypes: true })) {
-      if (entry.isDirectory() && entry.name.startsWith("migrate-from-json-")) {
-        const dir = path.join(BACKUPS_DIR, entry.name);
-        if (main) writeJsonRestricted(path.join(dir, path.basename(LEGACY_FILES.main)), main);
-        if (usage) writeJsonRestricted(path.join(dir, path.basename(LEGACY_FILES.usage)), usage);
-      }
-    }
+  return { main, usage };
+}
+
+function sanitizeLegacySources(adapter, legacyMain, legacyUsage, _backupDir = null, legacyKeyIds = null, matchCache = new Map()) {
+  const keys = adapter.all(`SELECT id, key FROM apiKeys`) || [];
+  const storedById = new Map(keys.map((key) => [key.id, key.key]));
+  const active = sanitizeLegacyPayload(legacyMain, legacyUsage, keys, storedById, legacyKeyIds, matchCache);
+  if (active.main) writeJsonRestricted(LEGACY_FILES.main, active.main);
+  if (active.usage) writeJsonRestricted(LEGACY_FILES.usage, active.usage);
+
+  if (!fs.existsSync(BACKUPS_DIR)) return;
+  for (const entry of fs.readdirSync(BACKUPS_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith("migrate-from-json-")) continue;
+    const dir = path.join(BACKUPS_DIR, entry.name);
+    const mainPath = path.join(dir, path.basename(LEGACY_FILES.main));
+    const usagePath = path.join(dir, path.basename(LEGACY_FILES.usage));
+    const backupMain = readJsonSafe(mainPath);
+    const backupUsage = readJsonSafe(usagePath);
+    const sanitized = sanitizeLegacyPayload(backupMain, backupUsage, keys, storedById, null, matchCache);
+    if (sanitized.main) writeJsonRestricted(mainPath, sanitized.main);
+    if (sanitized.usage) writeJsonRestricted(usagePath, sanitized.usage);
   }
 }
 
@@ -347,7 +360,9 @@ export async function runMigrationOnce(adapter) {
   const migrationProof = getMetaSync(adapter, "migratedAt", null);
   if (hasLegacy && !legacySanitized && migrationProof) {
     adapter.checkpoint?.();
-    sanitizeLegacySources(adapter, legacyMain, legacyUsage);
+    const legacyMatchCache = new Map();
+    const legacyKeyIds = buildLegacyKeyIdMap(legacyMain, legacyUsage, legacyMatchCache);
+    sanitizeLegacySources(adapter, legacyMain, legacyUsage, null, legacyKeyIds, legacyMatchCache);
     fs.writeFileSync(LEGACY_SANITIZED_MARKER, new Date().toISOString(), { mode: 0o600 });
   }
 
@@ -361,7 +376,8 @@ export async function runMigrationOnce(adapter) {
     const t0 = Date.now();
     const backupDir = makeBackupDir("migrate-from-json");
     for (const f of Object.values(LEGACY_FILES)) backupFile(f, backupDir);
-    const legacyKeyIds = buildLegacyKeyIdMap(legacyMain, legacyUsage);
+    const legacyMatchCache = new Map();
+    const legacyKeyIds = buildLegacyKeyIdMap(legacyMain, legacyUsage, legacyMatchCache);
 
     try {
       adapter.transaction(() => {
@@ -382,7 +398,7 @@ export async function runMigrationOnce(adapter) {
     }
 
     adapter.checkpoint?.();
-    sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir, legacyKeyIds);
+    sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir, legacyKeyIds, legacyMatchCache);
     fs.writeFileSync(LEGACY_SANITIZED_MARKER, new Date().toISOString(), { mode: 0o600 });
     fs.writeFileSync(MIGRATED_MARKER, new Date().toISOString(), { mode: 0o600 });
     pruneOldBackups();

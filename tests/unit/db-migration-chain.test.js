@@ -226,6 +226,19 @@ describe("Schema migrations", () => {
     expect(fs.readFileSync(path.join(backupRoot, migrationBackup, "db.json"), "utf8")).toBe(mainBytes);
     expect(fs.readFileSync(path.join(backupRoot, migrationBackup, "usage.json"), "utf8")).toBe(usageBytes);
 
+    const olderBackup = path.join(backupRoot, "migrate-from-json-older-distinct");
+    fs.mkdirSync(olderBackup, { recursive: true });
+    fs.writeFileSync(path.join(olderBackup, "db.json"), JSON.stringify({
+      settings: { sentinel: "older-backup" },
+      apiKeys: [{ id: "older-key", key: "legacy-two", createdAt: "2025-01-01T00:00:00.000Z" }],
+      modelAliases: { old: "keep-me" },
+    }));
+    fs.writeFileSync(path.join(olderBackup, "usage.json"), JSON.stringify({
+      totalRequestsLifetime: 77,
+      history: [{ apiKey: "legacy-two", cost: 9, provider: "old-provider" }],
+      dailySummary: { "2025-01-01": { requests: 9, cost: 9, byApiKey: { "legacy-two|old|old-provider": { apiKey: "legacy-two", cost: 9 } } } },
+    }));
+
     fs.writeFileSync(mainPath, JSON.stringify({
       settings: { repaired: true },
       apiKeys: [{ id: "repaired", key: "legacy-one", createdAt: "2026-08-20T00:00:00.000Z" }],
@@ -242,6 +255,21 @@ describe("Schema migrations", () => {
     expect(fs.readFileSync(path.join(backupRoot, migrationBackup, "db.json"), "utf8")).not.toContain("legacy-one");
     expect(fs.readFileSync(path.join(backupRoot, migrationBackup, "usage.json"), "utf8")).not.toContain("legacy-one");
     expect(fs.readFileSync(mainPath, "utf8")).not.toContain("legacy-one");
+    const failedMain = JSON.parse(fs.readFileSync(path.join(backupRoot, migrationBackup, "db.json"), "utf8"));
+    const failedUsage = JSON.parse(fs.readFileSync(path.join(backupRoot, migrationBackup, "usage.json"), "utf8"));
+    expect(failedMain.settings).toEqual({ mustRollback: true });
+    expect(failedMain.apiKeys).toHaveLength(2);
+    expect(failedUsage.history[0]).toEqual(expect.objectContaining({ apiKey: null, clientKeyId: "duplicate", cost: 4 }));
+
+    const olderMain = JSON.parse(fs.readFileSync(path.join(olderBackup, "db.json"), "utf8"));
+    const olderUsage = JSON.parse(fs.readFileSync(path.join(olderBackup, "usage.json"), "utf8"));
+    expect(olderMain.settings).toEqual({ sentinel: "older-backup" });
+    expect(olderMain.modelAliases).toEqual({ old: "keep-me" });
+    expect(olderUsage.totalRequestsLifetime).toBe(77);
+    expect(olderUsage.history[0]).toEqual(expect.objectContaining({ apiKey: null, clientKeyId: "older-key", cost: 9, provider: "old-provider" }));
+    expect(olderUsage.dailySummary["2025-01-01"]).toEqual(expect.objectContaining({ requests: 9, cost: 9 }));
+    expect(fs.readFileSync(path.join(olderBackup, "db.json"), "utf8")).not.toContain("legacy-two");
+    expect(fs.readFileSync(path.join(olderBackup, "usage.json"), "utf8")).not.toContain("legacy-two");
   });
 
   it("does not sanitize originals or old backups from a schema-stamped crash without durable import proof", async () => {

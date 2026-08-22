@@ -8,8 +8,10 @@ const KEEP_BACKUPS = 5;
 export function makeBackupDir(label) {
   ensureDirs();
   const ver = getAppVersion();
-  const slug = `${label}-${ver}-${timestampSlug()}`;
-  const dir = path.join(BACKUPS_DIR, slug);
+  const base = `${label}-${ver}-${timestampSlug()}`;
+  let dir = path.join(BACKUPS_DIR, base);
+  let suffix = 1;
+  while (fs.existsSync(dir)) dir = path.join(BACKUPS_DIR, `${base}-${suffix++}`);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
