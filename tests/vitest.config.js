@@ -5,6 +5,15 @@ import { fileURLToPath } from "url";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
+  // Dashboard components keep JSX inside .js files (the Next.js webpack
+  // pipeline handles that in the app); teach the test transform to parse
+  // them so component-level vitest suites can import src directly.
+  oxc: {
+    include: [/src\/.*\.js$/],
+    exclude: [],
+    lang: "jsx",
+    jsx: { runtime: "automatic" },
+  },
   test: {
     environment: "node",
     globals: true,

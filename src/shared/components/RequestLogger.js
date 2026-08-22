@@ -43,19 +43,25 @@ export default function RequestLogger() {
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Request Logs</h2>
         <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-text-muted flex items-center gap-2 cursor-pointer">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoRefresh}
+            onClick={() => setAutoRefresh((prev) => !prev)}
+            className="text-sm font-medium text-text-muted flex items-center gap-2 cursor-pointer rounded-lg p-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          >
             <span>Auto Refresh (3s)</span>
-            <div
-              onClick={() => setAutoRefresh(!autoRefresh)}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${autoRefresh ? "bg-primary" : "bg-bg-subtle border border-border"
+            <span
+              aria-hidden="true"
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${autoRefresh ? "bg-primary" : "bg-bg-subtle border border-border"
                 }`}
             >
               <span
                 className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${autoRefresh ? "translate-x-5" : "translate-x-1"
                   }`}
               />
-            </div>
-          </label>
+            </span>
+          </button>
         </div>
       </div>
 

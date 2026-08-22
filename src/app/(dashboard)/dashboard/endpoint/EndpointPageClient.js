@@ -181,6 +181,7 @@ export default function EndpointPageClient({ initialData }) {
           <Toggle
             checked={requireApiKey}
             onChange={handleRequireApiKeyChange}
+            aria-label="Require API key"
           />
         </div>
 
@@ -203,7 +204,9 @@ export default function EndpointPageClient({ initialData }) {
           </div>
         ) : (
           <div className="flex flex-col">
-            {keys.map((key) => (
+            {keys.map((key) => {
+              const keyLabel = key.name?.trim() || key.id;
+              return (
               <div
                 key={key.id}
                 className={`group flex items-center justify-between py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
@@ -250,7 +253,6 @@ export default function EndpointPageClient({ initialData }) {
                     checked={key.isActive ?? true}
                     onChange={(checked) => {
                       if (key.isActive && !checked) {
-                        const keyLabel = key.name?.trim() || key.id;
                         setConfirmState({
                           title: "Pause API Key",
                           message: `Pause API key "${keyLabel}"?\n\nThis key will stop working immediately but can be resumed later.`,
@@ -264,12 +266,14 @@ export default function EndpointPageClient({ initialData }) {
                       }
                     }}
                     title={key.isActive ? "Pause key" : "Resume key"}
+                    aria-label={key.isActive ? `Pause API key ${keyLabel}` : `Resume API key ${keyLabel}`}
                   />
                   <button
                     type="button"
                     onClick={() => setEditingKey(key)}
                     className="p-2 hover:bg-primary/10 rounded text-text-muted hover:text-primary opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
                     title="Edit key policy"
+                    aria-label={`Edit API key ${keyLabel} policy`}
                   >
                     <span className="material-symbols-outlined text-[18px]">edit</span>
                   </button>
@@ -278,7 +282,7 @@ export default function EndpointPageClient({ initialData }) {
                     onClick={() =>
                       setConfirmState({
                         title: "Delete API Key",
-                        message: `Delete API key "${key.name?.trim() || key.id}"?`,
+                        message: `Delete API key "${keyLabel}"?`,
                         onConfirm: async () => {
                           setConfirmState(null);
                           deleteKeyMutation.mutate(key.id);
@@ -286,12 +290,14 @@ export default function EndpointPageClient({ initialData }) {
                       })
                     }
                     className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                    aria-label={`Delete API key ${keyLabel}`}
                   >
                     <span className="material-symbols-outlined text-[18px]">delete</span>
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>

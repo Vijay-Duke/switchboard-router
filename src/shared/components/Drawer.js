@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect } from "react";
+import { useId } from "react";
 import { cn } from "@/shared/utils/cn";
+import { useDialog } from "@/shared/hooks/useDialog";
 
 export default function Drawer({
   isOpen,
@@ -9,7 +10,8 @@ export default function Drawer({
   title,
   children,
   width = "md",
-  className
+  className,
+  "aria-label": ariaLabel,
 }) {
   const widths = {
     sm: "w-[400px]",
@@ -19,22 +21,10 @@ export default function Drawer({
     full: "w-full",
   };
 
-  useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
-    return () => { document.body.style.overflow = ""; };
-  }, [isOpen]);
-
-  useEffect(() => {
-    const handleEscape = (e) => {
-      if (e.key === "Escape" && isOpen) onClose();
-    };
-    document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
-  }, [isOpen, onClose]);
+  // Dialog semantics: focus trap, Escape close, focus return (useDialog),
+  // plus role/aria wiring so every consumer inherits dialog behavior.
+  const dialogRef = useDialog({ isOpen, onClose });
+  const titleId = useId();
 
   if (!isOpen) return null;
 
@@ -48,24 +38,34 @@ export default function Drawer({
       />
 
       {/* Drawer panel */}
-      <div className={cn(
-        "absolute right-0 top-0 h-full bg-surface flex flex-col",
-        "shadow-[var(--shadow-elev)]",
-        "slide-in-right",
-        "border-l border-border-subtle",
-        widths[width] || widths.md,
-        className
-      )}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={ariaLabel}
+        aria-labelledby={ariaLabel ? undefined : title ? titleId : undefined}
+        tabIndex={-1}
+        className={cn(
+          "absolute right-0 top-0 h-full bg-surface flex flex-col",
+          "shadow-[var(--shadow-elev)]",
+          "slide-in-right",
+          "border-l border-border-subtle",
+          "outline-none",
+          widths[width] || widths.md,
+          className
+        )}
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-border-subtle flex-shrink-0">
           <div className="flex items-center gap-3">
             {title && (
-              <h2 className="text-lg font-semibold text-text-main">{title}</h2>
+              <h2 id={titleId} className="text-lg font-semibold text-text-main">{title}</h2>
             )}
           </div>
           <button
             type="button"
             onClick={onClose}
+            aria-label="Close"
             className="p-1.5 rounded-[10px] text-text-muted hover:bg-surface-2 hover:text-text-main transition-colors"
           >
             <span className="material-symbols-outlined text-[20px]">close</span>

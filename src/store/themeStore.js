@@ -32,10 +32,18 @@ const useThemeStore = create(
   )
 );
 
-// Apply theme to document — console UI is always warm-dark (mock match)
-function applyTheme(_theme) {
+// Resolve whether a theme resolves to dark. Exported for tests (QA-006).
+export function resolveIsDark(theme, systemPrefersDark) {
+  return theme === "dark" || (theme === "system" && systemPrefersDark === true);
+}
+
+// Apply theme to document — console tokens stay warm-dark in both modes, but
+// the `dark` class must reflect the effective theme so dark: variants and
+// documentElement state match the user's selection (light removes it).
+function applyTheme(theme) {
   if (typeof window === "undefined") return;
-  document.documentElement.classList.add("dark");
+  const systemPrefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.classList.toggle("dark", resolveIsDark(theme, systemPrefersDark));
 }
 
 export default useThemeStore;

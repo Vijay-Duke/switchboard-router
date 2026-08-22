@@ -133,12 +133,25 @@ export default function MitmToolCard({
   return (
     <>
       <Card padding="xs" className="overflow-hidden">
-        <div className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center" onClick={onToggle}>
+        <div
+          role="button"
+          tabIndex={0}
+          aria-expanded={isExpanded}
+          aria-label={`${isExpanded ? "Collapse" : "Expand"} ${tool.name} settings`}
+          className="flex items-start justify-between gap-3 hover:cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-lg sm:items-center"
+          onClick={onToggle}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onToggle();
+            }
+          }}
+        >
           <div className="flex min-w-0 items-center gap-3">
             <div className="size-8 flex items-center justify-center shrink-0">
               <Image
                 src={tool.image}
-                alt={tool.name}
+                alt=""
                 width={32}
                 height={32}
                 className="size-8 object-contain rounded-lg"
@@ -160,7 +173,7 @@ export default function MitmToolCard({
               <p className="text-xs text-text-muted sm:truncate">Intercept {tool.name} requests via MITM proxy</p>
             </div>
           </div>
-          <span className={`material-symbols-outlined text-text-muted text-[20px] transition-transform ${isExpanded ? "rotate-180" : ""}`}>
+          <span className={`material-symbols-outlined text-text-muted text-[20px] transition-transform ${isExpanded ? "rotate-180" : ""}`} aria-hidden="true">
             expand_more
           </span>
         </div>
@@ -272,23 +285,35 @@ export default function MitmToolCard({
 
       {/* Password Modal */}
       {showPasswordModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="mx-4 flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-surface p-5 shadow-xl sm:p-6">
-            <h3 className="font-semibold text-text-main">Sudo Password Required</h3>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && !loading) { setShowPasswordModal(false); setSudoPassword(""); setModalError(null); }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mitm-tool-sudo-title"
+            className="mx-4 flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-surface p-5 shadow-xl sm:p-6"
+          >
+            <h3 id="mitm-tool-sudo-title" className="font-semibold text-text-main">Sudo Password Required</h3>
             <div className="flex items-start gap-3 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
-              <span className="material-symbols-outlined text-yellow-500 text-[20px]">warning</span>
+              <span className="material-symbols-outlined text-yellow-500 text-[20px]" aria-hidden="true">warning</span>
               <p className="text-xs text-text-muted">Required to modify /etc/hosts and flush DNS cache</p>
             </div>
             <Input
+              label="Sudo password"
               type="password"
+              autoFocus
               placeholder="Enter sudo password"
               value={sudoPassword}
               onChange={(e) => setSudoPassword(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !loading) handleConfirmPassword(); }}
             />
             {modalError && (
-              <div className="flex items-center gap-2 px-2 py-1.5 rounded text-xs bg-red-500/10 text-red-600">
-                <span className="material-symbols-outlined text-[14px]">error</span>
+              <div role="alert" className="flex items-center gap-2 px-2 py-1.5 rounded text-xs bg-red-500/10 text-red-600">
+                <span className="material-symbols-outlined text-[14px]" aria-hidden="true">error</span>
                 <span>{modalError}</span>
               </div>
             )}

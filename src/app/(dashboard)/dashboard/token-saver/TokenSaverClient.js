@@ -270,6 +270,7 @@ export default function TokenSaverClient() {
           <Toggle
             checked={rtkEnabled}
             onChange={() => handleRtkEnabled(!rtkEnabled)}
+            aria-label="Compress tool output (RTK)"
           />
         </div>
         <div className="flex items-center justify-between py-4 border-b border-border gap-4 flex-wrap">
@@ -307,6 +308,7 @@ export default function TokenSaverClient() {
             checked={headroomEnabled && headroomRunning}
             disabled={!headroomRunning}
             onChange={() => handleHeadroomEnabled(!headroomEnabled)}
+            aria-label="Compress context (Headroom)"
           />
         </div>
         <div className="flex items-center justify-between pt-4 gap-4 flex-wrap">
@@ -356,6 +358,7 @@ export default function TokenSaverClient() {
             <Toggle
               checked={cavemanEnabled}
               onChange={() => handleCavemanEnabled(!cavemanEnabled)}
+              aria-label="Compress LLM output (Caveman)"
             />
           </div>
         </div>
@@ -407,6 +410,7 @@ export default function TokenSaverClient() {
             <Toggle
               checked={ponytailEnabled}
               onChange={() => handlePonytailEnabled(!ponytailEnabled)}
+              aria-label="Lazy senior dev (Ponytail)"
             />
           </div>
         </div>
@@ -431,11 +435,13 @@ export default function TokenSaverClient() {
           <Toggle
             checked={vaultEnabled}
             onChange={() => handleVaultEnabled(!vaultEnabled)}
+            aria-label="Externalize large tool results"
           />
         </div>
         <div className="py-4 border-b border-border">
           <Input
             label="Externalize tool results larger than (KB)"
+            aria-label="Externalize tool results larger than (KB)"
             type="number"
             min={7}
             step={1}

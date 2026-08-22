@@ -314,14 +314,14 @@ export default function ComboDetailPage() {
                     {model && <code className="text-[10px] text-text-muted font-mono truncate block">{model}</code>}
                   </div>
                   <div className="flex items-center gap-0.5">
-                    <button onClick={() => handleMove(idx, -1)} disabled={idx === 0} className={`p-1 rounded ${idx === 0 ? "text-text-muted/20" : "text-text-muted hover:text-primary hover:bg-black/5"}`} title="Move up">
-                      <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
+                    <button onClick={() => handleMove(idx, -1)} disabled={idx === 0} className={`p-1 rounded ${idx === 0 ? "text-text-muted/20" : "text-text-muted hover:text-primary hover:bg-black/5"}`} aria-label={`Move ${p?.name || providerId} up`} title="Move up">
+                      <span className="material-symbols-outlined text-[16px]" aria-hidden="true">arrow_upward</span>
                     </button>
-                    <button onClick={() => handleMove(idx, 1)} disabled={idx === providers.length - 1} className={`p-1 rounded ${idx === providers.length - 1 ? "text-text-muted/20" : "text-text-muted hover:text-primary hover:bg-black/5"}`} title="Move down">
-                      <span className="material-symbols-outlined text-[16px]">arrow_downward</span>
+                    <button onClick={() => handleMove(idx, 1)} disabled={idx === providers.length - 1} className={`p-1 rounded ${idx === providers.length - 1 ? "text-text-muted/20" : "text-text-muted hover:text-primary hover:bg-black/5"}`} aria-label={`Move ${p?.name || providerId} down`} title="Move down">
+                      <span className="material-symbols-outlined text-[16px]" aria-hidden="true">arrow_downward</span>
                     </button>
-                    <button onClick={() => handleRemoveProvider(idx)} className="p-1 rounded text-text-muted hover:text-red-500 hover:bg-red-500/10" title="Remove">
-                      <span className="material-symbols-outlined text-[16px]">close</span>
+                    <button onClick={() => handleRemoveProvider(idx)} className="p-1 rounded text-text-muted hover:text-red-500 hover:bg-red-500/10" aria-label={`Remove ${p?.name || providerId}`} title="Remove">
+                      <span className="material-symbols-outlined text-[16px]" aria-hidden="true">close</span>
                     </button>
                   </div>
                 </div>
@@ -340,11 +340,24 @@ export default function ComboDetailPage() {
               {testing ? "Running..." : "Run"}
             </Button>
           </div>
+          {/* API Key — user-entered client key secret; never hydrated from key lists */}
+          <div className="mb-3">
+            <Input
+              id="combo-example-key"
+              label="Client Key Secret"
+              type="password"
+              autoComplete="off"
+              placeholder="Paste a Switchboard client key secret (sk-...)"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              hint="Run uses this key as the Authorization bearer for the local gateway endpoint."
+            />
+          </div>
           <pre className="text-xs font-mono bg-black/[0.03] dark:bg-white/[0.03] p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-all">
             {curlExample}
           </pre>
           {testError && (
-            <p className="mt-3 text-xs text-red-500 break-words">{testError}</p>
+            <p role="alert" className="mt-3 text-xs text-red-500 break-words">{testError}</p>
           )}
           {testResult && (
             <div className="mt-3 flex flex-col gap-3">

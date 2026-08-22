@@ -11,6 +11,7 @@ import { GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS } from "open-sse/config/runtimeConfi
 import { initTranslators } from "open-sse/translator/index.js";
 import { authorizeClientKeyRequest, runWithClientKeyLease } from "@/sse/services/clientKeyPolicy.js";
 import { withConnectionInFlight } from "@/sse/services/connectionInFlight.js";
+import { corsPreflightResponse } from "@/shared/utils/cors.js";
 
 let initialized = false;
 const GEMINI_NATIVE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -28,15 +29,11 @@ async function ensureInitialized() {
 }
 
 /**
- * Handle CORS preflight
+ * Handle CORS preflight — reflect the requesting Origin (gateway serves
+ * browser clients on arbitrary origins; QA-023).
  */
-export async function OPTIONS() {
-  return new Response(null, {
-    headers: {
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "*"
-    }
-  });
+export async function OPTIONS(request) {
+  return corsPreflightResponse(request);
 }
 
 /**

@@ -1,7 +1,7 @@
 "use client";
 // @ts-check
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useId } from "react";
 import Card from "@/shared/components/Card";
 import Button from "@/shared/components/Button";
 import Drawer from "@/shared/components/Drawer";
@@ -55,33 +55,47 @@ function getProviderName(providerId, cache) {
 
 function CollapsibleSection({ title, children, defaultOpen = false, icon = null }) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
-  
+  const panelId = useId();
+
   return (
     <div className="border border-black/5 dark:border-white/5 rounded-lg overflow-hidden">
-      <button 
+      <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between p-3 bg-black/[0.02] dark:bg-white/[0.02] hover:bg-black/[0.04] dark:hover:bg-white/[0.04] transition-colors"
+        aria-expanded={isOpen}
+        aria-controls={panelId}
+        className="w-full flex items-center justify-between p-3 bg-black/[0.02] dark:bg-white/[0.02] hover:bg-black/[0.04] dark:hover:bg-white/[0.04] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-inset"
       >
         <div className="flex items-center gap-2">
-          {icon && <span className="material-symbols-outlined text-[18px] text-text-muted">{icon}</span>}
+          {icon && <span className="material-symbols-outlined text-[18px] text-text-muted" aria-hidden="true">{icon}</span>}
           <span className="font-semibold text-sm text-text-main">{title}</span>
         </div>
-        <span className={cn(
-          "material-symbols-outlined text-[20px] text-text-muted transition-transform duration-200",
-          isOpen ? "rotate-90" : ""
-        )}>
+        <span
+          aria-hidden="true"
+          className={cn(
+            "material-symbols-outlined text-[20px] text-text-muted transition-transform duration-200",
+            isOpen ? "rotate-90" : ""
+          )}
+        >
           chevron_right
         </span>
       </button>
-      
+
       {isOpen && (
-        <div className="p-4 border-t border-black/5 dark:border-white/5">
+        <div id={panelId} className="p-4 border-t border-black/5 dark:border-white/5">
           {children}
         </div>
       )}
     </div>
   );
+}
+
+function isDateRangeInverted({ startDate, endDate }) {
+  if (!startDate || !endDate) return false;
+  const start = new Date(startDate).getTime();
+  const end = new Date(endDate).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end)) return false;
+  return start > end;
 }
 
 function getCachedTokens(tokens) {
@@ -110,6 +124,7 @@ export default function RequestDetailsTab() {
     totalPages: 0
   });
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [providers, setProviders] = useState([]);
@@ -128,13 +143,16 @@ export default function RequestDetailsTab() {
 
       const cache = await fetchProviderNames();
       setProviderNameCache(cache.providerNameCache);
-    } catch (error) {
-      reportClientError("Failed to fetch providers:", error);
+    } catch (err) {
+      reportClientError("Failed to fetch providers:", err);
     }
   }, []);
 
   const fetchDetails = useCallback(async () => {
+    // QA-019: never request an inverted date range.
+    if (isDateRangeInverted(filters)) return;
     setLoading(true);
+    setError(null);
     try {
       const params = new URLSearchParams({
         page: pagination.page.toString(),
@@ -145,12 +163,16 @@ export default function RequestDetailsTab() {
       if (filters.endDate) params.append("endDate", filters.endDate);
 
       const res = await fetch(`/api/usage/request-details?${params}`);
+      if (!res.ok) {
+        throw new Error(`Request failed with status ${res.status}`);
+      }
       const data = await res.json();
 
       setDetails(data.details || []);
       setPagination(prev => ({ ...prev, ...data.pagination }));
-    } catch (error) {
-      reportClientError("Failed to fetch request details:", error);
+    } catch (err) {
+      reportClientError("Failed to fetch request details:", err);
+      setError(err?.message || "Network request failed");
     } finally {
       setLoading(false);
     }
@@ -176,6 +198,8 @@ export default function RequestDetailsTab() {
   const handlePageSizeChange = (newPageSize) => {
     setPagination(prev => ({ ...prev, pageSize: newPageSize, page: 1 }));
   };
+
+  const dateRangeInvalid = isDateRangeInverted(filters);
 
   const handleClearFilters = () => {
     setFilters({ provider: "", startDate: "", endDate: "" });
@@ -213,6 +237,8 @@ export default function RequestDetailsTab() {
               id="start-date-filter"
               type="datetime-local"
               value={filters.startDate}
+              aria-invalid={dateRangeInvalid || undefined}
+              aria-describedby={dateRangeInvalid ? "usage-date-range-error" : undefined}
               onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
               className={cn(
                 "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
@@ -227,6 +253,8 @@ export default function RequestDetailsTab() {
               id="end-date-filter"
               type="datetime-local"
               value={filters.endDate}
+              aria-invalid={dateRangeInvalid || undefined}
+              aria-describedby={dateRangeInvalid ? "usage-date-range-error" : undefined}
               onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
               className={cn(
                 "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
@@ -247,6 +275,12 @@ export default function RequestDetailsTab() {
             </Button>
           </div>
         </div>
+
+        {dateRangeInvalid && (
+          <div id="usage-date-range-error" role="alert" className="mt-3 text-sm text-danger">
+            Start Date must be on or before End Date.
+          </div>
+        )}
       </Card>
 
       <Card padding="none">
@@ -268,16 +302,29 @@ export default function RequestDetailsTab() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-text-muted">
+                  <td colSpan="9" className="p-8 text-center text-text-muted">
                     <div className="flex items-center justify-center gap-2">
-                      <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
+                      <span className="material-symbols-outlined animate-spin text-[20px]" aria-hidden="true">progress_activity</span>
                       Loading...
+                    </div>
+                  </td>
+                </tr>
+              ) : error ? (
+                <tr>
+                  <td colSpan="9" className="p-8 text-center">
+                    <div role="alert" className="flex flex-col items-center justify-center gap-2">
+                      <span className="material-symbols-outlined text-[24px] text-danger" aria-hidden="true">error</span>
+                      <p className="text-sm font-medium text-text-main">Failed to load request details</p>
+                      <p className="text-xs text-text-muted">{error}</p>
+                      <Button variant="outline" size="sm" onClick={() => fetchDetails()} className="mt-1">
+                        Retry
+                      </Button>
                     </div>
                   </td>
                 </tr>
               ) : details.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-text-muted">
+                  <td colSpan="9" className="p-8 text-center text-text-muted">
                     No request details found
                   </td>
                 </tr>
@@ -332,7 +379,7 @@ export default function RequestDetailsTab() {
           </table>
         </div>
 
-        {!loading && details.length > 0 && (
+        {!loading && !error && details.length > 0 && (
           <div className="border-t border-black/5 dark:border-white/5">
             <Pagination
               currentPage={pagination.page}

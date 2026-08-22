@@ -917,9 +917,18 @@ function ModelItem({ id, index, model, learned = null, isFirst, isLast, onEdit, 
         />
       ) : (
         <div
-          className="min-w-0 flex-1 cursor-text truncate rounded px-1.5 py-0.5 font-mono text-xs text-text-main hover:bg-black/5 dark:hover:bg-white/5"
+          role="button"
+          tabIndex={0}
+          className="min-w-0 flex-1 cursor-text truncate rounded px-1.5 py-0.5 font-mono text-xs text-text-main hover:bg-black/5 dark:hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
           onClick={() => setEditing(true)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setEditing(true);
+            }
+          }}
           title="Click to edit"
+          aria-label={`Edit model ${model}`}
         >
           {model}
         </div>

@@ -128,14 +128,16 @@ export default function NewProviderPage() {
 
           {/* Auth Method */}
           <div className="flex flex-col gap-3">
-            <label className="text-sm font-medium">
-              Authentication Method <span className="text-red-500">*</span>
-            </label>
-            <div className="flex gap-3">
+            <span id="new-provider-auth-method-label" className="text-sm font-medium">
+              Authentication Method <span className="text-red-500" aria-hidden="true">*</span>
+            </span>
+            <div className="flex gap-3" role="radiogroup" aria-labelledby="new-provider-auth-method-label">
               {authMethodOptions.map((method) => (
                 <button
                   key={method.value}
                   type="button"
+                  role="radio"
+                  aria-checked={formData.authMethod === method.value}
                   onClick={() => handleChange("authMethod", method.value)}
                   className={`flex-1 flex items-center justify-center gap-2 p-4 rounded-lg border transition-all ${
                     formData.authMethod === method.value
@@ -143,7 +145,7 @@ export default function NewProviderPage() {
                       : "border-border hover:border-primary/50"
                   }`}
                 >
-                  <span className="material-symbols-outlined">
+                  <span className="material-symbols-outlined" aria-hidden="true">
                     {method.value === "api_key" ? "key" : "lock"}
                   </span>
                   <span className="font-medium">{method.label}</span>
@@ -151,8 +153,6 @@ export default function NewProviderPage() {
               ))}
             </div>
           </div>
-
-          {/* API Key Input */}
           {formData.authMethod === "api_key" && (
             <Input
               label="API Key"
@@ -186,7 +186,7 @@ export default function NewProviderPage() {
 
           {/* Error Message */}
           {errors.submit && (
-            <div className="p-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm">
+            <div role="alert" className="p-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm">
               {errors.submit}
             </div>
           )}

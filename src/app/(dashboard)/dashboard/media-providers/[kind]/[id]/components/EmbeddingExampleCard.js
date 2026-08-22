@@ -100,9 +100,10 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
 
       <div className="flex flex-col gap-2.5">
         {/* Model — text input for custom node, dropdown otherwise */}
-        <Row label="Model">
+        <Row label="Model" htmlFor="embedding-example-model">
           {isCustom ? (
             <input
+              id="embedding-example-model"
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
               placeholder="e.g. voyage-3, embed-english-v3.0, text-embedding-3-small"
@@ -110,6 +111,7 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
             />
           ) : (
             <select
+              id="embedding-example-model"
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
               className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
@@ -122,9 +124,10 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
         </Row>
 
         {/* Endpoint */}
-        <Row label="Endpoint">
+        <Row label="Endpoint" htmlFor="embedding-example-endpoint">
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
             <input
+              id="embedding-example-endpoint"
               value={endpoint}
               onChange={(e) => setLocalEndpoint(e.target.value)}
               className="w-full min-w-0 flex-1 px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary font-mono"
@@ -134,20 +137,23 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
         </Row>
 
         {/* API Key */}
-        <Row label="API Key">
+        <Row label="API Key" htmlFor="embedding-example-key">
           <input
+            id="embedding-example-key"
             type="password"
+            autoComplete="off"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder="sk-..."
+            placeholder="Paste a Switchboard client key secret (sk-...)"
             className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary font-mono"
           />
         </Row>
 
         {/* Input */}
-        <Row label="Input">
+        <Row label="Input" htmlFor="embedding-example-input">
           <div className="relative">
             <input
+              id="embedding-example-input"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               className="w-full px-3 py-1.5 pr-7 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
@@ -156,17 +162,19 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
               <button
                 type="button"
                 onClick={() => setInput("")}
+                aria-label="Clear input"
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-primary transition-colors"
               >
-                <span className="material-symbols-outlined text-[14px]">close</span>
+                <span className="material-symbols-outlined text-[14px]" aria-hidden="true">close</span>
               </button>
             )}
           </div>
         </Row>
 
         {/* Dimensions (optional) — truncate embedding vector length */}
-        <Row label="Dimensions">
+        <Row label="Dimensions" htmlFor="embedding-example-dimensions">
           <input
+            id="embedding-example-dimensions"
             type="number"
             min="1"
             value={dimensions}
@@ -175,7 +183,6 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
             className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
           />
         </Row>
-
         {/* Curl + Run */}
         <div className="mt-1">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-1.5">
@@ -204,7 +211,7 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
         </div>
 
         {/* Error */}
-        {error && <p className="text-xs text-red-500 break-words">{error}</p>}
+        {error && <p role="alert" className="text-xs text-red-500 break-words">{error}</p>}
 
         {/* Response — default example or real result */}
         <div>

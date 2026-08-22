@@ -102,8 +102,9 @@ export function SttExampleCard({ providerId }) {
       <div className="flex flex-col gap-2.5">
         {/* Model */}
         {sttModels.length > 0 ? (
-          <Row label="Model">
+          <Row label="Model" htmlFor="stt-example-model">
             <select
+              id="stt-example-model"
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
               className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
@@ -114,8 +115,9 @@ export function SttExampleCard({ providerId }) {
             </select>
           </Row>
         ) : (
-          <Row label="Model">
+          <Row label="Model" htmlFor="stt-example-model">
             <input
+              id="stt-example-model"
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
               placeholder="Enter model id"
@@ -133,17 +135,24 @@ export function SttExampleCard({ providerId }) {
           </div>
         </Row>
 
-        {/* API Key */}
-        <Row label="API Key">
-          <span className="px-3 py-1.5 text-sm font-mono text-text-main bg-sidebar rounded-lg truncate block">
-            {apiKey ? `${apiKey.slice(0, 8)}${"\u2022".repeat(Math.min(20, apiKey.length - 8))}` : <span className="text-text-muted italic">No key configured</span>}
-          </span>
+        {/* API Key — user-entered client key secret; never hydrated from key lists */}
+        <Row label="API Key" htmlFor="stt-example-key">
+          <input
+            id="stt-example-key"
+            type="password"
+            autoComplete="off"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="Paste a Switchboard client key secret (sk-...)"
+            className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary font-mono"
+          />
         </Row>
 
         {/* Audio file */}
-        <Row label="Audio File">
+        <Row label="Audio File" htmlFor="stt-example-audio">
           <div className="flex flex-col gap-2">
             <input
+              id="stt-example-audio"
               type="file"
               accept="audio/*,video/mp4,.m4a,.mp3,.wav,.ogg,.flac,.webm,.opus"
               onChange={(e) => setAudioFile(e.target.files?.[0] || null)}
@@ -159,8 +168,9 @@ export function SttExampleCard({ providerId }) {
 
         {/* Language (if model supports) */}
         {allowedParams.includes("language") && (
-          <Row label="Language">
+          <Row label="Language" htmlFor="stt-example-language">
             <input
+              id="stt-example-language"
               value={language}
               onChange={(e) => setLanguage(e.target.value)}
               placeholder="e.g. en, vi, ja (auto-detect if empty)"
@@ -171,8 +181,9 @@ export function SttExampleCard({ providerId }) {
 
         {/* Prompt (if model supports) */}
         {allowedParams.includes("prompt") && (
-          <Row label="Prompt">
+          <Row label="Prompt" htmlFor="stt-example-prompt">
             <input
+              id="stt-example-prompt"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="optional context to improve accuracy"
@@ -183,8 +194,9 @@ export function SttExampleCard({ providerId }) {
 
         {/* Temperature (if model supports) */}
         {allowedParams.includes("temperature") && (
-          <Row label="Temperature">
+          <Row label="Temperature" htmlFor="stt-example-temperature">
             <input
+              id="stt-example-temperature"
               type="number"
               step="0.1"
               min="0"
@@ -199,8 +211,9 @@ export function SttExampleCard({ providerId }) {
 
         {/* Response format (if model supports) */}
         {allowedParams.includes("response_format") && (
-          <Row label="Response Format">
+          <Row label="Response Format" htmlFor="stt-example-format">
             <select
+              id="stt-example-format"
               value={responseFormat}
               onChange={(e) => setResponseFormat(e.target.value)}
               className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
@@ -241,7 +254,7 @@ export function SttExampleCard({ providerId }) {
           <pre className="bg-sidebar rounded-lg px-3 py-2.5 text-xs font-mono text-text-main overflow-x-auto whitespace-pre-wrap break-all">{curlSnippet}</pre>
         </div>
 
-        {error && <p className="text-xs text-red-500 break-words">{error}</p>}
+        {error && <p role="alert" className="text-xs text-red-500 break-words">{error}</p>}
 
         {/* Response */}
         <div>

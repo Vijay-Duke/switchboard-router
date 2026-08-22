@@ -156,6 +156,20 @@ export default function UsageTable({
 
   const totalColSpan = columns.length + valueColumns.length;
 
+  const getAriaSort = (field) =>
+    sortBy === field ? (sortOrder === "asc" ? "ascending" : "descending") : "none";
+
+  const renderSortButton = (col) => (
+    <button
+      type="button"
+      onClick={() => onToggleSort(tableType, col.field)}
+      className="inline-flex cursor-pointer items-center gap-1 rounded font-medium uppercase text-xs hover:text-text-main focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+    >
+      {col.label}
+      <SortIcon field={col.field} currentSort={sortBy} currentOrder={sortOrder} />
+    </button>
+  );
+
   return (
     <Card className="overflow-hidden">
       <div className="p-4 border-b border-border bg-bg-subtle/50">
@@ -168,21 +182,21 @@ export default function UsageTable({
               {columns.map((col) => (
                 <th
                   key={col.field}
-                  className={`px-6 py-3 cursor-pointer hover:bg-bg-subtle/50 ${col.align === "right" ? "text-right" : ""}`}
-                  onClick={() => onToggleSort(tableType, col.field)}
+                  scope="col"
+                  aria-sort={getAriaSort(col.field)}
+                  className={`px-6 py-3 ${col.align === "right" ? "text-right" : ""}`}
                 >
-                  {col.label}{" "}
-                  <SortIcon field={col.field} currentSort={sortBy} currentOrder={sortOrder} />
+                  {renderSortButton(col)}
                 </th>
               ))}
               {valueColumns.map((col) => (
                 <th
                   key={col.field}
-                  className="px-6 py-3 text-right cursor-pointer hover:bg-bg-subtle/50"
-                  onClick={() => onToggleSort(tableType, col.field)}
+                  scope="col"
+                  aria-sort={getAriaSort(col.field)}
+                  className="px-6 py-3 text-right"
                 >
-                  {col.label}{" "}
-                  <SortIcon field={col.field} currentSort={sortBy} currentOrder={sortOrder} />
+                  {renderSortButton(col)}
                 </th>
               ))}
             </tr>
@@ -196,14 +210,25 @@ export default function UsageTable({
                   onClick={() => toggleGroup(group.groupKey)}
                 >
                   <td className="px-6 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className={`material-symbols-outlined text-[18px] text-text-muted transition-transform ${expanded.has(group.groupKey) ? "rotate-90" : ""}`}>
+                    <button
+                      type="button"
+                      aria-expanded={expanded.has(group.groupKey)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleGroup(group.groupKey);
+                      }}
+                      className="flex w-full cursor-pointer items-center gap-2 rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={`material-symbols-outlined text-[18px] text-text-muted transition-transform ${expanded.has(group.groupKey) ? "rotate-90" : ""}`}
+                      >
                         chevron_right
                       </span>
                       <span className={`font-medium transition-colors ${group.summary.pending > 0 ? "text-primary" : ""}`}>
                         {group.groupKey}
                       </span>
-                    </div>
+                    </button>
                   </td>
                   {renderSummaryCells(group)}
                   <ValueCells item={group.summary} viewMode={viewMode} isSummary />

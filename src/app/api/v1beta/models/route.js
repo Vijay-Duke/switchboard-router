@@ -1,23 +1,24 @@
 // @ts-check
 import { PROVIDER_MODELS } from "@/shared/constants/models";
+import { buildModelsList } from "@/app/api/v1/models/route.js";
+import { corsPreflightResponse } from "@/shared/utils/cors.js";
+
+// Gemini generateContent serves chat models — same filter as GET /v1/models.
+const LLM_KIND = "llm";
 
 /**
- * Handle CORS preflight
+ * Handle CORS preflight — reflect the requesting Origin (gateway serves
+ * browser clients on arbitrary origins; QA-023).
  */
-export async function OPTIONS() {
-  return new Response(null, {
-    headers: {
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Allow-Headers": "*"
-    }
-  });
+export async function OPTIONS(request) {
+  return corsPreflightResponse(request, { methods: "GET, OPTIONS" });
 }
 
 /**
  * GET /v1beta/models - Gemini compatible models list
  * Returns models in Gemini API format
  */
-export async function GET() {
+export async function GET(request) {
   try {
     const models = [];
     const seen = new Set();
@@ -34,7 +35,7 @@ export async function GET() {
         outputTokenLimit: 8192,
       });
     }
-    
+
     for (const [provider, providerModels] of Object.entries(PROVIDER_MODELS)) {
       for (const model of providerModels) {
         addModel({
@@ -52,6 +53,25 @@ export async function GET() {
           });
         }
       }
+    }
+
+    // Active advertised models — local/provider-node connections, custom
+    // models, combos — so discovery lists everything generateContent actually
+    // serves (QA-026). Static catalog names dedupe against these via `seen`.
+    try {
+      const advertised = await buildModelsList([LLM_KIND], { signal: request?.signal });
+      for (const model of advertised) {
+        if (!model?.id) continue;
+        const displayName = model.display_name || model.name || model.id.split("/").pop();
+        const owner = model.owned_by || model.id.split("/")[0];
+        addModel({
+          name: `models/${model.id}`,
+          displayName,
+          description: `${owner} model: ${displayName}`,
+        });
+      }
+    } catch (e) {
+      console.log("Could not fetch advertised models for Gemini discovery:", e?.message || e);
     }
 
     return Response.json({ models });

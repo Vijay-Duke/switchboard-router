@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect } from "react";
+import { useId } from "react";
 import { cn } from "@/shared/utils/cn";
 import Button from "./Button";
 import Tooltip from "./Tooltip";
+import { useDialog } from "@/shared/hooks/useDialog";
 
 export default function Modal({
   isOpen,
@@ -15,6 +16,7 @@ export default function Modal({
   closeOnOverlay = true,
   showTrafficLights = true,
   className,
+  "aria-label": ariaLabel,
 }) {
   const sizes = {
     sm: "max-w-sm",
@@ -24,22 +26,10 @@ export default function Modal({
     full: "max-w-4xl",
   };
 
-  useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
-    return () => { document.body.style.overflow = ""; };
-  }, [isOpen]);
-
-  useEffect(() => {
-    const handleEscape = (e) => {
-      if (e.key === "Escape" && isOpen) onClose();
-    };
-    document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
-  }, [isOpen, onClose]);
+  // Dialog semantics: focus trap, Escape close, focus return (useDialog),
+  // plus role/aria wiring so every consumer inherits modal dialog behavior.
+  const dialogRef = useDialog({ isOpen, onClose });
+  const titleId = useId();
 
   if (!isOpen) return null;
 
@@ -49,15 +39,23 @@ export default function Modal({
       <div
         className="absolute inset-0 bg-black/50 backdrop-blur-[2px] fade-in"
         onClick={closeOnOverlay ? onClose : undefined}
+        aria-hidden="true"
       />
 
       {/* Modal content */}
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={ariaLabel}
+        aria-labelledby={ariaLabel ? undefined : title ? titleId : undefined}
+        tabIndex={-1}
         className={cn(
           "relative w-full bg-surface",
           "border border-border-subtle",
           "rounded-[14px] shadow-[var(--shadow-elev)]",
           "fade-in",
+          "outline-none",
           sizes[size],
           className
         )}
@@ -84,7 +82,7 @@ export default function Modal({
                 </div>
               )}
               {title && (
-                <h2 className="text-lg font-semibold text-text-main">{title}</h2>
+                <h2 id={titleId} className="text-lg font-semibold text-text-main">{title}</h2>
               )}
             </div>
             {/* X button — mobile only */}
