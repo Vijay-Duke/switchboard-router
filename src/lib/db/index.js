@@ -2,7 +2,7 @@
 import { getAdapter } from "./driver.js";
 import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
 import { connToRow } from "./repos/connectionsRepo.js";
-import { packApiKeyRecord, unpackApiKeyRecord } from "@/lib/crypto/secrets.js";
+import { normalizeApiKeyRecordLookup, packApiKeyRecord, unpackApiKeyRecord } from "@/lib/crypto/secrets.js";
 
 // Settings
 export {
@@ -124,7 +124,7 @@ export async function exportDb() {
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({
-      id: r.id, key: r.key, keyPrefix: r.keyPrefix, lookupId: r.lookupId, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt,
+      id: r.id, key: r.key, keyPrefix: r.keyPrefix, lookupDigest: r.lookupDigest, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt,
       allowedModels: parseJson(r.allowedModels, []), allowedCombos: parseJson(r.allowedCombos, []),
       expiresAt: r.expiresAt || null, rateLimitPerMinute: r.rateLimitPerMinute ?? null,
       concurrencyLimit: r.concurrencyLimit ?? null, spendLimitUsd: r.spendLimitUsd ?? null, spentUsd: Number(r.spentUsd || 0),
@@ -187,13 +187,15 @@ export async function importDb(payload) {
       );
     }
     for (const k of payload.apiKeys || []) {
-      const storedKey = typeof k.key === "string" && unpackApiKeyRecord(k.key).legacy
-        ? packApiKeyRecord(k.key)
-        : k.key;
+      const normalizedKey = normalizeApiKeyRecordLookup(k.key);
+      const storedKey = typeof normalizedKey === "string" && unpackApiKeyRecord(normalizedKey).legacy
+        ? packApiKeyRecord(normalizedKey)
+        : normalizedKey;
+      const unpacked = unpackApiKeyRecord(storedKey);
       db.run(
-        `INSERT OR REPLACE INTO apiKeys(id, key, keyPrefix, lookupId, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd)
+        `INSERT OR REPLACE INTO apiKeys(id, key, keyPrefix, lookupDigest, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd)
          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [k.id, storedKey, unpackApiKeyRecord(storedKey).prefix || null, unpackApiKeyRecord(storedKey).lookupId || null, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(),
+        [k.id, storedKey, unpacked.prefix || null, unpacked.lookupDigest || null, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(),
           k.allowedModels == null ? null : stringifyJson(k.allowedModels), k.allowedCombos == null ? null : stringifyJson(k.allowedCombos),
           k.expiresAt || null, k.rateLimitPerMinute ?? null, k.concurrencyLimit ?? null, k.spendLimitUsd ?? null, Number(k.spentUsd || 0)]
       );

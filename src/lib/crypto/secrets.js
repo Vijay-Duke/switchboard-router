@@ -86,34 +86,52 @@ export function apiKeyPrefix(rawKey) {
   return rawKey.length <= 12 ? rawKey.slice(0, 4) + "…" : rawKey.slice(0, 10) + "…";
 }
 
-export function apiKeyLookupId(rawKey) {
-  if (!rawKey || typeof rawKey !== "string" || !rawKey.startsWith("sk-")) return null;
-  const parts = rawKey.split("-");
-  if (parts.length >= 4) return parts[parts.length - 2] || null;
-  if (parts.length >= 2) return parts[parts.length - 1] || null;
-  return null;
+export function apiKeyLookupDigestFromKeyId(keyId) {
+  if (typeof keyId !== "string" || !/^[a-f0-9]{32}$/.test(keyId)) return null;
+  return crypto.createHash("sha256").update(`sb-key-lookup:${keyId}`).digest("hex");
 }
 
-/** Stored form: v2:<lookupId>:<prefix>:<saltHex>:<scryptHex>. */
-export function packApiKeyRecord(rawKey, lookupId = apiKeyLookupId(rawKey)) {
+export function apiKeyLookupDigest(rawKey) {
+  if (typeof rawKey !== "string") return null;
+  const parts = rawKey.split("-");
+  if (parts.length !== 4 || parts[0] !== "sk" || !parts[1] || !/^[a-f0-9]{8}$/.test(parts[3])) return null;
+  return apiKeyLookupDigestFromKeyId(parts[2]);
+}
+
+/** Stored forms: v2:<lookupDigest>:<prefix>:<saltHex>:<scryptHex> or cheap legacy v1. */
+export function packApiKeyRecord(rawKey, lookupDigest = apiKeyLookupDigest(rawKey)) {
+  if (!lookupDigest) {
+    // Low-entropy legacy keys remain on the cheap verifier until explicit rotation.
+    return `v1:${apiKeyPrefix(rawKey)}:${hashApiKey(rawKey)}`;
+  }
   const salt = crypto.randomBytes(16);
   const verifier = crypto.scryptSync(rawKey, salt, 32, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
-  return `v2:${lookupId || ""}:${apiKeyPrefix(rawKey)}:${salt.toString("hex")}:${verifier.toString("hex")}`;
+  return `v2:${lookupDigest}:${apiKeyPrefix(rawKey)}:${salt.toString("hex")}:${verifier.toString("hex")}`;
+}
+
+export function normalizeApiKeyRecordLookup(stored) {
+  if (typeof stored !== "string" || !stored.startsWith("v2:")) return stored;
+  const parts = stored.split(":");
+  if (parts.length !== 5 || !/^[a-f0-9]{32}$/.test(parts[1])) return stored;
+  const digest = apiKeyLookupDigestFromKeyId(parts[1]);
+  return `v2:${digest}:${parts[2]}:${parts[3]}:${parts[4]}`;
 }
 
 export function unpackApiKeyRecord(stored) {
-  if (!stored || typeof stored !== "string") return { version: 0, lookupId: null, prefix: "", hash: null, salt: null, legacy: true, raw: stored };
-  const parts = stored.split(":");
-  if (stored.startsWith("v2:") && parts.length === 5) {
-    return { version: 2, lookupId: parts[1] || null, prefix: parts[2], salt: parts[3], hash: parts[4], legacy: false, raw: null };
+  if (!stored || typeof stored !== "string") return { version: 0, lookupDigest: null, prefix: "", hash: null, salt: null, legacy: true, raw: stored };
+  const normalized = normalizeApiKeyRecordLookup(stored);
+  const parts = normalized.split(":");
+  if (normalized.startsWith("v2:") && parts.length === 5) {
+    const lookupDigest = /^[a-f0-9]{64}$/.test(parts[1]) ? parts[1] : null;
+    return { version: 2, lookupDigest, prefix: parts[2], salt: parts[3], hash: parts[4], legacy: false, raw: null };
   }
-  if (stored.startsWith("v2:") && parts.length === 4) {
-    return { version: 2, lookupId: null, prefix: parts[1], salt: parts[2], hash: parts[3], legacy: false, raw: null };
+  if (normalized.startsWith("v2:") && parts.length === 4) {
+    return { version: 2, lookupDigest: null, prefix: parts[1], salt: parts[2], hash: parts[3], legacy: false, raw: null };
   }
-  if (stored.startsWith("v1:") && parts.length >= 3) {
-    return { version: 1, lookupId: null, prefix: parts[1], salt: null, hash: parts.slice(2).join(":"), legacy: false, raw: null };
+  if (normalized.startsWith("v1:") && parts.length >= 3) {
+    return { version: 1, lookupDigest: null, prefix: parts[1], salt: null, hash: parts.slice(2).join(":"), legacy: false, raw: null };
   }
-  return { version: 0, lookupId: apiKeyLookupId(stored), prefix: apiKeyPrefix(stored), hash: null, salt: null, legacy: true, raw: stored };
+  return { version: 0, lookupDigest: apiKeyLookupDigest(normalized), prefix: apiKeyPrefix(normalized), hash: null, salt: null, legacy: true, raw: normalized };
 }
 
 export function timingSafeEqualStr(a, b) {

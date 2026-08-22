@@ -212,6 +212,14 @@ export default function EndpointPageClient({ initialData }) {
                   <p className="text-sm font-medium">{key.name}</p>
                   <div className="flex flex-wrap items-center gap-2 mt-1">
                     <code className="text-xs text-text-muted font-mono">{key.keyPrefix}</code>
+                    {key.rotationRequired ? (
+                      <span
+                        className="rounded-full bg-orange-500/10 px-2 py-0.5 text-[11px] text-orange-600"
+                        title="This legacy key remains usable through its compatibility verifier until you create a replacement."
+                      >
+                        Rotation required
+                      </span>
+                    ) : null}
                     {(key.allowedModels?.length || key.allowedCombos?.length) ? (
                       <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-primary">Restricted targets</span>
                     ) : (

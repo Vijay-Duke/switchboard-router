@@ -121,8 +121,12 @@ describe("Schema migrations", () => {
 
     const keys = db.all(`SELECT * FROM apiKeys`);
     expect(keys).toHaveLength(1);
-    expect(keys[0].key).toMatch(/^v2:/);
+    expect(keys[0].key).toMatch(/^v1:/);
     expect(keys[0].spentUsd).toBe(1);
+    expect(keys[0].lookupDigest).toBeNull();
+    expect(db.get(`SELECT value FROM _meta WHERE key = 'migratedAt'`)?.value).toBeTruthy();
+    expect(fs.existsSync(path.join(tempDir, "db", ".migrated-from-json"))).toBe(true);
+    expect(fs.existsSync(path.join(tempDir, "db", ".legacy-secrets-sanitized"))).toBe(true);
 
     const connection = db.get(`SELECT data FROM providerConnections WHERE id = ?`, ["legacy-connection"]);
     expect(connection.data).not.toContain("legacy-access-token");
@@ -141,6 +145,8 @@ describe("Schema migrations", () => {
     expect(backupBytes).not.toContain("\"abc\"");
 
     fs.writeFileSync(path.join(tempDir, "db.json"), JSON.stringify(legacy), { mode: 0o600 });
+    const oldMigrationBackup = fs.readdirSync(backupRoot).find((name) => name.startsWith("migrate-from-json-"));
+    fs.writeFileSync(path.join(backupRoot, oldMigrationBackup, "db.json"), JSON.stringify(legacy), { mode: 0o600 });
     fs.rmSync(path.join(tempDir, "db", ".legacy-secrets-sanitized"), { force: true });
     db.close?.();
     delete global._dbAdapter;
@@ -148,7 +154,68 @@ describe("Schema migrations", () => {
     const { getAdapter: restartAdapter } = await import("@/lib/db/driver.js");
     await restartAdapter();
     expect(fs.readFileSync(path.join(tempDir, "db.json"), "utf8")).not.toContain("\"abc\"");
+    expect(fs.readFileSync(path.join(backupRoot, oldMigrationBackup, "db.json"), "utf8")).not.toContain("\"abc\"");
+    expect(fs.existsSync(path.join(tempDir, "db", ".legacy-secrets-sanitized"))).toBe(true);
   }, 15_000);
+
+  it("keeps originals and migration backups intact when a row import fails and the transaction rolls back", async () => {
+    const mainPath = path.join(tempDir, "db.json");
+    const usagePath = path.join(tempDir, "usage.json");
+    const mainBytes = JSON.stringify({
+      settings: { mustRollback: true },
+      apiKeys: [
+        { id: "duplicate", key: "legacy-one", createdAt: "2026-08-20T00:00:00.000Z" },
+        { id: "duplicate", key: "legacy-two", createdAt: "2026-08-20T00:00:00.000Z" },
+      ],
+    });
+    const usageBytes = JSON.stringify({ history: [{ apiKey: "legacy-one", cost: 4 }] });
+    fs.writeFileSync(mainPath, mainBytes);
+    fs.writeFileSync(usagePath, usageBytes);
+
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const db = await getAdapter();
+
+    expect(db.get(`SELECT COUNT(*) count FROM apiKeys`).count).toBe(0);
+    expect(db.get(`SELECT COUNT(*) count FROM settings`).count).toBe(0);
+    expect(db.get(`SELECT value FROM _meta WHERE key = 'migratedAt'`)).toBeUndefined();
+    expect(fs.readFileSync(mainPath, "utf8")).toBe(mainBytes);
+    expect(fs.readFileSync(usagePath, "utf8")).toBe(usageBytes);
+    expect(fs.existsSync(path.join(tempDir, "db", ".migrated-from-json"))).toBe(false);
+    expect(fs.existsSync(path.join(tempDir, "db", ".legacy-secrets-sanitized"))).toBe(false);
+
+    const backupRoot = path.join(tempDir, "db", "backups");
+    const migrationBackup = fs.readdirSync(backupRoot).find((name) => name.startsWith("migrate-from-json-"));
+    expect(fs.readFileSync(path.join(backupRoot, migrationBackup, "db.json"), "utf8")).toBe(mainBytes);
+    expect(fs.readFileSync(path.join(backupRoot, migrationBackup, "usage.json"), "utf8")).toBe(usageBytes);
+  });
+
+  it("does not sanitize originals or old backups from a schema-stamped crash without durable import proof", async () => {
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const db = await getAdapter();
+    expect(db.get(`SELECT value FROM _meta WHERE key = 'schemaVersion'`)?.value).toBe("8");
+    db.close?.();
+
+    const mainBytes = JSON.stringify({ apiKeys: [{ id: "unproved", key: "raw-unproved-secret" }] });
+    const usageBytes = JSON.stringify({ history: [{ apiKey: "raw-unproved-secret" }] });
+    fs.writeFileSync(path.join(tempDir, "db.json"), mainBytes);
+    fs.writeFileSync(path.join(tempDir, "usage.json"), usageBytes);
+    const backupDir = path.join(tempDir, "db", "backups", "migrate-from-json-crashed");
+    fs.mkdirSync(backupDir, { recursive: true });
+    fs.writeFileSync(path.join(backupDir, "db.json"), mainBytes);
+    fs.writeFileSync(path.join(backupDir, "usage.json"), usageBytes);
+
+    delete global._dbAdapter;
+    vi.resetModules();
+    const { getAdapter: restartAdapter } = await import("@/lib/db/driver.js");
+    const restarted = await restartAdapter();
+
+    expect(restarted.get(`SELECT value FROM _meta WHERE key = 'migratedAt'`)).toBeUndefined();
+    expect(fs.readFileSync(path.join(tempDir, "db.json"), "utf8")).toBe(mainBytes);
+    expect(fs.readFileSync(path.join(tempDir, "usage.json"), "utf8")).toBe(usageBytes);
+    expect(fs.readFileSync(path.join(backupDir, "db.json"), "utf8")).toBe(mainBytes);
+    expect(fs.readFileSync(path.join(backupDir, "usage.json"), "utf8")).toBe(usageBytes);
+    expect(fs.existsSync(path.join(tempDir, "db", ".legacy-secrets-sanitized"))).toBe(false);
+  });
 
   it("auto-sync re-creates missing index when DB lacks it", async () => {
     const { getAdapter } = await import("@/lib/db/driver.js");

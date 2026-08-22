@@ -1,12 +1,13 @@
 import {
   matchesApiKeyRecord,
   packApiKeyRecord,
+  normalizeApiKeyRecordLookup,
   unpackApiKeyRecord,
 } from "../../crypto/secrets.js";
 
 const POLICY_COLUMNS = {
   keyPrefix: "TEXT",
-  lookupId: "TEXT",
+  lookupDigest: "TEXT",
   allowedModels: "TEXT",
   allowedCombos: "TEXT",
   expiresAt: "TEXT",
@@ -167,13 +168,18 @@ const migration = {
     addPolicyColumns(db);
     const keys = db.all(`SELECT id, key FROM apiKeys`) || [];
     for (const key of keys) {
-      const unpacked = unpackApiKeyRecord(key.key);
-      db.run(`UPDATE apiKeys SET keyPrefix = ?, lookupId = ? WHERE id = ?`, [unpacked.prefix || null, unpacked.lookupId || null, key.id]);
+      const normalized = normalizeApiKeyRecordLookup(key.key);
+      const unpacked = unpackApiKeyRecord(normalized);
+      db.run(
+        `UPDATE apiKeys SET key = ?, keyPrefix = ?, lookupDigest = ? WHERE id = ?`,
+        [normalized, unpacked.prefix || null, unpacked.lookupDigest || null, key.id],
+      );
+      key.key = normalized;
       key.keyPrefix = unpacked.prefix || null;
-      key.lookupId = unpacked.lookupId || null;
+      key.lookupDigest = unpacked.lookupDigest || null;
     }
     db.exec(`CREATE INDEX IF NOT EXISTS idx_ak_prefix ON apiKeys(keyPrefix)`);
-    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ak_lookup_id ON apiKeys(lookupId) WHERE lookupId IS NOT NULL`);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ak_lookup_digest ON apiKeys(lookupDigest) WHERE lookupDigest IS NOT NULL`);
     const usageColumns = columns(db, "usageHistory");
 
     if (usageColumns.has("apiKey")) {
@@ -208,7 +214,12 @@ const migration = {
       if (unpackApiKeyRecord(key.key).legacy) {
         const packed = packApiKeyRecord(String(key.key));
         const unpacked = unpackApiKeyRecord(packed);
-        db.run(`UPDATE apiKeys SET key = ?, keyPrefix = ?, lookupId = ? WHERE id = ?`, [packed, unpacked.prefix || null, unpacked.lookupId || null, key.id]);
+        db.run(
+          `UPDATE apiKeys SET key = ?, keyPrefix = ?, lookupDigest = ? WHERE id = ?`,
+          [packed, unpacked.prefix || null, unpacked.lookupDigest || null, key.id],
+        );
+        key.key = packed;
+        key.lookupDigest = unpacked.lookupDigest || null;
       }
     }
   },

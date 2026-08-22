@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import nodeCrypto from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createNodeSqliteAdapter } from "@/lib/db/adapters/nodeSqliteAdapter.js";
 import { TABLES, buildCreateTableSql } from "@/lib/db/schema.js";
@@ -35,11 +36,13 @@ afterAll(() => {
   fs.rmSync(`${file}-shm`, { force: true });
 });
 
-function expectSafe(record) {
+function expectSafe(record, rotationRequired = false) {
   expect(record).not.toHaveProperty("key");
+  expect(record).not.toHaveProperty("lookupDigest");
   expect(record).toEqual(expect.objectContaining({
     id: expect.any(String),
     keyPrefix: expect.any(String),
+    rotationRequired,
     allowedModels: expect.any(Array),
     allowedCombos: expect.any(Array),
     expiresAt: null,
@@ -52,11 +55,17 @@ function expectSafe(record) {
 
 describe("client key repository", () => {
   it("returns the generated secret once and only safe records afterward", async () => {
-    const created = await repo.createApiKey("Automation", "machine-1");
+    const created = await repo.createApiKey("Automation", "0123456789abcdef");
     expect(created.key).toMatch(/^sk-/);
     expect(created.allowedModels).toEqual([]);
     expect(created.allowedCombos).toEqual([]);
-    expect(db.get(`SELECT key FROM apiKeys WHERE id = ?`, [created.id]).key).toMatch(/^v2:/);
+    const stored = db.get(`SELECT key, lookupDigest FROM apiKeys WHERE id = ?`, [created.id]);
+    const { apiKeyLookupDigest } = await import("@/lib/crypto/secrets.js");
+    const rawKeyId = created.key.split("-").at(-2);
+    expect(stored.key).toMatch(/^v2:/);
+    expect(stored.lookupDigest).toBe(apiKeyLookupDigest(created.key));
+    expect(stored.lookupDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(stored)).not.toContain(rawKeyId);
     expect(created.spentUsd).toBe(0);
 
     const [listed] = await repo.getApiKeys();
@@ -68,20 +77,54 @@ describe("client key repository", () => {
     expect(authenticated.id).toBe(created.id);
   });
 
-  it("authenticates and upgrades legacy plaintext but rejects inactive keys", async () => {
+  it("keeps unparseable legacy keys usable and rotation-required without v2 fanout", async () => {
+    const raw = "sk-legacyraw";
     db.run(
-      `INSERT INTO apiKeys(id, key, name, isActive, createdAt) VALUES ('legacy', 'sk-legacyraw', 'Legacy', 1, '2026-08-22T00:00:00.000Z')`
+      `INSERT INTO apiKeys(id, key, name, isActive, createdAt) VALUES ('legacy', ?, 'Legacy', 1, '2026-08-22T00:00:00.000Z')`,
+      [raw],
     );
-    expect((await repo.authenticateApiKey("sk-legacyraw")).id).toBe("legacy");
-    expect(db.get(`SELECT key FROM apiKeys WHERE id = 'legacy'`).key).toMatch(/^v2:/);
+
+    expectSafe(await repo.authenticateApiKey(raw), true);
+    expectSafe(await repo.getApiKeyById("legacy"), true);
+    const plaintextUpgrade = db.get(`SELECT key, lookupDigest FROM apiKeys WHERE id = 'legacy'`);
+    expect(plaintextUpgrade.key).toMatch(/^v1:/);
+    expect(plaintextUpgrade.key).not.toContain(raw);
+    expect(plaintextUpgrade.lookupDigest).toBeNull();
+
+    const { hashApiKey } = await import("@/lib/crypto/secrets.js");
+    db.run(`UPDATE apiKeys SET key = ? WHERE id = 'legacy'`, [`v1:sk-l…:${hashApiKey(raw)}`]);
+    expectSafe(await repo.authenticateApiKey(raw), true);
+    expect(db.get(`SELECT key, lookupDigest FROM apiKeys WHERE id = 'legacy'`)).toEqual({
+      key: `v1:sk-l…:${hashApiKey(raw)}`,
+      lookupDigest: null,
+    });
+    expect(await repo.validateApiKey(raw)).toBe(true);
 
     await repo.updateApiKey("legacy", { isActive: false });
-    expect(await repo.authenticateApiKey("sk-legacyraw")).toBeNull();
+    expect(await repo.authenticateApiKey(raw)).toBeNull();
+  });
+  
+  it("upgrades parseable plaintext and v1 modern keys to indexed v2 digests", async () => {
+    const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey.js");
+    const { apiKeyLookupDigest, hashApiKey } = await import("@/lib/crypto/secrets.js");
+    const plaintext = generateApiKeyWithMachine("1111111111111111").key;
+    const v1 = generateApiKeyWithMachine("2222222222222222").key;
+    db.run(
+      `INSERT INTO apiKeys(id, key, name, isActive, createdAt) VALUES ('plain-modern', ?, 'Plain', 1, '2026-08-22T00:00:00.000Z')`,
+      [plaintext],
+    );
+    db.run(
+      `INSERT INTO apiKeys(id, key, name, isActive, createdAt) VALUES ('v1-modern', ?, 'V1', 1, '2026-08-22T00:00:00.000Z')`,
+      [`v1:${v1.slice(0, 10)}…:${hashApiKey(v1)}`],
+    );
 
-    db.run(`UPDATE apiKeys SET isActive = 1, key = ?, lookupId = NULL WHERE id = 'legacy'`, [`v1:sk-l…:${(await import("@/lib/crypto/secrets.js")).hashApiKey("sk-legacyraw")}`]);
-    expect((await repo.authenticateApiKey("sk-legacyraw")).id).toBe("legacy");
-    expect(db.get(`SELECT key FROM apiKeys WHERE id = 'legacy'`).key).toMatch(/^v2:/);
-    expect(await repo.validateApiKey("sk-legacyraw")).toBe(true);
+    for (const [id, raw] of [["plain-modern", plaintext], ["v1-modern", v1]]) {
+      expectSafe(await repo.authenticateApiKey(raw));
+      const stored = db.get(`SELECT key, lookupDigest FROM apiKeys WHERE id = ?`, [id]);
+      expect(stored.key).toMatch(/^v2:/);
+      expect(stored.lookupDigest).toBe(apiKeyLookupDigest(raw));
+      expect(JSON.stringify(stored)).not.toContain(raw.split("-").at(-2));
+    }
   });
 
   it("normalizes policy arrays, updates atomically, and clears explicit fields", async () => {
@@ -180,13 +223,60 @@ describe("client key repository", () => {
     getSpy.mockRestore();
   });
 
-  it("uses a unique lookup candidate so arbitrary invalid keys run no verifier KDF", async () => {
-    await repo.createApiKey("Bounded", "machine-bounded");
+  it("authenticates more than eight same-machine modern keys by one digest lookup and one async KDF", async () => {
+    const created = [];
+    for (let index = 0; index < 12; index += 1) {
+      created.push(await repo.createApiKey(`Key ${index}`, "3333333333333333"));
+    }
+    const scrypt = vi.spyOn(nodeCrypto, "scrypt");
+    const getSpy = vi.spyOn(db, "get");
+
+    for (const selected of [created[0], created[8], created[11]]) {
+      scrypt.mockClear();
+      getSpy.mockClear();
+      expect((await repo.authenticateApiKey(selected.key)).id).toBe(selected.id);
+      expect(scrypt).toHaveBeenCalledOnce();
+      const lookupCalls = getSpy.mock.calls.filter(([sql]) => String(sql).includes("lookupDigest = ?"));
+      expect(lookupCalls).toHaveLength(1);
+      expect(lookupCalls[0][1]).toEqual([(await import("@/lib/crypto/secrets.js")).apiKeyLookupDigest(selected.key)]);
+    }
+
+    scrypt.mockRestore();
+    getSpy.mockRestore();
+  });
+
+  it("performs zero KDFs for an unknown valid modern key and never scans lookup-less v2 rows", async () => {
+    await repo.createApiKey("Bounded", "4444444444444444");
+    const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey.js");
+    const unknown = generateApiKeyWithMachine("4444444444444444").key;
+    const scrypt = vi.spyOn(nodeCrypto, "scrypt");
     const allSpy = vi.spyOn(db, "all");
-    expect(await repo.authenticateApiKey("sk-unmatched-arbitrary-secret")).toBeNull();
-    const lookupCall = allSpy.mock.calls.find(([sql]) => String(sql).includes("lookupId = ?"));
-    expect(lookupCall).toBeDefined();
-    expect(lookupCall[1]).toEqual(["arbitrary"]);
+    const getSpy = vi.spyOn(db, "get");
+
+    expect(await repo.authenticateApiKey(unknown)).toBeNull();
+    expect(scrypt).not.toHaveBeenCalled();
+    expect(getSpy.mock.calls.filter(([sql]) => String(sql).includes("lookupDigest = ?"))).toHaveLength(1);
+    expect(allSpy.mock.calls.some(([sql]) => String(sql).includes("key NOT LIKE 'v2:%'"))).toBe(true);
+    expect(allSpy.mock.calls.some(([sql]) => String(sql).includes("key LIKE 'v2:%'"))).toBe(false);
+
+    scrypt.mockRestore();
     allSpy.mockRestore();
+    getSpy.mockRestore();
+  });
+
+  it("marks missing-lookup v2 records for rotation and never authenticates or scans them", async () => {
+    const created = await repo.createApiKey("Missing lookup", "8888888888888888");
+    const stored = db.get(`SELECT key FROM apiKeys WHERE id = ?`, [created.id]).key.split(":");
+    db.run(
+      `UPDATE apiKeys SET key = ?, lookupDigest = NULL WHERE id = ?`,
+      [`v2:${stored[2]}:${stored[3]}:${stored[4]}`, created.id],
+    );
+    const scrypt = vi.spyOn(nodeCrypto, "scrypt");
+
+    expectSafe(await repo.getApiKeyById(created.id), true);
+    expect(await repo.authenticateApiKey(created.key)).toBeNull();
+    expect(scrypt).not.toHaveBeenCalled();
+
+    scrypt.mockRestore();
   });
 });

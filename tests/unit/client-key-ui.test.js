@@ -41,4 +41,10 @@ describe("client key policy UI contract", () => {
     expect(page).toContain("concurrencyLimit");
     expect(page).toContain("spendLimitUsd");
   });
+
+  it("shows a safe rotation-required warning without verifier metadata", () => {
+    expect(page).toContain("rotationRequired");
+    expect(page).toContain("Rotation required");
+    expect(page).not.toContain("lookupDigest");
+  });
 });

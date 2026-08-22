@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import {
-  apiKeyLookupId,
+  apiKeyLookupDigest,
   apiKeyPrefix,
   matchesApiKeyRecord,
   matchesApiKeyRecordAsync,
@@ -49,6 +49,7 @@ function rowToKey(row) {
     machineId: row.machineId,
     isActive: row.isActive === 1 || row.isActive === true,
     createdAt: row.createdAt,
+    rotationRequired: unpacked.version !== 2 || !unpacked.lookupDigest,
     allowedModels: parseArray(row.allowedModels),
     allowedCombos: parseArray(row.allowedCombos),
     expiresAt: row.expiresAt || null,
@@ -177,9 +178,9 @@ export async function createApiKey(name, machineId) {
     spentUsd: 0,
   };
   db.run(
-    `INSERT INTO apiKeys(id, key, keyPrefix, lookupId, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd)
+    `INSERT INTO apiKeys(id, key, keyPrefix, lookupDigest, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd)
      VALUES(?, ?, ?, ?, ?, ?, 1, ?, NULL, NULL, NULL, NULL, NULL, NULL, 0)`,
-    [row.id, packed, apiKeyPrefix(generated.key), generated.keyId, name, machineId, row.createdAt]
+    [row.id, packed, apiKeyPrefix(generated.key), apiKeyLookupDigest(generated.key), name, machineId, row.createdAt]
   );
   return { ...rowToKey(row), key: generated.key };
 }
@@ -213,25 +214,35 @@ export async function deleteApiKey(id) {
 export async function authenticateApiKey(raw) {
   if (!raw || typeof raw !== "string") return null;
   const db = await getAdapter();
-  const lookupId = apiKeyLookupId(raw);
-  let rows = lookupId
-    ? db.all(`${KEY_ROWS} WHERE k.isActive = 1 AND k.lookupId = ? LIMIT 1`, [lookupId])
-    : [];
-  if (rows.length === 0) {
-    rows = db.all(`${KEY_ROWS} WHERE k.isActive = 1 AND k.lookupId IS NULL AND k.key NOT LIKE 'v2:%'`);
+  const lookupDigest = apiKeyLookupDigest(raw);
+  const indexed = lookupDigest
+    ? db.get(`${KEY_ROWS} WHERE k.isActive = 1 AND k.lookupDigest = ?`, [lookupDigest])
+    : null;
+
+  if (indexed) {
+    const matches = unpackApiKeyRecord(indexed.key).version === 2
+      ? await matchesApiKeyRecordAsync(indexed.key, raw)
+      : matchesApiKeyRecord(indexed.key, raw);
+    if (!matches) return null;
+    indexed.spentUsd = await getClientKeySpend(indexed.id);
+    return rowToKey(indexed);
   }
-  for (const row of rows) {
+
+  const legacyRows = db.all(
+    `${KEY_ROWS} WHERE k.isActive = 1 AND k.lookupDigest IS NULL AND k.key NOT LIKE 'v2:%'`,
+  );
+  for (const row of legacyRows) {
     const unpacked = unpackApiKeyRecord(row.key);
-    const matches = unpacked.version === 2
-      ? await matchesApiKeyRecordAsync(row.key, raw)
-      : matchesApiKeyRecord(row.key, raw);
-    if (!matches) continue;
-    if ((unpacked.legacy || unpacked.version === 1) && lookupId) {
-      const packed = packApiKeyRecord(raw, lookupId);
-      db.run(`UPDATE apiKeys SET key = ?, keyPrefix = ?, lookupId = ? WHERE id = ?`, [packed, apiKeyPrefix(raw), lookupId, row.id]);
+    if (!matchesApiKeyRecord(row.key, raw)) continue;
+    if (unpacked.legacy || (unpacked.version === 1 && lookupDigest)) {
+      const packed = packApiKeyRecord(raw, lookupDigest);
+      db.run(
+        `UPDATE apiKeys SET key = ?, keyPrefix = ?, lookupDigest = ? WHERE id = ?`,
+        [packed, apiKeyPrefix(raw), lookupDigest, row.id],
+      );
       row.key = packed;
       row.keyPrefix = apiKeyPrefix(raw);
-      row.lookupId = lookupId;
+      row.lookupDigest = lookupDigest;
     }
     row.spentUsd = await getClientKeySpend(row.id);
     return rowToKey(row);

@@ -37,4 +37,24 @@ describe("safe client key consumers", () => {
       expect(source, target).toContain("!apiKey.trim()");
     }
   });
+
+  it("covers repository, CLI, dashboard, media, and real-test consumers", () => {
+    const targets = {
+      repository: "src/lib/db/repos/apiKeysRepo.js",
+      cli: "cli/src/cli/menus/apiKeys.js",
+      dashboard: "src/app/(dashboard)/dashboard/endpoint/EndpointPageClient.js",
+      media: "src/app/(dashboard)/dashboard/media-providers/[kind]/[id]/components/EmbeddingExampleCard.js",
+      realTest: "tests/translator/real/nvidia-thinking.e2e.test.js",
+    };
+    const sources = Object.fromEntries(
+      Object.entries(targets).map(([name, file]) => [name, fs.readFileSync(path.join(root, file), "utf8")]),
+    );
+
+    expect(sources.repository).toContain("rotationRequired");
+    expect(sources.cli).toContain("keyPrefix");
+    expect(sources.dashboard).toContain("key.keyPrefix");
+    expect(sources.media).not.toContain('fetch("/api/keys"');
+    expect(sources.realTest).not.toContain("getApiKeys");
+    expect(sources.realTest).toContain("process.env.NV_E2E_KEY");
+  });
 });

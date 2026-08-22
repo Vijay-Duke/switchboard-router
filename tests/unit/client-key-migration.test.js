@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createNodeSqliteAdapter } from "@/lib/db/adapters/nodeSqliteAdapter.js";
 import { packApiKeyRecord } from "@/lib/crypto/secrets.js";
+import { generateApiKeyWithMachine } from "@/shared/utils/apiKey.js";
 import migration from "@/lib/db/migrations/008-client-key-identity.js";
 import { MIGRATIONS } from "@/lib/db/migrations/index.js";
 import { runVersionedMigrations } from "@/lib/db/migrate.js";
@@ -196,7 +197,7 @@ describe("migration 8 client key identity scrub", () => {
     db.transaction(() => migration.down(db));
     expect(db.all(`PRAGMA table_info(usageHistory)`).map((column) => column.name)).toContain("apiKey");
     expect(db.all(`SELECT DISTINCT apiKey FROM usageHistory`)).toEqual([{ apiKey: null }]);
-    expect(db.all(`SELECT key FROM apiKeys`).every(({ key }) => key.startsWith("v2:"))).toBe(true);
+    expect(db.all(`SELECT key FROM apiKeys`).every(({ key }) => /^v[12]:/.test(key))).toBe(true);
     expect(snapshot(db)).toEqual(before);
     const downDaily = JSON.parse(db.get(`SELECT data FROM usageDaily`).data);
     expect(downDaily.byClientKey).toBeUndefined();
@@ -214,5 +215,29 @@ describe("migration 8 client key identity scrub", () => {
     for (const secret of [RAW_KEY, LEGACY_KEY, UNKNOWN_KEY]) {
       expect(bytes.includes(Buffer.from(secret))).toBe(false);
     }
+  });
+
+  it("stores only lookup digests for parseable modern keys and keeps low-entropy legacy verifiers usable", async () => {
+    const { db } = await createVersion7Fixture();
+    const modern = generateApiKeyWithMachine("5555555555555555").key;
+    db.run(
+      `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES ('modern-plain', ?, 'Modern', NULL, 1, '2026-08-20T00:00:00.000Z')`,
+      [modern],
+    );
+
+    db.transaction(() => migration.up(db));
+
+    const columns = db.all(`PRAGMA table_info(apiKeys)`).map(({ name }) => name);
+    expect(columns).toContain("lookupDigest");
+    expect(columns).not.toContain("lookupId");
+    const modernStored = db.get(`SELECT key, lookupDigest FROM apiKeys WHERE id = 'modern-plain'`);
+    expect(modernStored.key).toMatch(/^v2:/);
+    expect(modernStored.lookupDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(modernStored)).not.toContain(modern.split("-").at(-2));
+
+    const legacyStored = db.get(`SELECT key, lookupDigest FROM apiKeys WHERE id = 'key-legacy'`);
+    expect(legacyStored.key).toMatch(/^v1:/);
+    expect(legacyStored.lookupDigest).toBeNull();
+    db.close();
   });
 });

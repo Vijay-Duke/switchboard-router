@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createNodeSqliteAdapter } from "@/lib/db/adapters/nodeSqliteAdapter.js";
 import { TABLES, buildCreateTableSql } from "@/lib/db/schema.js";
-import { apiKeyLookupId, apiKeyPrefix, packApiKeyRecord } from "@/lib/crypto/secrets.js";
+import { apiKeyLookupDigest, apiKeyPrefix, packApiKeyRecord } from "@/lib/crypto/secrets.js";
 
 const RAW_KEY = "sk-switchboard-usage-super-secret-tail";
 const mocks = vi.hoisted(() => ({ getAdapter: vi.fn() }));
@@ -36,8 +36,8 @@ beforeEach(() => {
   db.run(`DELETE FROM apiKeys`);
   db.run(`DELETE FROM _meta`);
   db.run(
-    `INSERT INTO apiKeys(id, key, keyPrefix, lookupId, name, isActive, createdAt) VALUES ('client-1', ?, ?, ?, 'Build bot', 1, '2026-08-22T00:00:00.000Z')`,
-    [packApiKeyRecord(RAW_KEY), apiKeyPrefix(RAW_KEY), apiKeyLookupId(RAW_KEY)]
+    `INSERT INTO apiKeys(id, key, keyPrefix, lookupDigest, name, isActive, createdAt) VALUES ('client-1', ?, ?, ?, 'Build bot', 1, '2026-08-22T00:00:00.000Z')`,
+    [packApiKeyRecord(RAW_KEY), apiKeyPrefix(RAW_KEY), apiKeyLookupDigest(RAW_KEY)]
   );
 });
 
