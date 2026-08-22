@@ -314,4 +314,3 @@ export async function clearAccountError(connectionId, currentConnection, model =
 export function extractApiKey(request) {
   return extractGatewayApiKey(request.headers);
 }
-
