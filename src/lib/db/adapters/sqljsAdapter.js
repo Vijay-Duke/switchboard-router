@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import initSqlJs from "sql.js";
 import { PRAGMA_SQL } from "../schema.js";
+import { registerAdapterCloser } from "./adapterShutdownRegistry.js";
 
 let SQL = null;
 
@@ -119,16 +120,22 @@ export async function createSqlJsAdapter(filePath) {
     }
   }
 
+  let closed = false;
   function close() {
-    if (saveTimer) clearTimeout(saveTimer);
-    if (dirty) persist();
-    db.close();
+    unregisterClose();
+    if (closed) return;
+    closed = true;
+    clearTimeout(saveTimer);
+    try {
+      if (dirty) persist();
+    } finally {
+      db.close();
+    }
   }
 
   // Flush on shutdown — beforeExit only. SIGINT/SIGTERM handled by CLI parent
   // which now sends SIGTERM → 2s wait → SIGKILL (gives persist time to run).
-  const flush = () => { if (dirty) try { persist(); } catch {} };
-  process.on("beforeExit", flush);
+  const unregisterClose = registerAdapterCloser(close);
 
   return { driver: "sql.js", run, get, all, exec, transaction, close, raw: db };
 }
