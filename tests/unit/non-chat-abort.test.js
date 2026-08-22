@@ -75,10 +75,10 @@ describe("non-chat combo abort propagation", () => {
   it("aborts STT provider fetch when the caller disconnects", async () => {
     const caller = new AbortController();
     let upstreamSignal;
-    vi.stubGlobal("fetch", vi.fn((url, init) => {
+    proxyAwareFetch.mockImplementation((url, init) => {
       upstreamSignal = init.signal;
       return abortableFetch(url, init);
-    }));
+    });
     const formData = new FormData();
     formData.append("file", new Blob(["audio"], { type: "audio/wav" }), "audio.wav");
     const resultPromise = handleSttCore({
@@ -97,13 +97,12 @@ describe("non-chat combo abort propagation", () => {
 
   it("rejects an already-aborted AssemblyAI polling delay without polling or waiting", async () => {
     const caller = new AbortController();
-    const fetchSpy = vi.fn()
+    proxyAwareFetch
       .mockResolvedValueOnce(Response.json({ upload_url: "https://upload.test/audio" }))
       .mockImplementationOnce(async () => {
         caller.abort();
         return Response.json({ id: "transcript-1" });
       });
-    vi.stubGlobal("fetch", fetchSpy);
     const formData = new FormData();
     formData.append("file", new Blob(["audio"], { type: "audio/wav" }), "audio.wav");
 
@@ -118,7 +117,7 @@ describe("non-chat combo abort propagation", () => {
     });
 
     expect(result).toMatchObject({ success: false, status: 499 });
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(proxyAwareFetch).toHaveBeenCalledTimes(2);
     expect(Date.now() - startedAt).toBeLessThan(500);
   });
 });
