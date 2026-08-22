@@ -78,6 +78,7 @@ export const TABLES = {
       machineId: "TEXT",
       isActive: "INTEGER DEFAULT 1",
       createdAt: "TEXT NOT NULL",
+      keyPrefix: "TEXT",
       allowedModels: "TEXT",
       allowedCombos: "TEXT",
       expiresAt: "TEXT",
@@ -86,7 +87,10 @@ export const TABLES = {
       spendLimitUsd: "REAL",
       spentUsd: "REAL NOT NULL DEFAULT 0",
     },
-    indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)",
+      "CREATE INDEX IF NOT EXISTS idx_ak_prefix ON apiKeys(keyPrefix)",
+    ],
   },
   combos: {
     columns: {

@@ -1,5 +1,5 @@
 const api = require("../api/client");
-const { pause, confirm, prompt } = require("../utils/input");
+const { pause, confirm, promptSecret } = require("../utils/input");
 const { showStatus } = require("../utils/display");
 const { selectModelFromList } = require("../utils/modelSelector");
 const { showMenuWithBack } = require("../utils/menuHelper");
@@ -27,7 +27,7 @@ const CLAUDE_MODEL_TYPES = [
  * @returns {Promise<string|null>}
  */
 async function getFirstApiKey() {
-  const secret = await prompt("Paste client key secret (leave empty to cancel): ");
+  const secret = await promptSecret("Paste client key secret (leave empty to cancel): ");
   return secret || null;
 }
 

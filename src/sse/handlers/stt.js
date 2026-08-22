@@ -84,6 +84,7 @@ export async function handleStt(request) {
     const result = await handleSttCore({ clientKeyId, provider, model, formData, credentials, sttConfig: AI_PROVIDERS[provider]?.sttConfig, abortSignal: request.signal });
 
     if (result.success) return result.response;
+    if (result.status === 499 || request.signal.aborted) return result.response;
 
     const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
     if (shouldFallback) {

@@ -5,6 +5,7 @@ import {
 } from "../../crypto/secrets.js";
 
 const POLICY_COLUMNS = {
+  keyPrefix: "TEXT",
   allowedModels: "TEXT",
   allowedCombos: "TEXT",
   expiresAt: "TEXT",
@@ -164,6 +165,12 @@ const migration = {
     db.exec(`PRAGMA secure_delete=ON`);
     addPolicyColumns(db);
     const keys = db.all(`SELECT id, key FROM apiKeys`) || [];
+    for (const key of keys) {
+      const prefix = unpackApiKeyRecord(key.key).prefix;
+      db.run(`UPDATE apiKeys SET keyPrefix = ? WHERE id = ?`, [prefix || null, key.id]);
+      key.keyPrefix = prefix || null;
+    }
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_ak_prefix ON apiKeys(keyPrefix)`);
     const usageColumns = columns(db, "usageHistory");
 
     if (usageColumns.has("apiKey")) {

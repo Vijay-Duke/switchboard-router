@@ -179,4 +179,14 @@ describe("client key repository", () => {
     expect(spendQueries[0][1]).toEqual([first.id]);
     getSpy.mockRestore();
   });
+
+  it("uses indexed prefix candidates so arbitrary invalid keys run no verifier KDF", async () => {
+    await repo.createApiKey("Bounded", "machine-bounded");
+    const allSpy = vi.spyOn(db, "all");
+    expect(await repo.authenticateApiKey("sk-unmatched-arbitrary-secret")).toBeNull();
+    const candidateCall = allSpy.mock.calls.find(([sql]) => String(sql).includes("keyPrefix = ?"));
+    expect(candidateCall).toBeDefined();
+    expect(candidateCall[1]).toEqual(["sk-unmatch…"]);
+    allSpy.mockRestore();
+  });
 });

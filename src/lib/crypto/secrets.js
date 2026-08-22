@@ -126,3 +126,21 @@ export function matchesApiKeyRecord(stored, raw) {
     return false;
   }
 }
+
+export async function matchesApiKeyRecordAsync(stored, raw) {
+  if (!raw || typeof raw !== "string") return false;
+  const unpacked = unpackApiKeyRecord(stored);
+  if (unpacked.version !== 2) return matchesApiKeyRecord(stored, raw);
+  if (!unpacked.salt || !unpacked.hash) return false;
+  try {
+    const actual = await new Promise((resolve, reject) => {
+      crypto.scrypt(raw, Buffer.from(unpacked.salt, "hex"), 32, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }, (error, value) => {
+        if (error) reject(error);
+        else resolve(value);
+      });
+    });
+    return timingSafeEqualStr(actual.toString("hex"), unpacked.hash);
+  } catch {
+    return false;
+  }
+}

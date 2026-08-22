@@ -13,6 +13,7 @@ import { resolveClientKeyId, scrubUsageDailyData } from "./migrations/008-client
 
 // Marker file: prevents re-importing legacy JSON when user wipes data.sqlite.
 const MIGRATED_MARKER = path.join(DB_DIR, ".migrated-from-json");
+const LEGACY_SANITIZED_MARKER = path.join(DB_DIR, ".legacy-secrets-sanitized");
 
 // Track per-adapter so reusing same adapter skips re-run, but new adapter (after reset) re-runs.
 const _migratedAdapters = new WeakSet();
@@ -200,9 +201,9 @@ function importLegacyMain(adapter, data) {
       ? packApiKeyRecord(k.key)
       : k.key;
     adapter.run(
-      `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd)
-       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [k.id, storedKey, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(),
+      `INSERT OR REPLACE INTO apiKeys(id, key, keyPrefix, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd)
+       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [k.id, storedKey, unpackApiKeyRecord(storedKey).prefix || null, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(),
         k.allowedModels == null ? null : stringifyJson(k.allowedModels), k.allowedCombos == null ? null : stringifyJson(k.allowedCombos),
         k.expiresAt || null, k.rateLimitPerMinute ?? null, k.concurrencyLimit ?? null, k.spendLimitUsd ?? null, Number(k.spentUsd || 0)]
     );
@@ -234,12 +235,13 @@ function importLegacyUsage(adapter, data) {
   if (!data || typeof data !== "object") return;
   for (const e of data.history || []) {
     const t = e.tokens || {};
+    const clientKeyId = resolveClientKeyId(e.apiKey, keys);
     adapter.run(
       `INSERT INTO usageHistory(timestamp, provider, model, connectionId, clientKeyId, endpoint, promptTokens, completionTokens, cost, status, tokens, meta)
        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         e.timestamp || new Date().toISOString(),
-        e.provider || null, e.model || null, e.connectionId || null, resolveClientKeyId(e.apiKey, keys), e.endpoint || null,
+        e.provider || null, e.model || null, e.connectionId || null, clientKeyId, e.endpoint || null,
         t.prompt_tokens || t.input_tokens || 0,
         t.completion_tokens || t.output_tokens || 0,
         e.cost || 0,
@@ -248,6 +250,9 @@ function importLegacyUsage(adapter, data) {
         stringifyJson({}),
       ]
     );
+    if (clientKeyId) {
+      adapter.run(`UPDATE apiKeys SET spentUsd = spentUsd + ? WHERE id = ?`, [Number(e.cost || 0), clientKeyId]);
+    }
   }
   for (const [dateKey, day] of Object.entries(data.dailySummary || {})) {
     adapter.run(
@@ -298,10 +303,12 @@ export async function runMigrationOnce(adapter) {
   const legacyDisabled = readJsonSafe(LEGACY_FILES.disabled);
   const legacyDetails = readJsonSafe(LEGACY_FILES.details);
   const hasLegacy = !!(legacyMain || legacyUsage || legacyDisabled || legacyDetails);
-  if (!fresh && hasLegacy && !alreadyImported) {
+  const legacySanitized = fs.existsSync(LEGACY_SANITIZED_MARKER);
+  const migrationProof = getMetaSync(adapter, "migratedAt", null);
+  if (hasLegacy && !legacySanitized && migrationProof) {
     adapter.checkpoint?.();
     sanitizeLegacySources(adapter, legacyMain, legacyUsage);
-    fs.writeFileSync(MIGRATED_MARKER, new Date().toISOString(), { mode: 0o600 });
+    fs.writeFileSync(LEGACY_SANITIZED_MARKER, new Date().toISOString(), { mode: 0o600 });
   }
 
 
@@ -329,6 +336,7 @@ export async function runMigrationOnce(adapter) {
 
     adapter.checkpoint?.();
     sanitizeLegacySources(adapter, legacyMain, legacyUsage, backupDir);
+    fs.writeFileSync(LEGACY_SANITIZED_MARKER, new Date().toISOString(), { mode: 0o600 });
     fs.writeFileSync(MIGRATED_MARKER, new Date().toISOString(), { mode: 0o600 });
     pruneOldBackups();
     console.log(`[DB][migrate] JSON → SQLite in ${Date.now() - t0}ms | legacy sources sanitized | backup: ${backupDir}`);

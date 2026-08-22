@@ -19,6 +19,7 @@ function throwIfAborted(signal) {
 
 function abortableDelay(ms, signal) {
   if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
+  if (signal.aborted) return Promise.reject(Object.assign(new Error("STT request aborted"), { name: "AbortError" }));
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
@@ -215,6 +216,7 @@ export async function handleSttCore({ provider, model, formData, credentials, st
       default:                return await transcribeOpenAICompatible(cfg, file, model, token, formData, abortSignal);
     }
   } catch (err) {
+    if (err?.name === "AbortError" || abortSignal?.aborted) return createErrorResult(499, "STT request aborted");
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, err.message || "STT request failed");
   }
 }

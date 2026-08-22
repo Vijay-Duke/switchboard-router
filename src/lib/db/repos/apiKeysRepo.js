@@ -1,7 +1,8 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import {
-  matchesApiKeyRecord,
+  apiKeyPrefix,
+  matchesApiKeyRecordAsync,
   packApiKeyRecord,
   unpackApiKeyRecord,
 } from "@/lib/crypto/secrets.js";
@@ -174,9 +175,9 @@ export async function createApiKey(name, machineId) {
     spentUsd: 0,
   };
   db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd)
-     VALUES(?, ?, ?, ?, 1, ?, NULL, NULL, NULL, NULL, NULL, NULL, 0)`,
-    [row.id, packed, name, machineId, row.createdAt]
+    `INSERT INTO apiKeys(id, key, keyPrefix, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd)
+     VALUES(?, ?, ?, ?, ?, 1, ?, NULL, NULL, NULL, NULL, NULL, NULL, 0)`,
+    [row.id, packed, apiKeyPrefix(generated.key), name, machineId, row.createdAt]
   );
   return { ...rowToKey(row), key: generated.key };
 }
@@ -210,14 +211,16 @@ export async function deleteApiKey(id) {
 export async function authenticateApiKey(raw) {
   if (!raw || typeof raw !== "string") return null;
   const db = await getAdapter();
-  const rows = db.all(`${KEY_ROWS} WHERE k.isActive = 1`);
+  const prefix = apiKeyPrefix(raw);
+  const rows = db.all(`${KEY_ROWS} WHERE k.isActive = 1 AND (k.keyPrefix = ? OR k.keyPrefix IS NULL) LIMIT 8`, [prefix]);
   for (const row of rows) {
-    if (!matchesApiKeyRecord(row.key, raw)) continue;
+    if (!(await matchesApiKeyRecordAsync(row.key, raw))) continue;
     const unpacked = unpackApiKeyRecord(row.key);
     if (unpacked.legacy || unpacked.version === 1) {
       const packed = packApiKeyRecord(raw);
-      db.run(`UPDATE apiKeys SET key = ? WHERE id = ?`, [packed, row.id]);
+      db.run(`UPDATE apiKeys SET key = ?, keyPrefix = ? WHERE id = ?`, [packed, prefix, row.id]);
       row.key = packed;
+      row.keyPrefix = prefix;
     }
     row.spentUsd = await getClientKeySpend(row.id);
     return rowToKey(row);

@@ -64,6 +64,42 @@ async function prompt(question) {
   }));
 }
 
+async function promptSecret(question) {
+  if (!process.stdin.isTTY) return prompt(question);
+  primeRawOnce();
+  process.stdout.write(question);
+  return new Promise((resolve) => {
+    let value = "";
+    const onData = (chunk) => {
+      for (const char of String(chunk)) {
+        if (char === "\r" || char === "\n") {
+          process.stdin.off("data", onData);
+          process.stdout.write("\n");
+          resolve(value.trim());
+          return;
+        }
+        if (char === "\u0003") {
+          process.stdin.off("data", onData);
+          process.stdout.write("\n");
+          requestGracefulInterrupt();
+          resolve("");
+          return;
+        }
+        if (char === "\u007f" || char === "\b") {
+          if (value) {
+            value = value.slice(0, -1);
+            process.stdout.write("\b \b");
+          }
+        } else if (char >= " ") {
+          value += char;
+          process.stdout.write("*");
+        }
+      }
+    };
+    process.stdin.on("data", onData);
+  });
+}
+
 async function select(question, options) {
   console.log(question);
   options.forEach((opt, i) => console.log(`  ${i + 1}. ${opt}`));
@@ -156,6 +192,7 @@ async function selectMenu(title, items, defaultIndex = 0, subtitle = "", headerC
 
 module.exports = {
   prompt,
+  promptSecret,
   select,
   confirm,
   pause,

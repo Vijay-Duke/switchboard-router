@@ -196,6 +196,7 @@ describe("migration 8 client key identity scrub", () => {
     db.transaction(() => migration.down(db));
     expect(db.all(`PRAGMA table_info(usageHistory)`).map((column) => column.name)).toContain("apiKey");
     expect(db.all(`SELECT DISTINCT apiKey FROM usageHistory`)).toEqual([{ apiKey: null }]);
+    expect(db.all(`SELECT key FROM apiKeys`).every(({ key }) => key.startsWith("v2:"))).toBe(true);
     expect(snapshot(db)).toEqual(before);
     const downDaily = JSON.parse(db.get(`SELECT data FROM usageDaily`).data);
     expect(downDaily.byClientKey).toBeUndefined();

@@ -70,6 +70,9 @@ export async function handleEmbeddingsCore({
       signal: abortSignal,
     });
   } catch (error) {
+    if (error?.name === "AbortError" || abortSignal?.aborted) {
+      return createErrorResult(499, "Embeddings request aborted");
+    }
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
     log?.debug?.("EMBEDDINGS", `Fetch error: ${errMsg}`);
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
@@ -105,7 +108,10 @@ export async function handleEmbeddingsCore({
           redirect: "error",
           signal: abortSignal,
         });
-      } catch {
+      } catch (error) {
+        if (error?.name === "AbortError" || abortSignal?.aborted) {
+          return createErrorResult(499, "Embeddings request aborted");
+        }
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);
       }
     } else {

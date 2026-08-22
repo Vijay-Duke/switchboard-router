@@ -122,6 +122,7 @@ describe("Schema migrations", () => {
     const keys = db.all(`SELECT * FROM apiKeys`);
     expect(keys).toHaveLength(1);
     expect(keys[0].key).toMatch(/^v2:/);
+    expect(keys[0].spentUsd).toBe(1);
 
     const connection = db.get(`SELECT data FROM providerConnections WHERE id = ?`, ["legacy-connection"]);
     expect(connection.data).not.toContain("legacy-access-token");
@@ -138,6 +139,15 @@ describe("Schema migrations", () => {
       .flatMap((dir) => fs.readdirSync(path.join(backupRoot, dir)).map((name) => fs.readFileSync(path.join(backupRoot, dir, name), "utf8")))
       .join("\\n");
     expect(backupBytes).not.toContain("\"abc\"");
+
+    fs.writeFileSync(path.join(tempDir, "db.json"), JSON.stringify(legacy), { mode: 0o600 });
+    fs.rmSync(path.join(tempDir, "db", ".legacy-secrets-sanitized"), { force: true });
+    db.close?.();
+    delete global._dbAdapter;
+    vi.resetModules();
+    const { getAdapter: restartAdapter } = await import("@/lib/db/driver.js");
+    await restartAdapter();
+    expect(fs.readFileSync(path.join(tempDir, "db.json"), "utf8")).not.toContain("\"abc\"");
   }, 15_000);
 
   it("auto-sync re-creates missing index when DB lacks it", async () => {

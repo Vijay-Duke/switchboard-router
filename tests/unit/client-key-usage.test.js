@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createNodeSqliteAdapter } from "@/lib/db/adapters/nodeSqliteAdapter.js";
 import { TABLES, buildCreateTableSql } from "@/lib/db/schema.js";
-import { packApiKeyRecord } from "@/lib/crypto/secrets.js";
+import { apiKeyPrefix, packApiKeyRecord } from "@/lib/crypto/secrets.js";
 
 const RAW_KEY = "sk-switchboard-usage-super-secret-tail";
 const mocks = vi.hoisted(() => ({ getAdapter: vi.fn() }));
@@ -15,6 +15,7 @@ vi.mock("open-sse/providers/pricing.js", () => ({ calculateCostFromTokens: vi.fn
 let db;
 let file;
 let usage;
+let policy;
 
 beforeAll(async () => {
   file = path.join(os.tmpdir(), `switchboard-client-key-usage-${crypto.randomUUID()}.sqlite`);
@@ -25,6 +26,7 @@ beforeAll(async () => {
   }
   mocks.getAdapter.mockResolvedValue(db);
   usage = await import("@/lib/db/repos/usageRepo.js");
+  policy = await import("@/sse/services/clientKeyPolicy.js");
 });
 
 beforeEach(() => {
@@ -34,8 +36,8 @@ beforeEach(() => {
   db.run(`DELETE FROM apiKeys`);
   db.run(`DELETE FROM _meta`);
   db.run(
-    `INSERT INTO apiKeys(id, key, name, isActive, createdAt) VALUES ('client-1', ?, 'Build bot', 1, '2026-08-22T00:00:00.000Z')`,
-    [packApiKeyRecord(RAW_KEY)]
+    `INSERT INTO apiKeys(id, key, keyPrefix, name, isActive, createdAt) VALUES ('client-1', ?, ?, 'Build bot', 1, '2026-08-22T00:00:00.000Z')`,
+    [packApiKeyRecord(RAW_KEY), apiKeyPrefix(RAW_KEY)]
   );
 });
 
@@ -150,5 +152,26 @@ describe("client key usage attribution", () => {
     await usage.saveRequestUsage({ ...base, requestId: "ledger-2" });
     expect(db.get(`SELECT COUNT(*) count FROM usageHistory`).count).toBe(1);
     expect(db.get(`SELECT spentUsd FROM apiKeys WHERE id = 'client-1'`).spentUsd).toBe(5);
+  });
+
+  it("makes completed spend visible to the immediately following authorization", async () => {
+    policy.__resetClientKeyPolicyStateForTests();
+    db.run(`UPDATE apiKeys SET spendLimitUsd = 2.5 WHERE id = 'client-1'`);
+    const args = {
+      settings: { requireApiKey: true },
+      rawKey: RAW_KEY,
+      request: new Request("https://router.test/v1/chat/completions"),
+      target: { kind: "model", id: "gpt-5" },
+    };
+    const first = await policy.authorizeClientKeyRequest(args);
+    expect(first.ok).toBe(true);
+    await usage.saveRequestUsage({
+      provider: "openai", model: "gpt-5", clientKeyId: "client-1",
+      tokens: { prompt_tokens: 1, completion_tokens: 1 }, requestId: "ordering-1",
+    });
+    first.lease.release();
+    const next = await policy.authorizeClientKeyRequest(args);
+    expect(next.ok).toBe(false);
+    expect((await next.response.json()).error.code).toBe("client_key_spend_limit_exceeded");
   });
 });
