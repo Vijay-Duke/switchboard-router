@@ -23,3 +23,6 @@ Review fix round 1 complete:
 - Made both scheduler settings surfaces read-merge-PATCH transactionally and update visible state only after success.
 - Focused proof: 24 files, 132 tests passed; React Doctor reported only the existing provider-component state-count warnings.
 - Commits: `4c147f7a`, `394188f9`, `b43bb5d1`, `37276586`.
+- Scoped correctness and security re-reviews started over `8ab655b4..54fc5534`.
+- Fix round 1 re-review: all findings ADDRESSED; Spec PASS; Quality APPROVED; Security APPROVED; no new Critical/Important finding.
+- Scheduler task complete (commits `1228a363..54fc5534`, correctness and security review clean).
