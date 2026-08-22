@@ -12,6 +12,8 @@ import { normalizeSearchResponse } from "./normalizers.js";
 import { handleChatSearch } from "./chatSearch.js";
 import { mergeAbortSignals } from "../../utils/abort.js";
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
+import { assertPublicUrlResolved } from "../../utils/ssrfGuard.js";
+import { getOpenSseDeps } from "../../runtimeDeps.js";
 import { PROVIDERS, PROVIDER_MEDIA } from "../../providers/index.js";
 
 function searchTransport(providerId, providerConfig) {
@@ -110,6 +112,22 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
 
+  // SSRF guard (DNS-resolved): the baseUrl override may be client-supplied, so
+  // re-check every address the hostname resolves to right before fetching —
+  // string-only checks miss DNS rebinding to private/metadata IPs.
+  let ssrfAllowHosts = null;
+  try {
+    ssrfAllowHosts = (await getOpenSseDeps().getSettings?.())?.ssrfAllowHosts || null;
+  } catch {
+    // settings unavailable — default-deny
+  }
+  try {
+    await assertPublicUrlResolved(url, ssrfAllowHosts);
+  } catch (ssrfErr) {
+    clearTimeout(timer);
+    return { success: false, status: 400, error: `SSRF blocked: ${ssrfErr?.message || "internal target"}` };
+  }
+
   log?.info?.("SEARCH", `${provider.id} | "${params.query.slice(0, 80)}" | type=${params.searchType}`);
 
   try {
@@ -117,6 +135,8 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
       ...init,
       headers: sanitizeHeaders(init.headers),
       signal: mergeAbortSignals(controller.signal, abortSignal),
+      // Never follow redirects: each hop would bypass the SSRF check above.
+      redirect: "error",
       ...searchTransport(provider.id, providerConfig),
     });
     clearTimeout(timer);
