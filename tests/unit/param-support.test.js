@@ -52,4 +52,22 @@ describe("stripUnsupportedParams", () => {
 
     expect(body.max_tokens).toBe(64000);
   });
+
+  it("drops temperature for every Claude model, not just opus-4 (#1748)", () => {
+    const body = { temperature: 0.7, top_p: 1 };
+
+    stripUnsupportedParams("claude", "claude-sonnet-5", body);
+    expect(body).toEqual({ top_p: 1 });
+
+    const haiku = { temperature: 0.2 };
+    stripUnsupportedParams("bedrock", "claude-haiku-4-5-20251001", haiku);
+    expect(haiku).toEqual({});
+  });
+
+  it("keeps temperature for non-Claude models", () => {
+    const body = { temperature: 0.7 };
+
+    stripUnsupportedParams("openai", "gpt-4o", body);
+    expect(body.temperature).toBe(0.7);
+  });
 });

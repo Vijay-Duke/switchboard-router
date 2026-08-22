@@ -3,7 +3,6 @@ import { stripLeaks, hasLeak } from "../../open-sse/identity/leaks.js";
 import { wrapHeaders } from "../../open-sse/identity/wrap.js";
 import { applyIdentity, resolveProfileId, orderHeaders } from "../../open-sse/identity/catalog.js";
 import { harvest, getSnapshot, resetIdentityState, getDeviceProfile, pollIdentityVersions, setSnapshot } from "../../open-sse/identity/snapshot.js";
-import { cacheClaudeHeaders, getCachedClaudeHeaders } from "../../open-sse/utils/claudeHeaderCache.js";
 import { detectClientTool, harvestDetectedClient, isConfirmedClaudeClient } from "../../open-sse/utils/clientDetector.js";
 import { mapStainlessOs, mapStainlessArch } from "../../open-sse/identity/os.js";
 
@@ -219,7 +218,7 @@ describe("harvest", () => {
     expect(serialized).not.toContain("x-api-key");
   });
 
-  it("caches an exact fully confirmed 2.1.220 tuple", () => {
+  it("harvests an exact fully confirmed 2.1.220 tuple into the snapshot", () => {
     const headers = {
       "user-agent": "claude-cli/2.1.220 (external, cli)",
       "anthropic-beta": "oauth-2025-04-20",
@@ -232,8 +231,6 @@ describe("harvest", () => {
     const body = { metadata: { user_id: JSON.stringify({ session_id: "session-220" }) } };
 
     expect(isConfirmedClaudeClient(headers, body)).toBe(true);
-    cacheClaudeHeaders(headers, body);
-    expect(getCachedClaudeHeaders()).toMatchObject(headers);
     expect(getSnapshot("claude-cli")).toMatchObject({
       version: "2.1.220",
       packageVersion: "0.94.0",
@@ -361,7 +358,6 @@ describe("applyIdentity overlay", () => {
 describe("confirmed client harvest", () => {
   beforeEach(() => {
     resetIdentityState();
-    cacheClaudeHeaders({}, {});
   });
 
   it.each([
@@ -440,7 +436,7 @@ describe("confirmed client harvest", () => {
     expect(isConfirmedClaudeClient(headers, body)).toBe(true);
   });
 
-  it("does not let a mismatched Claude version poison the current snapshot or cache", () => {
+  it("does not let a mismatched Claude version poison the current snapshot", () => {
     const confirmedHeaders = {
       "user-agent": "claude-cli/2.1.220 (external, cli)",
       "x-app": "cli",
@@ -450,21 +446,9 @@ describe("confirmed client harvest", () => {
       "x-stainless-os": "Linux",
       "x-stainless-arch": "x64",
     };
-    const confirmedBody = { metadata: { user_id: '{"session_id":"confirmed-session"}' } };
-    cacheClaudeHeaders(confirmedHeaders, confirmedBody);
-
-    const headers = {
-      ...confirmedHeaders,
-      "user-agent": "claude-cli/2.1.239 (external, cli)",
-      "anthropic-beta": "poison-beta",
-      "x-stainless-runtime-version": "v24.0.0",
-      "x-stainless-package-version": "0.99.0",
-    };
     const body = { metadata: { user_id: '{"session_id":"poison-session"}' } };
     expect(detectClientTool(headers, body)).toBe("claude");
     expect(harvestDetectedClient("claude", headers, body)).toBe(false);
-    expect(cacheClaudeHeaders(headers, body)).toBe(false);
-    expect(getCachedClaudeHeaders()).toMatchObject(confirmedHeaders);
     expect(getSnapshot("claude-cli")).toMatchObject({
       version: "2.1.220",
       packageVersion: "0.94.0",

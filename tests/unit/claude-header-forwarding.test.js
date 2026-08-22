@@ -1,97 +1,67 @@
 /**
- * Unit tests for Anthropic header caching + forwarding pipeline
- *
- * Tests cover:
- *  - claudeHeaderCache: detection, capture, and retrieval of Claude Code headers
- *  - default.js buildHeaders(): live header overlay for "claude" provider
- *  - default.js buildHeaders(): cold-start fallback when cache is empty
+ * Unit tests for the Claude header pipeline after removal of the global
+ * header-cache singleton (port of upstream 13ed1456):
+ *  - pickClaudeIdentityHeaders: request-scoped selection of non-secret headers
+ *  - selectAnthropicBeta: heavy-agent flags gated to opus/sonnet by model
+ *  - default.js buildHeaders(): static defaults + per-model Anthropic-Beta
  *  - default.js buildHeaders(): anthropic-compatible non-Anthropic host stripping
- *  - default.js buildHeaders(): anthropic-compatible official host keeps headers
  *  - proxyFetch.js: api.anthropic.com routes through anthropicFetch path
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-// ─── claudeHeaderCache ────────────────────────────────────────────────────────
+// ─── pickClaudeIdentityHeaders ────────────────────────────────────────────────
 
-describe("claudeHeaderCache", () => {
-  let cacheModule;
+describe("pickClaudeIdentityHeaders", () => {
+  let mod;
 
   beforeEach(async () => {
-    // Re-import fresh module each time to reset singleton state
     vi.resetModules();
-    cacheModule = await import("../../open-sse/utils/claudeHeaderCache.js");
+    mod = await import("../../open-sse/utils/claudeIdentityHeaders.js");
   });
 
-  it("returns null before any headers are cached (cold start)", () => {
-    expect(cacheModule.getCachedClaudeHeaders()).toBeNull();
+  it("returns null before any headers are given (no cross-request state)", () => {
+    expect(mod.pickClaudeIdentityHeaders({})).toBeNull();
+    expect(mod.pickClaudeIdentityHeaders(null)).toBeNull();
+    expect(mod.pickClaudeIdentityHeaders("string")).toBeNull();
   });
 
-  const confirmedBody = { metadata: { user_id: '{"session_id":"session-220"}' } };
-  const confirmedHeaders = (overrides = {}) => ({
-    "user-agent": "claude-cli/2.1.220 (external, cli)",
-    "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
-    "anthropic-version": "2023-06-01",
-    "x-app": "cli",
-    "x-stainless-os": "MacOS",
-    "x-stainless-arch": "arm64",
-    "x-stainless-lang": "js",
-    "x-stainless-runtime": "node",
-    "x-stainless-runtime-version": "v24.3.0",
-    "x-stainless-package-version": "0.74.0",
-    ...overrides,
-  });
-
-  it("caches only a fully confirmed current Claude request", () => {
-    expect(cacheModule.cacheClaudeHeaders(confirmedHeaders(), confirmedBody)).toBe(true);
-    const cached = cacheModule.getCachedClaudeHeaders();
-    expect(cached).toMatchObject(confirmedHeaders());
-    expect(cached["content-type"]).toBeUndefined();
-  });
-
-  it.each([
-    ["UA only", { "user-agent": "claude-cli/2.1.220 (external, cli)" }, confirmedBody],
-    ["missing x-app", confirmedHeaders({ "x-app": undefined }), confirmedBody],
-    ["missing beta", confirmedHeaders({ "anthropic-beta": undefined }), confirmedBody],
-    ["missing metadata", confirmedHeaders(), {}],
-    ["invalid metadata", confirmedHeaders(), { metadata: { user_id: '{"session_id":""}' } }],
-    ["non-Claude client", confirmedHeaders({ "user-agent": "PostmanRuntime/7.43.0" }), confirmedBody],
-  ])("does not cache %s", (_case, headers, body) => {
-    expect(cacheModule.cacheClaudeHeaders(headers, body)).toBe(false);
-    expect(cacheModule.getCachedClaudeHeaders()).toBeNull();
-  });
-
-  it("refreshes cache on each confirmed request", () => {
-    cacheModule.cacheClaudeHeaders(confirmedHeaders(), confirmedBody);
-    cacheModule.cacheClaudeHeaders(confirmedHeaders({ "x-stainless-package-version": "0.75.0" }), confirmedBody);
-    expect(cacheModule.getCachedClaudeHeaders()["x-stainless-package-version"]).toBe("0.75.0");
-  });
-
-  it("ignores calls with null or non-object headers", () => {
-    expect(cacheModule.cacheClaudeHeaders(null, confirmedBody)).toBe(false);
-    expect(cacheModule.cacheClaudeHeaders(undefined, confirmedBody)).toBe(false);
-    expect(cacheModule.cacheClaudeHeaders("string", confirmedBody)).toBe(false);
-    expect(cacheModule.getCachedClaudeHeaders()).toBeNull();
-  });
-
-  it("never stores authentication headers", () => {
-    cacheModule.cacheClaudeHeaders(confirmedHeaders({
+  it("picks only the known identity headers, request-scoped", () => {
+    const picked = mod.pickClaudeIdentityHeaders({
+      "user-agent": "claude-cli/2.1.220 (external, cli)",
+      "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+      "content-type": "application/json",
       authorization: "Bearer secret",
       "x-api-key": "secret-key",
-    }), confirmedBody);
-    const serialized = JSON.stringify(cacheModule.getCachedClaudeHeaders());
+    });
+    expect(picked["user-agent"]).toBe("claude-cli/2.1.220 (external, cli)");
+    expect(picked["anthropic-beta"]).toContain("oauth-2025-04-20");
+    const serialized = JSON.stringify(picked);
     expect(serialized).not.toContain("secret");
     expect(serialized).not.toContain("authorization");
     expect(serialized).not.toContain("x-api-key");
+    expect(picked["content-type"]).toBeUndefined();
   });
+});
 
-  it("does not replace a confirmed cache with a mismatched Claude version", () => {
-    cacheModule.cacheClaudeHeaders(confirmedHeaders(), confirmedBody);
-    expect(cacheModule.cacheClaudeHeaders(confirmedHeaders({
-      "user-agent": "claude-cli/2.1.239 (external, cli)",
-      "anthropic-beta": "poison-beta",
-    }), confirmedBody)).toBe(false);
-    expect(cacheModule.getCachedClaudeHeaders()).toMatchObject(confirmedHeaders());
+// ─── selectAnthropicBeta ──────────────────────────────────────────────────────
+
+describe("selectAnthropicBeta", () => {
+  it("includes heavy-agent flags for opus/sonnet, omits them otherwise", async () => {
+    const { selectAnthropicBeta } = await import("../../open-sse/providers/shared.js");
+
+    for (const model of ["claude-opus-5", "claude-sonnet-5"]) {
+      const flags = selectAnthropicBeta(model).split(",").map(s => s.trim());
+      expect(flags).toContain("advanced-tool-use-2025-11-20");
+      expect(flags).toContain("effort-2025-11-24");
+      expect(flags).toContain("claude-code-20250219");
+    }
+    for (const model of ["claude-haiku-4-5-20251001", "claude-fable-5", ""]) {
+      const flags = selectAnthropicBeta(model).split(",").map(s => s.trim());
+      expect(flags).not.toContain("advanced-tool-use-2025-11-20");
+      expect(flags).not.toContain("effort-2025-11-24");
+      expect(flags).toContain("claude-code-20250219");
+    }
   });
 });
 
@@ -102,56 +72,51 @@ describe("DefaultExecutor.buildHeaders() — claude provider", () => {
 
   beforeEach(async () => {
     vi.resetModules();
-    // Prime the cache with live client headers before importing executor
-    const cache = await import("../../open-sse/utils/claudeHeaderCache.js");
-    const body = { metadata: { user_id: '{"session_id":"session-220"}' } };
-    cache.cacheClaudeHeaders({
-      "user-agent": "claude-cli/2.1.220 (external, cli)",
-      "anthropic-beta": "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14",
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-      "x-app": "cli",
-      "x-stainless-os": "MacOS",
-      "x-stainless-arch": "arm64",
-      "x-stainless-lang": "js",
-      "x-stainless-runtime": "node",
-      "x-stainless-runtime-version": "v24.3.0",
-      "x-stainless-package-version": "0.74.0",
-      "x-stainless-helper-method": "stream",
-      "x-stainless-retry-count": "0",
-      "x-stainless-timeout": "600",
-    }, body);
     const mod = await import("../../open-sse/executors/default.js");
     DefaultExecutor = mod.DefaultExecutor || mod.default;
   });
 
-  it("overlays live cached headers over static provider defaults", () => {
+  it("uses static provider defaults when no model is given", () => {
     const executor = new DefaultExecutor("claude");
     const headers = executor.buildHeaders({ apiKey: "sk-test" }, true);
 
-    // Live values should win over static providers.js values
-    expect(headers["user-agent"]).toBe("claude-cli/2.1.220 (external, cli)");
-    // Beta flags are MERGED (static + cached) to preserve required flags like oauth
-    const betaFlags = headers["anthropic-beta"].split(",").map(s => s.trim());
-    expect(betaFlags).toContain("claude-code-20250219");
-    expect(betaFlags).toContain("oauth-2025-04-20");
-    expect(betaFlags).toContain("interleaved-thinking-2025-05-14");
-    expect(headers["x-stainless-package-version"]).toBe("0.74.0");
-    expect(headers["x-stainless-os"]).toBe("MacOS");
+    const hasVersion =
+      headers["Anthropic-Version"] === "2023-06-01" ||
+      headers["anthropic-version"] === "2023-06-01";
+    expect(hasVersion).toBe(true);
   });
 
-  it("removes conflicting Title-Case static keys when cached lowercase keys exist", () => {
+  it("includes heavy-agent beta flags for claude-opus-5", () => {
     const executor = new DefaultExecutor("claude");
-    const headers = executor.buildHeaders({ apiKey: "sk-test" }, true);
+    const headers = executor.buildHeaders({ apiKey: "sk-test" }, true, undefined, "claude-opus-5");
+    const betaFlags = headers["Anthropic-Beta"].split(",").map(s => s.trim());
+    expect(betaFlags).toContain("advanced-tool-use-2025-11-20");
+    expect(betaFlags).toContain("effort-2025-11-24");
+  });
 
-    // Title-Case variants from providers.js must be gone
-    expect(headers["Anthropic-Version"]).toBeUndefined();
-    expect(headers["Anthropic-Beta"]).toBeUndefined();
-    expect(headers["User-Agent"]).toBeUndefined();
-    expect(headers["X-App"]).toBeUndefined();
-    // Lowercase variants must be present
-    expect(headers["anthropic-version"]).toBe("2023-06-01");
-    expect(headers["x-app"]).toBe("cli");
+  it("includes heavy-agent beta flags for claude-sonnet-5", () => {
+    const executor = new DefaultExecutor("claude");
+    const headers = executor.buildHeaders({ apiKey: "sk-test" }, true, undefined, "claude-sonnet-5");
+    const betaFlags = headers["Anthropic-Beta"].split(",").map(s => s.trim());
+    expect(betaFlags).toContain("advanced-tool-use-2025-11-20");
+    expect(betaFlags).toContain("effort-2025-11-24");
+  });
+
+  it("omits heavy-agent beta flags for claude-haiku-4-5-20251001", () => {
+    const executor = new DefaultExecutor("claude");
+    const headers = executor.buildHeaders({ apiKey: "sk-test" }, true, undefined, "claude-haiku-4-5-20251001");
+    const betaFlags = headers["Anthropic-Beta"].split(",").map(s => s.trim());
+    expect(betaFlags).not.toContain("advanced-tool-use-2025-11-20");
+    expect(betaFlags).not.toContain("effort-2025-11-24");
+    expect(betaFlags).toContain("claude-code-20250219");
+  });
+
+  it("omits heavy-agent beta flags for claude-fable-5", () => {
+    const executor = new DefaultExecutor("claude");
+    const headers = executor.buildHeaders({ apiKey: "sk-test" }, true, undefined, "claude-fable-5");
+    const betaFlags = headers["Anthropic-Beta"].split(",").map(s => s.trim());
+    expect(betaFlags).not.toContain("advanced-tool-use-2025-11-20");
+    expect(betaFlags).not.toContain("effort-2025-11-24");
   });
 
   it("sets x-api-key auth when apiKey is provided", () => {
@@ -179,6 +144,11 @@ describe("DefaultExecutor.buildHeaders() — claude provider", () => {
     const headers = executor.buildHeaders({ apiKey: "k" }, false);
     expect(headers["Accept"]).toBeUndefined();
   });
+
+  it("does not throw when no model is given", () => {
+    const executor = new DefaultExecutor("claude");
+    expect(() => executor.buildHeaders({ apiKey: "sk" }, false)).not.toThrow();
+  });
 });
 
 describe("DefaultExecutor.buildHeaders() — Anthropic API provider", () => {
@@ -196,17 +166,12 @@ describe("DefaultExecutor.buildHeaders() — Anthropic API provider", () => {
 
     expect(headers.Authorization).toBe("Bearer native-claude-token");
     expect(headers["x-api-key"]).toBeUndefined();
-    expect(headers["anthropic-beta"]).toContain("oauth-2025-04-20");
+    // No global overlay: the caller's own beta string must not be replayed here
+    expect(headers["anthropic-beta"] || "").not.toContain("oauth-2025-04-20");
     expect(headers["x-switchboard-key"]).toBeUndefined();
   });
 
-  it("does not reuse cached Claude identity for a non-Claude request", async () => {
-    const cache = await import("../../open-sse/utils/claudeHeaderCache.js");
-    cache.cacheClaudeHeaders({
-      "user-agent": "claude-code/2.1.129",
-      "x-claude-code-session-id": "previous-session",
-      "anthropic-beta": "oauth-2025-04-20",
-    });
+  it("does not forward non-Claude client headers onto the outbound request", async () => {
     const { DefaultExecutor } = await import("../../open-sse/executors/default.js");
     const headers = new DefaultExecutor("anthropic").buildHeaders({
       apiKey: "anthropic-api-key",
@@ -214,36 +179,6 @@ describe("DefaultExecutor.buildHeaders() — Anthropic API provider", () => {
     }, false);
 
     expect(headers["x-claude-code-session-id"]).toBeUndefined();
-    expect(headers["user-agent"]).toBe("curl/8.0");
-    expect(headers["anthropic-beta"]).toBeUndefined();
-  });
-});
-
-describe("DefaultExecutor.buildHeaders() — claude provider cold start (no cache)", () => {
-  let DefaultExecutor;
-
-  beforeEach(async () => {
-    vi.resetModules();
-    // Do NOT prime cache — simulate cold start
-    const mod = await import("../../open-sse/executors/default.js");
-    DefaultExecutor = mod.DefaultExecutor || mod.default;
-  });
-
-  it("falls back to static provider headers when cache is empty", () => {
-    const executor = new DefaultExecutor("claude");
-    const headers = executor.buildHeaders({ apiKey: "sk-test" }, true);
-
-    // Static fallback values from providers.js must still be present
-    // They may be Title-Case since no cache to conflict with them
-    const hasVersion =
-      headers["Anthropic-Version"] === "2023-06-01" ||
-      headers["anthropic-version"] === "2023-06-01";
-    expect(hasVersion).toBe(true);
-  });
-
-  it("does not throw when cache returns null", () => {
-    const executor = new DefaultExecutor("claude");
-    expect(() => executor.buildHeaders({ apiKey: "sk" }, false)).not.toThrow();
   });
 });
 

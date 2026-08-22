@@ -7,7 +7,6 @@ import {
   clearAccountError,
   extractApiKey,
 } from "../services/auth.js";
-import { cacheClaudeHeaders } from "open-sse/utils/claudeHeaderCache.js";
 import { resolveAffinitySessionId } from "open-sse/utils/sessionManager.js";
 import { getSettings, getUsageStats } from "@/lib/db/index.js";
 import { getProviderQuotaHeadroom } from "@/lib/db/repos/connectionsRepo.js";
@@ -222,7 +221,6 @@ export async function handleChat(request, clientRawRequest = null) {
       headers: Object.fromEntries(request.headers.entries())
     };
   }
-  cacheClaudeHeaders(clientRawRequest.headers, body);
 
   // Log request endpoint and model
   const url = new URL(request.url);
