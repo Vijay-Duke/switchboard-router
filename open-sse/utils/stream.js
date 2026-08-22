@@ -5,6 +5,7 @@ import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBu
 import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE } from "./streamHelpers.js";
 import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
+import { errorLine } from "./logTags.js";
 
 import { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER } from "./sseConstants.js";
 import { createThinkExtractor } from "./thinkExtractor.js";
@@ -540,7 +541,9 @@ export function createSSEStream(options = {}) {
           }, state?.usage, ttftAt);
         }
       } catch (error) {
-        console.log("Error in flush:", error);
+        // Lifecycle error: always shown, unified format (no session tag available here)
+        const msg = error?.message || String(error);
+        errorLine("", "✗", `FLUSH ERROR · ${provider || targetFormat}/${model} · ${msg}${error?.stack ? `\n    ${error.stack}` : ""}`);
       }
     }
   });
