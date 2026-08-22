@@ -115,11 +115,23 @@ function getProviderLabel(connection) {
   return connection?.name || humanize(connection?.provider || connection?.id || "provider");
 }
 
+function getRequestModelPrefix(connection) {
+  // User-facing gateway model IDs use the provider node's public prefix
+  // (e.g. "qa-openai/qa-chat"); internal node ids such as
+  // "openai-compatible-chat-qa-local" are not routable model prefixes.
+  return (
+    textValue(connection?.providerSpecificData?.prefix)
+    || textValue(connection?.provider)
+    || textValue(connection?.id)
+  );
+}
+
 function normalizeStaticModel(model, connection) {
   if (!model?.id) return null;
+  const requestModel = `${getRequestModelPrefix(connection)}/${model.id}`;
   return {
-    id: `${connection.provider}/${model.id}`,
-    requestModel: `${connection.provider}/${model.id}`,
+    id: requestModel,
+    requestModel,
     name: model.name || model.id,
     providerId: connection.provider,
     providerName: getProviderLabel(connection),
@@ -137,8 +149,13 @@ function normalizeLiveModel(model, connection) {
 
   let requestModel = rawId;
   const isCompatible = isOpenAICompatibleProvider(connection.provider) || isAnthropicCompatibleProvider(connection.provider);
-  if (isCompatible && !rawId.includes("/")) {
-    requestModel = `${connection.provider}/${rawId}`;
+  if (isCompatible) {
+    // Gateway model IDs are addressed by the provider node's user-facing
+    // prefix (e.g. "qa-openai/qa-chat"), never the internal node id.
+    const aliasPrefix = getRequestModelPrefix(connection);
+    if (aliasPrefix && !rawId.startsWith(`${aliasPrefix}/`)) {
+      requestModel = `${aliasPrefix}/${rawId}`;
+    }
   }
 
   return {
@@ -638,7 +655,7 @@ export default function BasicChatPageClient() {
       }));
 
     try {
-      const response = await fetch("/api/dashboard/chat/completions", {
+      const response = await fetch("/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -713,7 +730,18 @@ export default function BasicChatPageClient() {
       }));
       finalizeSessionTitle(sessionId, userText);
     } catch (error) {
-      if (error.name !== "AbortError") {
+      if (error.name === "AbortError") {
+        // Stop: drop the provisional turn when nothing streamed; keep
+        // partial replies but visibly mark them stopped.
+        updateSession(sessionId, (currentSession) => ({
+          ...currentSession,
+          messages: currentSession.messages.flatMap((message) => {
+            if (message.id !== assistantMessageId) return [message];
+            return textValue(message.content) ? [{ ...message, status: "stopped" }] : [];
+          }),
+          updatedAt: new Date().toISOString(),
+        }));
+      } else {
         const errorText = textValue(error?.message || error);
         updateSession(sessionId, (currentSession) => ({
           ...currentSession,
@@ -801,6 +829,9 @@ export default function BasicChatPageClient() {
           </div>
 
           <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" icon="add" onClick={handleNewChat} disabled={!activeModel}>
+              New conversation
+            </Button>
             <button
               type="button"
               onClick={() => setHistoryOpen((value) => !value)}
@@ -903,6 +934,9 @@ export default function BasicChatPageClient() {
                         {content}
                         {isAssistant && isStreaming && !streamingText ? <span className="inline-block animate-pulse">▋</span> : null}
                       </div>
+                      {isAssistant && message.status === "stopped" ? (
+                        <p className="mt-1 text-xs italic text-white/45">Generation stopped</p>
+                      ) : null}
                     </div>
                   </div>
                 );
@@ -937,7 +971,7 @@ export default function BasicChatPageClient() {
 
                 <div className="mt-2 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
-                    <button type="button" onClick={() => fileInputRef.current?.click()} disabled={!activeModel || loadingData} className="p-2 text-white/50 hover:text-white transition rounded-full hover:bg-white/5">
+                    <button type="button" onClick={() => fileInputRef.current?.click()} disabled={!activeModel || loadingData} aria-label="Attach image" className="p-2 text-white/50 hover:text-white transition rounded-full hover:bg-white/5">
                       <span className="material-symbols-outlined text-[20px]">attach_file</span>
                     </button>
                     <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleAttachFiles} />
@@ -946,11 +980,11 @@ export default function BasicChatPageClient() {
 
                   <div className="flex items-center gap-2">
                     {isSending ? (
-                      <button type="button" onClick={handleStop} className="p-2 text-white bg-white/10 hover:bg-white/20 transition rounded-full h-8 w-8 flex items-center justify-center">
+                      <button type="button" onClick={handleStop} aria-label="Stop generating" className="p-2 text-white bg-white/10 hover:bg-white/20 transition rounded-full h-8 w-8 flex items-center justify-center">
                         <span className="material-symbols-outlined text-[16px]">stop</span>
                       </button>
                     ) : null}
-                    <button onClick={sendMessage} disabled={!canSend} className={`h-8 w-8 rounded-full flex items-center justify-center transition ${canSend ? 'bg-white text-black hover:opacity-90' : 'bg-white/10 text-white/30 cursor-not-allowed'}`}>
+                    <button type="button" onClick={sendMessage} disabled={!canSend} aria-label="Send message" className={`h-8 w-8 rounded-full flex items-center justify-center transition ${canSend ? 'bg-white text-black hover:opacity-90' : 'bg-white/10 text-white/30 cursor-not-allowed'}`}>
                       <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
                     </button>
                   </div>
