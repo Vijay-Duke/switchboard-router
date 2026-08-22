@@ -4,7 +4,7 @@
 
 `/api/mgmt/v1` is Switchboard's stable, machine-facing management contract. It is intended for local tray applications, quota widgets, and operational panels, and is modeled on the CLIProxyAPI Management API. It is not the OpenAI-compatible inference API (`/v1`).
 
-All responses are JSON and send `Cache-Control: no-store`.
+All JSON responses and successful metrics responses send `Cache-Control: no-store`.
 
 ### Authentication and network boundary
 
@@ -20,7 +20,7 @@ If the request is not trusted local and `MANAGEMENT_TOKEN` is absent, empty, mal
 
 ### Envelopes and errors
 
-Every successful response has this envelope:
+Except for a successful metrics scrape, every successful response has this envelope:
 
 ```json
 {"v":1,"data":{}}
@@ -32,7 +32,7 @@ Every error response has this envelope:
 {"v":1,"error":{"message":"Combo not found","code":"not_found"}}
 ```
 
-`code` is optional. Known codes include `unauthorized` and `not_found`. Validation failures use `400`; missing resources use `404`; unexpected failures use `500`.
+`code` is optional. Known codes include `unauthorized`, `not_found`, `metrics_disabled`, and `metrics_unavailable`. Validation failures use `400`; missing or disabled resources use `404`; unavailable metrics use `503`; unexpected failures use `500`.
 
 All examples below show the value under `data` wrapped in the success envelope.
 
@@ -246,6 +246,31 @@ Returns gateway, database, and provider-account health.
 ```json
 {"v":1,"data":{"status":"ok","uptimeSeconds":864,"db":{"ok":true},"providers":{"total":2,"ok":2,"error":0,"rateLimited":0},"timestamp":"2026-07-12T10:00:00.000Z"}}
 ```
+
+### `GET /api/mgmt/v1/metrics`
+
+Disabled by default. Set `PROMETHEUS_METRICS_ENABLED=true`, then scrape with
+the same management bearer token used by the other `/api/mgmt/v1/*` routes:
+
+```bash
+curl -H "Authorization: Bearer $MANAGEMENT_TOKEN" \
+  http://127.0.0.1:20128/api/mgmt/v1/metrics
+```
+
+Success is Prometheus text format
+(`text/plain; version=0.0.4; charset=utf-8`) with no-store caching.
+Unauthorized callers receive 401, authenticated callers receive 404 while the
+export is disabled, and any collection failure returns 503 without partial
+metrics.
+
+The export contains lifetime usage request/token/cost counters; live
+active-request, connection-state/cooldown, and cache-occupancy gauges; and
+retained routing error/fallback/Auto gauges. Routing values are gauges because
+routing events are retention-limited. Labels are limited to provider, token
+direction, connection state, and fixed Auto decision source. It does not
+export prompts, responses, keys or key identities, connection/account
+identity, email, model, combo, endpoint, session/request identity, arbitrary
+errors, latency histograms, or cache hit/miss counters.
 
 ### `GET /api/mgmt/v1/version`
 
