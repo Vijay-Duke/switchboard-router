@@ -12,6 +12,7 @@ function isLLMProvider(id) {
 }
 import Badge from "./Badge";
 import Card from "./Card";
+import Button from "./Button";
 import OverviewCards from "@/app/(dashboard)/dashboard/usage/components/OverviewCards";
 import UsageTable, { fmt, fmtTime } from "@/app/(dashboard)/dashboard/usage/components/UsageTable";
 import ProviderTopology from "@/app/(dashboard)/dashboard/usage/components/ProviderTopology";
@@ -209,6 +210,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
+  const [statsError, setStatsError] = useState(null);
   const [tableView, setTableView] = useState("model");
   const [viewMode, setViewMode] = useState("costs");
   const [providers, setProviders] = useState([]);
@@ -250,30 +252,41 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       .catch(() => {});
   }, []);
 
-  // Fetch filtered stats via REST when period changes
-  useEffect(() => {
+  // Fetch filtered stats via REST when period changes.
+  // Failures surface as statsError (with retry) instead of silently
+  // leaving the previous period's data on screen (QA-021).
+  const loadStats = useCallback((showFullLoading) => {
     // First load: show full spinner; subsequent: show subtle fetching indicator
-    if (isInitialLoad.current) {
-      isInitialLoad.current = false;
+    if (showFullLoading) {
       setLoading(true);
     } else {
       setFetching(true);
     }
 
     fetch(`/api/usage/stats?period=${period}`)
-      .then((r) => r.ok ? r.json() : null)
-      .then((data) => {
-        if (data) {
-          hasLoadedStats.current = true;
-          setStats((prev) => ({ ...prev, ...data }));
-        }
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`Request failed with status ${r.status}`);
+        return r.json();
       })
-      .catch(() => {})
+      .then((data) => {
+        hasLoadedStats.current = true;
+        setStats((prev) => ({ ...prev, ...data }));
+        setStatsError(null);
+      })
+      .catch((err) => {
+        reportClientError("Failed to fetch usage stats:", err);
+        setStatsError(err?.message || "Network request failed");
+      })
       .finally(() => {
         setLoading(false);
         setFetching(false);
       });
   }, [period]);
+
+  useEffect(() => {
+    loadStats(isInitialLoad.current);
+    isInitialLoad.current = false;
+  }, [loadStats]);
 
   // SSE connection - real-time updates for activeRequests + recentRequests only
   useEffect(() => {
@@ -432,7 +445,20 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
     }
   }, [stats, tableView, sortBy, sortOrder]);
 
-  if (!stats && !loading) return <div className="text-text-muted">Failed to load usage statistics.</div>;
+  if (!stats && !loading) {
+    return (
+      <div role="alert" className="flex flex-col items-start gap-3">
+        <div className="flex items-center gap-2 text-danger">
+          <span className="material-symbols-outlined text-[20px]" aria-hidden="true">error</span>
+          <span className="text-sm font-medium">Failed to load usage statistics.</span>
+        </div>
+        {statsError && <p className="text-xs text-text-muted">{statsError}</p>}
+        <Button variant="outline" size="sm" onClick={() => loadStats(true)}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
 
   const spinner = (
     <div className="flex items-center justify-center py-12 text-text-muted">
@@ -449,9 +475,11 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
             {PERIODS.map((p) => (
               <button
                 key={p.value}
+                type="button"
+                aria-pressed={period === p.value}
                 onClick={() => setPeriod(p.value)}
                 disabled={fetching}
-                className={`rounded-md px-3 py-1 text-sm font-medium transition-colors ${period === p.value ? "bg-primary text-on-primary shadow-sm" : "text-text-muted hover:bg-bg-hover hover:text-text"}`}
+                className={`rounded-md px-3 py-1 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${period === p.value ? "bg-primary text-on-primary shadow-sm" : "text-text-muted hover:bg-bg-hover hover:text-text"}`}
               >
                 {p.label}
               </button>
@@ -460,6 +488,25 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           {fetching && (
             <span className="material-symbols-outlined text-[16px] text-text-muted animate-spin">progress_activity</span>
           )}
+        </div>
+      )}
+
+      {/* Stale-data indicator: the selected period failed to load, so the
+          numbers below are from a previous period (QA-021) */}
+      {statsError && stats && !loading && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-danger/40 bg-danger/10 px-4 py-3"
+        >
+          <div className="flex min-w-0 items-center gap-2 text-sm text-danger">
+            <span className="material-symbols-outlined text-[18px]" aria-hidden="true">error</span>
+            <span>
+              Failed to load usage statistics for the selected period — showing previously loaded data.
+            </span>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => loadStats(false)}>
+            Retry
+          </Button>
         </div>
       )}
 
@@ -487,6 +534,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <select
             value={tableView}
+            aria-label="Group usage by"
             onChange={(e) => setTableView(e.target.value)}
             className="w-full rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-text-main focus:outline-none focus:ring-2 focus:ring-primary/50 sm:w-auto"
             style={{ colorScheme: 'auto' }}
@@ -497,14 +545,18 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           </select>
           <div className="grid grid-cols-2 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:flex">
             <button
+              type="button"
+              aria-pressed={viewMode === "costs"}
               onClick={() => setViewMode("costs")}
-              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === "costs" ? "bg-primary text-on-primary shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
+              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${viewMode === "costs" ? "bg-primary text-on-primary shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
             >
               Costs
             </button>
             <button
+              type="button"
+              aria-pressed={viewMode === "tokens"}
               onClick={() => setViewMode("tokens")}
-              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === "tokens" ? "bg-primary text-on-primary shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
+              className={`px-3 py-1 rounded-md text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${viewMode === "tokens" ? "bg-primary text-on-primary shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
             >
               Tokens
             </button>
