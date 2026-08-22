@@ -33,8 +33,10 @@ const moduleDefault = {
     { id: "grok-code-fast-1", name: "Grok Code Fast" },
     { id: "grok-3", name: "Grok 3" },
     { id: "grok-2-image-1212", name: "Grok 2 Image", params: ["n","response_format"], kind: "image" },
+    { id: "grok-imagine-video", name: "Grok Imagine Video", params: ["duration","aspect_ratio","resolution"], kind: "video" },
   ],
-  serviceKinds: ["llm","imageToText","webSearch","image"],
+  serviceKinds: ["llm","imageToText","webSearch","image","video"],
+  videoConfig: { identity: "grok-cli", baseUrl: "https://api.x.ai/v1/videos" },
   imageConfig: { identity: "grok-cli", baseUrl: "https://api.x.ai/v1/images/generations", bodyFields: ["model","prompt","n","response_format"] },
   searchViaChat: {
     defaultModel: "grok-4.20-reasoning",
