@@ -50,8 +50,9 @@ vi.mock("@/sse/services/model.js", () => ({
       const idx = s.indexOf("/");
       return { provider: s.slice(0, idx), model: s.slice(idx + 1) };
     }
-    // Combos and bare ids surface as provider-less to callers
-    return { provider: null, model: s };
+    // Bare ids mirror production resolution for catalog models: they map to
+    // their owning provider (xAI here) rather than surfacing as combos.
+    return { provider: "xai", model: s };
   }),
 }));
 

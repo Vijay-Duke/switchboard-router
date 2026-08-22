@@ -179,7 +179,6 @@ export async function handleVideoProxyCore({
       status: upstream.status,
       headers: {
         "Content-Type": upstream.headers.get("content-type") || "application/json",
-        "Access-Control-Allow-Origin": "*",
       },
     }),
   };
