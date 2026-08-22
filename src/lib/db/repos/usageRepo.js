@@ -228,6 +228,18 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
   scheduleStatsEvent("pending");
 }
 
+export function getConnectionInFlightCount(connectionId) {
+  const models = pendingRequests.byAccount[connectionId];
+  if (!models) return 0;
+
+  let total = 0;
+  for (const modelKey in models) {
+    const count = Number(models[modelKey]);
+    if (Number.isFinite(count) && count > 0) total += count;
+  }
+  return total;
+}
+
 export async function getActiveRequests() {
   const activeRequests = [];
   const connectionMap = await getConnectionMapCached();
