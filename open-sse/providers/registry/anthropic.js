@@ -32,9 +32,6 @@ const moduleDefault = {
         header: "Authorization",
         scheme: "bearer",
       },
-      hooks: [
-        "claudeOverlay",
-      ],
     },
   },
   models: [

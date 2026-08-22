@@ -1,10 +1,9 @@
 import { BaseExecutor, streamIsTransportControlled } from "./base.js";
 import { PROVIDERS, PROVIDER_OAUTH } from "../config/providers.js";
-import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
+import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE, selectAnthropicBeta } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
 import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
 import { buildClineHeaders } from "../shared/clineAuth.js";
-import { getCachedClaudeHeaders, pickClaudeIdentityHeaders } from "../utils/claudeHeaderCache.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
@@ -42,30 +41,6 @@ const HEADER_HOOKS = {
   kimiHeaders: (h) => Object.assign(h, buildKimiHeaders()),
   clineHeaders: (h, c) => Object.assign(h, buildClineHeaders(c.apiKey || c.accessToken)),
   kilocodeOrg: (h, c) => { if (c.providerSpecificData?.orgId) h["X-Kilocode-OrganizationID"] = c.providerSpecificData.orgId; },
-  claudeOverlay: (h, credentials) => {
-    // Request-scoped headers win. The singleton is only a cold-path fallback
-    // for legacy callers that do not thread clientRawRequest through chatCore.
-    const hasRequestHeaders = credentials && Object.hasOwn(credentials, "rawHeaders");
-    const cached = hasRequestHeaders
-      ? pickClaudeIdentityHeaders(credentials.rawHeaders || {})
-      : getCachedClaudeHeaders();
-    if (!cached) return;
-    // getCachedClaudeHeaders() hands back the live cache object. Merging this
-    // request's static anthropic-beta flags into it would persist them into
-    // every later request, for every model.
-    const overlay = { ...cached };
-    for (const lcKey of Object.keys(overlay)) {
-      const titleKey = lcKey.replace(/(^|-)([a-z])/g, (_, sep, ch) => sep + ch.toUpperCase());
-      if (lcKey === "anthropic-beta") {
-        const staticBetaStr = h[titleKey] || h[lcKey] || "";
-        const flags = new Set(staticBetaStr.split(",").map(f => f.trim()).filter(Boolean));
-        for (const f of overlay[lcKey].split(",").map(f => f.trim()).filter(Boolean)) flags.add(f);
-        overlay[lcKey] = Array.from(flags).join(",");
-      }
-      if (titleKey !== lcKey && h[titleKey] !== undefined) delete h[titleKey];
-    }
-    Object.assign(h, overlay);
-  },
 };
 
 // Config-driven OAuth refresh grants — derived from registry oauth.refresh.
@@ -182,13 +157,17 @@ export class DefaultExecutor extends BaseExecutor {
     return BEARER;
   }
 
-  buildHeaders(credentials, stream = true) {
+  buildHeaders(credentials, stream = true, url, model) {
     const rt = credentials?.runtimeTransport;
     const headers = { "Content-Type": "application/json", ...(rt ? rt.headers : this.config.headers) };
     const desc = rt?.auth || AUTH_DESCRIPTORS[this.provider] || this.resolveAuthDescriptor();
-    // Hooks run BEFORE auth so dynamic overlays (claude cached headers) can't clobber the token.
+    // Hooks run BEFORE auth so dynamic overlays can't clobber the token.
     for (const hook of desc.hooks || []) HEADER_HOOKS[hook]?.(headers, credentials);
     applyAuth(headers, desc, credentials);
+
+    if (this.provider === "claude" && model) {
+      headers["Anthropic-Beta"] = selectAnthropicBeta(model);
+    }
 
     // Strip first-party Claude Code identity headers for non-Anthropic anthropic-compatible upstreams
     if (this.provider?.startsWith?.("anthropic-compatible-")) {
