@@ -38,3 +38,32 @@ describe("SSRF guard allow list", () => {
     await expect(assertPublicUrlResolved("http://127.0.0.1/")).rejects.toThrow(/internal host|private IP/);
   });
 });
+
+describe("SSRF guard literal hardening", () => {
+  it("blocks trailing-dot forms of blocked hostnames", () => {
+    expect(() => assertPublicUrl("http://localhost./x")).toThrow(/internal host/);
+    expect(() => assertPublicUrl("http://metadata.google.internal./x")).toThrow(/internal host/);
+  });
+
+  it("still accepts trailing-dot public hostnames", () => {
+    expect(() => assertPublicUrl("http://example.com./x")).not.toThrow();
+  });
+
+  it("blocks full-form IPv6 loopback and unspecified literals", () => {
+    expect(() => assertPublicUrl("http://[0:0:0:0:0:0:0:1]:8080/x")).toThrow(/private IP/);
+    expect(() => assertPublicUrl("http://[0:0:0:0:0:0:0:0]/x")).toThrow(/private IP/);
+    expect(() => assertPublicUrl("http://[fe80:0000:0000:0000:0000:0000:0000:0001]/x")).toThrow(/private IP/);
+  });
+
+  it("blocks inet_aton shorthand IPv4 that getaddrinfo resolves", () => {
+    expect(() => assertPublicUrl("http://127.1/x")).toThrow(/private IP/);
+    expect(() => assertPublicUrl("http://127.0.1/x")).toThrow(/private IP/);
+    expect(() => assertPublicUrl("http://169.254.1/x")).toThrow(/private IP/);
+  });
+
+  it("does not block decimal-looking multi-label public hostnames", () => {
+    // "1.2" as a hostname would resolve via DNS, not inet_aton shorthand —
+    // only resolvable numeric shorthands are treated as IP literals.
+    expect(() => assertPublicUrl("http://1.2/x")).not.toThrow();
+  });
+});

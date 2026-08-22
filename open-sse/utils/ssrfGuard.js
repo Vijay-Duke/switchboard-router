@@ -10,7 +10,9 @@ const BLOCKED_SUFFIXES = [".internal", ".local", ".localhost"];
 // Normalize a user-supplied host (or resolved IP) for allowlist comparison:
 // lowercase and strip IPv6 brackets so "[::1]" and "::1" compare equal.
 function normalizeHost(host) {
-  return String(host).toLowerCase().replace(/^\[|\]$/g, "");
+  // Trailing-dot FQDN form ("localhost.") resolves like the bare name but
+  // would evade exact-match and suffix blocklists — strip it.
+  return String(host).toLowerCase().replace(/^\[|\]$/g, "").replace(/\.+$/, "");
 }
 
 // Build a Set from the operator's trusted-host allowlist. These are hosts that
@@ -88,8 +90,33 @@ function isBlockedIpv6(host) {
   const v4Mapped = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
   const mappedIpv4 = v4Mapped?.[1] || mappedIpv4FromIpv6(h);
   if (mappedIpv4) return isBlockedIpv4(mappedIpv4);
-  if (h === "::1" || h === "::") return true;
+  const groups = expandIpv6Groups(h);
+  if (groups) {
+    if (groups.every((v) => v === 0)) return true; // "::" unspecified
+    // Loopback in any textual form: "::1" and full "0:0:0:0:0:0:0:1".
+    if (groups.every((v, i) => (i === 7 ? v === 1 : v === 0))) return true;
+    if ((groups[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
+    if ((groups[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
+    return false;
+  }
+  // Not a parseable literal (e.g. hostname with a colon): prefix heuristic.
   return h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd");
+}
+
+// Expand an IPv6 literal into its eight 16-bit groups ("::" filled with zeros),
+// or null if the text is not a valid IPv6 literal.
+function expandIpv6Groups(host) {
+  const halves = host.split("::");
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(":").filter(Boolean) : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(":").filter(Boolean) : [];
+  const missing = 8 - left.length - right.length;
+  if (missing < 0 || (halves.length === 1 && missing !== 0)) return null;
+  const groups = [...left, ...Array(missing).fill("0"), ...right];
+  if (groups.length !== 8) return null;
+  const vals = groups.map((g) => parseInt(g, 16));
+  if (vals.some((v) => !Number.isInteger(v) || Number.isNaN(v) || v < 0 || v > 0xffff)) return null;
+  return vals;
 }
 
 /** Decode decimal / octal / hex / bare-integer IPv4 encodings (e.g. 2130706433 → 127.0.0.1). */
@@ -114,6 +141,20 @@ function decodeWeirdIpv4(host) {
       value = value * 256 + octet;
     }
     return value >>> 0;
+  }
+  // inet_aton shorthand: "127.1" → 127.0.0.1, "10.0.513"-style partials —
+  // the final dotted part spans the remaining bytes, and getaddrinfo
+  // resolves these as IPv4 even though they are not quad-dotted literals.
+  const shortParts = host.split(".");
+  if ((shortParts.length === 2 || shortParts.length === 3) && shortParts.every((p) => /^\d{1,3}$/.test(p))) {
+    const nums = shortParts.map(Number);
+    const lastMax = 2 ** (8 * (4 - shortParts.length)) - 1;
+    if (nums.slice(0, -1).every((v) => v <= 255) && nums[shortParts.length - 1] <= lastMax) {
+      const value = shortParts.length === 2
+        ? nums[0] * 0x1000000 + nums[1]
+        : nums[0] * 0x1000000 + nums[1] * 0x10000 + nums[2];
+      return value >>> 0;
+    }
   }
   return null;
 }
