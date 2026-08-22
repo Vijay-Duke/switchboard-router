@@ -208,13 +208,13 @@ async function handleSingleProviderFetch(body, providerInput, request, clientKey
 
     log.info("AUTH", `\x1b[32mUsing ${providerId} account: ${credentials.connectionName}\x1b[0m`);
 
-    const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
 
     const attempt = await withConnectionInFlight({
       provider: providerId,
       model: providerId,
       connectionId: credentials.connectionId,
     }, async () => {
+      const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
       const result = await handleFetchCore({
         clientKeyId,
         url: targetUrl,

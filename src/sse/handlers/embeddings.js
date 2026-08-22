@@ -105,13 +105,13 @@ export async function handleEmbeddings(request) {
 
     log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
 
-    const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
     const attempt = await withConnectionInFlight({
       provider,
       model,
       connectionId: credentials.connectionId,
     }, async () => {
+      const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
       const result = await handleEmbeddingsCore({
         clientKeyId,
         abortSignal: request.signal,

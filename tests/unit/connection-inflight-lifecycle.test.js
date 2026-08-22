@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   getConnectionInFlightCount,
+  trackPendingRequest,
 } from "../../src/lib/db/repos/usageRepo.js";
 import {
   withConnectionInFlight,
@@ -50,8 +51,11 @@ describe("withConnectionInFlight", () => {
       connectionId: "c1",
     }, async () => new Response(new ReadableStream({ pull() {} })));
 
-    expect(getConnectionInFlightCount("c1")).toBe(1);
+    trackPendingRequest("text-embedding-3-small", "openai", "c1", true);
+    expect(getConnectionInFlightCount("c1")).toBe(2);
     await response.body.cancel("client closed");
+    expect(getConnectionInFlightCount("c1")).toBe(1);
+    trackPendingRequest("text-embedding-3-small", "openai", "c1", false);
     expect(getConnectionInFlightCount("c1")).toBe(0);
   });
 

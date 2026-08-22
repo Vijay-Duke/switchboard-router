@@ -67,17 +67,24 @@ describe("resolveSessionId", () => {
 });
 
 describe("resolveAffinitySessionId", () => {
-  it("accepts platform Headers and client body fields", () => {
+  it("hashes platform Headers and client body fields within the client scope", () => {
+    const header = resolveAffinitySessionId({
+      headers: new Headers({ "x-session-id": "header-session" }),
+      body: {},
+      scope: "anthropic",
+    });
+    const cache = resolveAffinitySessionId({
+      headers: {},
+      body: { prompt_cache_key: "cache-session" },
+      scope: "openai",
+    });
+    expect(header).not.toBe("header-session");
+    expect(cache).not.toBe("cache-session");
     expect(resolveAffinitySessionId({
       headers: new Headers({ "x-session-id": "header-session" }),
       body: {},
       scope: "anthropic",
-    })).toBe("header-session");
-    expect(resolveAffinitySessionId({
-      headers: {},
-      body: { prompt_cache_key: "cache-session" },
-      scope: "openai",
-    })).toBe("cache-session");
+    })).toBe(header);
   });
 
   it("uses stable assistant history but never generates a fallback", () => {

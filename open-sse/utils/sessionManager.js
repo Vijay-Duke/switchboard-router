@@ -184,13 +184,14 @@ export function resolveAffinitySessionId({
     scope = "",
     clientKeyId = null,
 } = {}) {
-    const client = extractClientSessionId(headers, body);
-    if (client) return client;
-    return assistantTextSessionId(JSON.stringify([
+    const source = extractClientSessionId(headers, body)
+        || assistantTextSessionId(`${scope}:affinity`, body);
+    if (!source) return null;
+    return `affinity:${sha256(JSON.stringify([
         clientKeyId || "local-no-key",
         scope,
-        "affinity",
-    ]), body);
+        source,
+    ]))}`;
 }
 
 /**

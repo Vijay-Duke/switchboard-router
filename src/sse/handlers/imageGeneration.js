@@ -121,13 +121,13 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
       return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
     }
 
-    const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
     const attempt = await withConnectionInFlight({
       provider,
       model,
       connectionId: credentials.connectionId,
     }, async () => {
+      const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
       const result = await handleImageGenerationCore({
         clientKeyId,
         body,

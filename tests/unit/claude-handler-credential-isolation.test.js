@@ -266,7 +266,7 @@ describe("Claude handler credential isolation", () => {
     expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(2);
     const firstOptions = mocks.getProviderCredentials.mock.calls[0][3];
     const retryOptions = mocks.getProviderCredentials.mock.calls[1][3];
-    expect(firstOptions.sessionKey).toBe("conversation-42");
+    expect(firstOptions.sessionKey).not.toBe("conversation-42");
     expect(firstOptions.clientKeyId).toBe("client-key-a");
     expect(retryOptions.sessionKey).toBe(firstOptions.sessionKey);
     expect(retryOptions.clientKeyId).toBe(firstOptions.clientKeyId);

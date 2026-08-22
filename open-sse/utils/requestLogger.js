@@ -257,7 +257,6 @@ export async function createRequestLogger(sourceFormat, targetFormat, model) {
       writeJsonFile(sessionPath, "6_error.json", {
         timestamp: new Date().toISOString(),
         error: error?.message || String(error),
-        stack: error?.stack,
         requestBody
       });
     }
@@ -286,7 +285,7 @@ export function logError(provider, { error, url, model, requestBody }) {
       url,
       error: error?.message || String(error),
       stack: error?.stack,
-      requestBody
+      requestBody: redactSessionIdentifiers(requestBody),
     };
     
     fs.appendFileSync(logPath, JSON.stringify(logEntry) + "\n");
