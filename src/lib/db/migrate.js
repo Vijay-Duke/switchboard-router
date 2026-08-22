@@ -60,7 +60,7 @@ function isFreshDb(adapter) {
 }
 
 // ─── Versioned migrations runner (skip-version safe) ─────────────────────
-function runVersionedMigrations(adapter) {
+export function runVersionedMigrations(adapter) {
   // Bootstrap _meta first so we can read schemaVersion
   adapter.exec(buildCreateTableSql("_meta", TABLES._meta));
 
@@ -71,10 +71,9 @@ function runVersionedMigrations(adapter) {
   const pending = MIGRATIONS.filter((m) => m.version > current);
   let lastApplied = current;
   for (const m of pending) {
-    adapter.transaction(() => {
-      m.up(adapter);
-      setMetaSync(adapter, "schemaVersion", m.version);
-    });
+    adapter.transaction(() => m.up(adapter));
+    if (typeof m.afterUp === "function") m.afterUp(adapter);
+    adapter.transaction(() => setMetaSync(adapter, "schemaVersion", m.version));
     lastApplied = m.version;
     console.log(`[DB][migrate] applied #${m.version} ${m.name}`);
   }
