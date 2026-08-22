@@ -1,6 +1,6 @@
 // Unified request lifecycle logging: colored per-session tags.
 // Ported from upstream a625ea9f "refactor(log): unify request lifecycle
-// logging with session-colored tags" (9Router), adapted for Switchboard.
+// logging with session-colored tags", adapted for Switchboard.
 //
 // Every lifecycle line of one request (start / upstream / fallback /
 // done / disconnect / error) prints the same colored tag so concurrent
