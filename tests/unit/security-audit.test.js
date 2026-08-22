@@ -6,60 +6,67 @@ const repoPath = (relativePath) =>
   fileURLToPath(new URL(`../../${relativePath}`, import.meta.url));
 
 // ============================================================
-// AUDIT-002 (#1962): API key masking in usage stats
+// AUDIT-002 (#1962): Non-secret client-key identity in usage stats
 // ============================================================
-describe("AUDIT-002: API key masking", () => {
-  it("source should contain maskApiKey function", () => {
+describe("AUDIT-002: non-secret client-key identity", () => {
+  it("usage source should not define raw-key masking", () => {
     const source = fs.readFileSync(
       repoPath("src/lib/db/repos/usageRepo.js"),
       "utf-8"
     );
-    expect(source).toContain("function maskApiKey");
+    expect(source).not.toContain("function maskApiKey");
+    expect(source).not.toContain("apiKeyMasked");
   });
 
-  it("getUsageHistory should use apiKeyMasked instead of apiKey", () => {
+  it("getUsageHistory should return durable client-key IDs only", () => {
     const source = fs.readFileSync(
       repoPath("src/lib/db/repos/usageRepo.js"),
       "utf-8"
     );
-    // The REST response should use apiKeyMasked
-    expect(source).toContain("apiKeyMasked: maskApiKey(r.apiKey)");
-    // The return mapping in getUsageHistory should not have raw apiKey
-    // (The internal ring buffer still uses apiKey: r.apiKey for internal state - that's fine)
+    // History responses expose stable key identity, never raw key material
     const historyReturn = source.match(/return rows\.map\(\(r\)\s*=>\s*\(\{[\s\S]*?\}\)\);/);
     expect(historyReturn).not.toBeNull();
-    expect(historyReturn[0]).toContain("apiKeyMasked");
+    expect(historyReturn[0]).toContain("clientKeyId: r.clientKeyId");
     expect(historyReturn[0]).not.toContain("apiKey: r.apiKey");
+    expect(historyReturn[0]).not.toContain("apiKeyMasked");
   });
 
-  it("getUsageStats should use apiKeyMasked in byApiKey entries", () => {
+  it("getUsageStats should aggregate by client-key ID", () => {
     const source = fs.readFileSync(
       repoPath("src/lib/db/repos/usageRepo.js"),
       "utf-8"
     );
-    // Both code paths (daily summary + 24h live) should use apiKeyMasked
-    const maskedCount = (source.match(/apiKeyMasked/g) || []).length;
-    expect(maskedCount).toBeGreaterThanOrEqual(4); // function def + 3 usage sites
+    // Daily storage and rollups use durable client-key attribution
+    expect(source).toContain("byClientKey");
+    expect(source).toContain("Object.entries(day.byClientKey || {})");
 
-    // The byApiKey stats entries should use apiKeyMasked, not raw apiKey
-    // Check the daily summary path
-    const dailyPath = source.match(/stats\.byApiKey\[akKey\] = \{[^}]*apiKeyMasked[^}]*\}/);
-    expect(dailyPath).not.toBeNull();
-    // Check the 24h live path
-    const livePath = source.match(/stats\.byApiKey\[akKey\] = \{[^}]*apiKeyMasked[^}]*\}/g);
-    expect(livePath).not.toBeNull();
-    expect(livePath.length).toBeGreaterThanOrEqual(1);
+    // The outward byApiKey compatibility view exposes key ID and name only
+    const compatibilityEntries = source.match(
+      /stats\.byApiKey\[clientKeyCounter\] = \{[\s\S]*?\n\s*\};/g
+    );
+    expect(compatibilityEntries).not.toBeNull();
+    expect(compatibilityEntries.length).toBeGreaterThanOrEqual(2);
+    for (const entry of compatibilityEntries) {
+      expect(entry).toContain("clientKeyId");
+      expect(entry).toContain("keyName");
+      expect(entry).not.toMatch(/\bapiKey(?:Masked)?\s*:/);
+    }
   });
 
-  it("byApiKey object keys should use masked key, not raw key", () => {
+  it("aggregate keys should use client-key IDs, never raw keys", () => {
     const source = fs.readFileSync(
       repoPath("src/lib/db/repos/usageRepo.js"),
       "utf-8"
     );
-    // The 24h path should use apiKeyMasked in the akKey template
-    expect(source).toContain("${apiKeyMasked}|${r.model}|${r.provider");
-    // Should NOT use raw r.apiKey in the key
+    // Stored and live aggregate templates use clientKeyId
+    expect(source).toContain(
+      '${clientKeyId || "local-no-key"}|${entry.model}|${entry.provider || "unknown"}'
+    );
+    expect(source).toContain(
+      '${clientKeyId || "local-no-key"}|${r.model}|${r.provider || "unknown"}'
+    );
     expect(source).not.toContain("${r.apiKey}|${r.model}|${r.provider");
+    expect(source).not.toContain("${apiKeyMasked}|${r.model}|${r.provider");
   });
 });
 
