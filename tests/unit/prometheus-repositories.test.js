@@ -105,6 +105,17 @@ describe("Prometheus repository snapshots", () => {
     expect(JSON.stringify(result)).not.toContain("secret-model");
   });
 
+  it("reports active request counts without account or model dimensions", async () => {
+    usageRepo.trackPendingRequest("secret-model", "openai", "secret-connection", true);
+    try {
+      expect(await usageRepo.getActiveRequestMetricSnapshot()).toEqual({
+        activeRequests: [{ provider: "openai", count: 1 }],
+      });
+    } finally {
+      usageRepo.trackPendingRequest("secret-model", "openai", "secret-connection", false);
+    }
+  });
+
   it("counts only unexpired cache occupancy", async () => {
     db.run("DELETE FROM fetchCache");
     const now = new Date("2026-08-22T12:00:00.000Z");

@@ -273,6 +273,23 @@ export async function getActiveRequests() {
   return { activeRequests, recentRequests, errorProvider };
 }
 
+export function getActiveRequestMetricSnapshot() {
+  const byProvider = new Map();
+  for (const models of Object.values(pendingRequests.byAccount)) {
+    for (const [modelKey, count] of Object.entries(models)) {
+      if (count <= 0) continue;
+      const match = modelKey.match(/^(.*) \((.*)\)$/);
+      const provider = match?.[2] || "unknown";
+      byProvider.set(provider, (byProvider.get(provider) || 0) + count);
+    }
+  }
+  return {
+    activeRequests: [...byProvider.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([provider, count]) => ({ provider, count })),
+  };
+}
+
 export async function saveRequestUsage(entry) {
   try {
     const db = await getAdapter();
