@@ -15,7 +15,8 @@ import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
-import { handleComboChat, handleFusionChat } from "open-sse/services/combo.js";
+import { handleComboChat, handleFusionChat, detectRequiredCapabilities } from "open-sse/services/combo.js";
+import { augmentModelsWithCapacityAdapter, withCapacityAdapterStripping, getActiveAdapterStrategy } from "open-sse/services/capacityAdapter.js";
 import { handleAutoChat, invalidateCachedRoutes } from "open-sse/routing/handleAutoChat.js";
 import { resetOverlay } from "open-sse/routing/overlay.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
@@ -311,6 +312,11 @@ export async function handleChat(request, clientRawRequest = null) {
     log.warn?.("FEEDBACK", `capture/strip failed (ignored): ${e?.message || e}`);
   }
 
+  // Capacity adapter: which input modalities does this request require? Consumed by
+  // both the combo and single-model paths below to inject fallback pool models when
+  // no target model covers them (see open-sse/services/capacityAdapter.js).
+  const requiredCapabilities = detectRequiredCapabilities(body);
+
   // Check if model is a combo (has multiple models with fallback)
   if (comboModels) {
     // Check for combo-specific strategy first, fallback to global
@@ -422,24 +428,59 @@ export async function handleChat(request, clientRawRequest = null) {
       });
     }
 
+    // Capacity adapter pools: appended only when NO member covers the request's
+    // required input modalities; otherwise comboModels is returned untouched.
+    const augmentedModels = augmentModelsWithCapacityAdapter(comboModels, requiredCapabilities, settings);
+    const adapterAdded = augmentedModels.filter((m) => !comboModels.includes(m));
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
     const ps = comboStrategies[modelStr] || {};
     const capacityAutoSwitch = ps.capacityAutoSwitch !== false;
     const providerPreference = ps.providerStrategy && ps.providerStrategy !== "off"
       ? await loadProviderPreference(ps)
       : null;
-    log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit}, capacitySwitch: ${capacityAutoSwitch})`);
+    log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit}, capacitySwitch: ${capacityAutoSwitch})`);
     return handleComboChat({
       body,
-      models: comboModels,
-      handleSingleModel: (b, m, callOpts) =>
-        handleSingleModelChat(b, m, clientRawRequest, request, clientKeyId, callOpts),
+      models: augmentedModels,
+      handleSingleModel: withCapacityAdapterStripping(
+        (b, m, callOpts) =>
+          handleSingleModelChat(b, m, clientRawRequest, request, clientKeyId, callOpts),
+        adapterAdded
+      ),
       log,
       comboName: modelStr,
       comboStrategy,
       comboStickyLimit,
       autoSwitch: capacityAutoSwitch,
       ...(providerPreference || {}),
+      abortSignal: request?.signal || null,
+      childComboDepth: 1,
+    });
+  }
+
+  // Single model request — may still switch to a capacity-adapter model when the
+  // target lacks an input modality the request needs (e.g. no vision, image attached).
+  const soloAugmented = augmentModelsWithCapacityAdapter([modelStr], requiredCapabilities, settings);
+  if (soloAugmented.length > 1) {
+    const adapterAdded = soloAugmented.filter((m) => m !== modelStr);
+    log.info("CHAT", `Capacity adapter for [${[...requiredCapabilities].join(",")}] on "${modelStr}" → trying ${soloAugmented.join(", ")}`);
+    return handleComboChat({
+      body,
+      models: soloAugmented,
+      handleSingleModel: withCapacityAdapterStripping(
+        (b, m, callOpts) =>
+          handleSingleModelChat(b, m, clientRawRequest, request, clientKeyId, {
+            ...(callOpts || {}),
+            signal: callOpts?.signal || request?.signal || null,
+            preferredConnectionId,
+            strictPreferredConnection,
+            allowNativeClaudeOAuth: true,
+          }),
+        adapterAdded
+      ),
+      log,
+      comboName: modelStr,
+      comboStrategy: getActiveAdapterStrategy(requiredCapabilities, settings),
       abortSignal: request?.signal || null,
       childComboDepth: 1,
     });
@@ -521,6 +562,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const comboModels = await getComboModels(modelStr);
     if (comboModels) {
       const chatSettings = await getSettings();
+      const nestedRequiredCapabilities = detectRequiredCapabilities(body);
+      // Capacity adapter pools: appended only when NO member covers the request's
+      // required input modalities; otherwise comboModels is returned untouched.
+      const augmentedModels = augmentModelsWithCapacityAdapter(comboModels, nestedRequiredCapabilities, chatSettings);
+      const adapterAdded = augmentedModels.filter((m) => !comboModels.includes(m));
       // Check for combo-specific strategy first, fallback to global
       const comboStrategies = chatSettings.comboStrategies || {};
       const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
@@ -656,12 +702,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       const providerPreference = ps.providerStrategy && ps.providerStrategy !== "off"
         ? await loadProviderPreference(ps)
         : null;
-      log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit}, capacitySwitch: ${capacityAutoSwitch})`);
+      log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit}, capacitySwitch: ${capacityAutoSwitch})`);
       return handleComboChat({
         body,
-        models: comboModels,
-        handleSingleModel: (b, m, opts) =>
-          handleSingleModelChat(b, m, clientRawRequest, request, clientKeyId, opts),
+        models: augmentedModels,
+        handleSingleModel: withCapacityAdapterStripping(
+          (b, m, opts) =>
+            handleSingleModelChat(b, m, clientRawRequest, request, clientKeyId, opts),
+          adapterAdded
+        ),
         log,
         comboName: modelStr,
         comboStrategy,

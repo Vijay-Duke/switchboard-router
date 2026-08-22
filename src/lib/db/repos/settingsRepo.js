@@ -34,6 +34,16 @@ const DEFAULT_SETTINGS = {
   // LLM gateway on a private/VPN IP). Populated via the provider card's
   // "Add to allow list" button when an SSRF block is reported. Lowercased hosts.
   ssrfAllowHosts: [],
+  // Capacity adapter: per-modality fallback pools (vision/pdf/audioInput/videoInput).
+  // Vision+audio default ON so image/audio requests never dead-end on a text-only
+  // model; pdf/video start OFF. Empty enabled pool resolves to the built-in default
+  // model at read time (see open-sse/services/capacityAdapter.js).
+  capacityAdapter: {
+    vision: { enabled: true, roundRobin: false, models: [] },
+    pdf: { enabled: false, roundRobin: false, models: [] },
+    audioInput: { enabled: true, roundRobin: false, models: [] },
+    videoInput: { enabled: false, roundRobin: false, models: [] },
+  },
 };
 
 /** Env OVERRIDE_API_KEY / REQUIRE_API_KEY can force the gate without editing settings. */
