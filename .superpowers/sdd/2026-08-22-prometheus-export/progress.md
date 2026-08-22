@@ -20,3 +20,6 @@ Review: Spec FAIL; Quality CHANGES_REQUIRED; Security BLOCKED.
 - Fix round 2 re-review: Security APPROVED; startup/strict reads/roster/import rebuild passed. Correctness remains blocked because write-path SQLite arithmetic can coerce malformed compact rows before a scrape detects them.
 - Fix round 3/5 started with original implementer; list in `review-findings-round3.md`.
 - Fix round 3 complete in `efe70319`: strict pre-mutation validation, nested rollback, durable unavailable state, and preserved core writes. Focused verification: 20 files / 97 tests passed.
+- Final scoped correctness and security re-reviews started over `002e17f6..aeac107c`.
+- Final re-review: blocker ADDRESSED; Spec PASS; Quality APPROVED; Security APPROVED; no new Critical/Important finding.
+- Prometheus task complete (commits `1228a363..aeac107c`, correctness and security review clean).
