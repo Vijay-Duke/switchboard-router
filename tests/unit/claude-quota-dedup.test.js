@@ -32,7 +32,9 @@ async function loadModule() {
 describe("getClaudeUsage dedup + cache", () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.clearAllMocks();
+    // mockReset (not clearAllMocks) — clear leaves unconsumed mockResolvedValueOnce
+    // entries queued, which leak into later tests' fetch sequences.
+    proxyAwareFetch.mockReset();
   });
 
   it("dedups concurrent calls for the same token into a single fetch", async () => {
@@ -84,23 +86,31 @@ describe("getClaudeUsage dedup + cache", () => {
 
   it("does not cache soft failures and falls back to the last good result", async () => {
     const { getClaudeUsage } = await loadModule();
-    proxyAwareFetch
-      .mockResolvedValueOnce(jsonResponse(OK_USAGE)) // good read → cached
-      .mockResolvedValueOnce(jsonResponse({ error: "rate_limited" }, 429));
+    vi.useFakeTimers();
+    try {
+      proxyAwareFetch.mockResolvedValueOnce(jsonResponse(OK_USAGE));
+      await getClaudeUsage("tok-c"); // good read → cached (5min TTL)
 
-    await getClaudeUsage("tok-c");
-    const degraded = await getClaudeUsage("tok-c");
+      // Advance past TTL so the next call refetches; OAuth 500 + legacy refusal
+      // = soft failure, which must serve the last good quotas instead.
+      vi.advanceTimersByTime(6 * 60 * 1000);
+      proxyAwareFetch
+        .mockResolvedValueOnce(jsonResponse({ error: "server" }, 500)) // oauth endpoint
+        .mockResolvedValueOnce(jsonResponse({ error: "no admin" }, 403)); // legacy settings
+      const degraded = await getClaudeUsage("tok-c");
+      expect(proxyAwareFetch).toHaveBeenCalledTimes(3);
+      expect(degraded.quotas["weekly (7d)"].remainingPercentage).toBe(45); // last good served
 
-    // Second hit was a 429 soft failure: last good quotas served instead
-    expect(proxyAwareFetch).toHaveBeenCalledTimes(2);
-    expect(degraded.quotas["weekly (7d)"].remainingPercentage).toBe(45);
-
-    // Soft failure was NOT cached: third call goes back out
-    proxyAwareFetch.mockResolvedValueOnce(
-      jsonResponse({ five_hour: { utilization: 10, resets_at: null } }),
-    );
-    await getClaudeUsage("tok-c");
-    expect(proxyAwareFetch).toHaveBeenCalledTimes(3);
+      // Soft failure was NOT cached: next call goes back out and succeeds.
+      proxyAwareFetch.mockResolvedValueOnce(
+        jsonResponse({ five_hour: { utilization: 10, resets_at: null } }),
+      );
+      const refreshed = await getClaudeUsage("tok-c");
+      expect(proxyAwareFetch).toHaveBeenCalledTimes(4);
+      expect(refreshed.quotas["session (5h)"].used).toBe(10);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("force=true skips the cache and refetches", async () => {

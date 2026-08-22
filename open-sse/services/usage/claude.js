@@ -52,6 +52,12 @@ export async function getClaudeUsage(accessToken, proxyOptions = null, options =
   })();
 
   if (accessToken) usageCache.set(accessToken, { promise });
+  // A settled soft failure must not pin the token: drop the {promise} placeholder
+  // so the next non-force call refetches instead of replaying the error forever.
+  void promise.then(() => {
+    const entry = usageCache.get(accessToken);
+    if (accessToken && entry?.promise === promise) usageCache.delete(accessToken);
+  });
   return promise;
 }
 
