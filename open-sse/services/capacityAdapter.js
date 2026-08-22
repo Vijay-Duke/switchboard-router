@@ -139,8 +139,14 @@ export function stripHistoryForContext(body, contextWindow) {
   // Cap at 80% of the adapter model's context window — leaves room for the response.
   const budgetChars = (contextWindow || 200000) * 0.8 * CHARS_PER_TOKEN;
 
-  // Prefer keeping the first HEAD_KEEP messages (initial instructions/context) verbatim;
-  // only trim further if even that exceeds the adapter model's context window.
+  // Within budget: keep the whole conversation — trimming is only ever about
+  // fitting the adapter model's context window, never about message count.
+  if (systemMsgs.concat(older, tail).reduce((s, m) => s + blockLength(contentOf(m)), 0) <= budgetChars) {
+    return body;
+  }
+
+  // Over budget: prefer keeping the first HEAD_KEEP messages verbatim;
+  // trim further from the end of head (closest to the middle) first.
   const headKept = older.slice(0, HEAD_KEEP);
   let total = systemMsgs.concat(headKept, tail).reduce((s, m) => s + blockLength(contentOf(m)), 0);
 

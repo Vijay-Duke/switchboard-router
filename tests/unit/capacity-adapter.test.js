@@ -164,6 +164,16 @@ describe("stripHistoryForContext", () => {
     expect(stripHistoryForContext(body, 200000)).toBe(body);
   });
 
+  it("keeps the full conversation when it fits even with more than HEAD_KEEP turns", () => {
+    const msgs = [];
+    for (let i = 0; i < 10; i++) {
+      msgs.push({ role: "user", content: `q${i}` });
+      if (i < 9) msgs.push({ role: "assistant", content: `a${i}` });
+    }
+    const body = { messages: [...msgs, { role: "user", content: [{ type: "image_url", image_url: { url: "data:x" } }] }] };
+    expect(stripHistoryForContext(body, 200000)).toBe(body);
+   });
+
   it("no-op on unsupported shape", () => {
     const body = { foo: 1 };
     expect(stripHistoryForContext(body, 1000)).toBe(body);
