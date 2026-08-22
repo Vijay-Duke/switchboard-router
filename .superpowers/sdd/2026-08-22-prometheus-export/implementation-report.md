@@ -104,4 +104,46 @@ The response was HTTP 404 with `Cache-Control: no-store`. Unauthorized HTTP 401 
 - The plan fixture's expected unattributed prompt/completion totals were arithmetically inconsistent with its seeded daily/provider totals. The test uses the truthful remainders: 10 prompt tokens and 4 completion tokens.
 - The existing `getActiveRequests()` also initializes recent usage history and connection identity data. The collector instead uses the new process-local `getActiveRequestMetricSnapshot()` so a scrape does not enumerate usage history, model, account, connection name, or email data.
 - Usage counters reset when the data directory is replaced or restored. Routing/error/fallback/Auto values remain gauges because retained routing rows can be purged or deleted.
-- No database schema, migration, dependency, request hot-path instrumentation, public `/metrics` alias, key label, histogram, or cache hit/miss counter was added.
+- No dependency, public `/metrics` alias, key label, histogram, or cache hit/miss counter was added.
+
+## Review fix round 1
+
+Commit: `7a0727d7` `fix(metrics): bound scrape collection`
+
+### Red evidence
+
+- `prometheus-materialization.test.js` initially failed because migration 009 did not exist.
+- The repository suite then failed four bounded-read/write/corruption cases: scrapes still read `usageDaily`, unconfigured providers remained separate, and corrupt compact usage/routing values did not reject.
+- The collector suite failed the current-provider roster and concurrent single-flight cases.
+- The cache corruption test resolved `{ entries: 1, bytes: 0 }` instead of rejecting.
+- Existing migration-chain tests exposed version-9 fixture compatibility and schema-version expectations before the migration fix.
+
+### Green evidence
+
+```text
+npx vitest run \
+  unit/prometheus-materialization.test.js \
+  unit/prometheus-repositories.test.js \
+  unit/prometheus-metrics.test.js \
+  unit/prometheus-metrics-route.test.js \
+  unit/mgmt-api-auth.test.js \
+  unit/mgmt-api-masking.test.js \
+  unit/db-migration-chain.test.js \
+  unit/client-key-migration.test.js \
+  unit/routing-repo-atomic.test.js \
+  unit/routing-stats.test.js \
+  unit/routing-stats-route.test.js \
+  unit/connections-secret-hardening.test.js \
+  unit/connection-secret-redaction.test.js
+
+13 files passed; 55 tests passed.
+```
+
+### Fixes and remaining operational semantics
+
+- Migration 009 reversibly backfills compact lifetime usage totals and fixed routing totals. Scrapes read only the provider-bounded usage table, six routing-total rows, current connections/active requests, and the already capped fetch cache.
+- Usage and routing write paths update their materializations transactionally. Retention and combo deletion decrement routing totals; provider deletion rolls its lifetime usage into `unknown`.
+- Corrupt compact usage, routing, or live cache-occupancy values reject collection, so the route returns the existing sanitized atomic 503 envelope.
+- Provider labels are limited to the current configured roster plus `unknown`; deleted, retired, and unconfigured provider history cannot create permanent series.
+- Concurrent scrapes share an in-flight collection and reuse a completed process-local snapshot for at most one second. Failed collections are not cached.
+- `prometheusRoutingRequests` retains one support row per retained request so deletion can update the fixed totals; it follows routing retention and is never read by a scrape.
