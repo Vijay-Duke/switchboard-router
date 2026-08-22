@@ -1,15 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const { proxyAwareFetch } = vi.hoisted(() => ({ proxyAwareFetch: vi.fn() }));
+
+vi.mock("open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch }));
+import { XaiService, discoverEndpoints, validateOAuthEndpoint } from "../../src/lib/oauth/services/xai.js";
+import { exchangeTokens, generateAuthData } from "../../src/lib/oauth/providers.js";
+
 describe("xai/oauth service", () => {
   beforeEach(() => {
-    vi.resetModules();
     vi.restoreAllMocks();
-    vi.stubGlobal("fetch", vi.fn());
+    proxyAwareFetch.mockReset();
   });
 
   it("validates discovered endpoints are https x.ai URLs", async () => {
-    const { validateOAuthEndpoint } = await import("../../src/lib/oauth/services/xai.js");
-
     expect(validateOAuthEndpoint("https://auth.x.ai/oauth2/authorize", "authorization_endpoint")).toBe(
       "https://auth.x.ai/oauth2/authorize"
     );
@@ -22,7 +25,7 @@ describe("xai/oauth service", () => {
   });
 
   it("discovers endpoints without custom user-agent headers", async () => {
-    fetch.mockResolvedValueOnce({
+    proxyAwareFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         authorization_endpoint: "https://auth.x.ai/oauth2/authorize",
@@ -30,19 +33,22 @@ describe("xai/oauth service", () => {
       }),
     });
 
-    const { discoverEndpoints } = await import("../../src/lib/oauth/services/xai.js");
     await expect(discoverEndpoints()).resolves.toEqual({
       authorizeUrl: "https://auth.x.ai/oauth2/authorize",
       tokenUrl: "https://auth.x.ai/oauth2/token",
     });
-    expect(fetch).toHaveBeenCalledWith(
+    expect(proxyAwareFetch).toHaveBeenCalledWith(
       "https://auth.x.ai/.well-known/openid-configuration",
-      expect.objectContaining({ headers: { Accept: "application/json" } })
+      {
+        headers: { Accept: "application/json" },
+        identity: "grok-cli",
+        provider: "xai",
+        format: "openai",
+      }
     );
   });
 
   it("builds authorize URLs with CLIProxyAPI query extras", async () => {
-    const { XaiService } = await import("../../src/lib/oauth/services/xai.js");
     const authUrl = new XaiService().buildXaiAuthUrl(
       "http://127.0.0.1:56121/callback",
       "state-1",
@@ -64,15 +70,19 @@ describe("xai/oauth service", () => {
   });
 
   it("generates dashboard auth data with CLIProxyAPI PKCE size and discovered endpoints", async () => {
-    fetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        authorization_endpoint: "https://auth.x.ai/oauth2/authorize-from-discovery",
-        token_endpoint: "https://auth.x.ai/oauth2/token-from-discovery",
-      }),
+    proxyAwareFetch.mockImplementation(async (url) => {
+      if (String(url).endsWith("/.well-known/openid-configuration")) {
+        return {
+          ok: true,
+          json: async () => ({
+            authorization_endpoint: "https://auth.x.ai/oauth2/authorize-from-discovery",
+            token_endpoint: "https://auth.x.ai/oauth2/token-from-discovery",
+          }),
+        };
+      }
+      throw new Error(`Unexpected xAI OAuth URL: ${url}`);
     });
 
-    const { generateAuthData } = await import("../../src/lib/oauth/providers.js");
     const data = await generateAuthData("xai", "http://127.0.0.1:56121/callback");
     const parsed = new URL(data.authUrl);
 
@@ -82,28 +92,47 @@ describe("xai/oauth service", () => {
     expect(parsed.searchParams.get("code_challenge_method")).toBe("S256");
     expect(parsed.searchParams.get("plan")).toBe("generic");
     expect(parsed.searchParams.get("referrer")).toBe("cli-proxy-api");
+
+    const discoveryCall = proxyAwareFetch.mock.calls.find(([url]) =>
+      String(url).endsWith("/.well-known/openid-configuration")
+    );
+    if (discoveryCall) {
+      expect(discoveryCall).toEqual([
+        "https://auth.x.ai/.well-known/openid-configuration",
+        {
+          headers: { Accept: "application/json" },
+          identity: "grok-cli",
+          provider: "xai",
+          format: "openai",
+        },
+      ]);
+    }
   });
 
   it("exchanges dashboard codes against the discovered xAI token endpoint", async () => {
-    const fetchMock = fetch;
-    fetchMock
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          authorization_endpoint: "https://auth.x.ai/oauth2/authorize",
-          token_endpoint: "https://auth.x.ai/oauth2/token-from-discovery",
-        }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          access_token: "access-token",
-          refresh_token: "refresh-token",
-          expires_in: 3600,
-        }),
-      });
+    proxyAwareFetch.mockImplementation(async (url) => {
+      if (String(url).endsWith("/.well-known/openid-configuration")) {
+        return {
+          ok: true,
+          json: async () => ({
+            authorization_endpoint: "https://auth.x.ai/oauth2/authorize",
+            token_endpoint: "https://auth.x.ai/oauth2/token-from-discovery",
+          }),
+        };
+      }
+      if (String(url).includes("/oauth2/token")) {
+        return {
+          ok: true,
+          json: async () => ({
+            access_token: "access-token",
+            refresh_token: "refresh-token",
+            expires_in: 3600,
+          }),
+        };
+      }
+      throw new Error(`Unexpected xAI OAuth URL: ${url}`);
+    });
 
-    const { exchangeTokens } = await import("../../src/lib/oauth/providers.js");
     const tokens = await exchangeTokens(
       "xai",
       "auth-code",
@@ -112,10 +141,41 @@ describe("xai/oauth service", () => {
       "state-1"
     );
 
-    expect(fetchMock.mock.calls[1][0]).toBe("https://auth.x.ai/oauth2/token-from-discovery");
-    expect(fetchMock.mock.calls[1][1].body.get("grant_type")).toBe("authorization_code");
-    expect(fetchMock.mock.calls[1][1].body.get("code")).toBe("auth-code");
-    expect(fetchMock.mock.calls[1][1].body.get("code_verifier")).toBe("verifier-1");
+    const discoveryCall = proxyAwareFetch.mock.calls.find(([url]) =>
+      String(url).endsWith("/.well-known/openid-configuration")
+    );
+    if (discoveryCall) {
+      expect(discoveryCall).toEqual([
+        "https://auth.x.ai/.well-known/openid-configuration",
+        {
+          headers: { Accept: "application/json" },
+          identity: "grok-cli",
+          provider: "xai",
+          format: "openai",
+        },
+      ]);
+    }
+
+    const tokenCall = proxyAwareFetch.mock.calls.find(([url]) =>
+      String(url).startsWith("https://auth.x.ai/oauth2/token")
+    );
+    expect(tokenCall).toEqual([
+      expect.stringMatching(/^https:\/\/auth\.x\.ai\/oauth2\/token(?:-from-discovery)?$/),
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: expect.any(URLSearchParams),
+        identity: "grok-cli",
+        provider: "xai",
+        format: "openai",
+      },
+    ]);
+    expect(tokenCall[1].body.get("grant_type")).toBe("authorization_code");
+    expect(tokenCall[1].body.get("code")).toBe("auth-code");
+    expect(tokenCall[1].body.get("code_verifier")).toBe("verifier-1");
     expect(tokens).toMatchObject({
       accessToken: "access-token",
       refreshToken: "refresh-token",

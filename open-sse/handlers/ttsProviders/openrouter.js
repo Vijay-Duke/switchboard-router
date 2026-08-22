@@ -1,5 +1,6 @@
 // OpenRouter TTS — via chat completions + audio modality (SSE stream)
 import { PROVIDER_MEDIA } from "../../providers/index.js";
+import { authenticatedMediaFetch } from "./_base.js";
 
 const TTS_CFG = PROVIDER_MEDIA["openrouter"]?.ttsConfig || {};
 
@@ -24,12 +25,11 @@ const moduleDefault = {
       voice = model;
     }
 
-    const res = await fetch(TTS_CFG.baseUrl, {
+    const res = await authenticatedMediaFetch("openrouter", "tts", TTS_CFG.baseUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${credentials.apiKey}`,
-        ...(TTS_CFG.headers || {}),
       },
       body: JSON.stringify({
         model: ttsModel,

@@ -1,4 +1,6 @@
 import { KIRO_CONFIG, assertValidAwsRegion } from "../constants/oauth.js";
+import { getOAuthFetchProfile } from "../providerHelpers.js";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 
 /**
  * Kiro OAuth Service
@@ -10,6 +12,7 @@ import { KIRO_CONFIG, assertValidAwsRegion } from "../constants/oauth.js";
  */
 
 const KIRO_AUTH_SERVICE = "https://prod.us-east-1.auth.desktop.kiro.dev";
+const KIRO_FETCH_PROFILE = getOAuthFetchProfile("kiro");
 
 /**
  * Build a tagged validation error. The `code` lets the API route map a failure
@@ -33,7 +36,7 @@ export class KiroService {
     assertValidAwsRegion(region);
     const endpoint = `https://oidc.${region}.amazonaws.com/client/register`;
 
-    const response = await fetch(endpoint, {
+    const response = await proxyAwareFetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -45,6 +48,7 @@ export class KiroService {
         grantTypes: KIRO_CONFIG.grantTypes,
         issuerUrl: KIRO_CONFIG.issuerUrl,
       }),
+      ...KIRO_FETCH_PROFILE,
     });
 
     if (!response.ok) {
@@ -67,7 +71,7 @@ export class KiroService {
     assertValidAwsRegion(region);
     const endpoint = `https://oidc.${region}.amazonaws.com/device_authorization`;
 
-    const response = await fetch(endpoint, {
+    const response = await proxyAwareFetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -77,6 +81,7 @@ export class KiroService {
         clientSecret,
         startUrl,
       }),
+      ...KIRO_FETCH_PROFILE,
     });
 
     if (!response.ok) {
@@ -102,7 +107,7 @@ export class KiroService {
     assertValidAwsRegion(region);
     const endpoint = `https://oidc.${region}.amazonaws.com/token`;
 
-    const response = await fetch(endpoint, {
+    const response = await proxyAwareFetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -113,6 +118,7 @@ export class KiroService {
         deviceCode,
         grantType: "urn:ietf:params:oauth:grant-type:device_code",
       }),
+      ...KIRO_FETCH_PROFILE,
     });
 
     const data = await response.json();
@@ -158,7 +164,7 @@ export class KiroService {
     // Must match the redirect_uri used in buildSocialLoginUrl
     const redirectUri = "kiro://kiro.kiroAgent/authenticate-success";
 
-    const response = await fetch(`${KIRO_AUTH_SERVICE}/oauth/token`, {
+    const response = await proxyAwareFetch(`${KIRO_AUTH_SERVICE}/oauth/token`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -168,6 +174,7 @@ export class KiroService {
         code_verifier: codeVerifier,
         redirect_uri: redirectUri,
       }),
+      ...KIRO_FETCH_PROFILE,
     });
 
     if (!response.ok) {
@@ -196,7 +203,7 @@ export class KiroService {
       assertValidAwsRegion(safeRegion);
       const endpoint = `https://oidc.${safeRegion}.amazonaws.com/token`;
 
-      const response = await fetch(endpoint, {
+      const response = await proxyAwareFetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -207,6 +214,7 @@ export class KiroService {
           refreshToken,
           grantType: "refresh_token",
         }),
+        ...KIRO_FETCH_PROFILE,
       });
 
       if (!response.ok) {
@@ -224,7 +232,7 @@ export class KiroService {
     }
 
     // Social auth refresh (Google/GitHub)
-    const response = await fetch(`${KIRO_AUTH_SERVICE}/refreshToken`, {
+    const response = await proxyAwareFetch(`${KIRO_AUTH_SERVICE}/refreshToken`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -232,6 +240,7 @@ export class KiroService {
       body: JSON.stringify({
         refreshToken,
       }),
+      ...KIRO_FETCH_PROFILE,
     });
 
     if (!response.ok) {
@@ -283,7 +292,7 @@ export class KiroService {
     assertValidAwsRegion(region);
     const endpoint = `https://codewhisperer.${region}.amazonaws.com`;
 
-    const response = await fetch(endpoint, {
+    const response = await proxyAwareFetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-amz-json-1.0",
@@ -292,6 +301,7 @@ export class KiroService {
         "Accept": "application/json",
       },
       body: JSON.stringify({ maxResults: 10 }),
+      ...KIRO_FETCH_PROFILE,
     });
 
     if (!response.ok) {
@@ -332,7 +342,7 @@ export class KiroService {
 
     let response;
     try {
-      response = await fetch(endpoint, {
+      response = await proxyAwareFetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-amz-json-1.0",
@@ -344,6 +354,7 @@ export class KiroService {
           "Accept": "application/json",
         },
         body: JSON.stringify({ origin: "AI_EDITOR" }),
+        ...KIRO_FETCH_PROFILE,
       });
     } catch (err) {
       // Most commonly a region with no CodeWhisperer endpoint. Amazon
@@ -418,7 +429,7 @@ export class KiroService {
     const endpoint = "https://codewhisperer.us-east-1.amazonaws.com";
     const target = "AmazonCodeWhispererService.ListAvailableModels";
 
-    const response = await fetch(endpoint, {
+    const response = await proxyAwareFetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-amz-json-1.0",
@@ -430,6 +441,7 @@ export class KiroService {
         origin: "AI_EDITOR",
         profileArn,
       }),
+      ...KIRO_FETCH_PROFILE,
     });
 
     if (!response.ok) {

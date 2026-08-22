@@ -27,7 +27,7 @@ const moduleDefault = {
     { id: "sd3.5-medium", name: "Stable Diffusion 3.5 Medium", params: ["size"], kind: "image" },
   ],
   serviceKinds: ["image"],
-  imageConfig: { baseUrl: "https://api.stability.ai/v2beta/stable-image/generate" },
+  imageConfig: { identity: "openai-node", baseUrl: "https://api.stability.ai/v2beta/stable-image/generate" },
 };
 
 export default moduleDefault;

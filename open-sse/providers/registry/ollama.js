@@ -16,6 +16,7 @@ const moduleDefault = {
   },
   category: "freeTier",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://ollama.com/api/chat",
     validateUrl: "https://ollama.com/api/tags",
     format: "ollama",

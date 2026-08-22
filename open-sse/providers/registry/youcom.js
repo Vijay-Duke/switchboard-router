@@ -17,6 +17,7 @@ const moduleDefault = {
     "webSearch"
   ],
   searchConfig: {
+    identity: "openai-node",
     baseUrl: "https://ydc-index.io/v1/search",
     method: "GET",
     authType: "apikey",

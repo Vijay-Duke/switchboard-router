@@ -19,6 +19,7 @@ const moduleDefault = {
   ],
   hasOAuth: true,
   transport: {
+    identity: "grok-cli",
     baseUrl: "https://api.x.ai/v1/chat/completions",
     validateUrl: "https://api.x.ai/v1/models",
     responsesUrl: "https://api.x.ai/v1/responses",
@@ -34,7 +35,7 @@ const moduleDefault = {
     { id: "grok-2-image-1212", name: "Grok 2 Image", params: ["n","response_format"], kind: "image" },
   ],
   serviceKinds: ["llm","imageToText","webSearch","image"],
-  imageConfig: { baseUrl: "https://api.x.ai/v1/images/generations", bodyFields: ["model","prompt","n","response_format"] },
+  imageConfig: { identity: "grok-cli", baseUrl: "https://api.x.ai/v1/images/generations", bodyFields: ["model","prompt","n","response_format"] },
   searchViaChat: {
     defaultModel: "grok-4.20-reasoning",
     endpoint: "https://api.x.ai/v1/responses",

@@ -3,13 +3,16 @@ import { startLocalServer } from "../utils/server.js";
 import { generatePKCE } from "../utils/pkce.js";
 import { spinner as createSpinner } from "../utils/ui.js";
 import { OAUTH_TIMEOUT } from "../constants/oauth.js";
+import { getOAuthFetchProfile } from "../providerHelpers.js";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 
 /**
  * Generic OAuth Authorization Code Flow with PKCE
  */
 export class OAuthService {
-  constructor(config) {
+  constructor(config, provider = "openai") {
     this.config = config;
+    this.fetchProfile = getOAuthFetchProfile(provider);
   }
 
   /**
@@ -102,13 +105,14 @@ export class OAuthService {
             code_verifier: codeVerifier,
           });
 
-    const response = await fetch(this.config.tokenUrl, {
+    const response = await proxyAwareFetch(this.config.tokenUrl, {
       method: "POST",
       headers: {
         "Content-Type": contentType,
         Accept: "application/json",
       },
       body: body,
+      ...this.fetchProfile,
     });
 
     if (!response.ok) {

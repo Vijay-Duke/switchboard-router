@@ -15,6 +15,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.groq.com/openai/v1/chat/completions",
     validateUrl: "https://api.groq.com/openai/v1/models",
   },
@@ -29,6 +30,7 @@ const moduleDefault = {
   ],
   serviceKinds: ["llm","imageToText","stt"],
   sttConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.groq.com/openai/v1/audio/transcriptions",
     authType: "apikey",
     authHeader: "bearer",

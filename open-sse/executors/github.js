@@ -1,6 +1,6 @@
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
-import { OAUTH_ENDPOINTS, GITHUB_COPILOT } from "../config/appConstants.js";
+import { OAUTH_ENDPOINTS } from "../config/appConstants.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { openaiToOpenAIResponsesRequest } from "../translator/request/openai-responses.js";
 import { openaiResponsesToOpenAIResponse } from "../translator/response/openai-responses.js";
@@ -70,15 +70,7 @@ export class GithubExecutor extends BaseExecutor {
     return {
       "Authorization": `Bearer ${token}`,
       "Content-Type": "application/json",
-      "copilot-integration-id": "vscode-chat",
-      "editor-version": `vscode/${GITHUB_COPILOT.VSCODE_VERSION}`,
-      "editor-plugin-version": `copilot-chat/${GITHUB_COPILOT.COPILOT_CHAT_VERSION}`,
-      "user-agent": GITHUB_COPILOT.USER_AGENT,
-      "openai-intent": "conversation-panel",
-      "x-github-api-version": GITHUB_COPILOT.API_VERSION,
       "x-request-id": crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      "x-vscode-user-agent-library-version": "electron-fetch",
-      "X-Initiator": "user",
       "Accept": stream ? "text/event-stream" : "application/json"
     };
   }
@@ -228,7 +220,11 @@ export class GithubExecutor extends BaseExecutor {
       method: "POST",
       headers,
       body: JSON.stringify(transformedBody),
-      signal
+      signal,
+      identity: this.config?.identity,
+      provider: this.provider,
+      format: this.config?.format,
+      stream,
     }, proxyOptions);
 
     if (!response.ok) {
@@ -324,12 +320,11 @@ export class GithubExecutor extends BaseExecutor {
       const response = await proxyAwareFetch("https://api.github.com/copilot_internal/v2/token", {
         headers: {
           "Authorization": `token ${githubAccessToken}`,
-          "User-Agent": GITHUB_COPILOT.USER_AGENT,
-          "Editor-Version": `vscode/${GITHUB_COPILOT.VSCODE_VERSION}`,
-          "Editor-Plugin-Version": `copilot-chat/${GITHUB_COPILOT.COPILOT_CHAT_VERSION}`,
           "Accept": "application/json",
-          "x-github-api-version": GITHUB_COPILOT.API_VERSION
-        }
+        },
+        identity: this.config?.identity,
+        provider: this.provider,
+        format: this.config?.format,
       }, proxyOptions);
       if (!response.ok) {
         const errorText = await response.text();
@@ -359,7 +354,10 @@ export class GithubExecutor extends BaseExecutor {
       const response = await proxyAwareFetch(OAUTH_ENDPOINTS.github.token, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
-        body: new URLSearchParams(params)
+        body: new URLSearchParams(params),
+        identity: this.config?.identity,
+        provider: this.provider,
+        format: this.config?.format,
       }, proxyOptions);
       if (!response.ok) return null;
       const tokens = await response.json();

@@ -16,6 +16,7 @@ import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveProviderModels } from "open-sse/services/providerModels.js";
 import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
 import { MODEL_CATALOG_HEADER } from "@/lib/modelCatalogDiscovery";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -195,10 +196,6 @@ const PROVIDER_MODELS_CONFIG = {
     method: "GET",
     headers: {
       "Content-Type": "application/json",
-      "Copilot-Integration-Id": "vscode-chat",
-      "editor-version": "vscode/1.107.1",
-      "editor-plugin-version": "copilot-chat/0.26.7",
-      "user-agent": "GitHubCopilotChat/0.26.7"
     },
     authHeader: "Authorization",
     authPrefix: "Bearer ",
@@ -211,9 +208,9 @@ const PROVIDER_MODELS_CONFIG = {
         .map(m => ({
           id: m.id,
           name: m.name || m.id,
-          version: m.version,
+          object: "model",
+          owned_by: m.vendor || "github-copilot",
           capabilities: m.capabilities,
-          isDefault: m.model_picker_enabled === true
         }));
     }
   },
@@ -586,14 +583,17 @@ export async function GET(request, { params }) {
     // Make request
     const fetchOptions = {
       method: config.method,
-      headers
+      headers,
+      identity: connection.provider === "github" ? "copilot" : undefined,
+      provider: connection.provider,
+      format: connection.provider === "github" ? "openai" : undefined,
     };
 
     if (config.body && config.method === "POST") {
       fetchOptions.body = JSON.stringify(config.body);
     }
 
-    const response = await fetch(url, fetchOptions);
+    const response = await proxyAwareFetch(url, fetchOptions);
 
     if (!response.ok) {
       const errorText = await response.text();

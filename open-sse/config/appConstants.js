@@ -16,15 +16,6 @@ export function geminiCLIUserAgent(model = "unknown") {
   return `GeminiCLI/${GEMINI_CLI_VERSION}/${model || "unknown"} (${platform()}; ${geminiCLIArch()}; terminal)`;
 }
 
-// === GitHub Copilot ===
-// Derive từ registry github.transport.copilot
-const _ghCopilot = PROVIDERS.github?.copilot || {};
-export const GITHUB_COPILOT = {
-  VSCODE_VERSION: _ghCopilot.vscodeVersion,
-  COPILOT_CHAT_VERSION: _ghCopilot.chatVersion,
-  USER_AGENT: _ghCopilot.userAgent,
-  API_VERSION: _ghCopilot.apiVersion,
-};
 
 // === Antigravity enums ===
 export const IDE_TYPE = {
@@ -58,9 +49,6 @@ export function getPlatformEnum() {
   return PLATFORM.UNSPECIFIED;
 }
 
-export function getPlatformUserAgent() {
-  return `antigravity/1.104.0 ${platform()}/${arch()}`;
-}
 
 export const CLIENT_METADATA = {
   ideType: IDE_TYPE.ANTIGRAVITY,
@@ -68,8 +56,6 @@ export const CLIENT_METADATA = {
   pluginType: PLUGIN_TYPE.GEMINI
 };
 
-// Internal anti-loop header
-export const INTERNAL_REQUEST_HEADER = { name: "x-request-source", value: "local" };
 
 // Request-log header classification. Keep credential names centralized so new
 // log sinks cannot drift between partial masking and full redaction.
@@ -155,10 +141,6 @@ export const AG_DEFAULT_TOOLS = new Set([
   "write_to_file"
 ]);
 
-// Antigravity chat/stream headers
-export const ANTIGRAVITY_HEADERS = {
-  "User-Agent": `antigravity/1.107.0 ${platform()}/${arch()}`
-};
 
 // Cloud Code Assist API
 export const CLOUD_CODE_API = {
@@ -198,10 +180,8 @@ export const OAUTH_ENDPOINTS = {
   github:    { token: PROVIDER_OAUTH["github"]?.tokenUrl, auth: PROVIDER_OAUTH["github"]?.authorizeUrl, deviceCode: PROVIDER_OAUTH["github"]?.deviceCodeUrl },
 };
 
-// Generate Kimi OAuth custom headers
 export function buildKimiHeaders() {
   return {
-    "X-Msh-Platform": "switchboard",
     "X-Msh-Version": "2.1.2",
     "X-Msh-Device-Model": typeof process !== "undefined" ? `${process.platform} ${process.arch}` : "unknown",
     "X-Msh-Device-Id": `kimi-${Date.now()}`

@@ -20,6 +20,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.nanobananaapi.ai/v1/chat/completions",
     validateUrl: "https://api.nanobananaapi.ai/v1/models",
   },
@@ -29,6 +30,7 @@ const moduleDefault = {
   ],
   serviceKinds: ["image"],
   imageConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.nanobananaapi.ai/api/v1/nanobanana/generate",
     pollUrl: "https://api.nanobananaapi.ai/api/v1/nanobanana/record-info",
   },

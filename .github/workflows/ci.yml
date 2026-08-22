@@ -104,6 +104,9 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             cli/package-lock.json
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.25.x
       # CLI pack runs root Next.js build then bundles into cli/
       - name: Install root app deps
         run: npm ci --no-audit --no-fund

@@ -30,7 +30,7 @@ const moduleDefault = {
     { id: "fal-ai/stable-diffusion-v35-large", name: "SD 3.5 Large", params: ["n","size"], kind: "image" },
   ],
   serviceKinds: ["image"],
-  imageConfig: { baseUrl: "https://queue.fal.run" },
+  imageConfig: { identity: "openai-node", baseUrl: "https://queue.fal.run" },
 };
 
 export default moduleDefault;

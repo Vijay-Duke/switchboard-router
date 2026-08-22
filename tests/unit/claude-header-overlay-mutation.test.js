@@ -11,9 +11,14 @@ import { cacheClaudeHeaders, getCachedClaudeHeaders } from "../../open-sse/utils
 describe("claudeOverlay header hook", () => {
   beforeEach(() => {
     cacheClaudeHeaders({
-      "user-agent": "claude-cli/1.0.0",
+      "user-agent": "claude-cli/2.1.220 (external, cli)",
       "anthropic-beta": "cached-flag",
-    });
+      "x-app": "cli",
+      "x-stainless-package-version": "0.94.0",
+      "x-stainless-runtime-version": "v22.19.0",
+      "x-stainless-os": "Linux",
+      "x-stainless-arch": "x64",
+    }, { metadata: { user_id: '{"session_id":"overlay-session"}' } });
   });
 
   const buildFor = (staticBeta) => {

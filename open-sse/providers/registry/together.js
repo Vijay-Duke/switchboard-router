@@ -15,6 +15,7 @@ const moduleDefault = {
   category: "apikey",
   authType: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.together.xyz/v1/chat/completions",
     validateUrl: "https://api.together.xyz/v1/models",
   },
@@ -27,7 +28,7 @@ const moduleDefault = {
     { id: "togethercomputer/m2-bert-80M-8k-retrieval", name: "M2 BERT 80M 8K", kind: "embedding" },
   ],
   serviceKinds: ["llm", "embedding"],
-  embeddingConfig: { baseUrl: "https://api.together.xyz/v1/embeddings" },
+  embeddingConfig: { identity: "openai-node", baseUrl: "https://api.together.xyz/v1/embeddings" },
 };
 
 export default moduleDefault;

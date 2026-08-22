@@ -3,7 +3,7 @@ import { DEFAULT_RETRY_CONFIG, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtim
 
 /**
  * RegistryEntry shape — full contract for registry/{id}.js. See REGISTRY_TEMPLATE.js for a worked example.
- * Only `id` + `category` are strictly required; everything else is optional/derived.
+ * Required: `id`, `category`, and `transport.identity` (official-client fingerprint).
  *
  * @typedef {Object} RegistryEntry
  * @property {string}   id            Unique provider id (kebab-case). REQUIRED.
@@ -24,10 +24,11 @@ import { DEFAULT_RETRY_CONFIG, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtim
  * @property {Object}  [thinkingConfig] Reasoning UI: {options:[...],defaultMode}.
  * @property {boolean} [passthroughModels] Forward client model id untouched.
  *
- * TransportConfig: { baseUrl, format, headers, auth, forceStream, urlSuffix, quirks, retry, timeoutMs,
+ * TransportConfig: { baseUrl, format, identity, headers, auth, forceStream, urlSuffix, quirks, retry, timeoutMs,
  *   executor, clientId, clientSecret, tokenUrl, refreshUrl, usage, cliVersion, apiClient, regions,
- *   defaultRegion, modelsFetcher, validateUrl, responsesUrl } — clientId/clientSecret/tokenUrl are
- *   injected from `oauth` automatically (single source); declare them in `oauth`, not here.
+ *   defaultRegion, modelsFetcher, validateUrl, responsesUrl } — identity is REQUIRED (catalog profile name
+ *   or { profile, source }). clientId/clientSecret/tokenUrl are injected from `oauth` automatically;
+ *   declare them in `oauth`, not here. See open-sse/AGENTS.md identity gate.
  *
  * OAuthConfig: { clientId, authorizeUrl, tokenUrl, deviceCodeUrl, refreshUrl, scope|scopes, redirectUri,
  *   callbackPath, fixedPort, codeChallengeMethod, extraParams, refresh:{encoding,scope}, refreshLeadMs,

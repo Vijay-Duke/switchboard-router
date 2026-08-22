@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  proxyAwareFetch: vi.fn(),
+}));
+
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
+  proxyAwareFetch: mocks.proxyAwareFetch,
+}));
+
 import cursor from "../../open-sse/providers/registry/cursor.js";
 import commandcode from "../../open-sse/providers/registry/commandcode.js";
 import {
@@ -15,6 +23,7 @@ const originalFetch = global.fetch;
 
 afterEach(() => {
   global.fetch = originalFetch;
+  mocks.proxyAwareFetch.mockReset();
   clearProviderModelCache();
 });
 
@@ -25,7 +34,7 @@ describe("provider model discovery", () => {
       { id: "zai-org/GLM-5.2-Fast", name: "GLM 5.2 Fast" },
       { id: "nvidia/nemotron-3-ultra-550b-a55b", name: "Nemotron 3 Ultra" },
     ];
-    global.fetch = vi.fn().mockResolvedValue(new Response(
+    mocks.proxyAwareFetch.mockResolvedValue(new Response(
       JSON.stringify({ data: liveModels }),
       { status: 200, headers: { "content-type": "application/json" } },
     ));
@@ -37,13 +46,14 @@ describe("provider model discovery", () => {
     });
 
     expect(result.models).toEqual(liveModels);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(mocks.proxyAwareFetch).toHaveBeenCalledWith(
       "https://api.commandcode.ai/provider/v1/models",
       expect.objectContaining({
         method: "GET",
         redirect: "error",
         headers: expect.objectContaining({ Authorization: "Bearer user_test" }),
       }),
+      undefined,
     );
   });
 
@@ -119,7 +129,7 @@ describe("provider model discovery", () => {
         Buffer.from(encodeField(4, 2, "GPT-5.6 Sol 1M High")),
       ]))),
     ]);
-    global.fetch = vi.fn().mockResolvedValue(new Response(
+    mocks.proxyAwareFetch.mockResolvedValue(new Response(
       responsePayload,
       { status: 200, headers: { "content-type": "application/proto" } },
     ));
@@ -135,7 +145,7 @@ describe("provider model discovery", () => {
       "composer-2.5",
       "gpt-5.6-sol-high",
     ]);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(mocks.proxyAwareFetch).toHaveBeenCalledWith(
       "https://api2.cursor.sh/aiserver.v1.AiService/GetUsableModels",
       expect.objectContaining({
         method: "POST",
@@ -148,9 +158,10 @@ describe("provider model discovery", () => {
           "Connect-Protocol-Version": "1",
         }),
       }),
+      undefined,
     );
-    expect(global.fetch.mock.calls[0][1].body).toHaveLength(0);
-    expect(global.fetch.mock.calls[0][1].headers).not.toHaveProperty("x-cursor-checksum");
+    expect(mocks.proxyAwareFetch.mock.calls[0][1].body).toHaveLength(0);
+    expect(mocks.proxyAwareFetch.mock.calls[0][1].headers).not.toHaveProperty("x-cursor-checksum");
   });
 
   it("reads Cursor protobuf from Node-fetch-style responses used by the packaged server", async () => {
@@ -158,7 +169,7 @@ describe("provider model discovery", () => {
       Buffer.from(encodeField(1, 2, "gpt-5.6-sol-high")),
       Buffer.from(encodeField(4, 2, "GPT-5.6 Sol 1M High")),
     ])));
-    global.fetch = vi.fn().mockResolvedValue({
+    mocks.proxyAwareFetch.mockResolvedValue({
       ok: true,
       status: 200,
       buffer: vi.fn().mockResolvedValue(responsePayload),
@@ -176,7 +187,7 @@ describe("provider model discovery", () => {
   });
 
   it("does not cache ephemeral calls across credential values", async () => {
-    global.fetch = vi.fn().mockImplementation(() => Promise.resolve(new Response(
+    mocks.proxyAwareFetch.mockImplementation(() => Promise.resolve(new Response(
       JSON.stringify({ data: [{ id: "model-a" }] }),
       { status: 200, headers: { "content-type": "application/json" } },
     )));
@@ -192,6 +203,6 @@ describe("provider model discovery", () => {
 
     expect(first).toEqual({ models: [{ id: "model-a", name: "model-a" }] });
     expect(second).toEqual(first);
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(mocks.proxyAwareFetch).toHaveBeenCalledTimes(2);
   });
 });

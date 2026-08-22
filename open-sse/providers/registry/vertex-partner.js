@@ -18,6 +18,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://aiplatform.googleapis.com",
   },
   models: [

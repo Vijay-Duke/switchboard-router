@@ -11,7 +11,6 @@
  */
 
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
-import { GITHUB_COPILOT } from "../config/appConstants.js";
 import { refreshCopilotToken } from "./tokenRefresh.js";
 
 const MODELS_URL = "https://api.githubcopilot.com/models";
@@ -27,17 +26,6 @@ function cacheKey(credentials) {
     || "copilot-anonymous";
 }
 
-function buildHeaders(token) {
-  return {
-    "Authorization": `Bearer ${token}`,
-    "Content-Type": "application/json",
-    "Copilot-Integration-Id": "vscode-chat",
-    "editor-version": `vscode/${GITHUB_COPILOT.VSCODE_VERSION}`,
-    "editor-plugin-version": `copilot-chat/${GITHUB_COPILOT.COPILOT_CHAT_VERSION}`,
-    "user-agent": GITHUB_COPILOT.USER_AGENT,
-    "x-github-api-version": GITHUB_COPILOT.API_VERSION,
-  };
-}
 
 async function fetchCatalogRaw(token, signal) {
   const controller = new AbortController();
@@ -45,9 +33,15 @@ async function fetchCatalogRaw(token, signal) {
   try {
     const response = await proxyAwareFetch(MODELS_URL, {
       method: "GET",
-      headers: buildHeaders(token),
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
       cache: "no-store",
       signal: signal || controller.signal,
+      identity: "copilot",
+      provider: "github",
+      format: "openai",
     });
     if (!response.ok) {
       const err = new Error(`Copilot /models returned ${response.status}`);

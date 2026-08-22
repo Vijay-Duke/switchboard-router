@@ -5,6 +5,8 @@ import {
 } from "../../qoder/constants.js";
 import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
+import { getOAuthFetchProfile } from "../providerHelpers.js";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 
 /**
  * Qoder OAuth Service
@@ -27,6 +29,7 @@ import { v4 as uuidv4 } from "uuid";
 // 5 minutes; an individual request that stalls beyond this is treated as a
 // failed poll attempt and the next poll iteration retries.
 const FETCH_TIMEOUT_MS = 15_000;
+const QODER_FETCH_PROFILE = getOAuthFetchProfile("qoder");
 
 function base64Url(buf) {
   return buf
@@ -45,7 +48,11 @@ async function fetchWithTimeout(url, init = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort("timeout"), FETCH_TIMEOUT_MS);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await proxyAwareFetch(url, {
+      ...init,
+      signal: controller.signal,
+      ...QODER_FETCH_PROFILE,
+    });
   } finally {
     clearTimeout(timer);
   }

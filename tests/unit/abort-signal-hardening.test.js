@@ -15,6 +15,14 @@
  */
 import { describe, it, expect, vi, afterAll, afterEach } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  proxyAwareFetch: vi.fn(),
+}));
+
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
+  proxyAwareFetch: (...args) => mocks.proxyAwareFetch(...args),
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -25,7 +33,7 @@ function fetchSignalAware(capture) {
     const box = { signal: null };
     captureRef = box;
   }
-  return vi.spyOn(globalThis, "fetch").mockImplementation((_url, opts) => {
+  mocks.proxyAwareFetch.mockImplementation((_url, opts) => {
     const sig = /** @type {AbortSignal} */ (opts.signal);
     captureRef.signal = sig;
     return new Promise((_, reject) => {
@@ -33,6 +41,7 @@ function fetchSignalAware(capture) {
       sig.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
     });
   });
+  return mocks.proxyAwareFetch;
 }
 
 function stripAny() {
@@ -47,6 +56,7 @@ function stripAny() {
 describe("clinepassModels abort-signal merge fallback (#LOW)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    mocks.proxyAwareFetch.mockReset();
   });
 
   it("local timeout aborts when caller signal present and AbortSignal.any unavailable", async () => {
@@ -98,7 +108,7 @@ describe("clinepassModels abort-signal merge fallback (#LOW)", () => {
   });
 
   it("AbortSignal.any path still works (smoke)", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    mocks.proxyAwareFetch.mockResolvedValue(
       new Response(JSON.stringify([
         { id: "cline-pass/glm-5.2", name: "GLM-5.2" },
       ]), {

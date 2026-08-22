@@ -88,6 +88,9 @@ export async function getCodexUsage(accessToken, proxyOptions = null) {
         "Authorization": `Bearer ${accessToken}`,
         "Accept": "application/json",
       },
+      identity: "codex-cli",
+      provider: "codex",
+      format: "codex",
     }, proxyOptions);
 
     if (!response.ok) {
@@ -132,6 +135,9 @@ export async function getCodexRateLimitResetCredits(accessToken, proxyOptions = 
   const response = await proxyAwareFetch(CODEX_CONFIG.resetCreditsUrl, {
     method: "GET",
     headers,
+    identity: "codex-cli",
+    provider: "codex",
+    format: "codex",
   }, proxyOptions);
 
   let data = null;
@@ -177,6 +183,9 @@ export async function consumeCodexRateLimitResetCredit(accessToken, redeemReques
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ redeem_request_id: redeemRequestId }),
+      identity: "codex-cli",
+      provider: "codex",
+      format: "codex",
     }, proxyOptions);
 
     const text = await response.text();

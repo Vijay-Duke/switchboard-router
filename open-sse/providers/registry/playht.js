@@ -17,6 +17,7 @@ const moduleDefault = {
     "tts"
   ],
   ttsConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.play.ht/api/v2/tts/stream",
     authType: "apikey",
     authHeader: "playht",
@@ -27,6 +28,7 @@ const moduleDefault = {
         name: "PlayDialog"
       },
       {
+        identity: "openai-node",
         id: "Play3.0-mini",
         name: "Play 3.0 Mini"
       }

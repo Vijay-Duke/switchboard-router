@@ -14,6 +14,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://coding.dashscope.aliyuncs.com/v1/chat/completions",
     headers: {},
     quirks: { preserveCacheControl: true },

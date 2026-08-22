@@ -4,6 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { PROVIDERS } from "../../open-sse/config/providers.js";
 import { DefaultExecutor } from "../../open-sse/executors/default.js";
+import { wrapHeaders } from "../../open-sse/identity/wrap.js";
 
 // Credentials mẫu cố định (deterministic) — KHÔNG dùng Date.now/random.
 const API_KEY_CRED = { apiKey: "sk-test-APIKEY", providerSpecificData: {} };
@@ -23,50 +24,67 @@ const SPECIALIZED = new Set([
   "xiaomi-tokenplan", "mimo-free",
 ]);
 
-// Sanitize header: khử token, field thời gian động (kimi X-Msh-Device-Id),
-// và giá trị phụ thuộc OS/arch để snapshot ổn định trên mọi CI runner
-// (darwin arm64 ở local macOS → linux x64 ở CI Ubuntu):
-//   - X-PLATFORM            = process.platform            (cline)
-//   - X-Msh-Device-Model    = `${platform} ${arch}`       (kimi/moonshot)
-//   - X-Stainless-Os        = mapStainlessOs()            (claude/qwen)
-//   - X-Stainless-Arch      = mapStainlessArch()          (claude/qwen)
-// Các header còn lại (giá trị version, retry-count, timeout...) là hằng số → giữ nguyên
-// để vẫn assert ý nghĩa.
+// Sanitize dynamic credentials, timestamps, host details, and live identity versions
+// while retaining the product/profile shape asserted by the golden.
 function sanitize(headers) {
   const out = {};
   for (const [k, v] of Object.entries(headers)) {
-    if (k === "X-CLIENT-VERSION" || k === "X-CORE-VERSION") {
+    if (/switchboard/i.test(k) || /switchboard/i.test(String(v))) {
+      throw new Error(`Switchboard leak in header ${k}`);
+    }
+    const name = k.toLowerCase();
+    if (name === "x-client-version" || name === "x-core-version") {
       out[k] = "<VERSION>";
       continue;
     }
-    if (k === "X-PLATFORM-VERSION") {
+    if (name === "x-platform-version" || name === "x-stainless-runtime-version") {
       out[k] = "<NODE_VERSION>";
       continue;
     }
-    // Host-dependent platform/arch — phải khử để CI (Ubuntu) khớp local (macOS).
-    if (k === "X-PLATFORM" || k === "X-Stainless-Os") {
+    if (name === "x-stainless-package-version") {
+      out[k] = "<PACKAGE_VERSION>";
+      continue;
+    }
+    if (name === "x-platform" || name === "x-stainless-os") {
       out[k] = "<PLATFORM>";
       continue;
     }
-    if (k === "X-Stainless-Arch") {
+    if (name === "x-stainless-arch") {
       out[k] = "<ARCH>";
       continue;
     }
-    if (k === "X-Msh-Device-Model") {
+    if (name === "x-msh-device-model") {
       out[k] = "<PLATFORM> <ARCH>";
       continue;
     }
     out[k] = typeof v === "string"
       ? v.replace(/Bearer .+/, "Bearer <TOK>")
           .replace(/sk-test-APIKEY|tok-test-ACCESS/g, "<CRED>")
-          .replace(/Switchboard\/\d+(?:\.\d+)+/g, "Switchboard/<VERSION>")
+          .replace(/(OpenAI\/NodeJS\/)v?\d+(?:\.\d+)+/gi, "$1<NODE_VERSION>")
+          .replace(/(\b(?:claude-cli|codex_cli_rs|GeminiCLI|Cline|antigravity|GitHubCopilotChat|QwenCode|grok-cli)\/)\d+(?:\.\d+)+(?:-[0-9A-Za-z.-]+)?/gi, "$1<VERSION>")
           .replace(/kimi-\d{10,}/g, "kimi-<TS>")
       : v;
   }
   return out;
 }
 
+describe("sanitize headers", () => {
+  it("rejects Switchboard in header names and values", () => {
+    expect(() => sanitize({ "X-Switchboard-Test": "ok" })).toThrow(/switchboard/i);
+    expect(() => sanitize({ "User-Agent": "Switchboard/1.2.3" })).toThrow(/switchboard/i);
+  });
+});
+
 const providerIds = Object.keys(PROVIDERS).filter((p) => !SPECIALIZED.has(p)).sort();
+
+function providerWireHeaders(ex, pid, credentials, stream) {
+  return wrapHeaders(ex.buildHeaders(credentials, stream), {
+    identity: PROVIDERS[pid].identity,
+    provider: pid,
+    format: PROVIDERS[pid].format,
+    stream,
+  }).headers;
+}
 
 describe("GOLDEN buildUrl (default executor providers)", () => {
   for (const pid of providerIds) {
@@ -88,9 +106,9 @@ describe("GOLDEN buildHeaders (default executor providers)", () => {
     it(`${pid} → headers (apiKey / oauth)`, () => {
       const ex = new DefaultExecutor(pid);
       const snap = {
-        apiKey: safe(() => sanitize(ex.buildHeaders(PROVIDERS[pid].noAuth ? {} : API_KEY_CRED, true))),
-        oauth: safe(() => sanitize(ex.buildHeaders(PROVIDERS[pid].noAuth ? {} : OAUTH_CRED, true))),
-        nonStream: safe(() => sanitize(ex.buildHeaders(PROVIDERS[pid].noAuth ? {} : API_KEY_CRED, false))),
+        apiKey: sanitize(providerWireHeaders(ex, pid, PROVIDERS[pid].noAuth ? {} : API_KEY_CRED, true)),
+        oauth: sanitize(providerWireHeaders(ex, pid, PROVIDERS[pid].noAuth ? {} : OAUTH_CRED, true)),
+        nonStream: sanitize(providerWireHeaders(ex, pid, PROVIDERS[pid].noAuth ? {} : API_KEY_CRED, false)),
       };
       expect(snap).toMatchSnapshot();
     });
@@ -113,9 +131,9 @@ describe("GOLDEN buildHeaders — platform-independent sanitization", () => {
   for (const [pid, key] of HOST_DEPENDENT) {
     it(`${pid}: ${key} normalized to placeholder (no raw darwin/linux/arm64/x64)`, () => {
       const ex = new DefaultExecutor(pid);
-      const raw = ex.buildHeaders(API_KEY_CRED, true);
-      const clean = sanitize(raw);
-      expect(raw[key]).toBeTruthy();               // header thực sự được emit
+      const wrapped = providerWireHeaders(ex, pid, API_KEY_CRED, true);
+      const clean = sanitize(wrapped);
+      expect(wrapped[key]).toBeTruthy();           // wrapped header thực sự được emit
       expect(clean[key]).toMatch(/^<.+>$/);        // chỉ còn placeholder
       // Không rò rỉ giá trị host cụ thể sau sanitize.
       expect(clean[key]).not.toMatch(/darwin|linux|win32|MacOS|Windows|FreeBSD|arm64|x64|x86/i);

@@ -5,11 +5,21 @@ import { withCredentialRefreshLock } from "../services/oauthCredentialManager.js
 import { getExecutor } from "../executors/index.js";
 import { getImageAdapter } from "./imageProviders/index.js";
 import { urlToBase64 } from "./imageProviders/_base.js";
+import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { PROVIDERS, PROVIDER_MEDIA } from "../providers/index.js";
 
 function serializeRequestBody(requestBody) {
   if (typeof FormData !== "undefined" && requestBody instanceof FormData) return requestBody;
   if (typeof requestBody === "string") return requestBody;
   return JSON.stringify(requestBody);
+}
+function imageTransport(provider) {
+  const transport = PROVIDERS[provider] || {};
+  const config = PROVIDER_MEDIA[provider]?.imageConfig || {};
+  return {
+    identity: config.identity || transport.identity || "openai-node",
+    format: config.format || transport.format || "openai",
+  };
 }
 
 /**
@@ -39,6 +49,7 @@ export async function handleImageGenerationCore({
   abortSignal = null,
 }) {
   const { provider, model } = modelInfo;
+  const transport = imageTransport(provider);
 
   if (!body.prompt) {
     return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Missing required field: prompt");
@@ -109,11 +120,14 @@ export async function handleImageGenerationCore({
 
   let providerResponse;
   try {
-    providerResponse = await fetch(url, {
+    providerResponse = await proxyAwareFetch(url, {
       method: "POST",
       headers,
       body: serializeRequestBody(requestBody),
       signal: abortSignal || undefined,
+      identity: transport.identity,
+      provider,
+      format: transport.format,
     });
   } catch (error) {
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
@@ -144,11 +158,14 @@ export async function handleImageGenerationCore({
         const retryBody = await adapter.buildBody(model, body);
         const retryHeaders = adapter.buildHeaders(credentials, retryBody, model, body);
         const retryUrl = adapter.buildUrl(model, credentials);
-        providerResponse = await fetch(retryUrl, {
+        providerResponse = await proxyAwareFetch(retryUrl, {
           method: "POST",
           headers: retryHeaders,
           body: serializeRequestBody(retryBody),
           signal: abortSignal || undefined,
+          identity: transport.identity,
+          provider,
+          format: transport.format,
         });
       } catch {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);

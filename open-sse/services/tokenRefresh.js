@@ -1,5 +1,6 @@
 import { PROVIDERS } from "../config/providers.js";
 import { OAUTH_ENDPOINTS, REFRESH_LEAD_MS } from "../config/appConstants.js";
+import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import {
   refreshXaiToken,
   refreshAccessToken,
@@ -63,7 +64,7 @@ export function parseVertexSaJson(apiKey) {
 // Cache Vertex tokens keyed by service account email { token, expiresAt }
 const vertexTokenCache = new Map();
 
-export async function refreshVertexToken(saJson, log) {
+export async function refreshVertexToken(saJson, log, provider = "vertex", proxyOptions = null) {
   const cacheKey = saJson.client_email;
   const cached = vertexTokenCache.get(cacheKey);
 
@@ -85,14 +86,18 @@ export async function refreshVertexToken(saJson, log) {
       .setExpirationTime(now + 3600)
       .sign(privateKey);
 
-    const res = await fetch(OAUTH_ENDPOINTS.google.token, {
+    const config = PROVIDERS[provider] || PROVIDERS.vertex;
+    const res = await proxyAwareFetch(OAUTH_ENDPOINTS.google.token, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
         assertion: jwt,
       }),
-    });
+      identity: config.identity,
+      provider,
+      format: config.format,
+    }, proxyOptions);
 
     if (!res.ok) {
       const err = await res.text();
@@ -113,9 +118,9 @@ export async function refreshVertexToken(saJson, log) {
   }
 }
 
-function vertexRefreshHandler(c, log) {
+function vertexRefreshHandler(c, log, provider = "vertex") {
   const saJson = parseVertexSaJson(c.apiKey);
-  if (saJson) return refreshVertexToken(saJson, log);
+  if (saJson) return refreshVertexToken(saJson, log, provider);
   // ADC authorized_user in apiKey (wave13) — no OAuth refreshToken field
   try {
     const parsed = typeof c.apiKey === "string" ? JSON.parse(c.apiKey) : null;
@@ -129,7 +134,8 @@ function vertexRefreshHandler(c, log) {
         parsed.refresh_token,
         parsed.client_id,
         parsed.client_secret,
-        log
+        log,
+        provider,
       );
     }
   } catch {
@@ -149,8 +155,8 @@ const REFRESH_HANDLERS = {
   kiro: (c, log) => refreshKiroToken(c.refreshToken, c.providerSpecificData, log),
   xai: (c, log) => refreshXaiToken(c.refreshToken, log),
   "codebuddy-cn": (c, log) => refreshCodebuddyToken(c.refreshToken, log),
-  vertex: vertexRefreshHandler,
-  "vertex-partner": vertexRefreshHandler
+  vertex: (c, log) => vertexRefreshHandler(c, log, "vertex"),
+  "vertex-partner": (c, log) => vertexRefreshHandler(c, log, "vertex-partner"),
 };
 
 export async function getAccessToken(provider, credentials, log) {

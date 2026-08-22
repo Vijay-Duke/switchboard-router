@@ -5,6 +5,7 @@ import { XAI_CONFIG, XAI_PKCE_VERIFIER_BYTES } from "../constants/xai.js";
 import { startLocalServer } from "../utils/server.js";
 import { generateCodeVerifier, generateCodeChallenge, generateState } from "../utils/pkce.js";
 import { spinner as createSpinner } from "../utils/ui.js";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 
 /**
  * xAI (Grok) OAuth Service
@@ -53,8 +54,11 @@ export async function discoverEndpoints() {
   if (cachedDiscovery) return cachedDiscovery;
 
   try {
-    const res = await fetch(XAI_CONFIG.discoveryUrl, {
+    const res = await proxyAwareFetch(XAI_CONFIG.discoveryUrl, {
       headers: { Accept: "application/json" },
+      identity: "grok-cli",
+      provider: "xai",
+      format: "openai",
     });
     if (res.ok) {
       const data = await res.json();
@@ -127,7 +131,7 @@ export class XaiService extends OAuthService {
    * xAI is a public PKCE client — no client_secret.
    */
   async exchangeXaiCode({ tokenUrl, code, redirectUri, codeVerifier }) {
-    const res = await fetch(tokenUrl, {
+    const res = await proxyAwareFetch(tokenUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -140,6 +144,8 @@ export class XaiService extends OAuthService {
         redirect_uri: redirectUri,
         code_verifier: codeVerifier,
       }),
+      identity: "grok-cli",
+      provider: "xai",
     });
 
     if (!res.ok) {
@@ -154,7 +160,7 @@ export class XaiService extends OAuthService {
    */
   async refreshAccessToken(refreshToken) {
     const { tokenUrl } = await discoverEndpoints();
-    const res = await fetch(tokenUrl, {
+    const res = await proxyAwareFetch(tokenUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -165,6 +171,8 @@ export class XaiService extends OAuthService {
         client_id: XAI_CONFIG.clientId,
         refresh_token: refreshToken,
       }),
+      identity: "grok-cli",
+      provider: "xai",
     });
     if (!res.ok) {
       const err = await res.text();

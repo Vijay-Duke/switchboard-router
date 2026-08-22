@@ -13,6 +13,7 @@ const moduleDefault = {
   category: "free",
   noAuth: true,
   transport: {
+    identity: "openai-node",
     baseUrl: "https://opencode.ai",
     headers: {
       "x-opencode-client": "desktop",

@@ -41,6 +41,9 @@ describe("Gemini CLI usage project id resolution", () => {
       "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
       expect.objectContaining({
         body: JSON.stringify({ project: "cloud-code-project" }),
+        identity: "gemini-cli",
+        provider: "gemini-cli",
+        format: "gemini",
       }),
       null
     );
@@ -49,6 +52,36 @@ describe("Gemini CLI usage project id resolution", () => {
       total: 1000,
       remainingPercentage: 75,
     });
+  });
+
+  it("uses Gemini CLI identity for loadCodeAssist and quota", async () => {
+    proxyAwareFetch
+      .mockResolvedValueOnce(jsonResponse({
+        cloudaicompanionProject: { id: "project-from-load" },
+        currentTier: { name: "Free" },
+      }))
+      .mockResolvedValueOnce(jsonResponse({ buckets: [] }));
+
+    await getUsageForProvider({ provider: "gemini-cli", accessToken: "token" });
+
+    expect(proxyAwareFetch).toHaveBeenNthCalledWith(1,
+      "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+      expect.objectContaining({
+        identity: "gemini-cli",
+        provider: "gemini-cli",
+        format: "gemini",
+      }),
+      null,
+    );
+    expect(proxyAwareFetch).toHaveBeenNthCalledWith(2,
+      "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota",
+      expect.objectContaining({
+        identity: "gemini-cli",
+        provider: "gemini-cli",
+        format: "gemini",
+      }),
+      null,
+    );
   });
 
   it("normalizes project objects returned by loadCodeAssist", async () => {

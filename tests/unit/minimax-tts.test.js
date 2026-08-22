@@ -1,19 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+const proxyAwareFetch = vi.hoisted(() => vi.fn());
+
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch }));
+
 import { handleTtsCore } from "../../open-sse/handlers/ttsCore.js";
 
-const originalFetch = global.fetch;
+
 
 describe("MiniMax TTS", () => {
   beforeEach(() => {
-    global.fetch = vi.fn();
-  });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
+    proxyAwareFetch.mockReset();
   });
 
   it("sends MiniMax T2A payload and converts hex audio to base64 JSON", async () => {
-    global.fetch.mockResolvedValueOnce(
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           data: { audio: "00010203", status: 2 },
@@ -33,7 +33,7 @@ describe("MiniMax TTS", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(proxyAwareFetch).toHaveBeenCalledWith(
       "https://api.minimax.io/v1/t2a_v2",
       expect.objectContaining({
         method: "POST",
@@ -41,10 +41,13 @@ describe("MiniMax TTS", () => {
           "Content-Type": "application/json",
           Authorization: "Bearer test-key",
         }),
+        identity: "claude-cli",
+        provider: "minimax",
+        format: "minimax-tts",
       })
     );
 
-    const sent = JSON.parse(global.fetch.mock.calls[0][1].body);
+    const sent = JSON.parse(proxyAwareFetch.mock.calls[0][1].body);
     expect(sent).toMatchObject({
       model: "speech-2.8-hd",
       text: "Hello from MiniMax",
@@ -70,7 +73,7 @@ describe("MiniMax TTS", () => {
   });
 
   it("uses the default MiniMax voice when no voice is provided", async () => {
-    global.fetch.mockResolvedValueOnce(
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           data: { audio: "00010203", status: 2 },
@@ -89,15 +92,15 @@ describe("MiniMax TTS", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(global.fetch.mock.calls[0][0]).toBe("https://api.minimaxi.com/v1/t2a_v2");
+    expect(proxyAwareFetch.mock.calls[0][0]).toBe("https://api.minimaxi.com/v1/t2a_v2");
 
-    const sent = JSON.parse(global.fetch.mock.calls[0][1].body);
+    const sent = JSON.parse(proxyAwareFetch.mock.calls[0][1].body);
     expect(sent.model).toBe("speech-2.8-turbo");
     expect(sent.voice_setting.voice_id).toBe("English_expressive_narrator");
   });
 
   it("surfaces MiniMax base_resp errors", async () => {
-    global.fetch.mockResolvedValueOnce(
+    proxyAwareFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           base_resp: { status_code: 1008, status_msg: "insufficient quota" },

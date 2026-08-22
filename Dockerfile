@@ -5,7 +5,7 @@ WORKDIR /app
 
 FROM base AS builder
 
-RUN apk --no-cache upgrade && apk --no-cache add python3 make g++ linux-headers
+RUN apk --no-cache upgrade && apk --no-cache add python3 make g++ linux-headers go
 
 COPY package.json ./
 COPY package-lock.json ./

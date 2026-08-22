@@ -18,6 +18,7 @@ const moduleDefault = {
   category: "freeTier",
   mediaPriority: 1,
   transport: {
+    identity: "openai-node",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/models",
     format: "gemini",
     clientId: "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
@@ -59,19 +60,21 @@ const moduleDefault = {
   ],
   serviceKinds: ["llm","embedding","image","imageToText","webSearch","tts","stt"],
   ttsConfig: {
+    identity: "openai-node",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/models",
     authType: "apikey",
     authHeader: "key",
     format: "gemini-tts",
   },
   sttConfig: {
+    identity: "openai-node",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/models",
     authType: "apikey",
     authHeader: "key",
     format: "gemini-stt",
   },
-  embeddingConfig: { baseUrl: "https://generativelanguage.googleapis.com/v1beta/models", authType: "apikey", authHeader: "key" },
-  imageConfig: { baseUrl: "https://generativelanguage.googleapis.com/v1beta/models" },
+  embeddingConfig: { identity: "openai-node", baseUrl: "https://generativelanguage.googleapis.com/v1beta/models", authType: "apikey", authHeader: "key" },
+  imageConfig: { identity: "openai-node", baseUrl: "https://generativelanguage.googleapis.com/v1beta/models" },
   searchViaChat: {
     defaultModel: "gemini-2.5-flash",
     endpoint: "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",

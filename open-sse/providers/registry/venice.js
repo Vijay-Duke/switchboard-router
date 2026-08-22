@@ -19,6 +19,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.venice.ai/api/v1/chat/completions",
     validateUrl: "https://api.venice.ai/api/v1/models",
     thinkingFormat: "openai",
@@ -44,11 +45,13 @@ const moduleDefault = {
   ],
   serviceKinds: ["llm", "embedding", "image"],
   embeddingConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.venice.ai/api/v1/embeddings",
     authType: "apikey",
     authHeader: "bearer",
   },
   imageConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.venice.ai/api/v1/images/generations",
   },
   modelsFetcher: { url: "https://api.venice.ai/api/v1/models", type: "openai" },

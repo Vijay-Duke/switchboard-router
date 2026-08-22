@@ -12,6 +12,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "http://localhost:11434/api/chat",
     format: "ollama",
   },

@@ -17,6 +17,7 @@ const moduleDefault = {
     "tts"
   ],
   ttsConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.elevenlabs.io/v1/text-to-speech",
     authType: "apikey",
     authHeader: "xi-api-key",
@@ -27,6 +28,7 @@ const moduleDefault = {
         name: "Eleven Multilingual v2"
       },
       {
+        identity: "openai-node",
         id: "eleven_turbo_v2_5",
         name: "Eleven Turbo v2.5"
       }

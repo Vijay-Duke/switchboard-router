@@ -233,8 +233,8 @@ export class DefaultExecutor extends BaseExecutor {
     const grant = REFRESH_GRANTS[this.provider];
     const params = { grant_type: "refresh_token", refresh_token: credentials.refreshToken, ...grant.params(this) };
     return grant.encoding === "json"
-      ? this.refreshWithJSON(grant.url(), params, proxyOptions)
-      : this.refreshWithForm(grant.url(), params, proxyOptions);
+      ? this.refreshWithJSON(grant.url(), params, proxyOptions, this.provider)
+      : this.refreshWithForm(grant.url(), params, proxyOptions, this.provider);
   }
 
   async refreshCredentials(credentials, log, proxyOptions = null) {
@@ -243,7 +243,7 @@ export class DefaultExecutor extends BaseExecutor {
     const refreshers = {
       claude: () => this.refreshFromGrant(credentials, proxyOptions),
       codex: () => this.refreshFromGrant(credentials, proxyOptions),
-      qwen: () => this.refreshWithForm(OAUTH_ENDPOINTS.qwen.token, { grant_type: "refresh_token", refresh_token: credentials.refreshToken, client_id: PROVIDERS.qwen.clientId }, proxyOptions),
+      qwen: () => this.refreshWithForm(OAUTH_ENDPOINTS.qwen.token, { grant_type: "refresh_token", refresh_token: credentials.refreshToken, client_id: PROVIDERS.qwen.clientId }, proxyOptions, "qwen"),
       iflow: () => this.refreshIflow(credentials.refreshToken, proxyOptions),
       gemini: () => this.refreshFromGrant(credentials, proxyOptions),
       kiro: () => this.refreshKiro(credentials.refreshToken, proxyOptions),
@@ -266,22 +266,28 @@ export class DefaultExecutor extends BaseExecutor {
     }
   }
 
-  async refreshWithJSON(url, body, proxyOptions = null) {
+  async refreshWithJSON(url, body, proxyOptions = null, provider = this.provider) {
     const response = await proxyAwareFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      identity: PROVIDERS[provider]?.identity,
+      provider,
+      format: PROVIDERS[provider]?.format,
     }, proxyOptions);
     if (!response.ok) return null;
     const tokens = await response.json();
     return { accessToken: tokens.access_token, refreshToken: tokens.refresh_token || body.refresh_token, expiresIn: tokens.expires_in };
   }
 
-  async refreshWithForm(url, params, proxyOptions = null) {
+  async refreshWithForm(url, params, proxyOptions = null, provider = this.provider) {
     const response = await proxyAwareFetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
-      body: new URLSearchParams(params)
+      body: new URLSearchParams(params),
+      identity: PROVIDERS[provider]?.identity,
+      provider,
+      format: PROVIDERS[provider]?.format,
     }, proxyOptions);
     if (!response.ok) return null;
     const tokens = await response.json();
@@ -293,7 +299,10 @@ export class DefaultExecutor extends BaseExecutor {
     const response = await proxyAwareFetch(OAUTH_ENDPOINTS.iflow.token, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json", "Authorization": `Basic ${basicAuth}` },
-      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: PROVIDERS.iflow.clientId, client_secret: PROVIDERS.iflow.clientSecret })
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: PROVIDERS.iflow.clientId, client_secret: PROVIDERS.iflow.clientSecret }),
+      identity: PROVIDERS.iflow?.identity,
+      provider: "iflow",
+      format: PROVIDERS.iflow?.format,
     }, proxyOptions);
     if (!response.ok) return null;
     const tokens = await response.json();
@@ -304,7 +313,10 @@ export class DefaultExecutor extends BaseExecutor {
     const response = await proxyAwareFetch(PROVIDERS.kiro.tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "application/json", "User-Agent": "kiro-cli/1.0.0" },
-      body: JSON.stringify({ refreshToken })
+      body: JSON.stringify({ refreshToken }),
+      identity: PROVIDERS.kiro?.identity,
+      provider: "kiro",
+      format: PROVIDERS.kiro?.format,
     }, proxyOptions);
     if (!response.ok) return null;
     const tokens = await response.json();
@@ -315,7 +327,10 @@ export class DefaultExecutor extends BaseExecutor {
     const response = await proxyAwareFetch(PROVIDERS.cline.refreshUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ refreshToken, grantType: "refresh_token", clientType: "extension" })
+      body: JSON.stringify({ refreshToken, grantType: "refresh_token", clientType: "extension" }),
+      identity: PROVIDERS.cline?.identity,
+      provider: "cline",
+      format: PROVIDERS.cline?.format,
     }, proxyOptions);
     if (!response.ok) return null;
     const payload = await response.json();
@@ -338,7 +353,10 @@ export class DefaultExecutor extends BaseExecutor {
         "Accept": "application/json",
         ...kimiHeaders
       },
-      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: PROVIDERS["kimi-coding"].clientId })
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: PROVIDERS["kimi-coding"].clientId }),
+      identity: PROVIDERS["kimi-coding"]?.identity,
+      provider: "kimi-coding",
+      format: PROVIDERS["kimi-coding"]?.format,
     }, proxyOptions);
     if (!response.ok) return null;
     const tokens = await response.json();

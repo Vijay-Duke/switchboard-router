@@ -15,6 +15,7 @@ const moduleDefault = {
   ],
   noAuth: true,
   ttsConfig: {
+    identity: "openai-node",
     baseUrl: "http://localhost:5000/api/tts",
     authType: "none",
     authHeader: "none",

@@ -46,10 +46,6 @@ vi.mock("@/shared/constants/config", () => ({
   },
 }));
 
-vi.mock("open-sse/providers/shared.js", () => ({
-  CLAUDE_CLI_SPOOF_HEADERS: { "anthropic-version": "2023-06-01" },
-}));
-
 vi.mock("open-sse/services/usage/shared.js", () => ({
   U: () => ({ baseUrl: "https://chatgpt.com/backend-api/codex/responses" }),
 }));
@@ -376,7 +372,23 @@ describe("quota auto-ping", () => {
 
     await runQuotaAutoPingTick(deps, state);
 
-    expect(deps.proxyAwareFetch).toHaveBeenCalledTimes(1);
+    expect(deps.proxyAwareFetch).toHaveBeenCalledWith(
+      "https://api.anthropic.com/v1/messages?beta=true",
+      expect.objectContaining({
+        method: "POST",
+        identity: "claude-cli",
+        provider: "claude",
+        format: "claude",
+        stream: false,
+        credentialId: "claude-1",
+        retryCount: 0,
+        headers: {
+          Authorization: "Bearer token",
+          "content-type": "application/json",
+        },
+      }),
+      expect.any(Object),
+    );
     expect(JSON.parse(deps.proxyAwareFetch.mock.calls[0][1].body)).toMatchObject({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 1,

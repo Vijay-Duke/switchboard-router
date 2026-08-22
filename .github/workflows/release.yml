@@ -96,6 +96,9 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             cli/package-lock.json
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.25.x
 
       # Fail loudly if a future Node bump ships an npm without OIDC support,
       # rather than falling back to token auth and erroring obscurely.

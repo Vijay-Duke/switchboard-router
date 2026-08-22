@@ -7,27 +7,25 @@
  * - Falls back to old refresh_token when server doesn't return new one
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const originalFetch = global.fetch;
+const fetchMock = vi.hoisted(() => vi.fn());
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
+  proxyAwareFetch: (...args) => fetchMock(...args),
+}));
 
 describe("Codex Refresh Token", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
-    global.fetch = originalFetch;
-  });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
+    fetchMock.mockReset();
   });
 
   function mockFetchWithJson(payload) {
-    const fetchMock = vi.fn().mockResolvedValue({
+    fetchMock.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve(payload),
     });
-    global.fetch = fetchMock;
     return fetchMock;
   }
 
@@ -59,6 +57,8 @@ describe("Codex Refresh Token", () => {
             grant_type: "refresh_token",
             refresh_token: "old-refresh-token",
           }),
+          provider: "codex",
+          format: "openai-responses",
         })
       );
     });

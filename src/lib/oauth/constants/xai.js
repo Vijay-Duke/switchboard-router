@@ -8,6 +8,7 @@
  * intermediate constants stay module-private.
  */
 import { PROVIDERS } from "open-sse/providers/index.js";
+import { getSnapshot } from "open-sse/identity/snapshot.js";
 
 // xAI client_id for OAuth (PKCE public client) — single source: registry xai.transport
 const XAI_CLIENT_ID = PROVIDERS["xai"]?.clientId;
@@ -35,8 +36,8 @@ export const XAI_PKCE_VERIFIER_BYTES = 96;
 // Refresh tokens this many seconds before expiry
 const XAI_REFRESH_LEAD_SECONDS = 5 * 60;
 
-// User-Agent — mirror Go grok-cli UA. Version is best-effort; xAI does not pin a specific version.
-const XAI_USER_AGENT = "grok-cli/switchboard";
+// User-Agent — official grok-cli identity; never include the gateway product name.
+const XAI_USER_AGENT = getSnapshot("grok-cli")?.userAgent || "grok-cli/1.0.0";
 
 /**
  * Aggregated config object — mirrors the shape of CLAUDE_CONFIG/CODEX_CONFIG in oauth.js.

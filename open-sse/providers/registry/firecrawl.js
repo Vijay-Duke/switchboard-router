@@ -17,6 +17,7 @@ const moduleDefault = {
     "webFetch"
   ],
   fetchConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.firecrawl.dev/v1/scrape",
     method: "POST",
     authType: "apikey",

@@ -98,3 +98,4 @@ tests/.tmp-data/
 
 # Local git worktrees
 .worktrees/
+open-sse/identity/tls/bin/

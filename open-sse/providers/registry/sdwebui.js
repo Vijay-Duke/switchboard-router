@@ -16,7 +16,7 @@ const moduleDefault = {
     { id: "sdxl-base-1.0", name: "SDXL Base 1.0", params: ["n","size"], kind: "image" },
   ],
   serviceKinds: ["image"],
-  imageConfig: { baseUrl: "http://localhost:7860/sdapi/v1/txt2img" },
+  imageConfig: { identity: "openai-node", baseUrl: "http://localhost:7860/sdapi/v1/txt2img" },
 };
 
 export default moduleDefault;

@@ -20,6 +20,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.deepseek.com/chat/completions",
     validateUrl: "https://api.deepseek.com/models",
     reasoningInject: {
@@ -29,11 +30,13 @@ const moduleDefault = {
   // Multi-endpoint: pick the transport matching client sourceFormat to skip translation.
   transports: [
     {
+      identity: "openai-node",
       format: "openai",
       baseUrl: "https://api.deepseek.com/chat/completions",
       auth: { combined: true, header: "Authorization", scheme: "bearer" },
     },
     {
+      identity: "openai-node",
       format: "claude",
       baseUrl: "https://api.deepseek.com/anthropic/v1/messages",
       headers: { ...CLAUDE_API_HEADERS },

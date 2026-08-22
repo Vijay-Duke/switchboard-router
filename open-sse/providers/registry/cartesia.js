@@ -17,6 +17,7 @@ const moduleDefault = {
     "tts"
   ],
   ttsConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.cartesia.ai/tts/bytes",
     authType: "apikey",
     authHeader: "x-api-key",
@@ -27,6 +28,7 @@ const moduleDefault = {
         name: "Sonic 2"
       },
       {
+        identity: "openai-node",
         id: "sonic-3",
         name: "Sonic 3"
       }

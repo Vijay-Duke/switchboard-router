@@ -36,8 +36,10 @@ import {
   extractEmailFromAccessToken,
   extractCodexAccountInfo,
   fetchKiroProfileArn,
+  getOAuthFetchProfile,
 } from "./providerHelpers";
 import { parseKiroProfileArn } from "open-sse/utils/kiroProfileArn.js";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 
 export { extractCodexAccountInfo, fetchKiroProfileArn };
 
@@ -47,7 +49,12 @@ let cachedXaiDiscovery = null;
 async function discoverXaiEndpoints() {
   if (cachedXaiDiscovery) return cachedXaiDiscovery;
   try {
-    const res = await fetch(XAI_CONFIG.discoveryUrl, { headers: { Accept: "application/json" } });
+    const res = await proxyAwareFetch(XAI_CONFIG.discoveryUrl, {
+      headers: { Accept: "application/json" },
+      identity: "grok-cli",
+      provider: "xai",
+      format: "openai",
+    });
     if (res.ok) {
       const data = await res.json();
       cachedXaiDiscovery = {
@@ -89,7 +96,7 @@ const PROVIDERS = {
         codeState = parts[1] || "";
       }
 
-      const response = await fetch(config.tokenUrl, {
+      const response = await proxyAwareFetch(config.tokenUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -103,6 +110,7 @@ const PROVIDERS = {
           redirect_uri: redirectUri,
           code_verifier: codeVerifier,
         }),
+        ...getOAuthFetchProfile("claude"),
       });
 
       if (!response.ok) {
@@ -142,7 +150,7 @@ const PROVIDERS = {
       return `${config.authorizeUrl}?${queryString}`;
     },
     exchangeToken: async (config, code, redirectUri, codeVerifier) => {
-      const response = await fetch(config.tokenUrl, {
+      const response = await proxyAwareFetch(config.tokenUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -155,6 +163,7 @@ const PROVIDERS = {
           redirect_uri: redirectUri,
           code_verifier: codeVerifier,
         }),
+        ...getOAuthFetchProfile("codex"),
       });
 
       if (!response.ok) {
@@ -220,7 +229,7 @@ const PROVIDERS = {
       return `${config.authorizeUrl}?${qs}`;
     },
     exchangeToken: async (config, code, redirectUri, codeVerifier) => {
-      const response = await fetch(config.tokenUrl, {
+      const response = await proxyAwareFetch(config.tokenUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -233,6 +242,9 @@ const PROVIDERS = {
           redirect_uri: redirectUri,
           code_verifier: codeVerifier,
         }),
+        identity: "grok-cli",
+        provider: "xai",
+        format: "openai",
       });
       if (!response.ok) {
         const error = await response.text();
@@ -272,7 +284,7 @@ const PROVIDERS = {
       return `${config.authorizeUrl}?${params.toString()}`;
     },
     exchangeToken: async (config, code, redirectUri) => {
-      const response = await fetch(config.tokenUrl, {
+      const response = await proxyAwareFetch(config.tokenUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -285,6 +297,7 @@ const PROVIDERS = {
           code: code,
           redirect_uri: redirectUri,
         }),
+        ...getOAuthFetchProfile("gemini-cli"),
       });
 
       if (!response.ok) {
@@ -296,28 +309,27 @@ const PROVIDERS = {
     },
     postExchange: async (tokens) => {
       // Fetch user info
-      const userInfoRes = await fetch(`${GEMINI_CONFIG.userInfoUrl}?alt=json`, {
+      const userInfoRes = await proxyAwareFetch(`${GEMINI_CONFIG.userInfoUrl}?alt=json`, {
         headers: { Authorization: `Bearer ${tokens.access_token}` },
+        ...getOAuthFetchProfile("gemini-cli"),
       });
       const userInfo = userInfoRes.ok ? await userInfoRes.json() : {};
 
       // Fetch project ID
       let projectId = "";
       try {
-        const projectRes = await fetch(
-          "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${tokens.access_token}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              metadata: getOAuthClientMetadata(),
-              mode: 1,
-            }),
-          }
-        );
+        const projectRes = await proxyAwareFetch("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${tokens.access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            metadata: getOAuthClientMetadata(),
+            mode: 1,
+          }),
+          ...getOAuthFetchProfile("gemini-cli"),
+        });
         if (projectRes.ok) {
           const data = await projectRes.json();
           projectId = data.cloudaicompanionProject?.id || data.cloudaicompanionProject || "";
@@ -354,7 +366,7 @@ const PROVIDERS = {
       return `${config.authorizeUrl}?${params.toString()}`;
     },
     exchangeToken: async (config, code, redirectUri) => {
-      const response = await fetch(config.tokenUrl, {
+      const response = await proxyAwareFetch(config.tokenUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -367,6 +379,9 @@ const PROVIDERS = {
           code: code,
           redirect_uri: redirectUri,
         }),
+        identity: "antigravity",
+        provider: "antigravity",
+        format: "antigravity",
       });
 
       if (!response.ok) {
@@ -381,19 +396,19 @@ const PROVIDERS = {
       const loadHeaders = {
         "Authorization": `Bearer ${tokens.access_token}`,
         "Content-Type": "application/json",
-        "User-Agent": ANTIGRAVITY_CONFIG.loadCodeAssistUserAgent,
         "X-Goog-Api-Client": ANTIGRAVITY_CONFIG.loadCodeAssistApiClient,
         "Client-Metadata": ANTIGRAVITY_CONFIG.loadCodeAssistClientMetadata,
-        "x-request-source": "local",
       };
       const metadata = getOAuthClientMetadata();
 
       // Fetch user info
-      const userInfoRes = await fetch(`${ANTIGRAVITY_CONFIG.userInfoUrl}?alt=json`, {
+      const userInfoRes = await proxyAwareFetch(`${ANTIGRAVITY_CONFIG.userInfoUrl}?alt=json`, {
         headers: {
           Authorization: `Bearer ${tokens.access_token}`,
-          "x-request-source": "local",
         },
+        identity: "antigravity",
+        provider: "antigravity",
+        format: "antigravity",
       });
       const userInfo = userInfoRes.ok ? await userInfoRes.json() : {};
 
@@ -401,10 +416,13 @@ const PROVIDERS = {
       let projectId = "";
       let tierId = "legacy-tier";
       try {
-        const loadRes = await fetch(ANTIGRAVITY_CONFIG.loadCodeAssistEndpoint, {
+        const loadRes = await proxyAwareFetch(ANTIGRAVITY_CONFIG.loadCodeAssistEndpoint, {
           method: "POST",
           headers: loadHeaders,
           body: JSON.stringify({ metadata }),
+          identity: "antigravity",
+          provider: "antigravity",
+          format: "antigravity",
         });
         if (loadRes.ok) {
           const data = await loadRes.json();
@@ -427,10 +445,13 @@ const PROVIDERS = {
         const doOnboard = async () => {
           for (let i = 0; i < 10; i++) {
             try {
-              const onboardRes = await fetch(ANTIGRAVITY_CONFIG.onboardUserEndpoint, {
+              const onboardRes = await proxyAwareFetch(ANTIGRAVITY_CONFIG.onboardUserEndpoint, {
                 method: "POST",
                 headers: loadHeaders,
                 body: JSON.stringify({ tierId, metadata }),
+                identity: "antigravity",
+                provider: "antigravity",
+                format: "antigravity",
               });
               if (onboardRes.ok) {
                 const result = await onboardRes.json();
@@ -476,7 +497,7 @@ const PROVIDERS = {
         `${config.clientId}:${config.clientSecret}`
       ).toString("base64");
 
-      const response = await fetch(config.tokenUrl, {
+      const response = await proxyAwareFetch(config.tokenUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -490,6 +511,7 @@ const PROVIDERS = {
           client_id: config.clientId,
           client_secret: config.clientSecret,
         }),
+        ...getOAuthFetchProfile("iflow"),
       });
 
       if (!response.ok) {
@@ -501,14 +523,12 @@ const PROVIDERS = {
     },
     postExchange: async (tokens) => {
       // Fetch user info (MUST succeed to get API key)
-      const userInfoRes = await fetch(
-        `${IFLOW_CONFIG.userInfoUrl}?accessToken=${encodeURIComponent(tokens.access_token)}`,
-        {
-          headers: {
-            Accept: "application/json",
-          },
-        }
-      );
+      const userInfoRes = await proxyAwareFetch(`${IFLOW_CONFIG.userInfoUrl}?accessToken=${encodeURIComponent(tokens.access_token)}`, {
+        headers: {
+          Accept: "application/json",
+        },
+        ...getOAuthFetchProfile("iflow"),
+      });
       
       if (!userInfoRes.ok) {
         const errorText = await userInfoRes.text();
@@ -648,7 +668,7 @@ const PROVIDERS = {
     config: QWEN_CONFIG,
     flowType: "device_code",
     requestDeviceCode: async (config, codeChallenge) => {
-      const response = await fetch(config.deviceCodeUrl, {
+      const response = await proxyAwareFetch(config.deviceCodeUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -660,6 +680,7 @@ const PROVIDERS = {
           code_challenge: codeChallenge,
           code_challenge_method: config.codeChallengeMethod,
         }),
+        ...getOAuthFetchProfile("qwen"),
       });
 
       if (!response.ok) {
@@ -670,7 +691,7 @@ const PROVIDERS = {
       return await response.json();
     },
     pollToken: async (config, deviceCode, codeVerifier) => {
-      const response = await fetch(config.tokenUrl, {
+      const response = await proxyAwareFetch(config.tokenUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -682,6 +703,7 @@ const PROVIDERS = {
           device_code: deviceCode,
           code_verifier: codeVerifier,
         }),
+        ...getOAuthFetchProfile("qwen"),
       });
 
       return {
@@ -701,7 +723,7 @@ const PROVIDERS = {
     config: GITHUB_CONFIG,
     flowType: "device_code",
     requestDeviceCode: async (config) => {
-      const response = await fetch(config.deviceCodeUrl, {
+      const response = await proxyAwareFetch(config.deviceCodeUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -711,6 +733,7 @@ const PROVIDERS = {
           client_id: config.clientId,
           scope: config.scopes,
         }),
+        ...getOAuthFetchProfile("github"),
       });
 
       if (!response.ok) {
@@ -721,7 +744,7 @@ const PROVIDERS = {
       return await response.json();
     },
     pollToken: async (config, deviceCode) => {
-      const response = await fetch(config.tokenUrl, {
+      const response = await proxyAwareFetch(config.tokenUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -732,6 +755,7 @@ const PROVIDERS = {
           device_code: deviceCode,
           grant_type: "urn:ietf:params:oauth:grant-type:device_code",
         }),
+        ...getOAuthFetchProfile("github"),
       });
 
       // Handle response properly - if not ok, try to get error as text first
@@ -751,24 +775,27 @@ const PROVIDERS = {
     },
     postExchange: async (tokens) => {
       // Get Copilot token using GitHub access token
-      const copilotRes = await fetch(GITHUB_CONFIG.copilotTokenUrl, {
+      const copilotRes = await proxyAwareFetch(GITHUB_CONFIG.copilotTokenUrl, {
         headers: {
           Authorization: `Bearer ${tokens.access_token}`,
           Accept: "application/json",
-          "X-GitHub-Api-Version": GITHUB_CONFIG.apiVersion,
-          "User-Agent": GITHUB_CONFIG.userAgent,
         },
+        identity: "copilot",
+        provider: "github",
+        format: "openai",
       });
       const copilotToken = copilotRes.ok ? await copilotRes.json() : {};
 
       // Get user info from GitHub
-      const userRes = await fetch(GITHUB_CONFIG.userInfoUrl, {
+      const userRes = await proxyAwareFetch(GITHUB_CONFIG.userInfoUrl, {
         headers: {
           Authorization: `Bearer ${tokens.access_token}`,
           Accept: "application/json",
           "X-GitHub-Api-Version": GITHUB_CONFIG.apiVersion,
-          "User-Agent": GITHUB_CONFIG.userAgent,
         },
+        identity: "copilot",
+        provider: "github",
+        format: "openai",
       });
       const userInfo = userRes.ok ? await userRes.json() : {};
 
@@ -804,7 +831,7 @@ const PROVIDERS = {
       const deviceAuthUrl = `https://oidc.${region}.amazonaws.com/device_authorization`;
 
       // Step 1: Register client with AWS SSO OIDC
-      const registerRes = await fetch(registerClientUrl, {
+      const registerRes = await proxyAwareFetch(registerClientUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -817,6 +844,7 @@ const PROVIDERS = {
           grantTypes: config.grantTypes,
           issuerUrl: config.issuerUrl,
         }),
+        ...getOAuthFetchProfile("kiro"),
       });
 
       if (!registerRes.ok) {
@@ -827,7 +855,7 @@ const PROVIDERS = {
       const clientInfo = await registerRes.json();
 
       // Step 2: Request device authorization
-      const deviceRes = await fetch(deviceAuthUrl, {
+      const deviceRes = await proxyAwareFetch(deviceAuthUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -838,6 +866,7 @@ const PROVIDERS = {
           clientSecret: clientInfo.clientSecret,
           startUrl,
         }),
+        ...getOAuthFetchProfile("kiro"),
       });
 
       if (!deviceRes.ok) {
@@ -871,7 +900,7 @@ const PROVIDERS = {
         throw new Error("A valid Kiro profile ARN is required for IAM Identity Center");
       }
       const tokenUrl = `https://oidc.${region}.amazonaws.com/token`;
-      const response = await fetch(tokenUrl, {
+      const response = await proxyAwareFetch(tokenUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -883,6 +912,7 @@ const PROVIDERS = {
           deviceCode: deviceCode,
           grantType: "urn:ietf:params:oauth:grant-type:device_code",
         }),
+        ...getOAuthFetchProfile("kiro"),
       });
 
       let data;
@@ -969,10 +999,11 @@ const PROVIDERS = {
     config: KIMI_CODING_CONFIG,
     flowType: "device_code",
     requestDeviceCode: async (config) => {
-      const response = await fetch(config.deviceCodeUrl, {
+      const response = await proxyAwareFetch(config.deviceCodeUrl, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
         body: new URLSearchParams({ client_id: config.clientId }),
+        ...getOAuthFetchProfile("kimi-coding"),
       });
       if (!response.ok) {
         const error = await response.text();
@@ -991,7 +1022,7 @@ const PROVIDERS = {
       };
     },
     pollToken: async (config, deviceCode) => {
-      const response = await fetch(config.tokenUrl, {
+      const response = await proxyAwareFetch(config.tokenUrl, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
         body: new URLSearchParams({
@@ -999,6 +1030,7 @@ const PROVIDERS = {
           client_id: config.clientId,
           device_code: deviceCode,
         }),
+        ...getOAuthFetchProfile("kimi-coding"),
       });
       let data;
       try {
@@ -1020,9 +1052,10 @@ const PROVIDERS = {
     config: KILOCODE_CONFIG,
     flowType: "device_code",
     requestDeviceCode: async (config) => {
-      const response = await fetch(config.initiateUrl, {
+      const response = await proxyAwareFetch(config.initiateUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        ...getOAuthFetchProfile("kilocode"),
       });
       if (!response.ok) {
         if (response.status === 429) {
@@ -1042,7 +1075,9 @@ const PROVIDERS = {
       };
     },
     pollToken: async (config, deviceCode) => {
-      const response = await fetch(`${config.pollUrlBase}/${deviceCode}`);
+      const response = await proxyAwareFetch(`${config.pollUrlBase}/${deviceCode}`, {
+        ...getOAuthFetchProfile("kilocode"),
+      });
       if (response.status === 202) return { ok: false, data: { error: "authorization_pending" } };
       if (response.status === 403) return { ok: false, data: { error: "access_denied", error_description: "Authorization denied by user" } };
       if (response.status === 410) return { ok: false, data: { error: "expired_token", error_description: "Authorization code expired" } };
@@ -1052,8 +1087,9 @@ const PROVIDERS = {
         // Fetch profile to get orgId for X-Kilocode-OrganizationID header
         let orgId = null;
         try {
-          const profileRes = await fetch(`${config.apiBaseUrl}/api/profile`, {
-            headers: { "Authorization": `Bearer ${data.token}` }
+          const profileRes = await proxyAwareFetch(`${config.apiBaseUrl}/api/profile`, {
+            headers: { "Authorization": `Bearer ${data.token}` },
+            ...getOAuthFetchProfile("kilocode"),
           });
           if (profileRes.ok) {
             const profile = await profileRes.json();
@@ -1103,10 +1139,11 @@ const PROVIDERS = {
           expires_at: tokenData.expiresAt,
         };
       } catch (e) {
-        const response = await fetch(config.tokenExchangeUrl, {
+        const response = await proxyAwareFetch(config.tokenExchangeUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify({ grant_type: "authorization_code", code, client_type: "extension", redirect_uri: redirectUri }),
+          ...getOAuthFetchProfile("cline"),
         });
         if (!response.ok) {
           const error = await response.text();
@@ -1161,10 +1198,11 @@ const PROVIDERS = {
           expires_at: tokenData.expiresAt,
         };
       } catch (e) {
-        const response = await fetch(config.tokenUrl, {
+        const response = await proxyAwareFetch(config.tokenUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify({ grant_type: "authorization_code", code, client_type: "extension", redirect_uri: redirectUri }),
+          ...getOAuthFetchProfile("clinepass"),
         });
         if (!response.ok) {
           const error = await response.text();
@@ -1220,16 +1258,18 @@ const PROVIDERS = {
         code_verifier: codeVerifier,
       });
       if (clientSecret) body.set("client_secret", clientSecret);
-      const response = await fetch(`${baseUrl}${config.tokenUrlPath}`, {
+      const response = await proxyAwareFetch(`${baseUrl}${config.tokenUrlPath}`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
         body: body.toString(),
+        ...getOAuthFetchProfile("gitlab"),
       });
       if (!response.ok) throw new Error(`GitLab token exchange failed: ${await response.text()}`);
       const tokens = await response.json();
       // Fetch user info
-      const userRes = await fetch(`${baseUrl}${config.userInfoUrlPath}`, {
+      const userRes = await proxyAwareFetch(`${baseUrl}${config.userInfoUrlPath}`, {
         headers: { Authorization: `Bearer ${tokens.access_token}` },
+        ...getOAuthFetchProfile("gitlab"),
       });
       const user = userRes.ok ? await userRes.json() : {};
       return { ...tokens, _user: user, _baseUrl: baseUrl, _clientId: clientId };
@@ -1258,7 +1298,7 @@ const PROVIDERS = {
     config: CODEBUDDY_CONFIG,
     flowType: "device_code",
     requestDeviceCode: async (config) => {
-      const response = await fetch(`${config.stateUrl}?platform=${config.platform}`, {
+      const response = await proxyAwareFetch(`${config.stateUrl}?platform=${config.platform}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1271,6 +1311,7 @@ const PROVIDERS = {
           "X-Product": "SaaS",
         },
         body: "{}",
+        ...getOAuthFetchProfile("codebuddy-cn"),
       });
       if (!response.ok) throw new Error(`CodeBuddy state request failed: ${await response.text()}`);
       const data = await response.json();
@@ -1288,7 +1329,7 @@ const PROVIDERS = {
     pollToken: async (config, deviceCode) => {
       // CodeBuddy polls the token endpoint via GET with the state as a query
       // param (not POST/body) — matches the official CLI's /v2/plugin/auth/token?state=...
-      const response = await fetch(`${config.tokenUrl}?state=${encodeURIComponent(deviceCode)}`, {
+      const response = await proxyAwareFetch(`${config.tokenUrl}?state=${encodeURIComponent(deviceCode)}`, {
         method: "GET",
         headers: {
           Accept: "application/json",
@@ -1301,6 +1342,7 @@ const PROVIDERS = {
           "X-No-Department-Info": "true",
           "X-Product": "SaaS",
         },
+        ...getOAuthFetchProfile("codebuddy-cn"),
       });
       if (!response.ok) return { ok: false, data: { error: "request_failed" } };
       const data = await response.json();
@@ -1345,12 +1387,13 @@ const PROVIDERS = {
       }
 
       const validationUrl = config.validationUrl || "https://api.cast.ai/v1/llm/openai/supported-providers";
-      const validationRes = await fetch(validationUrl, {
+      const validationRes = await proxyAwareFetch(validationUrl, {
         method: "GET",
         headers: {
           Accept: "application/json",
           Authorization: `Bearer ${accessToken}`,
         },
+        ...getOAuthFetchProfile("kimchi"),
       });
       if (!validationRes.ok) {
         throw new Error(`Kimchi token validation failed: ${validationRes.status}`);
@@ -1359,12 +1402,13 @@ const PROVIDERS = {
       let userInfo = {};
       if (config.userInfoUrl) {
         try {
-          const userRes = await fetch(config.userInfoUrl, {
+          const userRes = await proxyAwareFetch(config.userInfoUrl, {
             method: "GET",
             headers: {
               Accept: "application/json",
               Authorization: `Bearer ${accessToken}`,
             },
+            ...getOAuthFetchProfile("kimchi"),
           });
           if (userRes.ok) {
             userInfo = await userRes.json();

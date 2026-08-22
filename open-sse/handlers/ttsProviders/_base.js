@@ -1,5 +1,18 @@
 // Shared TTS helpers
 import { Buffer } from "node:buffer";
+import { proxyAwareFetch } from "../../utils/proxyFetch.js";
+import { PROVIDERS, PROVIDER_MEDIA } from "../../providers/index.js";
+
+export function authenticatedMediaFetch(provider, kind, url, init = {}) {
+  const transport = PROVIDERS[provider] || {};
+  const config = PROVIDER_MEDIA[provider]?.[`${kind}Config`] || {};
+  return proxyAwareFetch(url, {
+    ...init,
+    identity: config.identity || transport.identity || "openai-node",
+    provider,
+    format: config.format || transport.format || "openai",
+  });
+}
 
 export const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
 

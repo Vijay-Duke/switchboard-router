@@ -1,5 +1,6 @@
 import REGISTRY from "../providers/registry/index.js";
 import { decodeMessage } from "../utils/cursorProtobuf.js";
+import { proxyAwareFetch } from "../utils/proxyFetch.js";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10 * 1000;
@@ -190,14 +191,17 @@ async function fetchCatalog(connection, entry, config, options) {
     : options.signal || controller.signal;
 
   try {
-    const response = await fetch(config.url, {
+    const response = await proxyAwareFetch(config.url, {
       method: config.method,
       headers: buildHeaders(entry, connection, config.type),
       ...(config.body !== undefined ? { body: config.body } : {}),
       cache: "no-store",
       redirect: "error",
       signal,
-    });
+      identity: entry.transport.identity,
+      provider: entry.id,
+      format: entry.transport.format,
+    }, options.proxyOptions);
     if (!response.ok) {
       options.log?.warn?.("Provider model discovery request failed", {
         provider: connection?.provider,

@@ -1,6 +1,7 @@
 import { DefaultExecutor } from "./default.js";
 import { PROVIDERS } from "../config/providers.js";
 import { OAUTH_ENDPOINTS } from "../config/appConstants.js";
+import { proxyAwareFetch } from "../utils/proxyFetch.js";
 
 /** portal.qwen.ai — static fingerprint matching stable Qwen Code release */
 const QWEN_USER_AGENT = "QwenCode/0.12.3 (linux; x64)";
@@ -99,18 +100,21 @@ export class QwenExecutor extends DefaultExecutor {
   }
 
   // Override to capture resource_url from refresh response (required for buildUrl).
-  async refreshCredentials(credentials, log) {
+  async refreshCredentials(credentials, log, proxyOptions = null) {
     if (!credentials?.refreshToken) return null;
     try {
-      const response = await fetch(OAUTH_ENDPOINTS.qwen.token, {
+      const response = await proxyAwareFetch(OAUTH_ENDPOINTS.qwen.token, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
         body: new URLSearchParams({
           grant_type: "refresh_token",
           refresh_token: credentials.refreshToken,
           client_id: PROVIDERS.qwen.clientId
-        })
-      });
+        }),
+        identity: this.config.identity,
+        provider: this.provider,
+        format: this.config.format,
+      }, proxyOptions);
       if (!response.ok) return null;
       const tokens = await response.json();
       log?.info?.("TOKEN", "qwen refreshed");

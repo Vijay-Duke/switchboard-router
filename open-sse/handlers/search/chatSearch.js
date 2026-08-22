@@ -4,6 +4,8 @@
  */
 import { PROVIDER_MEDIA } from "../../providers/index.js";
 import { mergeAbortSignals } from "../../utils/abort.js";
+import { proxyAwareFetch } from "../../utils/proxyFetch.js";
+import { PROVIDERS } from "../../providers/index.js";
 
 // Default search model + endpoint derive from registry searchViaChat (single source)
 const searchModel = (id) => PROVIDER_MEDIA[id]?.searchViaChat?.defaultModel;
@@ -336,11 +338,16 @@ export async function handleChatSearch({
   let upstreamStart = Date.now();
   let resp;
   try {
-    resp = await fetch(url, {
+    const transport = PROVIDERS[provider] || {};
+    const searchConfig = PROVIDER_MEDIA[provider]?.searchViaChat || {};
+    resp = await proxyAwareFetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
-      signal: mergeAbortSignals(controller.signal, abortSignal)
+      signal: mergeAbortSignals(controller.signal, abortSignal),
+      identity: searchConfig.identity || transport.identity || "openai-node",
+      provider,
+      format: searchConfig.format || transport.format || "openai",
     });
   } catch (err) {
     clearTimeout(timer);

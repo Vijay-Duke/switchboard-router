@@ -14,6 +14,7 @@ const moduleDefault = {
   },
   category: "oauth",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://apis.iflow.cn/v1/chat/completions",
     thinkingFormat: "openai",
     headers: {

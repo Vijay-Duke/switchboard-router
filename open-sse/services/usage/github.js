@@ -3,14 +3,7 @@
  */
 
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
-import { PROVIDER_OAUTH } from "../../providers/index.js";
 import { U, parseResetTime } from "./shared.js";
-
-// GitHub API config — single source from registry oauth block
-const GITHUB_CONFIG = {
-  apiVersion: PROVIDER_OAUTH.github?.apiVersion,
-  userAgent: PROVIDER_OAUTH.github?.userAgent,
-};
 
 /**
  * GitHub Copilot Usage
@@ -27,11 +20,10 @@ export async function getGitHubUsage(accessToken, providerSpecificData, proxyOpt
       headers: {
         "Authorization": `token ${accessToken}`,
         "Accept": "application/json",
-        "X-GitHub-Api-Version": GITHUB_CONFIG.apiVersion,
-        "User-Agent": GITHUB_CONFIG.userAgent,
-        "Editor-Version": "vscode/1.100.0",
-        "Editor-Plugin-Version": "copilot-chat/0.26.7",
       },
+      identity: "copilot",
+      provider: "github",
+      format: "openai",
     }, proxyOptions);
 
     if (!response.ok) {

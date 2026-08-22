@@ -60,9 +60,6 @@ export async function testProxyUrl({ proxyUrl, testUrl, timeoutMs } = {}) {
         method: "HEAD",
         dispatcher,
         signal: controller.signal,
-        headers: {
-          "User-Agent": "Switchboard",
-        },
       });
 
       return {

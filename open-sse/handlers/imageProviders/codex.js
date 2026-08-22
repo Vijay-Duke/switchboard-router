@@ -2,10 +2,10 @@
 import { randomUUID } from "node:crypto";
 import { nowSec } from "./_base.js";
 import { PROVIDERS } from "../../config/providers.js";
+import { resolveSessionId } from "../../utils/sessionManager.js";
+import { getSnapshot } from "../../identity/snapshot.js";
 
 const CODEX_RESPONSES_URL = PROVIDERS["codex"].baseUrl;
-const CODEX_USER_AGENT = "codex_cli_rs/0.136.0";
-const CODEX_VERSION = "0.136.0";
 const CODEX_ORIGINATOR = "codex_cli_rs";
 const CODEX_MODEL_SUFFIX = "-image";
 const CODEX_REF_DETAIL = "high";
@@ -146,17 +146,25 @@ function buildSseResponse(providerResponse, log, onSuccess) {
 const moduleDefault = {
   stream: true,
   buildUrl: () => CODEX_RESPONSES_URL,
-  buildHeaders: (creds) => {
+  buildHeaders: (creds, requestBody, model, originalBody) => {
     const accountId = creds?.providerSpecificData?.chatgptAccountId || decodeAccountId(creds?.idToken);
+    const snapshot = getSnapshot("codex-cli");
+    const version = snapshot?.version;
+    const sessionId = resolveSessionId({
+      headers: creds?.rawHeaders,
+      body: originalBody || requestBody,
+      connectionId: creds?.connectionId,
+      scope: "codex-image",
+    });
     return {
       "accept": "text/event-stream, application/json",
       "authorization": `Bearer ${creds?.accessToken || ""}`,
       "chatgpt-account-id": accountId || "",
       "content-type": "application/json",
       "originator": CODEX_ORIGINATOR,
-      "session_id": randomUUID(),
-      "user-agent": CODEX_USER_AGENT,
-      "version": CODEX_VERSION,
+      "session_id": sessionId,
+      "user-agent": snapshot?.userAgent || `codex_cli_rs/${version}`,
+      "version": version,
       "x-client-request-id": randomUUID(),
     };
   },

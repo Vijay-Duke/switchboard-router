@@ -10,6 +10,13 @@ const originalHome = process.env.HOME;
 const originalXdg = process.env.XDG_CONFIG_HOME;
 const originalDataDir = process.env.DATA_DIR;
 let home;
+let fullCatalogGet;
+let fullCatalogPost;
+let fullCatalogDelete;
+let createCombo;
+let createProviderConnection;
+let deleteCombo;
+let deleteProviderConnection;
 
 const payload = {
   baseUrl: "http://127.0.0.1:20128/v1",
@@ -30,6 +37,13 @@ beforeAll(async () => {
   process.env.HOME = home;
   process.env.XDG_CONFIG_HOME = path.join(home, ".config");
   process.env.DATA_DIR = path.join(home, ".switchboard");
+  ({ GET: fullCatalogGet, POST: fullCatalogPost, DELETE: fullCatalogDelete } = await import("../../src/app/api/cli-tools/claude-full-catalog/route.js"));
+  ({
+    createCombo,
+    createProviderConnection,
+    deleteCombo,
+    deleteProviderConnection,
+  } = await import("../../src/lib/db/index.js"));
 });
 
 afterAll(async () => {
@@ -100,13 +114,9 @@ describe("CLI catalog routes write native client schemas", () => {
 
   it("writes and removes an isolated Claude full-catalog launch profile", async () => {
     const profilePath = path.join(process.env.DATA_DIR, "claude-code", "full-catalog-settings.json");
-    const { GET, POST, DELETE } = await import("../../src/app/api/cli-tools/claude-full-catalog/route.js");
-    const {
-      createCombo,
-      createProviderConnection,
-      deleteCombo,
-      deleteProviderConnection,
-    } = await import("../../src/lib/db/index.js");
+    const GET = fullCatalogGet;
+    const POST = fullCatalogPost;
+    const DELETE = fullCatalogDelete;
     const provider = await createProviderConnection({
       provider: "openai-compatible-chat-claude-catalog-test",
       authType: "api_key",

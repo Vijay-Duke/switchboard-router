@@ -14,6 +14,7 @@ const moduleDefault = {
   },
   category: "oauth",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api2.cursor.sh",
     chatPath: "/aiserver.v1.ChatService/StreamUnifiedChatWithTools",
     format: "cursor",

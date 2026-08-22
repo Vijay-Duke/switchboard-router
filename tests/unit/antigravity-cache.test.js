@@ -16,7 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { PROVIDERS } from "../../open-sse/config/providers.js";
-import { ANTIGRAVITY_HEADERS, INTERNAL_REQUEST_HEADER } from "../../open-sse/config/appConstants.js";
+import { wrapHeaders } from "../../open-sse/identity/wrap.js";
 
 const ENABLE = process.env.AG_CACHE_TEST === "1";
 const DB_PATH = path.join(os.homedir(), ".switchboard", "db.json");
@@ -63,15 +63,14 @@ async function callAg({ accessToken, projectId, sessionId, longText, userText })
       sessionId
     }
   };
+  const headers = wrapHeaders({
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${accessToken}`,
+    "X-Machine-Session-Id": sessionId
+  }, { identity: "antigravity", provider: "antigravity", format: "antigravity" }).headers;
   const res = await fetch(`${baseUrl}/v1internal:generateContent`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${accessToken}`,
-      "User-Agent": ANTIGRAVITY_HEADERS["User-Agent"],
-      [INTERNAL_REQUEST_HEADER.name]: INTERNAL_REQUEST_HEADER.value,
-      "X-Machine-Session-Id": sessionId
-    },
+    headers,
     body: JSON.stringify(body)
   });
   const json = await res.json();

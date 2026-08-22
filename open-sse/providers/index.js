@@ -9,9 +9,10 @@ import { buildTtsProviderModels } from "../config/ttsModels.js";
 const OAUTH_INJECT_FIELDS = ["clientId", "clientSecret", "tokenUrl"];
 
 // transport: re-apply shared default (format:"openai") + inject oauth-canonical fields
-function buildTransport(transport, oauth) {
+export function buildTransport(transport, oauth) {
   const t = { ...transport };
   if (!t.format) t.format = PROVIDER_DEFAULTS.format;
+  if (!t.identity) t.identity = t.format === "claude" ? "claude-cli" : "openai-node";
   if (oauth) {
     for (const f of OAUTH_INJECT_FIELDS) {
       if (t[f] === undefined && oauth[f] !== undefined) t[f] = oauth[f];

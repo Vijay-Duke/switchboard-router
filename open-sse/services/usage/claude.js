@@ -35,6 +35,9 @@ export async function getClaudeUsage(accessToken, proxyOptions = null) {
         "anthropic-beta": "oauth-2025-04-20",
         "anthropic-version": CLAUDE_CONFIG.apiVersion,
       },
+      identity: "claude-cli",
+      provider: "claude",
+      format: "claude",
     }, proxyOptions);
 
     if (oauthResponse.ok) {
@@ -105,6 +108,9 @@ async function getClaudeUsageLegacy(accessToken, proxyOptions = null) {
         "Authorization": `Bearer ${accessToken}`,
         "anthropic-version": CLAUDE_CONFIG.apiVersion,
       },
+      identity: "claude-cli",
+      provider: "claude",
+      format: "claude",
     }, proxyOptions);
 
     if (settingsResponse.ok) {
@@ -119,6 +125,9 @@ async function getClaudeUsageLegacy(accessToken, proxyOptions = null) {
               "Authorization": `Bearer ${accessToken}`,
               "anthropic-version": CLAUDE_CONFIG.apiVersion,
             },
+            identity: "claude-cli",
+            provider: "claude",
+            format: "claude",
           },
           proxyOptions
         );

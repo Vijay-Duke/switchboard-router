@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
-import { OAUTH_ENDPOINTS, ANTIGRAVITY_HEADERS, INTERNAL_REQUEST_HEADER, AG_DEFAULT_TOOLS, AG_TOOL_SUFFIX } from "../config/appConstants.js";
+import { OAUTH_ENDPOINTS, AG_DEFAULT_TOOLS, AG_TOOL_SUFFIX } from "../config/appConstants.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
@@ -111,8 +111,6 @@ export class AntigravityExecutor extends BaseExecutor {
     return {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${credentials.accessToken}`,
-      "User-Agent": this.config.headers?.["User-Agent"] || ANTIGRAVITY_HEADERS["User-Agent"],
-      [INTERNAL_REQUEST_HEADER.name]: INTERNAL_REQUEST_HEADER.value,
       ...(sid && { "X-Machine-Session-Id": sid }),
       "Accept": stream ? "text/event-stream" : "application/json"
     };
@@ -268,7 +266,10 @@ export class AntigravityExecutor extends BaseExecutor {
           refresh_token: credentials.refreshToken,
           client_id: this.config.clientId,
           client_secret: this.config.clientSecret
-        })
+        }),
+        identity: this.config?.identity,
+        provider: this.provider,
+        format: this.config?.format,
       }, proxyOptions);
 
       if (!response.ok) return null;

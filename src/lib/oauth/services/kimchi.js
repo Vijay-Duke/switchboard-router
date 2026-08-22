@@ -12,9 +12,12 @@
 import { randomBytes } from "node:crypto";
 import { startLocalServer } from "../utils/server.js";
 import { KIMCHI_CONFIG } from "../constants/oauth.js";
+import { getOAuthFetchProfile } from "../providerHelpers.js";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 
 const sessions = new Map(); // state -> { result, close, timeout, done, resolved }
 const SESSION_TTL_MS = 5 * 60 * 1000;
+const KIMCHI_FETCH_PROFILE = getOAuthFetchProfile("kimchi");
 
 export function buildKimchiAuthUrl(callbackUrl, state) {
   const params = new URLSearchParams({ callback: callbackUrl, state });
@@ -91,8 +94,9 @@ export class KimchiService {
 
   async fetchProfile(token) {
     try {
-      const res = await fetch(KIMCHI_CONFIG.meUrl, {
+      const res = await proxyAwareFetch(KIMCHI_CONFIG.userInfoUrl, {
         headers: { Authorization: `Bearer ${token}` },
+        ...KIMCHI_FETCH_PROFILE,
       });
       if (!res.ok) return {};
       const j = await res.json();
@@ -110,13 +114,14 @@ export class KimchiService {
     const timer = setTimeout(() => controller.abort(), 10_000);
     let status = 0;
     try {
-      const res = await fetch(KIMCHI_CONFIG.validationUrl, {
+      const res = await proxyAwareFetch(KIMCHI_CONFIG.validationUrl, {
         method: "GET",
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
         },
         signal: controller.signal,
+        ...KIMCHI_FETCH_PROFILE,
       });
       status = res.status;
     } catch {

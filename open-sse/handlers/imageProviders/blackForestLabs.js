@@ -1,8 +1,13 @@
 // Black Forest Labs (FLUX) — async submit + polling_url
 import { sleep, nowSec, POLL_INTERVAL_MS, POLL_TIMEOUT_MS } from "./_base.js";
 import { PROVIDER_MEDIA } from "../../providers/index.js";
+import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 
-const BASE_URL = PROVIDER_MEDIA["black-forest-labs"]?.imageConfig?.baseUrl;
+const PROVIDER = "black-forest-labs";
+const IMAGE_CFG = PROVIDER_MEDIA[PROVIDER]?.imageConfig || {};
+const TRANSPORT = { identity: IMAGE_CFG.identity || "openai-node", provider: PROVIDER, format: IMAGE_CFG.format || "openai" };
+
+const BASE_URL = IMAGE_CFG.baseUrl;
 
 const moduleDefault = {
   async: true,
@@ -28,7 +33,7 @@ const moduleDefault = {
     const deadline = Date.now() + POLL_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await sleep(POLL_INTERVAL_MS);
-      const r = await fetch(pollingUrl, { headers: { "x-key": headers["x-key"], "Accept": "application/json" } });
+      const r = await proxyAwareFetch(pollingUrl, { headers: { "x-key": headers["x-key"], "Accept": "application/json" }, ...TRANSPORT });
       if (!r.ok) throw new Error(`BFL status ${r.status}`);
       const s = await r.json();
       if (s.status === "Ready") return s;

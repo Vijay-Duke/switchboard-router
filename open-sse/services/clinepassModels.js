@@ -1,4 +1,6 @@
 import { buildClineHeaders } from "../shared/clineAuth.js";
+import { PROVIDERS } from "../config/providers.js";
+import { proxyAwareFetch } from "../utils/proxyFetch.js";
 
 const CLINEPASS_MODELS_ENDPOINT = "https://api.cline.bot/api/v1/models";
 const FETCH_TIMEOUT_MS = 5000;
@@ -45,11 +47,14 @@ export async function resolveClinepassModels(credentials, options = {}) {
   try {
     const headers = buildModelListHeaders(token, isApiKey);
 
-    const response = await fetch(CLINEPASS_MODELS_ENDPOINT, {
+    const response = await proxyAwareFetch(CLINEPASS_MODELS_ENDPOINT, {
       method: "GET",
       headers,
       signal,
-    });
+      identity: PROVIDERS.clinepass.identity,
+      provider: "clinepass",
+      format: PROVIDERS.clinepass.format,
+    }, options.proxyOptions);
 
     if (!response.ok) return null;
 

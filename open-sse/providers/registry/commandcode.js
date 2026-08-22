@@ -19,6 +19,7 @@ const moduleDefault = {
   },
   category: "apikey",
   transport: {
+    identity: "openai-node",
     baseUrl: "https://api.commandcode.ai/alpha/generate",
     format: "commandcode",
     forceStream: true,
