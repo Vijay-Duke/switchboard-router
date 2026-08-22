@@ -1,9 +1,12 @@
 /**
  * Port of upstream 0648e9e4 (node:test .cjs) to vitest:
  * JetBrains Runtime 25+ sends h2c upgrades on OpenAI-compatible requests.
- * The custom server must intercept the upgrade, replay the buffered request
- * through the HTTP/1.1 handler, and respond over HTTP/1.1 with
- * Connection: close, upgrade/http2-settings headers stripped.
+ * Node routes an Upgrade request through the normal HTTP/1.1 handler when no
+ * "upgrade" listener exists (body intact); the custom server must scrub the
+ * Upgrade/HTTP2-Settings headers and reply with Connection: close. The emit
+ * hook in custom-server.js covers the listener-forced upgrade path as a
+ * fallback, so the test deliberately registers none (that path loses
+ * post-upgrade body bytes on node v18+).
  */
 
 import { describe, it, expect } from "vitest";
@@ -30,7 +33,7 @@ describe("custom-server h2c downgrade", () => {
       res.setHeader("Content-Type", "text/event-stream");
       res.end("data: [DONE]\n\n");
     });
-    server.on("upgrade", (_req, socket) => socket.destroy());
+
 
     try {
       await new Promise((resolve, reject) => {

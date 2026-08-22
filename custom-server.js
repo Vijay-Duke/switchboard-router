@@ -14,6 +14,16 @@ http.createServer = (...args) => {
   const rest = args.filter((a) => typeof a !== "function");
   if (!handler) return origCreate(...args);
   const wrapped = (req, res) => {
+    // h2c downgrade, normal-routing case: with no "upgrade" listener registered,
+    // node routes an Upgrade request through the handler as a plain HTTP/1.1
+    // request (body intact) but leaks Upgrade/HTTP2-Settings downstream. Scrub
+    // them and force Connection: close so the client sees a clean HTTP/1.1 reply.
+    if (String(req.headers.upgrade || "").toLowerCase() === "h2c") {
+      delete req.headers.upgrade;
+      delete req.headers["http2-settings"];
+      req.headers.connection = "close";
+      res.shouldKeepAlive = false;
+    }
     const socketIp = req.socket && req.socket.remoteAddress ? req.socket.remoteAddress : "";
     const xff = req.headers["x-forwarded-for"];
     const xRealIp = req.headers["x-real-ip"];
@@ -32,7 +42,11 @@ http.createServer = (...args) => {
   };
   const server = origCreate(...rest, wrapped);
   const origEmit = server.emit;
-  // JBR 25 sends h2c upgrades that the HTTP/1.1 server would otherwise close.
+  // JBR 25 sends h2c upgrades. If any component registers an "upgrade" listener
+  // (forcing node's upgrade path), intercept here and replay as HTTP/1.1. Note:
+  // this only recovers the body when it arrived coalesced with the headers —
+  // node v18+ drops post-upgrade socket bytes — hence the scrub in `wrapped`
+  // above remains the primary path.
   server.emit = function (event, ...eventArgs) {
     const [req, socket, head] = eventArgs;
     if (event !== "upgrade" || String(req.headers.upgrade || "").toLowerCase() !== "h2c") {
