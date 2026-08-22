@@ -269,8 +269,11 @@ The export contains lifetime usage request/token/cost counters; live
 active-request, connection-state/cooldown, and cache-occupancy gauges; and
 retained routing error/fallback/Auto gauges. Routing values are gauges because
 routing events are retention-limited. Labels are limited to provider, token
-direction, connection state, and fixed Auto decision source. It does not
-export prompts, responses, keys or key identities, connection/account
+direction, connection state, and fixed Auto decision source.
+Provider values are restricted to built-in registry IDs, current custom
+connection/provider-node IDs, and `unknown`; deleted custom IDs collapse into
+`unknown` rather than leaving permanent series.
+The export does not include prompts, responses, keys or key identities, connection/account
 identity, email, model, combo, endpoint, session/request identity, arbitrary
 errors, latency histograms, or cache hit/miss counters.
 

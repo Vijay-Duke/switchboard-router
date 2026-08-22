@@ -3,6 +3,7 @@ import { stringifyJson, parseJson } from "../helpers/jsonCol.js";
 import { randomUUID } from "crypto";
 import { recomputeStoredOutcome } from "open-sse/routing/scoring.js";
 import { providerOf } from "open-sse/routing/providerPreference.js";
+import { requireMetricNumber } from "@/lib/metrics/numeric.js";
 
 function nowIso() {
   return new Date().toISOString();
@@ -717,6 +718,8 @@ const AUTO_METRIC_SOURCES = [
 
 export async function getRoutingMetricSnapshot() {
   const db = await getAdapter();
+  const state = db.get(`SELECT available FROM prometheusMetricState WHERE id = 1`);
+  if (state?.available !== 1) throw new Error("Prometheus metrics unavailable");
   const rows = db.all(
     `SELECT source, requests, errors, fallbacks FROM prometheusRoutingTotals ORDER BY source`,
   ) || [];
@@ -735,11 +738,11 @@ export async function getRoutingMetricSnapshot() {
     seen.add(row.source);
     const values = {};
     for (const field of ["requests", "errors", "fallbacks"]) {
-      const value = Number(row[field]);
-      if (!Number.isFinite(value) || value < 0) {
+      try {
+        values[field] = requireMetricNumber(row[field], `${row.source}.${field}`, { integer: true });
+      } catch {
         throw new Error(`invalid Prometheus routing metric: ${row.source}.${field}`);
       }
-      values[field] = value;
     }
     autoDecisions[row.source] = values.requests;
     retainedRequests += values.requests;

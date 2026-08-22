@@ -10,6 +10,7 @@ import { stringifyJson } from "./helpers/jsonCol.js";
 import { connToRow } from "./repos/connectionsRepo.js";
 import { normalizeApiKeyRecordLookup, packApiKeyRecord, unpackApiKeyRecord } from "@/lib/crypto/secrets.js";
 import { resolveClientKeyId, scrubUsageDailyData } from "./migrations/008-client-key-identity.js";
+import { rebuildPrometheusMetrics } from "./migrations/009-prometheus-materialization.js";
 
 // Marker file: prevents re-importing legacy JSON when user wipes data.sqlite.
 const MIGRATED_MARKER = path.join(DB_DIR, ".migrated-from-json");
@@ -325,6 +326,7 @@ export async function runMigrationOnce(adapter) {
         importLegacyUsage(adapter, legacyUsage);
         importLegacyDisabled(adapter, legacyDisabled);
         importLegacyDetails(adapter, legacyDetails);
+        rebuildPrometheusMetrics(adapter);
         setMetaSync(adapter, "appVersion", getAppVersion());
         setMetaSync(adapter, "migratedAt", new Date().toISOString());
       });

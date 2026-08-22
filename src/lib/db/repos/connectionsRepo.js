@@ -3,6 +3,7 @@ import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { encryptSecret, decryptSecret } from "@/lib/crypto/secrets.js";
 import { QUOTA_AUTOPING_CONFIG } from "@/shared/constants/config.js";
+import { retirePrometheusProviderInTx } from "@/lib/metrics/providerRoster.js";
 
 export const DEFAULT_QUOTA_FRESH_MS = QUOTA_AUTOPING_CONFIG.tickIntervalMs * 2;
 
@@ -160,28 +161,6 @@ function reorderInTx(db, providerId) {
   });
 }
 
-function retirePrometheusProviderInTx(db, provider) {
-  if (!provider || provider === "unknown") return;
-  if (db.get(`SELECT 1 AS configured FROM providerConnections WHERE provider = ? LIMIT 1`, [provider])) return;
-  const row = db.get(
-    `SELECT requests, promptTokens, completionTokens, cachedTokens, cost
-     FROM prometheusUsageTotals WHERE provider = ?`,
-    [provider],
-  );
-  if (!row) return;
-  db.run(
-    `INSERT INTO prometheusUsageTotals(provider, requests, promptTokens, completionTokens, cachedTokens, cost)
-     VALUES('unknown', ?, ?, ?, ?, ?)
-     ON CONFLICT(provider) DO UPDATE SET
-       requests = requests + excluded.requests,
-       promptTokens = promptTokens + excluded.promptTokens,
-       completionTokens = completionTokens + excluded.completionTokens,
-       cachedTokens = cachedTokens + excluded.cachedTokens,
-       cost = cost + excluded.cost`,
-    [row.requests, row.promptTokens, row.completionTokens, row.cachedTokens, row.cost],
-  );
-  db.run(`DELETE FROM prometheusUsageTotals WHERE provider = ?`, [provider]);
-}
 
 export async function createProviderConnection(data) {
   const db = await getAdapter();

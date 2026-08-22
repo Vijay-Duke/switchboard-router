@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { retirePrometheusProviderInTx } from "@/lib/metrics/providerRoster.js";
 
 function rowToNode(row) {
   if (!row) return null;
@@ -90,6 +91,7 @@ export async function deleteProviderNode(id) {
     if (!row) return;
     removed = rowToNode(row);
     db.run(`DELETE FROM providerNodes WHERE id = ?`, [id]);
+    retirePrometheusProviderInTx(db, id);
   });
   return removed;
 }

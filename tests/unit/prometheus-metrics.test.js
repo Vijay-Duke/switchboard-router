@@ -22,6 +22,7 @@ function deps(overrides = {}) {
       { id: "off", provider: "anthropic", isActive: false, testStatus: "error" },
       { id: "quoted", provider: "quoted\"provider\\line\nnext", isActive: true, testStatus: "ok" },
     ],
+    getProviderNodes: async () => [],
     getActiveRequests: async () => ({ activeRequests: [
       { provider: "openai", model: "DO-NOT-EXPORT-MODEL", account: "DO-NOT-EXPORT-ACCOUNT", count: 2 },
       { provider: "openai", model: "another-secret-model", account: "another-secret-account", count: 1 },
@@ -120,6 +121,31 @@ describe("Prometheus collector", () => {
     expect(text).not.toContain("retired-b");
   });
 
+
+  it("keeps fixed native and current provider-node IDs without connections", async () => {
+    const text = await collectPrometheusMetrics(deps({
+      getUsageMetricTotals: async () => ({ byProvider: [
+        { provider: "anthropic", requests: 2, promptTokens: 20, completionTokens: 8, cachedTokens: 1, cost: 1 },
+        { provider: "custom-node", requests: 3, promptTokens: 30, completionTokens: 12, cachedTokens: 2, cost: 2 },
+        { provider: "deleted-custom", requests: 4, promptTokens: 40, completionTokens: 16, cachedTokens: 3, cost: 3 },
+      ] }),
+      getProviderConnections: async () => [],
+      getProviderNodes: async () => [{ id: "custom-node" }],
+      getActiveRequests: async () => ({ activeRequests: [
+        { provider: "anthropic", count: 1 },
+        { provider: "custom-node", count: 2 },
+        { provider: "deleted-custom", count: 3 },
+      ] }),
+    }));
+
+    expect(text).toContain('switchboard_usage_requests_total{provider="anthropic"} 2');
+    expect(text).toContain('switchboard_usage_requests_total{provider="custom-node"} 3');
+    expect(text).toContain('switchboard_usage_requests_total{provider="unknown"} 4');
+    expect(text).toContain('switchboard_active_requests{provider="anthropic"} 1');
+    expect(text).toContain('switchboard_active_requests{provider="custom-node"} 2');
+    expect(text).toContain('switchboard_active_requests{provider="unknown"} 3');
+    expect(text).not.toContain("deleted-custom");
+  });
   it("coalesces concurrent collection and reuses a short-lived snapshot", async () => {
     let reads = 0;
     let release;
@@ -151,6 +177,6 @@ describe("Prometheus collector", () => {
   it("rejects non-finite samples instead of emitting invalid text", async () => {
     await expect(collectPrometheusMetrics(deps({
       getFetchCacheMetricSnapshot: async () => ({ entries: Number.NaN, bytes: 2048 }),
-    }))).rejects.toThrow("Prometheus samples must be finite");
+    }))).rejects.toThrow("invalid Prometheus metric number");
   });
 });

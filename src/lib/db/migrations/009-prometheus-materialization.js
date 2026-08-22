@@ -1,3 +1,6 @@
+import { requireMetricNumber } from "../../metrics/numeric.js";
+import { currentMetricProviderIds } from "../../metrics/providerRoster.js";
+
 const METRIC_FIELDS = ["requests", "promptTokens", "completionTokens", "cachedTokens", "cost"];
 const AUTO_SOURCES = [
   "router",
@@ -16,29 +19,18 @@ function emptyUsage(provider) {
   return { provider, requests: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0, cost: 0 };
 }
 
-function metricValue(value, context) {
-  if (value == null) return 0;
-  const number = Number(value);
-  if (!Number.isFinite(number) || number < 0) {
-    throw new Error(`invalid Prometheus aggregate value: ${context}`);
-  }
-  return number;
+function metricValue(value, context, { integer = false } = {}) {
+  return requireMetricNumber(value === undefined ? 0 : value, context, { integer });
 }
 
 function addUsage(target, values, context) {
   for (const field of METRIC_FIELDS) {
-    target[field] += metricValue(values?.[field], `${context}.${field}`);
+    target[field] += metricValue(values?.[field], `${context}.${field}`, { integer: field !== "cost" });
   }
 }
 
 function backfillUsage(db) {
-  const configured = new Set(
-    (tableExists(db, "providerConnections")
-      ? db.all("SELECT DISTINCT provider FROM providerConnections") || []
-      : [])
-      .map((row) => String(row.provider || ""))
-      .filter(Boolean),
-  );
+  const configured = currentMetricProviderIds(db);
   const totals = new Map();
   const totalFor = (provider) => {
     if (!totals.has(provider)) totals.set(provider, emptyUsage(provider));
@@ -140,14 +132,20 @@ function backfillRouting(db) {
 
   const totals = Object.fromEntries(AUTO_SOURCES.map((source) => [source, { requests: 0, errors: 0, fallbacks: 0 }]));
   for (const row of rows) {
+    const terminalId = metricValue(row.terminalId, `${row.requestKey}.terminalId`, { integer: true });
+    const isError = metricValue(row.isError, `${row.requestKey}.isError`, { integer: true });
+    const fallbackUsed = metricValue(row.fallbackUsed, `${row.requestKey}.fallbackUsed`, { integer: true });
+    if (!AUTO_SOURCES.includes(row.source) || ![0, 1].includes(isError) || ![0, 1].includes(fallbackUsed)) {
+      throw new Error(`invalid Prometheus routing aggregate: ${row.requestKey}`);
+    }
     db.run(
       `INSERT INTO prometheusRoutingRequests(requestKey, comboName, timestamp, terminalId, source, isError, fallbackUsed)
        VALUES(?, ?, ?, ?, ?, ?, ?)`,
-      [row.requestKey, row.comboName, row.timestamp, row.terminalId, row.source, row.isError, row.fallbackUsed],
+      [row.requestKey, row.comboName, row.timestamp, terminalId, row.source, isError, fallbackUsed],
     );
     totals[row.source].requests += 1;
-    totals[row.source].errors += Number(row.isError) || 0;
-    totals[row.source].fallbacks += Number(row.fallbackUsed) || 0;
+    totals[row.source].errors += isError;
+    totals[row.source].fallbacks += fallbackUsed;
   }
   for (const source of AUTO_SOURCES) {
     const total = totals[source];
@@ -158,11 +156,40 @@ function backfillRouting(db) {
   }
 }
 
+export function rebuildPrometheusMetrics(db) {
+  db.exec(`
+    DELETE FROM prometheusUsageTotals;
+    DELETE FROM prometheusRoutingRequests;
+    DELETE FROM prometheusRoutingTotals;
+  `);
+  db.run(
+    `INSERT INTO prometheusMetricState(id, available) VALUES(1, 0)
+     ON CONFLICT(id) DO UPDATE SET available = 0`,
+  );
+  try {
+    backfillUsage(db);
+    backfillRouting(db);
+    db.run(`UPDATE prometheusMetricState SET available = 1 WHERE id = 1`);
+    return true;
+  } catch {
+    db.exec(`
+      DELETE FROM prometheusUsageTotals;
+      DELETE FROM prometheusRoutingRequests;
+      DELETE FROM prometheusRoutingTotals;
+    `);
+    return false;
+  }
+}
+
 const migration = {
   version: 9,
   name: "prometheus-materialization",
   up(db) {
     db.exec(`
+      CREATE TABLE IF NOT EXISTS prometheusMetricState (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        available INTEGER NOT NULL CHECK (available IN (0, 1))
+      );
       CREATE TABLE IF NOT EXISTS prometheusUsageTotals (
         provider TEXT PRIMARY KEY,
         requests INTEGER NOT NULL,
@@ -188,17 +215,14 @@ const migration = {
         errors INTEGER NOT NULL,
         fallbacks INTEGER NOT NULL
       );
-      DELETE FROM prometheusUsageTotals;
-      DELETE FROM prometheusRoutingRequests;
-      DELETE FROM prometheusRoutingTotals;
     `);
-    backfillUsage(db);
-    backfillRouting(db);
+    rebuildPrometheusMetrics(db);
   },
   down(db) {
     db.exec(`
       DROP TABLE IF EXISTS prometheusRoutingTotals;
       DROP TABLE IF EXISTS prometheusRoutingRequests;
+      DROP TABLE IF EXISTS prometheusMetricState;
       DROP TABLE IF EXISTS prometheusUsageTotals;
     `);
   },

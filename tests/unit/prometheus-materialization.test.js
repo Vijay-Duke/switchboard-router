@@ -113,6 +113,36 @@ describe("Prometheus materialization migration", () => {
     ]) expect(stored).not.toContain(forbidden);
   });
 
+  it("marks metrics unavailable for non-numeric legacy aggregates and can rebuild after repair", () => {
+    db.run("DELETE FROM usageDaily");
+    db.run("DELETE FROM routing_events");
+    db.run("INSERT INTO usageDaily(dateKey, data) VALUES(?, ?)", [
+      "2026-08-22",
+      JSON.stringify({
+        requests: " ",
+        promptTokens: 0,
+        completionTokens: 0,
+        cachedTokens: 0,
+        cost: 0,
+      }),
+    ]);
+
+    expect(() => materialization.up(db)).not.toThrow();
+    expect(db.get("SELECT available FROM prometheusMetricState WHERE id = 1").available).toBe(0);
+
+    db.run("UPDATE usageDaily SET data = ? WHERE dateKey = '2026-08-22'", [
+      JSON.stringify({
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        cachedTokens: 0,
+        cost: 0,
+      }),
+    ]);
+    materialization.up(db);
+    expect(db.get("SELECT available FROM prometheusMetricState WHERE id = 1").available).toBe(1);
+  });
+
   it("rolls back materialized tables without changing source data", () => {
     const usageRows = db.get("SELECT COUNT(*) AS count FROM usageDaily").count;
     const routingRows = db.get("SELECT COUNT(*) AS count FROM routing_events").count;

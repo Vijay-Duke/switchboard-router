@@ -2,10 +2,13 @@
 import { getProviderConnections } from "@/lib/db/repos/connectionsRepo.js";
 import { getFetchCacheMetricSnapshot } from "@/lib/db/repos/fetchCacheRepo.js";
 import { getRoutingMetricSnapshot } from "@/lib/db/repos/routingRepo.js";
+import { getProviderNodes } from "@/lib/db/repos/nodesRepo.js";
 import {
   getActiveRequestMetricSnapshot as getActiveRequests,
   getUsageMetricTotals,
 } from "@/lib/db/repos/usageRepo.js";
+import { requireMetricNumber } from "@/lib/metrics/numeric.js";
+import { BUILT_IN_PROVIDER_IDS } from "@/lib/metrics/providerRoster.js";
 
 const CONNECTION_STATES = ["ready", "disabled", "cooldown", "error"];
 const AUTO_SOURCES = [
@@ -32,9 +35,7 @@ function labels(values = {}) {
 }
 
 function finite(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) throw new TypeError("Prometheus samples must be finite");
-  return Object.is(number, -0) ? 0 : number;
+  return requireMetricNumber(value, "sample");
 }
 
 function family(name, help, type, samples) {
@@ -66,6 +67,7 @@ const defaultDeps = {
   getUsageMetricTotals,
   getRoutingMetricSnapshot,
   getFetchCacheMetricSnapshot,
+  getProviderNodes,
   getProviderConnections,
   getActiveRequests,
   now: () => new Date(),
@@ -82,25 +84,31 @@ function snapshotState(key) {
 
 async function collectOnce(deps) {
   const now = deps.now();
-  const [usage, routing, cache, connections, active] = await Promise.all([
+  const [usage, routing, cache, connections, nodes, active] = await Promise.all([
     deps.getUsageMetricTotals(),
     deps.getRoutingMetricSnapshot(),
     deps.getFetchCacheMetricSnapshot(now),
     deps.getProviderConnections(),
+    deps.getProviderNodes(),
     deps.getActiveRequests(),
   ]);
 
   const providers = new Set();
+  const allowedProviders = new Set(BUILT_IN_PROVIDER_IDS);
   const stateCounts = new Map();
   for (const connection of connections || []) {
     const providerId = provider(connection.provider);
     providers.add(providerId);
+    allowedProviders.add(providerId);
     const key = `${providerId}\u0000${connectionState(connection, now.getTime())}`;
     stateCounts.set(key, (stateCounts.get(key) || 0) + 1);
   }
+  for (const node of nodes || []) {
+    if (typeof node?.id === "string" && node.id) allowedProviders.add(node.id);
+  }
   const boundedProvider = (value) => {
     const candidate = provider(value);
-    return candidate === "unknown" || providers.has(candidate) ? candidate : "unknown";
+    return candidate === "unknown" || allowedProviders.has(candidate) ? candidate : "unknown";
   };
 
   const activeByProvider = new Map();

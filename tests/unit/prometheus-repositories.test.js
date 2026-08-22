@@ -10,6 +10,7 @@ let usageRepo;
 let routingRepo;
 let cacheRepo;
 let connectionsRepo;
+let nodesRepo;
 
 beforeAll(async () => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-prometheus-"));
@@ -22,6 +23,7 @@ beforeAll(async () => {
   usageRepo = await import("../../src/lib/db/repos/usageRepo.js");
   routingRepo = await import("../../src/lib/db/repos/routingRepo.js");
   connectionsRepo = await import("../../src/lib/db/repos/connectionsRepo.js");
+  nodesRepo = await import("../../src/lib/db/repos/nodesRepo.js");
   cacheRepo = await import("../../src/lib/db/repos/fetchCacheRepo.js");
 });
 
@@ -92,13 +94,24 @@ describe("Prometheus repository snapshots", () => {
     });
   });
 
-  it("rejects corrupt compact usage values", async () => {
-    db.run("DELETE FROM prometheusUsageTotals");
-    db.run(
-      `INSERT INTO prometheusUsageTotals(provider, requests, promptTokens, completionTokens, cachedTokens, cost)
-       VALUES('openai', 1, 2, 3, 0, 'not-a-number')`,
-    );
-    await expect(usageRepo.getUsageMetricTotals()).rejects.toThrow("invalid Prometheus usage metric");
+  it("rejects non-decimal, fractional, and negative compact usage values", async () => {
+    for (const [field, value] of [
+      ["requests", " "],
+      ["requests", "0x10"],
+      ["requests", 1.5],
+      ["promptTokens", 1.5],
+      ["completionTokens", -1],
+      ["cost", "not-a-number"],
+      ["cost", -0.5],
+    ]) {
+      db.run("DELETE FROM prometheusUsageTotals");
+      db.run(
+        `INSERT INTO prometheusUsageTotals(provider, requests, promptTokens, completionTokens, cachedTokens, cost)
+         VALUES('openai', 1, 2, 3, 0, 0.5)`,
+      );
+      db.run(`UPDATE prometheusUsageTotals SET ${field} = ? WHERE provider = 'openai'`, [value]);
+      await expect(usageRepo.getUsageMetricTotals()).rejects.toThrow("invalid Prometheus usage metric");
+    }
   });
 
 
@@ -120,6 +133,50 @@ describe("Prometheus repository snapshots", () => {
     expect(await usageRepo.getUsageMetricTotals()).toEqual({
       byProvider: [
         { provider: "unknown", requests: 3, promptTokens: 25, completionTokens: 10, cachedTokens: 1, cost: 2.5 },
+      ],
+    });
+  });
+
+  it("keeps built-in provider totals after the last connection is deleted", async () => {
+    db.run("DELETE FROM prometheusUsageTotals");
+    db.run("DELETE FROM providerConnections");
+    const now = "2026-08-22T00:00:00.000Z";
+    db.run(
+      `INSERT INTO providerConnections(id, provider, authType, isActive, data, createdAt, updatedAt)
+       VALUES('anthropic-connection', 'anthropic', 'apikey', 1, '{}', ?, ?)`,
+      [now, now],
+    );
+    db.run(
+      `INSERT INTO prometheusUsageTotals(provider, requests, promptTokens, completionTokens, cachedTokens, cost)
+       VALUES('anthropic', 2, 20, 8, 1, 2)`,
+    );
+
+    expect(await connectionsRepo.deleteProviderConnection("anthropic-connection")).toBe(true);
+    expect(await usageRepo.getUsageMetricTotals()).toEqual({
+      byProvider: [
+        { provider: "anthropic", requests: 2, promptTokens: 20, completionTokens: 8, cachedTokens: 1, cost: 2 },
+      ],
+    });
+  });
+
+  it("collapses a deleted custom provider-node total into unknown", async () => {
+    db.run("DELETE FROM prometheusUsageTotals");
+    db.run("DELETE FROM providerNodes");
+    const now = "2026-08-22T00:00:00.000Z";
+    db.run(
+      `INSERT INTO providerNodes(id, type, name, data, createdAt, updatedAt)
+       VALUES('custom-node', 'llm', 'Custom', '{}', ?, ?)`,
+      [now, now],
+    );
+    db.run(
+      `INSERT INTO prometheusUsageTotals(provider, requests, promptTokens, completionTokens, cachedTokens, cost)
+       VALUES('custom-node', 2, 20, 8, 1, 2)`,
+    );
+
+    expect((await nodesRepo.deleteProviderNode("custom-node")).id).toBe("custom-node");
+    expect(await usageRepo.getUsageMetricTotals()).toEqual({
+      byProvider: [
+        { provider: "unknown", requests: 2, promptTokens: 20, completionTokens: 8, cachedTokens: 1, cost: 2 },
       ],
     });
   });
@@ -182,9 +239,12 @@ describe("Prometheus repository snapshots", () => {
     });
   });
 
-  it("rejects corrupt compact routing values", async () => {
-    db.run("UPDATE prometheusRoutingTotals SET requests = 'not-a-number' WHERE source = 'router'");
-    await expect(routingRepo.getRoutingMetricSnapshot()).rejects.toThrow("invalid Prometheus routing metric");
+  it("rejects non-decimal, fractional, and negative compact routing values", async () => {
+    for (const value of [" ", "0x10", 1.5, -1]) {
+      db.run("UPDATE prometheusRoutingTotals SET requests = 0");
+      db.run("UPDATE prometheusRoutingTotals SET requests = ? WHERE source = 'router'", [value]);
+      await expect(routingRepo.getRoutingMetricSnapshot()).rejects.toThrow("invalid Prometheus routing metric");
+    }
   });
 
   it("reports active request counts without account or model dimensions", async () => {
@@ -211,18 +271,21 @@ describe("Prometheus repository snapshots", () => {
     expect(await cacheRepo.getFetchCacheMetricSnapshot(now)).toEqual({ entries: 1, bytes: 9 });
   });
 
-  it("rejects corrupt cache occupancy values", async () => {
-    db.run("DELETE FROM fetchCache");
-    db.run(
-      `INSERT INTO fetchCache(cacheKey, kind, content, sizeBytes, createdAt, expiresAt, lastAccessedAt)
-       VALUES('corrupt', 'fetch', 'x', 'not-a-number', ?, ?, ?)`,
-      [
-        "2026-08-22T00:00:00.000Z",
-        "2026-08-23T00:00:00.000Z",
-        "2026-08-22T00:00:00.000Z",
-      ],
-    );
-    await expect(cacheRepo.getFetchCacheMetricSnapshot(new Date("2026-08-22T12:00:00.000Z")))
-      .rejects.toThrow("invalid Prometheus cache metric");
+  it("rejects text and fractional cache occupancy values", async () => {
+    for (const size of ["not-a-number", 1.5]) {
+      db.run("DELETE FROM fetchCache");
+      db.run(
+        `INSERT INTO fetchCache(cacheKey, kind, content, sizeBytes, createdAt, expiresAt, lastAccessedAt)
+         VALUES('corrupt', 'fetch', 'x', ?, ?, ?, ?)`,
+        [
+          size,
+          "2026-08-22T00:00:00.000Z",
+          "2026-08-23T00:00:00.000Z",
+          "2026-08-22T00:00:00.000Z",
+        ],
+      );
+      await expect(cacheRepo.getFetchCacheMetricSnapshot(new Date("2026-08-22T12:00:00.000Z")))
+        .rejects.toThrow("invalid Prometheus cache metric");
+    }
   });
 });

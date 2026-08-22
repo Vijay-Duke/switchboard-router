@@ -37,7 +37,7 @@ describe("Schema migrations", () => {
     expect(tables).toEqual(expect.arrayContaining([
       "_meta", "settings", "providerConnections", "providerNodes",
       "proxyPools", "apiKeys", "combos", "kv", "usageHistory", "usageDaily", "requestDetails",
-      "prometheusUsageTotals", "prometheusRoutingRequests", "prometheusRoutingTotals",
+      "prometheusMetricState", "prometheusUsageTotals", "prometheusRoutingRequests", "prometheusRoutingTotals",
     ]));
   }, 15_000);
 
@@ -109,6 +109,14 @@ describe("Schema migrations", () => {
       history: [{ apiKey: "abc", provider: "openai", model: "gpt-5", cost: 1 }],
       dailySummary: {
         "2026-08-21": {
+          requests: 1,
+          promptTokens: 10,
+          completionTokens: 4,
+          cachedTokens: 2,
+          cost: 1,
+          byProvider: {
+            openai: { requests: 1, promptTokens: 10, completionTokens: 4, cachedTokens: 2, cost: 1 },
+          },
           byApiKey: { "abc|gpt-5|openai": { apiKey: "abc", rawModel: "gpt-5", provider: "openai", cost: 1 } },
         },
       },
@@ -131,6 +139,13 @@ describe("Schema migrations", () => {
 
     const connection = db.get(`SELECT data FROM providerConnections WHERE id = ?`, ["legacy-connection"]);
     expect(connection.data).not.toContain("legacy-access-token");
+
+    const { getUsageMetricTotals } = await import("@/lib/db/repos/usageRepo.js");
+    expect(await getUsageMetricTotals()).toEqual({
+      byProvider: [
+        { provider: "openai", requests: 1, promptTokens: 10, completionTokens: 4, cachedTokens: 2, cost: 1 },
+      ],
+    });
 
     const aliases = db.all(`SELECT * FROM kv WHERE scope='modelAliases'`);
     expect(aliases).toHaveLength(1);
