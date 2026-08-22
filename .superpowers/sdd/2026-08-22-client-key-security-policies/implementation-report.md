@@ -218,3 +218,34 @@ Not run by explicit assignment constraint: project-wide tests, lint, React Docto
 - The workstation's `better-sqlite3` native binding is unavailable under Node 26.7.0. Database tests transparently used the repository's `node:sqlite` adapter; semantic migration checks and closed-file/WAL byte scans still ran.
 - Migration 8's scrub is intentionally irreversible. `down()` provides prior-schema compatibility with null attribution, not reconstructed secrets; a forward fix remains the preferred operational rollback.
 - Rate and concurrency counters are intentionally process-local and reset on restart; spend remains persisted.
+
+## Review fix round 1
+
+Blocking findings from `review-findings-round1.md` were addressed in commit:
+
+- `8ac7146c fix: close client key security review gaps`
+
+### Fixes
+
+1. **Safe list consumers:** migrated dashboard CLI/MITM cards, internal model probes, Claude picker labels, application MITM startup, and CLI setup flows away from `ClientKeyRecord.key`. Listed records render `keyPrefix` metadata only. Tool setup now requires a password-style explicitly supplied secret; internal probes use the CLI-token bypass. Protected MITM auto-start now refuses to invent/reuse a listed secret.
+2. **Usage completion ordering:** `saveUsageStats` returns the persistence promise; non-stream and forced-SSE-to-JSON handlers await it. Stream completion callbacks and transform flushes are async/awaited, so a completed request's durable spend is visible before EOF.
+3. **Production migration retry:** `_migratedAdapters` is marked only after successful completion. A failed `afterUp` now retries through `runMigrationOnce` on the same adapter.
+4. **Runtime/log security paths:** all eight real handler rejection surfaces execute with a reusable test key while console output is checked for full/tail absence. Enabled request-log files are inspected for every gateway carrier. Existing non-stream, consumed-stream, cancelled-stream, source-error, and thrown-work lease tests remain green.
+5. **Matched-key spend lookup:** authentication scans active verifier records without spend joins, then issues exactly one durable spend lookup for the matched ID.
+6. **Pruning-safe spend ledger:** added monotonic `apiKeys.spentUsd`, seeded by migration 8 and incremented in the same idempotent transaction as accepted usage. History pruning no longer lowers spend. Backup/import preserves the ledger; authorization reads it.
+7. **Embeddings/STT aborts:** request abort signals now reach initial/retry embedding fetches and every STT upload/submit/poll fetch plus polling delay. Focused tests prove active upstream cancellation and exactly-once lease release.
+8. **Legacy source sanitization:** successful import checkpoints, atomically rewrites original and migration-backup `db.json`/`usage.json`, removes plaintext usage attribution, replaces key secrets with verifier records, applies mode `0600`, and supports sanitizer retry before marker creation.
+9. **Slow salted verifier:** new keys and plaintext migrations use versioned `v2:<prefix>:<salt>:<scrypt>` records. Authentication keeps constant-time v1/legacy compatibility and upgrades matched v1/plaintext rows to v2.
+
+### Red/green evidence
+
+- RED command: migration entry, repository/ledger/verifier, STT abort, safe consumers, and usage-completion tests.
+- RED result: **5 files failed with 9 expected contract failures** (same-adapter migration retry, v2 verifier, durable spend, STT signal, list consumers, awaited usage/stream completion).
+- GREEN command 1: the same focused review tests plus embeddings abort, migration chain, and all handler rejection paths.
+- GREEN result 1: **9 files passed; 38 tests passed**.
+- GREEN command 2: migration/repository/usage/policy/handler/security/log-file/abort/consumer/completion/parity/cached-token/request-ID/Responses focused suite.
+- GREEN result 2: **17 files passed; 84 tests passed**.
+- Consumer regression command: initialize lifecycle, model/provider probes, CLI route writes, and dashboard polish.
+- Consumer result: **5 files passed; 42 tests passed**.
+
+No full suite, lint, React Doctor, build, scheduler, or Prometheus command was run.
