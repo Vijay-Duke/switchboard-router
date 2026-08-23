@@ -11,6 +11,7 @@ import { MEDIA_PROVIDER_KINDS } from "@/shared/constants/providers";
  */
 const HUB_KINDS = [
   { id: "image", label: "Text to Image", icon: "brush", blurb: "Image generation providers" },
+  { id: "video", label: "Video", icon: "movie", blurb: "Video generation providers" },
   { id: "tts", label: "Text to Speech", icon: "record_voice_over", blurb: "Speech synthesis providers" },
   { id: "stt", label: "Speech to Text", icon: "mic", blurb: "Transcription providers" },
   { id: "embedding", label: "Embedding", icon: "data_array", blurb: "Vector embedding providers" },
