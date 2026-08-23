@@ -13,6 +13,7 @@ const AUTH_FALLBACK_UA = {
   copilot: "GitHubCopilotChat/0.38.0",
   qwen: "QwenCode/0.12.3 (linux; x64)",
   "grok-cli": "grok-cli/1.0.0",
+  "grok-build": "grok-shell/0.2.99",
 };
 
 function findUserAgentKey(headers) {

@@ -118,6 +118,7 @@ export async function getModelInfoCore(modelStr, aliasesOrGetter) {
 
 // Config-driven prefix → provider inference (first match wins, fallback "openai").
 const MODEL_PREFIX_PROVIDERS = [
+  [/^grok-build$/, "grok-cli"],
   [/^claude-/, "anthropic"],
   [/^gemini-/, "gemini"],
   [/^gpt-/, "openai"],

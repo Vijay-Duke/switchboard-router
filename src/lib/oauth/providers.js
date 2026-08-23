@@ -28,6 +28,7 @@ import {
   GITLAB_CONFIG,
   CODEBUDDY_CONFIG,
   KIMCHI_CONFIG,
+  GROK_CLI_CONFIG,
   getOAuthClientMetadata,
 } from "./constants/oauth";
 import { XAI_CONFIG, XAI_PKCE_VERIFIER_BYTES } from "./constants/xai";
@@ -41,6 +42,12 @@ import {
 } from "./providerHelpers";
 import { parseKiroProfileArn } from "open-sse/utils/kiroProfileArn.js";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
+import {
+  fetchGrokCliUser,
+  mapGrokCliTokens,
+  pollGrokCliToken,
+  requestGrokCliDeviceCode,
+} from "./grokCli";
 
 export { extractCodexAccountInfo, fetchKiroProfileArn };
 
@@ -267,6 +274,15 @@ const PROVIDERS = {
       }
       return mapped;
     },
+  },
+
+  "grok-cli": {
+    config: GROK_CLI_CONFIG,
+    flowType: "device_code",
+    requestDeviceCode: requestGrokCliDeviceCode,
+    pollToken: (config, deviceCode) => pollGrokCliToken(config, deviceCode),
+    postExchange: fetchGrokCliUser,
+    mapTokens: mapGrokCliTokens,
   },
 
   "gemini-cli": {

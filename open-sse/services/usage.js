@@ -13,6 +13,7 @@ import { getMiniMaxUsage } from "./usage/minimax.js";
 import { getCodeBuddyCnUsage } from "./usage/codebuddy-cn.js";
 import { getKimiUsage } from "./usage/kimi.js";
 import { getDeepseekUsage } from "./usage/deepseek.js";
+import { getGrokCliUsage } from "./usage/grok-cli.js";
 import {
   getQwenUsage,
   getIflowUsage,
@@ -48,6 +49,7 @@ const USAGE_HANDLERS = {
   kimi: (c) => getKimiUsage(c.accessToken, c.apiKey, c.proxyOptions, c.providerSpecificData),
   "kimi-coding": (c) => getKimiUsage(c.accessToken, c.apiKey, c.proxyOptions, c.providerSpecificData),
   deepseek: (c) => getDeepseekUsage(c.apiKey, c.proxyOptions),
+  "grok-cli": (c) => getGrokCliUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
 };
 
 export async function getUsageForProvider(connection, proxyOptions = null, options = {}) {

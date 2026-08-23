@@ -19,6 +19,7 @@ import { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
 import { MimoFreeExecutor } from "./mimo-free.js";
 import { CodeBuddyExecutor } from "./codebuddy-cn.js";
 import { DefaultExecutor } from "./default.js";
+import { GrokCliExecutor } from "./grok-cli.js";
 
 const executors = {
   antigravity: new AntigravityExecutor(),
@@ -44,6 +45,7 @@ const executors = {
   "mimo-free": new MimoFreeExecutor(),
   mmf: new MimoFreeExecutor(), // Alias for mimo-free
   "codebuddy-cn": new CodeBuddyExecutor(),
+  "grok-cli": new GrokCliExecutor(),
 };
 
 const defaultCache = new Map();
@@ -80,3 +82,4 @@ export { CommandCodeExecutor } from "./commandcode.js";
 export { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
 export { MimoFreeExecutor } from "./mimo-free.js";
 export { CodeBuddyExecutor } from "./codebuddy-cn.js";
+export { GrokCliExecutor } from "./grok-cli.js";

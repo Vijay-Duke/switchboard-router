@@ -15,8 +15,10 @@ import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveProviderModels } from "open-sse/services/providerModels.js";
 import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
+import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { MODEL_CATALOG_HEADER } from "@/lib/modelCatalogDiscovery";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
+import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 
 const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
 
@@ -395,6 +397,23 @@ const PROVIDER_MODELS_CONFIG = {
       parseFn: parseGeminiCliModels,
       errorLabel: "Failed to fetch Gemini CLI models"
     })
+  },
+  "grok-cli": {
+    customResolver: async (connection) => {
+      const proxyOptions = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
+      const result = await resolveGrokCliModels({
+        ...connection,
+        connectionId: connection.id,
+      }, {
+        log: console,
+        proxyOptions,
+        onCredentialsRefreshed: (refreshed) => updateProviderCredentials(connection.id, {
+          ...refreshed,
+          existingProviderSpecificData: connection.providerSpecificData || {},
+        }),
+      });
+      return withStaticFallback("grok-cli", result, "Grok CLI returned no live models");
+    },
   },
   "ollama-local": {
     customResolver: async (connection) => {

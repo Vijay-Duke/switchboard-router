@@ -32,6 +32,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
   let currentAssistantMsg = null;
   let pendingToolResults = [];
   let pendingReasoning = "";
+  let pendingEncryptedReasoning = "";
 
   const inputItems = normalizeResponsesInput(body.input);
   if (!inputItems) return body;
@@ -98,7 +99,11 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
       if (item.role === ROLE.ASSISTANT && pendingReasoning) {
         msg.reasoning_content = pendingReasoning;
       }
+      if (item.role === ROLE.ASSISTANT && pendingEncryptedReasoning) {
+        msg.encrypted_content = pendingEncryptedReasoning;
+      }
       pendingReasoning = "";
+      pendingEncryptedReasoning = "";
       result.messages.push(msg);
     }
     else if (itemType === RESPONSES_ITEM.FUNCTION_CALL) {
@@ -115,6 +120,10 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
         if (pendingReasoning) {
           currentAssistantMsg.reasoning_content = pendingReasoning;
           pendingReasoning = "";
+        }
+        if (pendingEncryptedReasoning) {
+          currentAssistantMsg.encrypted_content = pendingEncryptedReasoning;
+          pendingEncryptedReasoning = "";
         }
       }
       currentAssistantMsg.tool_calls.push({
@@ -152,6 +161,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
       // Buffer reasoning text; attached to next assistant message/function_call
       const txt = extractReasoningText(item);
       if (txt) pendingReasoning = pendingReasoning ? `${pendingReasoning}\n${txt}` : txt;
+      if (typeof item.encrypted_content === "string") pendingEncryptedReasoning = item.encrypted_content;
       continue;
     }
   }
@@ -255,10 +265,14 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
     // Convert user/assistant messages to input items
     if (msg.role === ROLE.USER || msg.role === ROLE.ASSISTANT) {
       // Preserve reasoning_content as a reasoning item before the message (PR#2401).
-      if (msg.role === ROLE.ASSISTANT && msg.reasoning_content) {
+      const encryptedReasoning = msg.encrypted_content || msg.reasoning_encrypted_content;
+      if (msg.role === ROLE.ASSISTANT && (msg.reasoning_content || encryptedReasoning)) {
         result.input.push({
           type: RESPONSES_ITEM.REASONING,
-          summary: [{ type: RESPONSES_ITEM.SUMMARY_TEXT, text: msg.reasoning_content }]
+          ...(msg.reasoning_content
+            ? { summary: [{ type: RESPONSES_ITEM.SUMMARY_TEXT, text: msg.reasoning_content }] }
+            : {}),
+          ...(encryptedReasoning ? { encrypted_content: encryptedReasoning } : {}),
         });
       }
 

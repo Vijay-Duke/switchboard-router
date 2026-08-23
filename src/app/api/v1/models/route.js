@@ -19,6 +19,7 @@ import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveCopilotModels } from "open-sse/services/copilotModels.js";
 import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
 import { resolveProviderModels } from "open-sse/services/providerModels.js";
+import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import {
   refreshImportedCursorCredentials,
   updateProviderCredentials,
@@ -36,6 +37,7 @@ import {
   readClaudeCatalogPickerLabelsFromHeaders,
   readClaudeCatalogSelectionFromHeaders,
 } from "@/shared/claudeGateway.js";
+import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 
 // Per-provider live model resolvers. Each receives a connection record and
 // returns { models: [{ id, name? }, ...] } | null on failure.
@@ -94,7 +96,20 @@ const LIVE_MODEL_RESOLVERS = {
       apiKey: conn.apiKey,
     }, { signal: options.signal });
     return result?.models?.length ? { models: result.models } : null;
-  }
+  },
+  "grok-cli": async (conn, options = {}) => {
+    const proxyOptions = await resolveConnectionProxyConfig(conn.providerSpecificData || {});
+    const result = await resolveGrokCliModels({ ...conn, connectionId: conn.id }, {
+      log: console,
+      signal: options.signal,
+      proxyOptions,
+      onCredentialsRefreshed: (refreshed) => updateProviderCredentials(conn.id, {
+        ...refreshed,
+        existingProviderSpecificData: conn.providerSpecificData || {},
+      }),
+    });
+    return result?.models?.length ? { models: result.models } : null;
+  },
 };
 
 const parseOpenAIStyleModels = (data) => {

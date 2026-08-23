@@ -64,18 +64,19 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
 
   return dedupRefresh(provider, refreshToken, async () => {
   try {
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: config.clientId,
+    });
+    if (config.clientSecret) body.set("client_secret", config.clientSecret);
     const response = await proxyAwareFetch(config.refreshUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         Accept: "application/json",
       },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-        client_id: config.clientId,
-        client_secret: config.clientSecret,
-      }),
+      body,
       identity: config.identity,
       provider,
       format: config.format,

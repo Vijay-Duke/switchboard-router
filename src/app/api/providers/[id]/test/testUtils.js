@@ -23,6 +23,7 @@ import {
 } from "@/lib/oauth/constants/oauth";
 import { XAI_CONFIG } from "@/lib/oauth/constants/xai";
 import { buildClineHeaders } from "@/shared/utils/clineAuth";
+import { GROK_CLI_BASE_URL, buildGrokCliApiHeaders } from "open-sse/config/grokCli.js";
 
 // OAuth provider test endpoints
 const OAUTH_TEST_CONFIG = {
@@ -36,6 +37,15 @@ const OAUTH_TEST_CONFIG = {
     extraHeaders: { Accept: "application/json" },
     // 403 = valid token, account may lack credits; 401 = bad/revoked token
     acceptStatuses: [403],
+    refreshable: true,
+  },
+  "grok-cli": {
+    url: `${GROK_CLI_BASE_URL}/user`,
+    method: "GET",
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    extraHeaders: buildGrokCliApiHeaders(""),
+    acceptStatuses: [402],
     refreshable: true,
   },
   codex: {
@@ -198,7 +208,7 @@ async function refreshOAuthToken(connection, effectiveProxy = null) {
       return { accessToken: data.access_token, expiresIn: data.expires_in, refreshToken: data.refresh_token || refreshToken };
     }
 
-    if (provider === "codex" || provider === "xai") {
+    if (provider === "codex" || provider === "xai" || provider === "grok-cli") {
       return await refreshProviderCredentials(provider, connection, console);
     }
 

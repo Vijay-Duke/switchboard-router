@@ -1,5 +1,6 @@
 import { ANTHROPIC_API_VERSION } from "../providers/shared.js";
 import { mapStainlessArch, mapStainlessOs, hostArch, hostPlatform } from "./os.js";
+import { GROK_CLI_CLIENT_IDENTIFIER, GROK_CLI_VERSION } from "../config/grokCli.js";
 
 const CLAUDE_BETAS = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advanced-tool-use-2025-11-20,effort-2025-11-24,structured-outputs-2025-12-15,fast-mode-2026-02-01,redact-thinking-2026-02-12,token-efficient-tools-2026-03-28";
 
@@ -138,6 +139,16 @@ function grokCliHeaders(snapshot) {
   };
 }
 
+function grokBuildHeaders() {
+  const arch = hostArch() === "x64" ? "x86_64" : hostArch();
+  const os = hostPlatform() === "win32" ? "windows" : hostPlatform();
+  return {
+    "User-Agent": `grok-shell/${GROK_CLI_VERSION} (${os}; ${arch})`,
+    "x-grok-client-identifier": GROK_CLI_CLIENT_IDENTIFIER,
+    "x-grok-client-version": GROK_CLI_VERSION,
+  };
+}
+
 function chromeHeaders() {
   return {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
@@ -251,6 +262,14 @@ export const PROFILES = {
     source: { capture: "grok-cli" },
     headers: grokCliHeaders,
   },
+  "grok-build": {
+    id: "grok-build",
+    tls: "node",
+    alpn: ["h2", "http/1.1"],
+    headerOrder: ["Authorization", "Content-Type", "Accept", "User-Agent", "x-grok-client-identifier", "x-grok-client-version"],
+    source: { capture: "@xai-official/grok 0.2.99" },
+    headers: grokBuildHeaders,
+  },
 };
 
 export function getProfile(profileId) {
@@ -285,6 +304,7 @@ export function resolveProfileId(identity, hint = {}) {
   if (provider === "cline" || provider === "clinepass") return "cline";
   if (provider === "kimi" || provider === "kimi-coding") return "kimi";
   if (provider === "xai") return "grok-cli";
+  if (provider === "grok-cli") return "grok-build";
   if (provider === "grok-web") return "chrome";
   if (provider === "cursor" || format === "cursor") return "cursor";
   if (OPENAI_FAMILY.has(format) || format === "openai" || !format) return "openai-node";

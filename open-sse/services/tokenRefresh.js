@@ -154,6 +154,7 @@ const REFRESH_HANDLERS = {
   github: (c, log) => refreshGitHubToken(c.refreshToken, log),
   kiro: (c, log) => refreshKiroToken(c.refreshToken, c.providerSpecificData, log),
   xai: (c, log) => refreshXaiToken(c.refreshToken, log),
+  "grok-cli": (c, log) => refreshAccessToken("grok-cli", c.refreshToken, c, log),
   "codebuddy-cn": (c, log) => refreshCodebuddyToken(c.refreshToken, log),
   vertex: (c, log) => vertexRefreshHandler(c, log, "vertex"),
   "vertex-partner": (c, log) => vertexRefreshHandler(c, log, "vertex-partner"),
@@ -219,6 +220,7 @@ export function formatProviderCredentials(provider, credentials, log) {
     case "openai":
     case "openrouter":
     case "xai":
+    case "grok-cli":
       return {
         apiKey: credentials.apiKey,
         accessToken: credentials.accessToken
