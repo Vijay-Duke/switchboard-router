@@ -129,6 +129,7 @@ Examples:
   switchboard restart --port ${defaultPort}
   switchboard xai video --prompt "a neon city" --output video.mp4
   switchboard stop
+  switchboard xai video --prompt "a neon city" --output video.mp4
 `;
 }
 

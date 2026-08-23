@@ -36,8 +36,9 @@ const moduleDefault = {
     { id: "grok-imagine-video", name: "Grok Imagine Video", params: ["duration","aspect_ratio","resolution"], kind: "video" },
   ],
   serviceKinds: ["llm","imageToText","webSearch","image","video"],
-  videoConfig: { identity: "grok-cli", baseUrl: "https://api.x.ai/v1/videos" },
+
   imageConfig: { identity: "grok-cli", baseUrl: "https://api.x.ai/v1/images/generations", bodyFields: ["model","prompt","n","response_format"] },
+  videoConfig: { identity: "grok-cli", baseUrl: "https://api.x.ai/v1/videos" },
   searchViaChat: {
     defaultModel: "grok-4.20-reasoning",
     endpoint: "https://api.x.ai/v1/responses",
