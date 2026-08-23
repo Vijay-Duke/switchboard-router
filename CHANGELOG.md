@@ -1,3 +1,14 @@
+# v0.9.0 (2026-08-23)
+
+## Features
+- **OpenCode Go**: route models through their native OpenAI, Claude, or Responses transports with per-model fallback
+- **Self-hosted modalities**: add connection-backed STT, TTS, and embedding providers with explicit HTTP(S) endpoints and optional API keys
+- **Grok Build**: add device OAuth, token refresh, live models, usage, official client identity, and Responses transport for Grok subscription accounts
+
+## Fixes
+- **Streaming retries**: retry known transient SSE overload errors only before meaningful output, with bounded byte-exact replay
+- **Provider reliability**: preserve connection proxies during Grok refresh, bound optional usage metadata, forward self-hosted cancellation, and invalidate closed OAuth device flows
+
 # v0.8.1 (2026-08-23)
 
 ## Fixes
