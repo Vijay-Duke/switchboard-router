@@ -40,62 +40,66 @@ import p37 from "./glm-cn.js";
 import p38 from "./glm.js";
 import p39 from "./google-pse.js";
 import p40 from "./google-tts.js";
-import p41 from "./grok-web.js";
-import p42 from "./groq.js";
-import p43 from "./huggingface.js";
-import p44 from "./hyperbolic.js";
-import p45 from "./iflow.js";
-import p46 from "./inworld.js";
-import p47 from "./jina-ai.js";
-import p48 from "./jina-reader.js";
-import p49 from "./kilocode.js";
-import p50 from "./kimchi.js";
-import p51 from "./kimi-coding.js";
-import p52 from "./kimi.js";
-import p53 from "./kiro.js";
-import p54 from "./linkup.js";
-import p55 from "./local-device.js";
-import p56 from "./mimo-free.js";
-import p57 from "./minimax-cn.js";
-import p58 from "./minimax.js";
-import p59 from "./mistral.js";
-import p60 from "./mmf.js";
-import p61 from "./nanobanana.js";
-import p62 from "./nebius.js";
-import p63 from "./nvidia.js";
-import p64 from "./ollama-local.js";
-import p65 from "./ollama.js";
-import p66 from "./openai.js";
-import p67 from "./opencode-go.js";
-import p68 from "./opencode.js";
-import p69 from "./openrouter.js";
-import p70 from "./perplexity-web.js";
-import p71 from "./perplexity.js";
-import p72 from "./playht.js";
-import p73 from "./qoder.js";
-import p74 from "./qwen.js";
-import p75 from "./recraft.js";
-import p76 from "./runwayml.js";
-import p77 from "./sdwebui.js";
-import p78 from "./searchapi.js";
-import p79 from "./searxng.js";
-import p80 from "./serper.js";
-import p81 from "./siliconflow.js";
-import p82 from "./stability-ai.js";
-import p83 from "./tavily.js";
-import p84 from "./together.js";
-import p85 from "./topaz.js";
-import p86 from "./tortoise.js";
-import p87 from "./venice.js";
-import p88 from "./vercel-ai-gateway.js";
-import p89 from "./vertex-partner.js";
-import p90 from "./vertex.js";
-import p91 from "./volcengine-ark.js";
-import p92 from "./voyage-ai.js";
-import p93 from "./xai.js";
-import p94 from "./xiaomi-mimo.js";
-import p95 from "./xiaomi-tokenplan.js";
-import p96 from "./youcom.js";
+import p41 from "./grok-cli.js";
+import p42 from "./grok-web.js";
+import p43 from "./groq.js";
+import p44 from "./huggingface.js";
+import p45 from "./hyperbolic.js";
+import p46 from "./iflow.js";
+import p47 from "./inworld.js";
+import p48 from "./jina-ai.js";
+import p49 from "./jina-reader.js";
+import p50 from "./kilocode.js";
+import p51 from "./kimchi.js";
+import p52 from "./kimi-coding.js";
+import p53 from "./kimi.js";
+import p54 from "./kiro.js";
+import p55 from "./linkup.js";
+import p56 from "./local-device.js";
+import p57 from "./mimo-free.js";
+import p58 from "./minimax-cn.js";
+import p59 from "./minimax.js";
+import p60 from "./mistral.js";
+import p61 from "./mmf.js";
+import p62 from "./nanobanana.js";
+import p63 from "./nebius.js";
+import p64 from "./nvidia.js";
+import p65 from "./ollama-local.js";
+import p66 from "./ollama.js";
+import p67 from "./openai.js";
+import p68 from "./opencode-go.js";
+import p69 from "./opencode.js";
+import p70 from "./openrouter.js";
+import p71 from "./perplexity-web.js";
+import p72 from "./perplexity.js";
+import p73 from "./playht.js";
+import p74 from "./qoder.js";
+import p75 from "./qwen.js";
+import p76 from "./recraft.js";
+import p77 from "./runwayml.js";
+import p78 from "./sdwebui.js";
+import p79 from "./searchapi.js";
+import p80 from "./searxng.js";
+import p81 from "./selfhosted-embedding.js";
+import p82 from "./selfhosted-stt.js";
+import p83 from "./selfhosted-tts.js";
+import p84 from "./serper.js";
+import p85 from "./siliconflow.js";
+import p86 from "./stability-ai.js";
+import p87 from "./tavily.js";
+import p88 from "./together.js";
+import p89 from "./topaz.js";
+import p90 from "./tortoise.js";
+import p91 from "./venice.js";
+import p92 from "./vercel-ai-gateway.js";
+import p93 from "./vertex-partner.js";
+import p94 from "./vertex.js";
+import p95 from "./volcengine-ark.js";
+import p96 from "./voyage-ai.js";
+import p97 from "./xai.js";
+import p98 from "./xiaomi-mimo.js";
+import p99 from "./xiaomi-tokenplan.js";
+import p100 from "./youcom.js";
 
 const providerRegistry = [
   p0,
@@ -194,7 +198,11 @@ const providerRegistry = [
   p93,
   p94,
   p95,
-  p96
+  p96,
+  p97,
+  p98,
+  p99,
+  p100
 ];
 
 export default providerRegistry;
