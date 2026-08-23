@@ -1,4 +1,4 @@
-# Unreleased
+# v0.8.0 (2026-08-23)
 
 ## Features
 - **SSRF search guard**: outbound search/fetch tooling validates resolved upstream addresses against private/link-local ranges before connect, fail-closed on DNS ambiguity
@@ -7,12 +7,31 @@
 - **Usage quota trackers**: extended provider quota tracking with background token-quota refresh (rotation-safe apply), Ollama usage accounting, and soft-failure cache release so tokens recover from transient OAuth/legacy endpoint errors without restart
 - **PXPIPE token saver**: opt-in compression of bulky Claude-format prompts into dense multimodal encodings via the `pxpipe-proxy` library API — fail-open engine with min-size/timeout gates, in-process loader, JSONL stats with windowed dashboard (`/dashboard/pxpipe`), setup/health controls on the Token Saver page, and per-request summaries in usage request details
 - **Session-colored logging**: unified request-lifecycle log tags (`open-sse/utils/logTags.js`) print one colored tag per request across start/upstream/fallback/done/disconnect/error lines
+- **Videos**: `/v1/videos` generation proxy routes with core/app handlers, `switchboard xai video` CLI command, and `grok-imagine-video` in the xAI registry
+- **Headroom extras**: extras detection with pip install/uninstall and managed restart, plus dashboard extras management UI
+- **Proactive token refresh**: background OAuth refresh before expiry; refresh_token rotates between retry attempts
+- **Capacity pools**: combos port capacity adapter pools with vision/audio default-enable; hidden capability pools survive settings edits
+- **Endpoint auto-provisioning**: a default API key is provisioned on first run
+- **Usage force flag**: wired through the client and usage route to bypass caches on demand
+- **Dashboard error boundary**: recoverable per-segment error boundary instead of full-page failure
 
 ## Fixes
 - **h2c downgrade**: JBR-style `Upgrade: h2c` requests are served as clean HTTP/1.1 — upgrade/HTTP2-Settings headers scrubbed and `Connection: close` forced; emit-hook replay retained as fallback
 - **Claude quota**: settled soft-failure promise placeholders are released from the usage cache instead of pinning a token to a stale error until restart (upstream parity fix)
 - **Video routes**: wildcard CORS removed from all video proxy endpoints
 - **Translator**: mid-conversation system blocks fold into the preceding user turn for cache stability (upstream-verified behavior); tests aligned accordingly
+- **Codex reset windows**: routing honors precise codex reset windows and self-reported exhaustion before scheduling an account
+- **Command Code**: connection test against the Command Code provider is supported
+- **Dashboard**: real runtime port is served before hydration; completed memo dependency arrays in ModelSelectModal
+- **Kimi OAuth**: device id persists across the oauth flow and executors, minted device id forwarded through the poll circuit, and the kimi-coding usage handler is registered
+- **PXPIPE**: restored requestId wiring, ported `/api/pxpipe/logs` honoring token-saver opt-out, and cache-busted module reloads by content
+- **Capacity**: history trimmed to fit the adapter context window; input-modality caps exposed to the model picker UI
+- **SSRF hardening**: literal parsing rejects shorthand/full-form evasions, resolved IPs are rechecked against the guard before fetch, and override fetches reject redirects
+- **Identity wrap**: dashboard-route identity wrap cutovers completed
+- **Claude**: passthrough cache breakpoints re-anchor with 1h TTL; global header cache removed and `anthropic-beta` gated by model; temperature dropped for all Claude models
+- **Translator**: `prompt_cache_key` preserved converting chat→responses; empty `tool_calls` arrays no longer close the message; JSON Schema keywords Gemini lacks are dropped
+- **Integration/quota fixes**: quota registry flags, video endpoint path, and hub card alignment
+- **CI**: standalone pack guard no longer false-positives on the Next.js 16 nested layout; gitbook audit gate cleared via patched postcss pin
 
 # v0.7.0 (2026-08-22)
 
