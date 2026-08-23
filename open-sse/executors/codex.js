@@ -8,13 +8,9 @@ import {
 import { normalizeResponsesInput } from "../translator/formats/responsesApi.js";
 import { fetchImageAsBase64 } from "../translator/concerns/image.js";
 import { getModelUpstreamId } from "../config/providerModels.js";
-import { DEFAULT_RETRY_CONFIG, resolveRetryEntry } from "../config/runtimeConfig.js";
 import { dbg } from "../utils/debugLog.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
-
-// SSE error patterns inside 200-OK body that should trigger retry as if 503
-const CODEX_SSE_OVERLOADED_PATTERNS = ["server_is_overloaded", "service_unavailable_error"];
-const CODEX_SSE_PEEK_BYTES = 4096;
+import { executeWithPreOutputSseRetry } from "../utils/sseTransientRetry.js";
 
 // Server-generated item id prefixes that Codex /responses cannot resolve when store=false
 const SERVER_ID_PATTERN = /^(rs|fc|resp|msg)_/;
@@ -191,89 +187,13 @@ export class CodexExecutor extends BaseExecutor {
       await this.prefetchImages(args.body);
     }
 
-    // Retry loop for SSE-level overloaded errors (200 OK body contains event: error)
-    // Reuses 503 retry config — same semantic: upstream temporarily unavailable
-    const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
-    const { attempts, delayMs } = resolveRetryEntry(retryConfig[503]);
-    let attempt = 0;
-    while (true) {
-      const result = await super.execute(args);
-      const peek = await this._peekSseOverloaded(result.response);
-      if (!peek.matched) {
-        // Replace body with re-assembled stream (prefix bytes already read + rest)
-        if (peek.replacementBody) {
-          result.response = new Response(peek.replacementBody, {
-            status: result.response.status,
-            statusText: result.response.statusText,
-            headers: result.response.headers,
-          });
-        }
-        return result;
-      }
-      if (attempt >= attempts) {
-        args.log?.warn?.("RETRY", `CODEX | SSE overloaded "${peek.matched}" — retries exhausted (${attempt}/${attempts})`);
-        // Out of retries → return with replacement body so client gets the error
-        if (peek.replacementBody) {
-          result.response = new Response(peek.replacementBody, {
-            status: result.response.status,
-            statusText: result.response.statusText,
-            headers: result.response.headers,
-          });
-        }
-        return result;
-      }
-      attempt++;
-      args.log?.debug?.("RETRY", `CODEX | SSE "${peek.matched}" retry ${attempt}/${attempts} after ${delayMs / 1000}s`);
-      dbg("CODEX", `SSE overloaded "${peek.matched}" → retry ${attempt}/${attempts} in ${delayMs}ms`);
-      try { await result.response.body?.cancel?.(); } catch { /* noop */ }
-      await new Promise(r => setTimeout(r, delayMs));
-    }
-  }
-
-  // Peek first N bytes of SSE body to detect upstream "overloaded" errors.
-  // Returns { matched: string|null, replacementBody: ReadableStream|null }.
-  // Caller MUST use replacementBody (original body has been read).
-  async _peekSseOverloaded(response) {
-    if (!response || !response.ok || !response.body) return { matched: null, replacementBody: null };
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    const chunks = [];
-    let text = "";
-    let matched = null;
-    try {
-      while (text.length < CODEX_SSE_PEEK_BYTES) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        text += decoder.decode(value, { stream: true });
-        const hit = CODEX_SSE_OVERLOADED_PATTERNS.find(p => text.includes(p));
-        if (hit) { matched = hit; break; }
-      }
-    } catch (e) {
-      dbg("CODEX", `peek read error: ${e.message}`);
-    }
-    reader.releaseLock();
-
-    // Re-assemble stream: prefix chunks + remaining upstream body
-    const upstream = response.body;
-    let upstreamReader = null;
-    const replacementBody = new ReadableStream({
-      start(controller) {
-        for (const c of chunks) controller.enqueue(c);
-        upstreamReader = upstream.getReader();
-      },
-      async pull(controller) {
-        try {
-          const { done, value } = await upstreamReader.read();
-          if (done) { controller.close(); return; }
-          controller.enqueue(value);
-        } catch (e) { controller.error(e); }
-      },
-      cancel(reason) {
-        try { upstreamReader?.cancel(reason); } catch { /* noop */ }
-      },
+    return executeWithPreOutputSseRetry({
+      execute: () => super.execute(args),
+      retryConfig: this.config.retry,
+      signal: args.signal,
+      log: args.log,
+      provider: "codex",
     });
-    return { matched, replacementBody };
   }
 
   // Parse Codex usage_limit_reached to extract precise resetsAtMs; fallback to default otherwise

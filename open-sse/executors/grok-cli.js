@@ -10,6 +10,7 @@ import { normalizeResponsesInput } from "../translator/formats/responsesApi.js";
 import { getModelUpstreamId } from "../config/providerModels.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { getConsistentMachineId } from "../shared/machineId.js";
+import { executeWithPreOutputSseRetry } from "../utils/sseTransientRetry.js";
 import {
   GROK_CLI_BASE_URL,
   GROK_CLI_CLIENT_IDENTIFIER,
@@ -197,7 +198,13 @@ export class GrokCliExecutor extends BaseExecutor {
     const credentials = { ...(args.credentials || {}) };
     const meta = requestMetadata(credentials, args.body);
     if (!meta.agentId) meta.agentId = formatAgentId(await getConsistentMachineId("grok-cli-agent"));
-    return super.execute({ ...args, credentials });
+    return executeWithPreOutputSseRetry({
+      execute: () => super.execute({ ...args, credentials }),
+      retryConfig: this.config.retry,
+      signal: args.signal,
+      log: args.log,
+      provider: "grok-cli",
+    });
   }
 
   parseError(response, bodyText) {
