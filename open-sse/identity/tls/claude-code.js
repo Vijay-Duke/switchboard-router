@@ -6,9 +6,11 @@ import { PassThrough, Readable } from "node:stream";
 import { CLAUDE_CODE_ALPN, CLAUDE_CODE_TLS_SPEC_REV } from "./claude-code-spec.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const helperName = process.platform === "win32" ? "switchboard-claude-tls.exe" : "switchboard-claude-tls";
 const candidates = [
   process.env.SWITCHBOARD_CLAUDE_TLS_HELPER,
-  path.join(here, "bin", process.platform, process.arch, process.platform === "win32" ? "switchboard-claude-tls.exe" : "switchboard-claude-tls"),
+  path.join(process.cwd(), "open-sse", "identity", "tls", "bin", process.platform, process.arch, helperName),
+  path.join(here, "bin", process.platform, process.arch, helperName),
 ].filter(Boolean);
 
 const DEFAULT_HELPER_TIMEOUT_MS = 60_000;

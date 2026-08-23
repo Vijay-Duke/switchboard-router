@@ -25,9 +25,16 @@ function snapshotPath(profileId) {
 
 function loadCommittedVersions() {
   try {
-    return JSON.parse(fs.readFileSync(new URL("./snapshots/versions.json", import.meta.url), "utf8"));
+    return JSON.parse(fs.readFileSync(
+      path.join(process.cwd(), "open-sse", "identity", "snapshots", "versions.json"),
+      "utf8",
+    ));
   } catch {
-    return {};
+    try {
+      return JSON.parse(fs.readFileSync(new URL("./snapshots/versions.json", import.meta.url), "utf8"));
+    } catch {
+      return {};
+    }
   }
 }
 

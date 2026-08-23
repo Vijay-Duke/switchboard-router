@@ -104,6 +104,8 @@ describe("universal CLI native packaging", () => {
   const cliPackage = JSON.parse(fs.readFileSync(path.join(repoRoot, "cli", "package.json"), "utf8"));
   const cliLock = JSON.parse(fs.readFileSync(path.join(repoRoot, "cli", "package-lock.json"), "utf8"));
   const cliBuild = fs.readFileSync(path.join(repoRoot, "cli", "scripts", "build-cli.js"), "utf8");
+  const snapshotSource = fs.readFileSync(path.join(repoRoot, "open-sse", "identity", "snapshot.js"), "utf8");
+  const helperSource = fs.readFileSync(path.join(repoRoot, "open-sse", "identity", "tls", "claude-code.js"), "utf8");
 
   it("declares every impit native package as an exact optional dependency", () => {
     expect(Object.fromEntries(impitPackages.map((name) => [name, cliPackage.optionalDependencies[name]]))).toEqual(
@@ -128,11 +130,17 @@ describe("universal CLI native packaging", () => {
     expect(cliBuild).toContain('"open-sse", "identity", "tls", "bin"');
   });
 
-  it("contains all six prebuilt helper executables without Go sources", () => {
+  it("contains the identity snapshot and all six prebuilt helpers without Go sources", () => {
+    expect(fs.existsSync(path.join(repoRoot, "cli", "app", "open-sse", "identity", "snapshots", "versions.json"))).toBe(true);
     for (const helperPath of helperTarPaths) {
       expect(fs.existsSync(path.join(repoRoot, "cli", helperPath)), helperPath).toBe(true);
     }
     expect(fs.existsSync(path.join(repoRoot, "cli", "app", "open-sse", "identity", "tls", "native", "main.go"))).toBe(false);
+  });
+
+  it("resolves Claude identity assets from the standalone runtime directory", () => {
+    expect(snapshotSource).toContain('path.join(process.cwd(), "open-sse", "identity", "snapshots", "versions.json")');
+    expect(helperSource).toContain('path.join(process.cwd(), "open-sse", "identity", "tls", "bin"');
   });
 
   it("bundles generic impit without treating the host native package as the cross-platform source", () => {
