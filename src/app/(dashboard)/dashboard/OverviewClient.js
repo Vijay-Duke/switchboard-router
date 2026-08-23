@@ -15,7 +15,7 @@ const STRATEGY_LABELS = {
  * Overview — live endpoint stats + honest combo strategy summary (not always Auto).
  */
 export default function OverviewClient({ initialData }) {
-  const [host, setHost] = useState("127.0.0.1:20128");
+  const [host, setHost] = useState(initialData?.endpointHost || "127.0.0.1:20128");
   const [stats, setStats] = useState(null);
 
   const providerCount = initialData?.providerCount ?? 0;

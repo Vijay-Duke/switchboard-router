@@ -61,15 +61,16 @@ const NAV_SECTIONS = [
   },
 ];
 
-export default function Sidebar({ onClose }) {
+export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) {
   const pathname = usePathname();
   const [isDisconnected, setIsDisconnected] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [shutdownCountdown, setShutdownCountdown] = useState(0);
-  // Stable SSR default — set real host only after mount (avoids hydration mismatch)
-  const [endpointHost, setEndpointHost] = useState(`127.0.0.1:${UPDATER_CONFIG.appPort}`);
+  // Server passes the real runtime port (see dashboard layout); window.location
+  // wins after mount so a proxied/LAN host still displays correctly.
+  const [endpointHost, setEndpointHost] = useState(initialEndpointHost || `127.0.0.1:${UPDATER_CONFIG.appPort}`);
   const { copied, copy } = useCopyToClipboard(2000);
 
   const INSTALL_CMD = UPDATER_CONFIG.installCmdLatest;

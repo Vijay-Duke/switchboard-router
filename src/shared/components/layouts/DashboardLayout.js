@@ -32,7 +32,7 @@ function getToastStyle(type) {
   };
 }
 
-export default function DashboardLayout({ children }) {
+export default function DashboardLayout({ children, endpointHost }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
   const notifications = useNotificationStore((state) => state.notifications);
@@ -98,7 +98,7 @@ export default function DashboardLayout({ children }) {
       )}
 
       <div className="hidden lg:flex h-full">
-        <Sidebar />
+        <Sidebar endpointHost={endpointHost} />
       </div>
 
       <div
@@ -106,7 +106,7 @@ export default function DashboardLayout({ children }) {
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <Sidebar onClose={() => setSidebarOpen(false)} />
+        <Sidebar endpointHost={endpointHost} onClose={() => setSidebarOpen(false)} />
       </div>
 
       <main className="flex flex-col flex-1 h-full min-w-0 relative isolate">

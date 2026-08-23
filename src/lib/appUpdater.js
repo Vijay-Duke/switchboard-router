@@ -169,13 +169,19 @@ function resolveRelaunchCommand() {
   return { cmd: npx, args: [UPDATER_CONFIG.npmPackageName] };
 }
 
-function resolveRelaunchSettings() {
+// Loopback port the dashboard chrome shows before client hydration can read
+// window.location. Server-side only — process.env.PORT does not exist in the
+// browser bundle, so this value must reach client components via props.
+export function getLocalEndpointPort() {
   const configuredPort = Number.parseInt(process.env.PORT || "", 10);
-  const port = Number.isInteger(configuredPort) && configuredPort > 0
+  return Number.isInteger(configuredPort) && configuredPort > 0
     ? configuredPort
     : UPDATER_CONFIG.appPort;
+}
+
+function resolveRelaunchSettings() {
   const host = process.env.HOST || process.env.HOSTNAME || "127.0.0.1";
-  return { port, host };
+  return { port: getLocalEndpointPort(), host };
 }
 
 // Spawn detached headless updater (Node process) then exit current server
