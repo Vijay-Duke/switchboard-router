@@ -296,6 +296,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
  * @param {string} errorText
  * @param {string|null} provider
  * @param {string|null} model - The specific model that triggered the error
+ * @param {number|null} resetsAtMs - Precise upstream reset epoch (e.g. codex usage_limit_reached);
+ *   locks until then (capped) and persists an exhausted lastQuota snapshot for quota-first routing
  * @returns {{ shouldFallback: boolean, cooldownMs: number }}
  */
 export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null) {
@@ -305,8 +307,9 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   const backoffLevel = conn?.backoffLevel || 0;
 
   // Provider-specific precise cooldown (e.g. codex usage_limit_reached resets_at) overrides backoff
+  const preciseReset = Boolean(resetsAtMs && resetsAtMs > Date.now());
   let shouldFallback, cooldownMs, newBackoffLevel;
-  if (resetsAtMs && resetsAtMs > Date.now()) {
+  if (preciseReset) {
     shouldFallback = true;
     cooldownMs = Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
     newBackoffLevel = 0;
@@ -324,7 +327,12 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     lastError: reason,
     errorCode: status,
     lastErrorAt: new Date().toISOString(),
-    backoffLevel: newBackoffLevel ?? backoffLevel
+    backoffLevel: newBackoffLevel ?? backoffLevel,
+    // Self-report exhaustion so quota-first routing demotes this account
+    // immediately instead of waiting for the next auto-ping snapshot.
+    ...(preciseReset
+      ? { lastQuota: { remainingPercentage: 0, resetAt: new Date(resetsAtMs).toISOString(), at: Date.now() } }
+      : {}),
   });
 
   const lockKey = Object.keys(lockUpdate)[0];
