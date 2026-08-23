@@ -194,10 +194,12 @@ copyRecursive(standaloneApp, cliAppDir);
 // A clean release bundle contains exactly one active Next dist tree. Fail the
 // pack rather than silently shipping recursively traced builds, tests, or CLI
 // build homes when someone runs `npm run cli:pack` from a used checkout.
+// NOTE: a top-level .next here is REQUIRED — since the Next.js 16 nested
+// layout the copied standalone root ships server.js next to its compiled
+// .next/, so only foreign build homes (.next-*) stay forbidden.
 const forbiddenTopLevel = fs.readdirSync(cliAppDir).filter((name) =>
   name === "tests" ||
   name === "cli" ||
-  name === ".next" ||
   (name.startsWith(".next-") && name !== buildDistDirName)
 );
 if (forbiddenTopLevel.length) {
