@@ -53,13 +53,20 @@ export async function handleEmbeddingsCore({
   }
 
   const ctx = { input };
-  const url = adapter.buildUrl(model, credentials, ctx);
-  const headers = adapter.buildHeaders(credentials, ctx);
-  const requestBody = adapter.buildBody(model, {
-    input,
-    encoding_format: body.encoding_format || "float",
-    dimensions: body.dimensions,
-  });
+  let url;
+  let headers;
+  let requestBody;
+  try {
+    url = adapter.buildUrl(model, credentials, ctx);
+    headers = adapter.buildHeaders(credentials, ctx);
+    requestBody = adapter.buildBody(model, {
+      input,
+      encoding_format: body.encoding_format || "float",
+      dimensions: body.dimensions,
+    });
+  } catch (error) {
+    return createErrorResult(HTTP_STATUS.BAD_REQUEST, error.message || "Invalid embeddings configuration");
+  }
 
   log?.debug?.("EMBEDDINGS", `${provider.toUpperCase()} | ${model} | input_type=${Array.isArray(input) ? `array[${input.length}]` : "string"}`);
 
@@ -72,7 +79,7 @@ export async function handleEmbeddingsCore({
 
   let providerResponse;
   try {
-    await assertPublicUrlResolved(url, ssrfAllowHosts);
+    if (provider !== "selfhosted-embedding") await assertPublicUrlResolved(url, ssrfAllowHosts);
     providerResponse = await proxyAwareFetch(url, {
       method: "POST",
       headers,
@@ -118,7 +125,7 @@ export async function handleEmbeddingsCore({
       try {
         const retryHeaders = adapter.buildHeaders(credentials, ctx);
         const retryUrl = adapter.buildUrl(model, credentials, ctx);
-        await assertPublicUrlResolved(retryUrl, ssrfAllowHosts);
+        if (provider !== "selfhosted-embedding") await assertPublicUrlResolved(retryUrl, ssrfAllowHosts);
         await providerResponse.body?.cancel?.().catch?.(() => {});
         providerResponse = await proxyAwareFetch(retryUrl, {
           method: "POST",

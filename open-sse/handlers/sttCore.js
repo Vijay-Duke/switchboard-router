@@ -214,11 +214,25 @@ export async function handleSttCore({ provider, model, formData, credentials, st
   const file = formData.get("file");
   if (!file) return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Missing required field: file");
 
-  const cfg = sttConfig;
+  let cfg = sttConfig;
   if (!cfg) return createErrorResult(HTTP_STATUS.BAD_REQUEST, `Provider '${provider}' does not support STT`);
 
-  const token = cfg.authType === "none" ? null : (credentials?.apiKey || credentials?.accessToken);
-  if (cfg.authType !== "none" && !token) {
+  const isSelfHosted = provider === "selfhosted-stt";
+  if (isSelfHosted) {
+    const baseUrl = credentials?.providerSpecificData?.baseUrl?.trim();
+    if (!baseUrl) return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Self-hosted STT requires a connection base URL");
+    try {
+      if (!["http:", "https:"].includes(new URL(baseUrl).protocol)) throw new Error();
+    } catch {
+      return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Self-hosted STT base URL must use http or https");
+    }
+    cfg = { ...cfg, baseUrl: baseUrl.replace(/\/+$/, "") };
+  }
+
+  const token = isSelfHosted
+    ? (credentials?.apiKey || credentials?.accessToken)
+    : cfg.authType === "none" ? null : (credentials?.apiKey || credentials?.accessToken);
+  if (!isSelfHosted && cfg.authType !== "none" && !token) {
     return createErrorResult(HTTP_STATUS.UNAUTHORIZED, `No credentials for STT provider: ${provider}`);
   }
   const transport = sttTransport(provider, cfg);

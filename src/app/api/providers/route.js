@@ -13,6 +13,18 @@ import { normalizeProviderId, normalizeProviderSpecificData } from "@/lib/provid
 
 export const dynamic = "force-dynamic";
 
+const SELFHOSTED_PROVIDERS = new Set(["selfhosted-stt", "selfhosted-tts", "selfhosted-embedding"]);
+
+function normalizeSelfHostedBaseUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    return ["http:", "https:"].includes(url.protocol) ? value.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeProxyConfig(body = {}) {
   const enabled = body?.connectionProxyEnabled === true;
   const url = typeof body?.connectionProxyUrl === "string" ? body.connectionProxyUrl.trim() : "";
@@ -84,6 +96,7 @@ export async function POST(request) {
 
     // Validation
     const isWebCookieProvider = !!WEB_COOKIE_PROVIDERS[provider];
+    const isSelfHosted = SELFHOSTED_PROVIDERS.has(provider);
     // Dual-auth providers (e.g. codebuddy-cn, xai) live under category "oauth" but also
     // accept an API key via authModes — they aren't in APIKEY_PROVIDERS, so allow them here.
     const supportsApiKeyMode = !!AI_PROVIDERS[provider]?.authModes?.includes("apikey");
@@ -98,7 +111,7 @@ export async function POST(request) {
     if (!provider || !isValidProvider) {
       return NextResponse.json({ error: "Invalid provider" }, { status: 400 });
     }
-    if (!apiKey && provider !== "ollama-local") {
+    if (!apiKey && provider !== "ollama-local" && !isSelfHosted) {
       return NextResponse.json({ error: `${isWebCookieProvider ? "Cookie value" : "API Key"} is required` }, { status: 400 });
     }
     const connectionName = name || displayName || AI_PROVIDERS[provider]?.name;
@@ -107,6 +120,14 @@ export async function POST(request) {
     }
 
     let providerSpecificData = normalizeProviderSpecificData(provider, body, body.providerSpecificData);
+
+    if (isSelfHosted) {
+      const baseUrl = normalizeSelfHostedBaseUrl(providerSpecificData?.baseUrl);
+      if (!baseUrl) {
+        return NextResponse.json({ error: "A self-hosted http(s) base URL is required" }, { status: 400 });
+      }
+      providerSpecificData = { ...(providerSpecificData || {}), baseUrl };
+    }
 
     // Compatible LLM nodes support multiple API-key connections (key pool); runtime
     // rotates/fails over via getProviderCredentials. Embedding nodes stay single-connection.

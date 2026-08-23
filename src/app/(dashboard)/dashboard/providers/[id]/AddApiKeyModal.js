@@ -6,9 +6,11 @@ import { Button, Badge, Input, Modal, Select } from "@/shared/components";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 
 const BULK_PLACEHOLDER = `name1|sk-key1\nname2|sk-key2\nsk-key-only-auto-named`;
+const SELFHOSTED_PROVIDERS = new Set(["selfhosted-stt", "selfhosted-tts", "selfhosted-embedding"]);
 
 export default function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthropic, authType, authHint, website, error, onSave, onBulkDone, onClose }) {
   const isOllamaLocal = provider === "ollama-local";
+  const isSelfHosted = SELFHOSTED_PROVIDERS.has(provider);
   const isCookie = authType === "cookie";
   const isXaiApiKey = provider === "xai" && !isCookie;
   const credentialLabel = isCookie ? "Cookie Value" : "API Key";
@@ -27,6 +29,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     defaultModel: "",
     priority: 1,
     ollamaHostUrl: "",
+    baseUrl: "",
   });
   const [azureData, setAzureData] = useState({
     azureEndpoint: "",
@@ -47,6 +50,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const hasApiKey = formData.apiKey.trim().length > 0;
 
   const buildProviderSpecificData = () => {
+    if (isSelfHosted) return { baseUrl: formData.baseUrl.trim() };
     if (isOllamaLocal && formData.ollamaHostUrl.trim()) {
       return { baseUrl: formData.ollamaHostUrl.trim() };
     }
@@ -90,7 +94,8 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     if (!provider) return;
     const name = formData.name.trim();
     const apiKey = formData.apiKey.trim();
-    if (!isOllamaLocal && !apiKey) return;
+    if (!isOllamaLocal && !isSelfHosted && !apiKey) return;
+    if (isSelfHosted && !formData.baseUrl.trim()) return;
     if (!isOllamaLocal) {
       // Non-ollama providers require a name
       if (!name) return;
@@ -169,12 +174,12 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     <Modal isOpen={isOpen} title={`Add ${providerName || provider} ${credentialLabel}`} onClose={onClose}>
       <div className="flex flex-col gap-4">
         {/* Mode switcher */}
-        <div className="flex gap-2">
+        {!isSelfHosted && <div className="flex gap-2">
           <Button size="sm" variant={mode === "single" ? "primary" : "ghost"} onClick={() => { setMode("single"); setBulkResult(null); }}>Single</Button>
           <Button size="sm" variant={mode === "bulk" ? "primary" : "ghost"} onClick={() => { setMode("bulk"); setBulkResult(null); }}>Bulk Add</Button>
-        </div>
+        </div>}
 
-        {mode === "bulk" && (
+        {mode === "bulk" && !isSelfHosted && (
           <div className="flex flex-col gap-3">
             <p className="text-xs text-text-muted">One key per line. Format: <code>name|apiKey</code> or just <code>apiKey</code> (auto-named by index).</p>
             <textarea
@@ -197,13 +202,23 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
           </div>
         )}
 
-        {mode === "single" && (<>
+        {(mode === "single" || isSelfHosted) && (<>
         <Input
           label="Name"
           value={formData.name}
           onChange={(e) => setFormData({ ...formData, name: e.target.value })}
           placeholder={isOllamaLocal ? "Ollama Local" : "Production Key"}
         />
+        {isSelfHosted && (
+          <Input
+            label="Base URL"
+            value={formData.baseUrl}
+            onChange={(e) => setFormData({ ...formData, baseUrl: e.target.value })}
+            placeholder={provider === "selfhosted-stt"
+              ? "http://localhost:8080/v1/audio/transcriptions"
+              : provider === "selfhosted-tts" ? "http://localhost:8880" : "http://localhost:8080/v1"}
+          />
+        )}
         {isOllamaLocal && (
           <div className="flex gap-2">
             <Input
@@ -223,7 +238,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
         {!isOllamaLocal && (
           <div className="flex gap-2">
             <Input
-              label={credentialLabel}
+              label={isSelfHosted ? "API Key (optional)" : credentialLabel}
               type={isCookie ? "text" : "password"}
               autoComplete="off"
               value={formData.apiKey}
@@ -231,11 +246,11 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
               placeholder={credentialPlaceholder}
               className="flex-1"
             />
-            <div className="pt-6">
+            {!isSelfHosted && <div className="pt-6">
               <Button onClick={handleValidate} disabled={!formData.apiKey || validating || saving} variant="secondary">
                 {validating ? "Checking..." : "Check"}
               </Button>
-            </div>
+            </div>}
           </div>
         )}
         {isXaiApiKey && (
@@ -345,7 +360,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
         />
 
         <div className="flex gap-2">
-          <Button onClick={handleSubmit} fullWidth disabled={saving || (!isOllamaLocal && (!hasName || !hasApiKey)) || (isCompatible && !formData.defaultModel.trim()) || (isAzure && (!azureData.azureEndpoint || !azureData.deployment || !azureData.organization)) || (isCloudflareAi && !cloudflareData.accountId)}>
+          <Button onClick={handleSubmit} fullWidth disabled={saving || (!isOllamaLocal && !isSelfHosted && (!hasName || !hasApiKey)) || (isSelfHosted && (!hasName || !formData.baseUrl.trim())) || (isCompatible && !formData.defaultModel.trim()) || (isAzure && (!azureData.azureEndpoint || !azureData.deployment || !azureData.organization)) || (isCloudflareAi && !cloudflareData.accountId)}>
             {saving ? "Saving..." : "Save"}
           </Button>
           <Button onClick={onClose} variant="ghost" fullWidth>
