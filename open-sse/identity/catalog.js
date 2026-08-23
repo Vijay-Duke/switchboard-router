@@ -140,10 +140,8 @@ function grokCliHeaders(snapshot) {
 }
 
 function grokBuildHeaders() {
-  const arch = hostArch() === "x64" ? "x86_64" : hostArch();
-  const os = hostPlatform() === "win32" ? "windows" : hostPlatform();
   return {
-    "User-Agent": `grok-shell/${GROK_CLI_VERSION} (${os}; ${arch})`,
+    "User-Agent": `grok-shell/${GROK_CLI_VERSION} (linux; x86_64)`,
     "x-grok-client-identifier": GROK_CLI_CLIENT_IDENTIFIER,
     "x-grok-client-version": GROK_CLI_VERSION,
   };
