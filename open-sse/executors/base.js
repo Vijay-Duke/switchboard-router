@@ -147,6 +147,7 @@ export class BaseExecutor {
   // at (or defaults to) the official Anthropic base it must wear the claude-cli
   // profile — OpenAI SDK strings on api.anthropic.com are a proxy tell.
   resolveIdentity(credentials) {
+    if (credentials?.runtimeTransport?.identity) return credentials.runtimeTransport.identity;
     if (this.provider?.startsWith?.("anthropic-compatible-")) {
       const baseUrl = credentials?.providerSpecificData?.baseUrl || ANTHROPIC_COMPAT_BASE;
       return baseUrl.includes("api.anthropic.com") ? "claude-cli" : this.config?.identity;
@@ -242,7 +243,7 @@ export class BaseExecutor {
           redirect: "error",
           identity: this.resolveIdentity(credentials),
           provider: this.provider,
-          format: this.config?.format,
+          format: credentials?.runtimeTransport?.format || this.config?.format,
           overlay: credentials?.rawHeaders ? pickClaudeIdentityHeaders(credentials.rawHeaders) : undefined,
           credentialId: credentials?.connectionId || credentials?.apiKey || credentials?.accessToken,
           stream,

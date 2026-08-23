@@ -38,3 +38,6 @@ export function modelStrip(model) {
 export function modelTargetFormat(model) {
   return model?.targetFormat || MODEL_DEFAULTS.targetFormat;
 }
+export function modelSupportedFormats(model) {
+  return model?.supportedFormats || null;
+}

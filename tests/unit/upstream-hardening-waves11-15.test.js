@@ -19,7 +19,7 @@ import { gitLog } from "../../open-sse/rtk/filters/gitLog.js";
 import { compressMessages } from "../../open-sse/rtk/index.js";
 import { BaseExecutor } from "../../open-sse/executors/base.js";
 import { IFlowExecutor } from "../../open-sse/executors/iflow.js";
-import { OpenCodeGoExecutor } from "../../open-sse/executors/opencode-go.js";
+import { getExecutor } from "../../open-sse/executors/index.js";
 
 // ── Wave 11 ──────────────────────────────────────────────────────────────
 
@@ -205,9 +205,9 @@ describe("wave13: IFlowExecutor implements refreshCredentials", () => {
   });
 });
 
-describe("wave13: OpenCodeGo calls super.transformRequest", () => {
+describe("wave13: OpenCode Go injects stream usage", () => {
   it("injects stream_options.include_usage for streaming chat bodies", () => {
-    const ex = new OpenCodeGoExecutor();
+    const ex = getExecutor("opencode-go");
     const body = { messages: [{ role: "user", content: "hi" }] };
     const out = ex.transformRequest("glm-4", body, true, {});
     expect(out.stream_options?.include_usage).toBe(true);

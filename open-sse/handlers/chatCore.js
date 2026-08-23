@@ -8,7 +8,7 @@ import { createStreamController } from "../utils/streamHandler.js";
 import { refreshWithRetry } from "../services/tokenRefresh.js";
 import { withCredentialRefreshLock } from "../services/oauthCredentialManager.js";
 import { createRequestLogger } from "../utils/requestLogger.js";
-import { getModelTargetFormat, getModelStrip, getModelUpstreamId, getModelType, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
+import { getModelSupportedFormats, getModelTargetFormat, getModelStrip, getModelUpstreamId, getModelType, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
 import { PROVIDERS } from "../config/providers.js";
 import { createErrorResult, parseUpstreamError, formatProviderError } from "../utils/error.js";
 import { HTTP_STATUS, TOKEN_SAVER_HEADER } from "../config/runtimeConfig.js";
@@ -64,17 +64,21 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   const alias = PROVIDER_ID_TO_ALIAS[provider] || provider;
   const modelTargetFormat = getModelTargetFormat(alias, model);
-  // Multi-endpoint providers: pick transport matching sourceFormat → zero translation.
-  // When a transport matches sourceFormat, force targetFormat=sourceFormat so we skip
-  // translation entirely — otherwise modelTargetFormat can win and the body is sent
-  // in the wrong shape (e.g. MiniMax M3: Claude-format tools on an OpenAI endpoint → 400).
+  const modelSupportedFormats = getModelSupportedFormats(alias, model);
+  const fallbackTargetFormat = modelTargetFormat || getTargetFormat(provider, credentials);
+  // Multi-endpoint providers prefer a supported sourceFormat for zero translation,
+  // then use the configured target transport to preserve translated fallback behavior.
+  // This prevents MiniMax M3 Claude tools reaching an OpenAI endpoint while keeping
+  // chat-only models off endpoints they do not support.
   // See Switchboard#2435 / PR#2463.
-  const runtimeTransport = resolveTransport(provider, sourceFormat);
-  const skipTranslation = runtimeTransport?.format === sourceFormat;
-  if (runtimeTransport && credentials) credentials.runtimeTransport = runtimeTransport;
+  const nativeTransport = resolveTransport(provider, sourceFormat, modelSupportedFormats);
+  const runtimeTransport = nativeTransport
+    || resolveTransport(provider, fallbackTargetFormat, modelSupportedFormats);
+  const skipTranslation = nativeTransport?.format === sourceFormat;
+  if (credentials) credentials.runtimeTransport = runtimeTransport || undefined;
   const targetFormat = skipTranslation
     ? sourceFormat
-    : (modelTargetFormat || runtimeTransport?.format || getTargetFormat(provider, credentials));
+    : (runtimeTransport?.format || fallbackTargetFormat);
   const stripList = getModelStrip(alias, model);
   const upstreamModel = getModelUpstreamId(alias, model);
 

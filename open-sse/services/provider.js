@@ -147,7 +147,8 @@ export function getTargetFormat(provider, credentials = null) {
 // Resolve which transport to use for a provider given the client sourceFormat.
 // Multi-endpoint providers (transport.transports[]) pick the entry matching sourceFormat
 // to avoid lossy translation; falls back to the default transport when no match.
-export function resolveTransport(provider, sourceFormat) {
+export function resolveTransport(provider, sourceFormat, supportedFormats = null) {
+  if (Array.isArray(supportedFormats) && !supportedFormats.includes(sourceFormat)) return null;
   const config = PROVIDERS[provider];
   const transports = config?.transports;
   if (!Array.isArray(transports) || !transports.length) return null;
