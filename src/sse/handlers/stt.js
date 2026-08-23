@@ -12,10 +12,9 @@ import * as log from "../utils/logger.js";
 import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
 import { withConnectionInFlight } from "../services/connectionInFlight.js";
 
-// Providers requiring credentials for STT
-const CREDENTIALED_PROVIDERS = new Set(
+const CONNECTION_BACKED_PROVIDERS = new Set(
   Object.entries(AI_PROVIDERS)
-    .filter(([, p]) => p.serviceKinds?.includes("stt") && !p.noAuth && p.sttConfig?.authType !== "none")
+    .filter(([, p]) => p.serviceKinds?.includes("stt") && !p.noAuth)
     .map(([id]) => id)
 );
 
@@ -52,14 +51,13 @@ export async function handleStt(request) {
   const { provider, model } = modelInfo;
   log.info("ROUTING", `Provider: ${provider}, Model: ${model}`);
 
-  // noAuth providers
-  if (!CREDENTIALED_PROVIDERS.has(provider)) {
+  if (!CONNECTION_BACKED_PROVIDERS.has(provider)) {
     const result = await handleSttCore({ clientKeyId, provider, model, formData, sttConfig: AI_PROVIDERS[provider]?.sttConfig, abortSignal: request.signal });
     if (result.success) return result.response;
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "STT failed");
   }
 
-  // Credentialed — fallback loop
+  // Stored connections — fallback loop
   const excludeConnectionIds = new Set();
   let lastError = null;
   let lastStatus = null;

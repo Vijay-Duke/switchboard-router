@@ -56,7 +56,7 @@ export async function resolveGrokCliModels(credentials, options = {}) {
   try {
     let response = await request(credentials.accessToken);
     if ((response.status === 401 || response.status === 403) && credentials.refreshToken) {
-      const refreshed = await refreshProviderCredentials("grok-cli", credentials, log);
+      const refreshed = await refreshProviderCredentials("grok-cli", credentials, log, proxyOptions);
       if (refreshed?.accessToken) {
         try { await onCredentialsRefreshed?.(refreshed); } catch (error) {
           log?.warn?.("Grok CLI credential persistence failed", error);

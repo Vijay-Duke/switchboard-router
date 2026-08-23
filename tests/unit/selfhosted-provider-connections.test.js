@@ -19,28 +19,6 @@ vi.mock("@/models", () => ({
   getProviderNodes: vi.fn(),
   redactSecrets: (value) => value,
 }));
-vi.mock("@/shared/constants/config", async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    APIKEY_PROVIDERS: {
-      ...original.APIKEY_PROVIDERS,
-      "selfhosted-stt": { id: "selfhosted-stt", name: "Self-hosted STT" },
-      "selfhosted-tts": { id: "selfhosted-tts", name: "Self-hosted TTS" },
-      "selfhosted-embedding": { id: "selfhosted-embedding", name: "Self-hosted Embedding" },
-    },
-  };
-});
-vi.mock("@/shared/constants/providers", async (importOriginal) => {
-  const original = await importOriginal();
-  const selfhosted = {
-    "selfhosted-stt": { id: "selfhosted-stt", name: "Self-hosted STT" },
-    "selfhosted-tts": { id: "selfhosted-tts", name: "Self-hosted TTS" },
-    "selfhosted-embedding": { id: "selfhosted-embedding", name: "Self-hosted Embedding" },
-  };
-  return { ...original, AI_PROVIDERS: { ...original.AI_PROVIDERS, ...selfhosted } };
-});
-
 import { POST } from "@/app/api/providers/route.js";
 
 function request(provider, { apiKey = "", baseUrl } = {}) {
@@ -54,6 +32,16 @@ function request(provider, { apiKey = "", baseUrl } = {}) {
 beforeEach(() => createProviderConnection.mockClear());
 
 describe("self-hosted provider connections", () => {
+  it.each([undefined, { id: "selfhosted-stt" }])(
+    "keeps the invalid-provider response for %j",
+    async (provider) => {
+      const response = await POST(request(provider));
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({ error: "Invalid provider" });
+      expect(createProviderConnection).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["selfhosted-stt", "selfhosted-tts", "selfhosted-embedding"])(
     "persists an explicit endpoint and permits an empty key for %s",
     async (provider) => {

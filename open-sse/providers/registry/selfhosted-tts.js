@@ -11,7 +11,6 @@ const moduleDefault = {
   },
   category: "apikey",
   authType: "apikey",
-  noAuth: true,
   models: [
     { id: "kokoro", name: "Kokoro (self-hosted)", params: ["voice", "response_format", "speed"], kind: "tts" },
   ],
@@ -22,6 +21,7 @@ const moduleDefault = {
     authHeader: "bearer",
     format: "openai",
     defaultModel: "kokoro",
+    defaultVoice: "af_heart",
   },
 };
 

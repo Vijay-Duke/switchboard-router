@@ -5,6 +5,8 @@ import {
   buildGrokCliApiHeaders,
 } from "../../config/grokCli.js";
 
+const OPTIONAL_USER_TIMEOUT_MS = 2_000;
+
 const unwrap = (value, fallback = 0) => value && typeof value === "object" && "val" in value
   ? toFiniteNumber(value.val, fallback)
   : toFiniteNumber(value, fallback);
@@ -59,7 +61,7 @@ export async function getGrokCliUsage(accessToken, providerSpecificData = null, 
         method: "GET", headers, ...GROK_CLI_FETCH_PROFILE,
       }, proxyOptions),
       proxyAwareFetch(usage.userUrl, {
-        method: "GET", headers, ...GROK_CLI_FETCH_PROFILE,
+        method: "GET", headers, signal: AbortSignal.timeout(OPTIONAL_USER_TIMEOUT_MS), ...GROK_CLI_FETCH_PROFILE,
       }, proxyOptions).catch(() => null),
     ]);
     if (billingResponse.status === 401 || billingResponse.status === 403) {

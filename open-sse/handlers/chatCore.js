@@ -413,7 +413,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     try {
       // H7: serialize reactive 401 refresh with the same lock as proactive path
       const newCredentials = await refreshWithRetry(async () => {
-        const result = await withCredentialRefreshLock(provider, credentials, () => executor.refreshCredentials(credentials, log));
+        const result = await withCredentialRefreshLock(provider, credentials, () => executor.refreshCredentials(credentials, log, proxyOptions));
         // aa0448f7: rotate refresh_token between retries — a consumed RT must not
         // be replayed on the next attempt or the provider revokes the session.
         if (result?.refreshToken && result.refreshToken !== credentials.refreshToken) {

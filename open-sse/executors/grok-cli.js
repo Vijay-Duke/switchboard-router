@@ -3,9 +3,10 @@ import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import grokCliProvider from "../providers/registry/grok-cli.js";
 import {
-  refreshProviderCredentials,
+  mergeRefreshedCredentials,
   shouldRefreshCredentials,
 } from "../services/oauthCredentialManager.js";
+import { refreshTokenByProvider } from "../services/tokenRefresh.js";
 import { normalizeResponsesInput } from "../translator/formats/responsesApi.js";
 import { getModelUpstreamId } from "../config/providerModels.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
@@ -123,7 +124,8 @@ export class GrokCliExecutor extends BaseExecutor {
 
   async refreshCredentials(credentials, log, proxyOptions = null) {
     if (!credentials?.refreshToken) return null;
-    return refreshProviderCredentials("grok-cli", credentials, log, proxyOptions);
+    const refreshed = await refreshTokenByProvider("grok-cli", credentials, log, proxyOptions);
+    return mergeRefreshedCredentials("grok-cli", credentials, refreshed);
   }
 
   needsRefresh(credentials) {

@@ -37,7 +37,7 @@ describe("self-hosted provider registry", () => {
     [selfhostedEmbedding, "embedding"],
   ])("declares %s as local media with an outbound identity", (provider, kind) => {
     expect(provider.serviceKinds).toEqual([kind]);
-    expect(provider.noAuth).toBe(true);
+    expect(provider.noAuth).not.toBe(true);
     expect(provider[`${kind}Config`].identity).toBe("openai-node");
   });
 });
@@ -76,7 +76,7 @@ describe("self-hosted STT", () => {
 });
 
 describe("self-hosted TTS", () => {
-  it("requires the connection endpoint and uses the wrapped fetch without a key", async () => {
+  it("uses registry defaults and forwards abort signals without requiring a key", async () => {
     const missing = await handleTtsCore({
       provider: "selfhosted-tts",
       model: "kokoro",
@@ -89,20 +89,26 @@ describe("self-hosted TTS", () => {
     proxyAwareFetch.mockResolvedValueOnce(new Response(new Uint8Array(128), {
       headers: { "content-type": "audio/mpeg" },
     }));
+    const controller = new AbortController();
     const result = await handleTtsCore({
       provider: "selfhosted-tts",
-      model: "kokoro/af_heart",
+      model: "",
       input: "hello",
       credentials: { providerSpecificData: { baseUrl: "http://192.168.1.20:8880/v1" } },
       responseFormat: "json",
+      abortSignal: controller.signal,
     });
 
     expect(result.success).toBe(true);
     const [url, init] = proxyAwareFetch.mock.calls[0];
     expect(url).toBe("http://192.168.1.20:8880/v1/audio/speech");
-    expect(init).toMatchObject({ identity: "openai-node", provider: "selfhosted-tts" });
+    expect(init).toMatchObject({ identity: "openai-node", provider: "selfhosted-tts", signal: controller.signal });
     expect(init.headers.Authorization).toBeUndefined();
-    expect(JSON.parse(init.body)).toMatchObject({ model: "kokoro", voice: "af_heart", input: "hello" });
+    expect(JSON.parse(init.body)).toMatchObject({
+      model: selfhostedTts.ttsConfig.defaultModel,
+      voice: selfhostedTts.ttsConfig.defaultVoice,
+      input: "hello",
+    });
   });
 });
 

@@ -21,6 +21,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const [polling, setPolling] = useState(false);
   const popupRef = useRef(null);
   const pollingAbortRef = useRef(false);
+  const flowGenerationRef = useRef(0);
   const openedRef = useRef(false);
   const { copied, copy } = useCopyToClipboard();
 
@@ -88,7 +89,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   }, [authData, onSuccess]);
 
   // Poll for device code token
-  const startPolling = useCallback(async (deviceCode, codeVerifier, interval, extraData, deadlineMs) => {
+  const startPolling = useCallback(async (deviceCode, codeVerifier, interval, extraData, deadlineMs, generation) => {
     pollingAbortRef.current = false;
     setPolling(true);
     // Honor the upstream's expires_in when supplied (qoder sets 300s) so we
@@ -99,7 +100,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
     while (Date.now() < deadline) {
       // Check if polling should be aborted
-      if (pollingAbortRef.current) {
+      if (pollingAbortRef.current || generation !== flowGenerationRef.current) {
         setPolling(false);
         return;
       }
@@ -107,7 +108,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       await new Promise((r) => setTimeout(r, interval * 1000));
 
       // Check again after sleep
-      if (pollingAbortRef.current) {
+      if (pollingAbortRef.current || generation !== flowGenerationRef.current) {
         setPolling(false);
         return;
       }
@@ -120,6 +121,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         });
 
         const data = await res.json();
+
+        if (generation !== flowGenerationRef.current) return;
 
         if (data.success) {
           pollingAbortRef.current = true; // Stop polling immediately
@@ -152,6 +155,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   // Start OAuth flow
   const startOAuthFlow = useCallback(async () => {
     if (!provider) return;
+    const generation = ++flowGenerationRef.current;
     try {
       setError(null);
 
@@ -171,6 +175,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         }
         const res = await fetch(deviceCodeUrl.toString());
         const data = await res.json();
+        if (generation !== flowGenerationRef.current) return;
         if (!res.ok) throw new Error(data.error);
 
         setDeviceData(data);
@@ -212,6 +217,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
           Number.isFinite(data.expires_in) && data.expires_in > 0
             ? data.expires_in * 1000
             : undefined,
+          generation,
         );
         return;
       }
@@ -237,6 +243,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       }
       const res = await fetch(authorizeUrl.toString());
       const data = await res.json();
+      if (generation !== flowGenerationRef.current) return;
       if (!res.ok) throw new Error(data.error);
 
       // Codex: start proxy with server-side session (auto-exchange) + fallback to channels
@@ -281,6 +288,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         }
       }
 
+      if (generation !== flowGenerationRef.current) return;
       setAuthData({ ...data, redirectUri, codexServerSide, xaiServerSide });
 
       if (provider === "codex" && codexProxyActive) {
@@ -309,6 +317,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         }
       }
     } catch (err) {
+      if (generation !== flowGenerationRef.current) return;
       setError(err.message);
       setStep("error");
     }
@@ -330,6 +339,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       startOAuthFlow();
     } else if (!isOpen) {
       // Abort polling and cleanup proxy when modal closes
+      flowGenerationRef.current += 1;
       pollingAbortRef.current = true;
       openedRef.current = false;
       if (provider === "codex") {
@@ -516,6 +526,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
   // Clear session on modal close + cleanup proxy
   const handleClose = useCallback(() => {
+    flowGenerationRef.current += 1;
+    pollingAbortRef.current = true;
     if (provider === "codex") {
       fetch("/api/oauth/codex/stop-proxy").catch(() => {});
     } else if (provider === "xai") {

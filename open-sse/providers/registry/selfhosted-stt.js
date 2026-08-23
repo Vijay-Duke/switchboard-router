@@ -11,7 +11,6 @@ const moduleDefault = {
   },
   category: "apikey",
   authType: "apikey",
-  noAuth: true,
   models: [
     { id: "whisper-1", name: "Whisper (self-hosted)", params: ["language", "response_format", "temperature", "prompt"], kind: "stt" },
   ],

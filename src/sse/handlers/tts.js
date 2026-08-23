@@ -13,10 +13,9 @@ import * as log from "../utils/logger.js";
 import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
 import { withConnectionInFlight } from "../services/connectionInFlight.js";
 
-// Derived from providers.js: any TTS provider not noAuth requires stored credentials
-const CREDENTIALED_PROVIDERS = new Set(
+const CONNECTION_BACKED_PROVIDERS = new Set(
   Object.entries(AI_PROVIDERS)
-    .filter(([, p]) => p.serviceKinds?.includes("tts") && !p.noAuth && p.ttsConfig?.authType !== "none")
+    .filter(([, p]) => p.serviceKinds?.includes("tts") && !p.noAuth)
     .map(([id]) => id)
 );
 
@@ -81,14 +80,13 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, cl
   const { provider, model } = modelInfo;
   log.info("ROUTING", `Provider: ${provider}, Voice: ${model}`);
 
-  // noAuth providers — no credential needed
-  if (!CREDENTIALED_PROVIDERS.has(provider)) {
+  if (!CONNECTION_BACKED_PROVIDERS.has(provider)) {
     const result = await handleTtsCore({ clientKeyId, provider, model, input: body.input, responseFormat, language, abortSignal });
     if (result.success) return result.response;
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "TTS failed");
   }
 
-  // Credentialed providers — fallback loop (same pattern as embeddings)
+  // Stored connections — fallback loop (same pattern as embeddings)
   const excludeConnectionIds = new Set();
   let lastError = null;
   let lastStatus = null;

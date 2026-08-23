@@ -23,6 +23,7 @@ vi.mock("../../open-sse/config/providers.js", () => ({
 }));
 
 import { proxyAwareFetch } from "../../open-sse/utils/proxyFetch.js";
+import { refreshProviderCredentials } from "../../open-sse/services/oauthCredentialManager.js";
 import { GrokCliExecutor } from "../../open-sse/executors/grok-cli.js";
 import {
   mapGrokCliTokens,
@@ -101,6 +102,46 @@ describe("grok-cli provider", () => {
     expect(body.include).toContain("reasoning.encrypted_content");
   });
 
+  it("normalizes function, custom, and built-in tools with a forced choice", () => {
+    const body = new GrokCliExecutor().transformRequest("grok-build", {
+      input: "use a tool",
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "lookup",
+            description: "Look something up",
+            parameters: { type: "object", properties: { query: { type: "string" } } },
+          },
+        },
+        { type: "custom", name: "shell", description: "Run a command" },
+        { type: "web_search", search_context_size: "low" },
+      ],
+      tool_choice: { type: "custom", name: "shell" },
+    }, true, { connectionId: "connection-1" });
+
+    expect(body.tools).toEqual([
+      {
+        type: "function",
+        name: "lookup",
+        description: "Look something up",
+        parameters: { type: "object", properties: { query: { type: "string" } } },
+      },
+      {
+        type: "function",
+        name: "shell",
+        description: "Run a command",
+        parameters: {
+          type: "object",
+          properties: { input: { type: "string" } },
+          required: ["input"],
+        },
+      },
+      { type: "web_search", search_context_size: "low" },
+    ]);
+    expect(body.tool_choice).toEqual({ type: "function", name: "shell" });
+  });
+
   it("preserves native Grok item ids while stripping non-native server ids", () => {
     const executor = new GrokCliExecutor();
     const nativeId = "rs_3e3f6187-892a-96db-893b-904eff019e19";
@@ -162,6 +203,42 @@ describe("grok-cli provider", () => {
     for (const [, options] of proxyAwareFetch.mock.calls) {
       expect(options).toMatchObject({ identity: "grok-build", provider: "grok-cli" });
     }
+  });
+
+  it("keeps the configured proxy when model discovery refreshes credentials", async () => {
+    const credentials = { accessToken: "expired", refreshToken: "refresh" };
+    const proxyOptions = { proxyUrl: "http://proxy.example:8080" };
+    refreshProviderCredentials.mockResolvedValue({ accessToken: "new" });
+    proxyAwareFetch
+      .mockResolvedValueOnce(jsonResponse({}, 401))
+      .mockResolvedValueOnce(jsonResponse({ data: [{ id: "grok-build" }] }));
+
+    const result = await resolveGrokCliModels(credentials, { proxyOptions });
+
+    expect(result.models).toHaveLength(1);
+    expect(refreshProviderCredentials).toHaveBeenCalledWith("grok-cli", credentials, console, proxyOptions);
+    expect(proxyAwareFetch.mock.calls.every(([, , proxy]) => proxy === proxyOptions)).toBe(true);
+  });
+
+  it("bounds the optional user lookup and falls back to billing-only usage", async () => {
+    const timeoutController = new AbortController();
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutController.signal);
+    proxyAwareFetch
+      .mockResolvedValueOnce(jsonResponse({ config: { onDemandCap: { val: 100 }, onDemandUsed: { val: 25 } } }))
+      .mockImplementationOnce((_url, options) => new Promise((_, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+      }));
+
+    const pending = getGrokCliUsage("token");
+    await Promise.resolve();
+    timeoutController.abort();
+
+    await expect(pending).resolves.toMatchObject({
+      plan: "Grok Build",
+      quotas: { "On-demand": { used: 25, total: 100 } },
+    });
+    expect(timeoutSpy).toHaveBeenCalledWith(2_000);
+    timeoutSpy.mockRestore();
   });
 
   it("preserves encrypted reasoning across Responses and chat formats", () => {

@@ -49,10 +49,13 @@ export async function refreshXaiToken(refreshToken, log) {
   }, log);
 }
 
-export async function refreshAccessToken(provider, refreshToken, credentials, log) {
+export async function refreshAccessToken(provider, refreshToken, credentials, log, proxyOptions = null) {
   const config = PROVIDERS[provider];
+  const refreshUrl = config?.refreshUrl
+    || PROVIDER_OAUTH[provider]?.refreshUrl
+    || PROVIDER_OAUTH[provider]?.tokenUrl;
 
-  if (!config || !config.refreshUrl) {
+  if (!config || !refreshUrl) {
     log?.warn?.("TOKEN_REFRESH", `No refresh URL configured for provider: ${provider}`);
     return null;
   }
@@ -70,7 +73,7 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
       client_id: config.clientId,
     });
     if (config.clientSecret) body.set("client_secret", config.clientSecret);
-    const response = await proxyAwareFetch(config.refreshUrl, {
+    const response = await proxyAwareFetch(refreshUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -80,7 +83,7 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
       identity: config.identity,
       provider,
       format: config.format,
-    });
+    }, proxyOptions);
 
     if (!response.ok) {
       const errorText = await response.text();

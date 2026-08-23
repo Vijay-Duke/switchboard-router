@@ -11,7 +11,6 @@ const moduleDefault = {
   },
   category: "apikey",
   authType: "apikey",
-  noAuth: true,
   models: [
     { id: "embedding", name: "Self-hosted embedding model", kind: "embedding" },
   ],

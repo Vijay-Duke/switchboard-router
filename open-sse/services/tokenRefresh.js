@@ -154,7 +154,7 @@ const REFRESH_HANDLERS = {
   github: (c, log) => refreshGitHubToken(c.refreshToken, log),
   kiro: (c, log) => refreshKiroToken(c.refreshToken, c.providerSpecificData, log),
   xai: (c, log) => refreshXaiToken(c.refreshToken, log),
-  "grok-cli": (c, log) => refreshAccessToken("grok-cli", c.refreshToken, c, log),
+  "grok-cli": (c, log, proxyOptions) => refreshAccessToken("grok-cli", c.refreshToken, c, log, proxyOptions),
   "codebuddy-cn": (c, log) => refreshCodebuddyToken(c.refreshToken, log),
   vertex: (c, log) => vertexRefreshHandler(c, log, "vertex"),
   "vertex-partner": (c, log) => vertexRefreshHandler(c, log, "vertex-partner"),
@@ -185,12 +185,14 @@ async function _getAccessTokenInternal(provider, credentials, log) {
   return handler(credentials, log);
 }
 
-export async function refreshTokenByProvider(provider, credentials, log) {
+export async function refreshTokenByProvider(provider, credentials, log, proxyOptions = null) {
   // Vertex SA/ADC use apiKey JSON, not refreshToken (wave12)
   const vertexLike = provider === "vertex" || provider === "vertex-partner";
   if (!credentials.refreshToken && !(vertexLike && credentials?.apiKey)) return null;
   const handler = REFRESH_HANDLERS[provider];
-  return handler ? handler(credentials, log) : refreshAccessToken(provider, credentials.refreshToken, credentials, log);
+  return handler
+    ? handler(credentials, log, proxyOptions)
+    : refreshAccessToken(provider, credentials.refreshToken, credentials, log, proxyOptions);
 }
 
 export function formatProviderCredentials(provider, credentials, log) {
