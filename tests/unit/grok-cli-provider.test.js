@@ -86,8 +86,6 @@ describe("grok-cli provider", () => {
     expect(options.provider).toBe("grok-cli");
     expect(options.headers).toMatchObject({
       Authorization: "Bearer token",
-      "x-grok-client-identifier": "grok-shell",
-      "x-grok-client-version": "0.2.99",
       "x-grok-agent-id": "agent-1",
       "x-grok-model-override": "grok-4.5",
       "x-grok-turn-idx": "1",

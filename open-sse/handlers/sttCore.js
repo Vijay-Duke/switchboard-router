@@ -229,9 +229,9 @@ export async function handleSttCore({ provider, model, formData, credentials, st
     cfg = { ...cfg, baseUrl: baseUrl.replace(/\/+$/, "") };
   }
 
-  const token = isSelfHosted
+  const token = isSelfHosted || cfg.authType !== "none"
     ? (credentials?.apiKey || credentials?.accessToken)
-    : cfg.authType === "none" ? null : (credentials?.apiKey || credentials?.accessToken);
+    : null;
   if (!isSelfHosted && cfg.authType !== "none" && !token) {
     return createErrorResult(HTTP_STATUS.UNAUTHORIZED, `No credentials for STT provider: ${provider}`);
   }

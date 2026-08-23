@@ -41,18 +41,16 @@ function parseFrame(frame) {
   return { event, parsed, rawData };
 }
 
-function transientMarker(frame, patterns) {
-  const { event, parsed, rawData } = parseFrame(frame);
+function transientMarker({ event, parsed, rawData }) {
   const type = parsed?.type || event;
   const error = parsed?.error || parsed?.response?.error;
   const isError = event === "error" || type === "error" || type === "response.failed" || type?.endsWith?.(".error") || !!error;
   if (!isError) return null;
   const errorText = parsed ? JSON.stringify(error || parsed) : rawData;
-  return patterns.find((pattern) => errorText.includes(pattern)) || null;
+  return DEFAULT_PATTERNS.find((pattern) => errorText.includes(pattern)) || null;
 }
 
-function isMeaningfulFrame(frame) {
-  const { event, parsed } = parseFrame(frame);
+function isMeaningfulFrame({ event, parsed }) {
   const type = parsed?.type || event;
   if (!type || type === "error" || type === "response.failed" || type?.endsWith?.(".error") || parsed?.error || parsed?.response?.error) return false;
   return type.startsWith("response.output_")
@@ -85,7 +83,7 @@ function reassemble(reader, chunks) {
   });
 }
 
-async function peekResponse(response, patterns) {
+async function peekResponse(response) {
   if (!response?.ok || !response.body) return { matched: null, replacementBody: null };
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -105,15 +103,16 @@ async function peekResponse(response, patterns) {
       const frames = pending.split(/\r?\n\r?\n/);
       pending = frames.pop() || "";
       for (const frame of frames) {
-        if (isMeaningfulFrame(frame)) meaningfulSeen = true;
-        const marker = transientMarker(frame, patterns);
+        const parsedFrame = parseFrame(frame);
+        if (isMeaningfulFrame(parsedFrame)) meaningfulSeen = true;
+        const marker = transientMarker(parsedFrame);
         if (marker && !meaningfulSeen) {
           matched = marker;
           break;
         }
       }
     }
-    if (!matched && !meaningfulSeen) matched = transientMarker(pending, patterns);
+    if (!matched && !meaningfulSeen) matched = transientMarker(parseFrame(pending));
   } catch {
     // Preserve the already-read bytes and let the replacement stream surface
     // the upstream read failure normally.
@@ -140,7 +139,6 @@ export async function executeWithPreOutputSseRetry({
   signal,
   log,
   provider = "UPSTREAM",
-  patterns = DEFAULT_PATTERNS,
 }) {
   const config = { ...DEFAULT_RETRY_CONFIG, ...retryConfig };
   const { attempts, delayMs } = resolveRetryEntry(config[503]);
@@ -148,7 +146,7 @@ export async function executeWithPreOutputSseRetry({
   for (let attempt = 0; ; attempt++) {
     if (signal?.aborted) throw abortError(signal);
     const result = await execute();
-    const peek = await peekResponse(result.response, patterns);
+    const peek = await peekResponse(result.response);
     const restored = withBody(result, peek.replacementBody);
     if (!peek.matched) return restored;
     if (attempt >= attempts) {

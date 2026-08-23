@@ -1,4 +1,5 @@
 import { refreshProviderCredentials } from "./oauthCredentialManager.js";
+import { normalizeModels } from "./providerModels.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import {
   GROK_CLI_BASE_URL,
@@ -14,26 +15,25 @@ function entries(data) {
 }
 
 export function parseGrokCliModels(data) {
-  const models = [];
-  const seen = new Set();
-  for (const [key, raw] of entries(data)) {
+  const models = entries(data).map(([key, raw]) => {
     const item = typeof raw === "string" ? { id: raw } : raw;
-    if (!item || typeof item !== "object") continue;
+    if (!item || typeof item !== "object") return null;
     const id = String(item.id ?? item.model_id ?? item.modelId ?? item.model ?? item.slug ?? key ?? "").trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    const model = { ...item, id, name: item.display_name ?? item.displayName ?? item.name ?? id };
-    const contextLength = Number(item.context_length ?? item.contextLength ?? item.context_window ?? item.contextWindow);
-    const maxOutputTokens = Number(item.max_output_tokens ?? item.maxOutputTokens);
+    if (!id) return null;
+    return { ...item, id };
+  }).filter(Boolean);
+
+  return normalizeModels(models).map((model) => {
+    const contextLength = Number(model.context_length ?? model.contextLength ?? model.context_window ?? model.contextWindow);
+    const maxOutputTokens = Number(model.max_output_tokens ?? model.maxOutputTokens);
     if (Number.isFinite(contextLength) && contextLength > 0) model.contextLength = contextLength;
     if (Number.isFinite(maxOutputTokens) && maxOutputTokens > 0) model.maxOutputTokens = maxOutputTokens;
-    if (id === GROK_CLI_MODEL) {
+    if (model.id === GROK_CLI_MODEL) {
       model.contextLength ||= 500000;
       model.maxOutputTokens ||= 64000;
     }
-    models.push(model);
-  }
-  return models;
+    return model;
+  });
 }
 
 export async function resolveGrokCliModels(credentials, options = {}) {

@@ -8,7 +8,7 @@ const moduleDefault = {
     const raw = credentials?.providerSpecificData?.baseUrl?.trim();
     if (!raw) throw new Error("Self-hosted Embedding requires a connection base URL");
     const parsed = new URL(raw);
-    if (!new Set(["http:", "https:"]).has(parsed.protocol)) {
+    if (!["http:", "https:"].includes(parsed.protocol)) {
       throw new Error("Self-hosted Embedding base URL must use http or https");
     }
     return `${raw.replace(/\/+$/, "").replace(/\/embeddings$/, "")}/embeddings`;

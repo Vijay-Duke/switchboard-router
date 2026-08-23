@@ -7,7 +7,7 @@ const moduleDefault = {
     if (!raw) return createErrorResult(400, "Self-hosted TTS requires a connection base URL");
 
     const parsed = new URL(raw);
-    if (!new Set(["http:", "https:"]).has(parsed.protocol)) {
+    if (!["http:", "https:"].includes(parsed.protocol)) {
       return createErrorResult(400, "Self-hosted TTS base URL must use http or https");
     }
     const base = raw.replace(/\/+$/, "");

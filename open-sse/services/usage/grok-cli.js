@@ -1,7 +1,6 @@
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
-import { parseResetTime, toFiniteNumber } from "./shared.js";
+import { parseResetTime, toFiniteNumber, U } from "./shared.js";
 import {
-  GROK_CLI_BASE_URL,
   GROK_CLI_FETCH_PROFILE,
   buildGrokCliApiHeaders,
 } from "../../config/grokCli.js";
@@ -53,12 +52,13 @@ export function parseGrokCliBilling(billing, user = null) {
 export async function getGrokCliUsage(accessToken, providerSpecificData = null, proxyOptions = null) {
   if (!accessToken) return { message: "Grok CLI access token not available." };
   const headers = buildGrokCliApiHeaders(accessToken, providerSpecificData || {});
+  const usage = U("grok-cli");
   try {
     const [billingResponse, userResponse] = await Promise.all([
-      proxyAwareFetch(`${GROK_CLI_BASE_URL}/billing?format=credits`, {
+      proxyAwareFetch(usage.url, {
         method: "GET", headers, ...GROK_CLI_FETCH_PROFILE,
       }, proxyOptions),
-      proxyAwareFetch(`${GROK_CLI_BASE_URL}/user?include=subscription`, {
+      proxyAwareFetch(usage.userUrl, {
         method: "GET", headers, ...GROK_CLI_FETCH_PROFILE,
       }, proxyOptions).catch(() => null),
     ]);

@@ -13,8 +13,6 @@ import { normalizeProviderId, normalizeProviderSpecificData } from "@/lib/provid
 
 export const dynamic = "force-dynamic";
 
-const SELFHOSTED_PROVIDERS = new Set(["selfhosted-stt", "selfhosted-tts", "selfhosted-embedding"]);
-
 function normalizeSelfHostedBaseUrl(value) {
   if (typeof value !== "string" || !value.trim()) return null;
   try {
@@ -96,7 +94,7 @@ export async function POST(request) {
 
     // Validation
     const isWebCookieProvider = !!WEB_COOKIE_PROVIDERS[provider];
-    const isSelfHosted = SELFHOSTED_PROVIDERS.has(provider);
+    const isSelfHosted = provider.startsWith("selfhosted-");
     // Dual-auth providers (e.g. codebuddy-cn, xai) live under category "oauth" but also
     // accept an API key via authModes — they aren't in APIKEY_PROVIDERS, so allow them here.
     const supportsApiKeyMode = !!AI_PROVIDERS[provider]?.authModes?.includes("apikey");

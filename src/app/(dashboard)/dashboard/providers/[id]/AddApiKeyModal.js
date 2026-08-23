@@ -6,11 +6,9 @@ import { Button, Badge, Input, Modal, Select } from "@/shared/components";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
 
 const BULK_PLACEHOLDER = `name1|sk-key1\nname2|sk-key2\nsk-key-only-auto-named`;
-const SELFHOSTED_PROVIDERS = new Set(["selfhosted-stt", "selfhosted-tts", "selfhosted-embedding"]);
-
 export default function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthropic, authType, authHint, website, error, onSave, onBulkDone, onClose }) {
   const isOllamaLocal = provider === "ollama-local";
-  const isSelfHosted = SELFHOSTED_PROVIDERS.has(provider);
+  const isSelfHosted = provider.startsWith("selfhosted-");
   const isCookie = authType === "cookie";
   const isXaiApiKey = provider === "xai" && !isCookie;
   const credentialLabel = isCookie ? "Cookie Value" : "API Key";

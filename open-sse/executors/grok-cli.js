@@ -13,9 +13,8 @@ import { getConsistentMachineId } from "../shared/machineId.js";
 import { executeWithPreOutputSseRetry } from "../utils/sseTransientRetry.js";
 import {
   GROK_CLI_BASE_URL,
-  GROK_CLI_CLIENT_IDENTIFIER,
   GROK_CLI_IDENTITY,
-  GROK_CLI_VERSION,
+  GROK_CLI_MODEL,
   supportsGrokCliReasoningEffort,
 } from "../config/grokCli.js";
 
@@ -134,8 +133,6 @@ export class GrokCliExecutor extends BaseExecutor {
   buildHeaders(credentials, stream = true) {
     const headers = super.buildHeaders(credentials, stream);
     const meta = requestMetadata(credentials, {});
-    headers["x-grok-client-identifier"] = GROK_CLI_CLIENT_IDENTIFIER;
-    headers["x-grok-client-version"] = GROK_CLI_VERSION;
     headers["x-grok-session-id"] = meta.sessionId;
     headers["x-grok-conv-id"] = meta.sessionId;
     headers["x-grok-req-id"] = meta.requestId;
@@ -165,7 +162,7 @@ export class GrokCliExecutor extends BaseExecutor {
     normalizeTools(body);
     meta.turnIdx = countUserTurns(body.input);
 
-    const requested = String(body.model || model || "grok-build");
+    const requested = String(body.model || model || GROK_CLI_MODEL);
     const suffix = requested.match(/-(low|medium|high|xhigh)$/)?.[1] || null;
     const baseModel = suffix ? requested.slice(0, -(suffix.length + 1)) : requested;
     body.model = getModelUpstreamId("gcli", baseModel) || baseModel;
