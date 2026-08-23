@@ -3,6 +3,8 @@
 
 import { NextResponse } from "next/server";
 import { safeErrorMessage } from "@/lib/jsonError.js";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
+
 
 const REGISTRY_URL = "https://api.anthropic.com/mcp-registry/v0/servers";
 const VISIBILITY = "commercial,gsuite,gsuite-google";
@@ -28,7 +30,12 @@ async function fetchAll() {
   let cursor = "";
   for (let i = 0; i < 20; i++) {
     const url = `${REGISTRY_URL}?limit=500&visibility=${VISIBILITY}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
-    const r = await fetch(url, { headers: { accept: "application/json" } });
+    const r = await proxyAwareFetch(url, {
+      headers: { accept: "application/json" },
+      identity: "claude-cli",
+      provider: "claude",
+      format: "claude",
+    });
     if (!r.ok) break;
     const j = await r.json();
     for (const item of j.servers || []) {

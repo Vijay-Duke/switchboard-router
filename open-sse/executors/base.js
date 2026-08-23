@@ -142,6 +142,18 @@ export class BaseExecutor {
       || !!credentials?.runtimeTransport?.baseUrl;
   }
 
+  // Identity profile for outbound calls. Compat nodes fall back to the
+  // openai-node registry config, but when an anthropic-compatible node points
+  // at (or defaults to) the official Anthropic base it must wear the claude-cli
+  // profile — OpenAI SDK strings on api.anthropic.com are a proxy tell.
+  resolveIdentity(credentials) {
+    if (this.provider?.startsWith?.("anthropic-compatible-")) {
+      const baseUrl = credentials?.providerSpecificData?.baseUrl || ANTHROPIC_COMPAT_BASE;
+      return baseUrl.includes("api.anthropic.com") ? "claude-cli" : this.config?.identity;
+    }
+    return this.config?.identity;
+  }
+
   parseError(response, bodyText) {
     return { status: response.status, message: bodyText || `HTTP ${response.status}` };
   }
@@ -228,7 +240,7 @@ export class BaseExecutor {
           body: bodyStr,
           signal: mergedSignal,
           redirect: "error",
-          identity: this.config?.identity,
+          identity: this.resolveIdentity(credentials),
           provider: this.provider,
           format: this.config?.format,
           overlay: credentials?.rawHeaders ? pickClaudeIdentityHeaders(credentials.rawHeaders) : undefined,

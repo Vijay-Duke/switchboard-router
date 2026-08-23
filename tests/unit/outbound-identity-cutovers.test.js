@@ -84,4 +84,17 @@ describe("outbound identity cutovers", () => {
     expect(options.format).toBeDefined();
   });
 
+  it("anthropic-compatible nodes wear claude-cli only on the official Anthropic base", async () => {
+    const readFileSync = (await import("node:fs")).readFileSync;
+    const baseSource = readFileSync(new URL("../../open-sse/executors/base.js", import.meta.url), "utf8");
+    expect(baseSource).toContain("identity: this.resolveIdentity(credentials)");
+
+    const executor = new DefaultExecutor("anthropic-compatible-node1");
+    // No baseUrl / official base → default ANTHROPIC_COMPAT_BASE → claude-cli
+    expect(executor.resolveIdentity({ providerSpecificData: {} })).toBe("claude-cli");
+    expect(executor.resolveIdentity({ providerSpecificData: { baseUrl: "https://api.anthropic.com/v1" } })).toBe("claude-cli");
+    // Third-party gateways keep the openai-node fallback profile
+    expect(executor.resolveIdentity({ providerSpecificData: { baseUrl: "https://relay.example.com/v1" } })).toBe("openai-node");
+  });
+
 });

@@ -8,7 +8,7 @@ import {
   refreshImportedCursorCredentials,
   updateProviderCredentials,
 } from "@/sse/services/tokenRefresh";
-import { resolveOllamaLocalHost } from "open-sse/config/providers.js";
+import { resolveOllamaLocalHost, PROVIDERS } from "open-sse/config/providers.js";
 import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
@@ -443,8 +443,11 @@ export async function GET(request, { params }) {
         return NextResponse.json({ error: "No base URL configured for OpenAI compatible provider" }, { status: 400 });
       }
       const url = `${baseUrl.replace(/\/$/, "")}/models`;
-      const response = await fetch(url, {
+      const response = await proxyAwareFetch(url, {
         method: "GET",
+        identity: "openai-node",
+        provider: connection.provider,
+        format: "openai",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${connection.apiKey}`,
@@ -483,8 +486,11 @@ export async function GET(request, { params }) {
       }
 
       const url = `${baseUrl}/models`;
-      const response = await fetch(url, {
+      const response = await proxyAwareFetch(url, {
         method: "GET",
+        identity: baseUrl.includes("api.anthropic.com") ? "claude-cli" : "openai-node",
+        provider: connection.provider,
+        format: "claude",
         headers: {
           "Content-Type": "application/json",
           "x-api-key": connection.apiKey,
@@ -584,7 +590,7 @@ export async function GET(request, { params }) {
     const fetchOptions = {
       method: config.method,
       headers,
-      identity: connection.provider === "github" ? "copilot" : undefined,
+      identity: connection.provider === "github" ? "copilot" : PROVIDERS[connection.provider]?.identity,
       provider: connection.provider,
       format: connection.provider === "github" ? "openai" : undefined,
     };

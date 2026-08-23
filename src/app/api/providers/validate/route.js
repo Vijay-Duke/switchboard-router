@@ -6,6 +6,7 @@ import { getDefaultModel } from "open-sse/config/providerModels.js";
 import { resolveOllamaLocalHost, resolveXiaomiTokenplanBaseUrl, PROVIDERS } from "open-sse/config/providers.js";
 import { openaiToCommandCodeRequest } from "open-sse/translator/request/openai-to-commandcode.js";
 import { normalizeProviderId } from "@/lib/providerNormalization";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 import { assertPublicUrlResolved } from "@/shared/utils/ssrfGuard.js";
 
 // Probe a webSearch/webFetch provider using its searchConfig/fetchConfig.
@@ -107,7 +108,10 @@ export async function POST(request) {
         const baseUrl = node.baseUrl?.replace(/\/$/, "");
         await assertPublicUrlResolved(baseUrl);
         const modelsUrl = `${baseUrl}/models`;
-        const res = await fetch(modelsUrl, {
+        const res = await proxyAwareFetch(modelsUrl, {
+          identity: "openai-node",
+          provider,
+          format: "openai",
           headers: { "Authorization": `Bearer ${apiKey}` },
         });
         isValid = res.ok;
@@ -125,7 +129,10 @@ export async function POST(request) {
         }
         const baseUrl = node.baseUrl?.replace(/\/$/, "");
         await assertPublicUrlResolved(baseUrl);
-        const modelsRes = await fetch(`${baseUrl}/models`, {
+        const modelsRes = await proxyAwareFetch(`${baseUrl}/models`, {
+          identity: "openai-node",
+          provider,
+          format: "openai",
           headers: { "Authorization": `Bearer ${apiKey}` },
         });
         if (modelsRes.ok) {
@@ -136,7 +143,10 @@ export async function POST(request) {
           return NextResponse.json({ valid: false, error: "Invalid API key" });
         }
         // Fallback: probe /embeddings with a common test model — many providers lack /models
-        const embedRes = await fetch(`${baseUrl}/embeddings`, {
+        const embedRes = await proxyAwareFetch(`${baseUrl}/embeddings`, {
+          identity: "openai-node",
+          provider,
+          format: "openai",
           method: "POST",
           headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
           body: JSON.stringify({ model: "test", input: "ping" }),
@@ -275,8 +285,11 @@ export async function POST(request) {
           break;
 
         case "anthropic":
-          const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
+          const anthropicRes = await proxyAwareFetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
+            identity: PROVIDERS.anthropic?.identity,
+            provider: "anthropic",
+            format: PROVIDERS.anthropic?.format,
             headers: {
               "x-api-key": apiKey,
               "anthropic-version": "2023-06-01",
