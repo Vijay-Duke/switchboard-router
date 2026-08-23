@@ -13,7 +13,7 @@ import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleComboChat, getComboModelsFromData } from "open-sse/services/combo.js";
-import { assertPublicUrl } from "@/shared/utils/ssrfGuard.js";
+import { assertPublicUrl, assertPublicUrlResolved } from "@/shared/utils/ssrfGuard.js";
 import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
 import { getFetchCache } from "@/lib/db/repos/fetchCacheRepo.js";
 import {
@@ -86,6 +86,15 @@ export async function handleFetch(request) {
   } catch (err) {
     log.warn("FETCH", "Blocked URL", { url: targetUrl });
     return errorResponse(HTTP_STATUS.BAD_REQUEST, err.message);
+  }
+
+  // Resolved-IP recheck: the sync string-only guard above misses DNS
+  // rebinding to private/metadata addresses.
+  try {
+    await assertPublicUrlResolved(targetUrl, settings?.ssrfAllowHosts || null);
+  } catch (err) {
+    log.warn("FETCH", "Blocked URL (resolved)", { url: targetUrl });
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, `SSRF blocked: ${err.message}`);
   }
 
   let ttlMs = 0;
