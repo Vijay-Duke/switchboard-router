@@ -743,6 +743,16 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
       }
+      case "commandcode": {
+        const res = await fetchWithConnectionProxy(connection.provider, "https://api.commandcode.ai/provider/v1/models", {
+          headers: {
+            Authorization: `Bearer ${connection.apiKey}`,
+            "x-command-code-version": "0.25.7",
+            "x-cli-environment": "cli",
+          },
+        }, effectiveProxy);
+        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+      }
       default:
         return { valid: false, error: "Provider test not supported" };
     }
