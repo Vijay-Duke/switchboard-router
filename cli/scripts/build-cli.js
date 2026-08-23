@@ -190,6 +190,11 @@ if (!fs.existsSync(standaloneApp)) {
   process.exit(1);
 }
 copyRecursive(standaloneApp, cliAppDir);
+const bundledIdentitySnapshot = path.join(cliAppDir, "open-sse", "identity", "snapshots", "versions.json");
+if (!fs.existsSync(bundledIdentitySnapshot)) {
+  console.error(`❌ Missing identity snapshot: ${bundledIdentitySnapshot}`);
+  process.exit(1);
+}
 
 // A clean release bundle contains exactly one active Next dist tree. Fail the
 // pack rather than silently shipping recursively traced builds, tests, or CLI

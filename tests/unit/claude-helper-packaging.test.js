@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const buildScript = path.join(repoRoot, "scripts", "build-claude-tls-helper.mjs");
@@ -68,6 +68,33 @@ function targetFromCall(call) {
   return match ? `${match[1]}/${match[2]}` : null;
 }
 
+function runIdentityProbe(cwd) {
+  const snapshotModule = pathToFileURL(path.join(repoRoot, "open-sse", "identity", "snapshot.js")).href;
+  const helperModule = pathToFileURL(path.join(repoRoot, "open-sse", "identity", "tls", "claude-code.js")).href;
+  const script = `
+process.env.DATA_DIR = ${JSON.stringify(path.join(cwd, "data"))};
+const { getConsistentSnapshot } = await import(${JSON.stringify(snapshotModule)});
+const { __setClaudeCodeSpawnForTest, createClaudeCodeFetch } = await import(${JSON.stringify(helperModule)});
+let binary;
+__setClaudeCodeSpawnForTest((candidate) => {
+  binary = candidate;
+  throw new Error("selected helper");
+});
+try {
+  await createClaudeCodeFetch()("https://api.anthropic.com", {}, { alpn: ["http/1.1"] });
+} catch (error) {
+  if (error.message !== "selected helper") throw error;
+}
+console.log(JSON.stringify({ snapshot: getConsistentSnapshot("claude-cli"), binary }));
+`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd,
+    encoding: "utf8",
+  });
+  expect(result.status, result.stderr).toBe(0);
+  return JSON.parse(result.stdout);
+}
+
 describe("Claude TLS helper target builds", () => {
   it("builds every explicitly requested target with static Go binaries", () => {
     const requested = ["darwin/x64", "linux/arm64", "win32/x64"];
@@ -104,8 +131,6 @@ describe("universal CLI native packaging", () => {
   const cliPackage = JSON.parse(fs.readFileSync(path.join(repoRoot, "cli", "package.json"), "utf8"));
   const cliLock = JSON.parse(fs.readFileSync(path.join(repoRoot, "cli", "package-lock.json"), "utf8"));
   const cliBuild = fs.readFileSync(path.join(repoRoot, "cli", "scripts", "build-cli.js"), "utf8");
-  const snapshotSource = fs.readFileSync(path.join(repoRoot, "open-sse", "identity", "snapshot.js"), "utf8");
-  const helperSource = fs.readFileSync(path.join(repoRoot, "open-sse", "identity", "tls", "claude-code.js"), "utf8");
 
   it("declares every impit native package as an exact optional dependency", () => {
     expect(Object.fromEntries(impitPackages.map((name) => [name, cliPackage.optionalDependencies[name]]))).toEqual(
@@ -128,19 +153,45 @@ describe("universal CLI native packaging", () => {
     expect(cliBuild).toContain("process.platform");
     expect(cliBuild).toContain("process.arch");
     expect(cliBuild).toContain('"open-sse", "identity", "tls", "bin"');
+    expect(cliBuild).toContain('"open-sse", "identity", "snapshots", "versions.json"');
   });
 
-  it("contains the identity snapshot and all six prebuilt helpers without Go sources", () => {
-    expect(fs.existsSync(path.join(repoRoot, "cli", "app", "open-sse", "identity", "snapshots", "versions.json"))).toBe(true);
+  it("contains all six prebuilt helpers without Go sources", () => {
     for (const helperPath of helperTarPaths) {
       expect(fs.existsSync(path.join(repoRoot, "cli", helperPath)), helperPath).toBe(true);
     }
     expect(fs.existsSync(path.join(repoRoot, "cli", "app", "open-sse", "identity", "tls", "native", "main.go"))).toBe(false);
   });
 
-  it("resolves Claude identity assets from the standalone runtime directory", () => {
-    expect(snapshotSource).toContain('path.join(process.cwd(), "open-sse", "identity", "snapshots", "versions.json")');
-    expect(helperSource).toContain('path.join(process.cwd(), "open-sse", "identity", "tls", "bin"');
+  it("resolves Claude identity assets from standalone and source runtime directories", () => {
+    const standaloneDir = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-standalone-"));
+    tempDirs.push(standaloneDir);
+    const snapshotDir = path.join(standaloneDir, "open-sse", "identity", "snapshots");
+    const helperName = process.platform === "win32" ? "switchboard-claude-tls.exe" : "switchboard-claude-tls";
+    const standaloneHelper = path.join(standaloneDir, "open-sse", "identity", "tls", "bin", process.platform, process.arch, helperName);
+    fs.mkdirSync(snapshotDir, { recursive: true });
+    fs.mkdirSync(path.dirname(standaloneHelper), { recursive: true });
+    fs.writeFileSync(path.join(snapshotDir, "versions.json"), JSON.stringify({
+      "claude-cli": {
+        version: "9.8.7",
+        tlsSpecRev: "9.8.7",
+        packageVersion: "9.8.7",
+        runtimeVersion: "v22.19.0",
+        betas: "claude-code-20250219,oauth-2025-04-20",
+      },
+    }));
+    fs.writeFileSync(standaloneHelper, "");
+
+    const standalone = runIdentityProbe(standaloneDir);
+    expect(standalone.snapshot.version).toBe("9.8.7");
+    expect(fs.realpathSync(standalone.binary)).toBe(fs.realpathSync(standaloneHelper));
+
+    const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-source-fallback-"));
+    tempDirs.push(sourceDir);
+    const committed = JSON.parse(fs.readFileSync(path.join(repoRoot, "open-sse", "identity", "snapshots", "versions.json"), "utf8"));
+    const source = runIdentityProbe(sourceDir);
+    expect(source.snapshot.version).toBe(committed["claude-cli"].version);
+    expect(fs.realpathSync(source.binary)).toBe(fs.realpathSync(path.join(repoRoot, "open-sse", "identity", "tls", "bin", process.platform, process.arch, helperName)));
   });
 
   it("bundles generic impit without treating the host native package as the cross-platform source", () => {
