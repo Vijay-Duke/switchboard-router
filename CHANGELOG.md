@@ -1,3 +1,8 @@
+# v0.8.1 (2026-08-23)
+
+## Fixes
+- **Claude identity assets**: resolve bundled identity snapshots and TLS helpers from runtime-relative paths so standalone builds can fetch usage without reporting an identity mismatch
+
 # v0.8.0 (2026-08-23)
 
 ## Features
