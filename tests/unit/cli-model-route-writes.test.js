@@ -584,6 +584,99 @@ describe("CLI catalog routes write native client schemas", () => {
     expect((await DELETE()).status).toBe(200);
   });
 
+  it("writes models.yml with live discovery and keeps models.json in sync", async () => {
+    const piDir = path.join(home, ".pi/agent");
+    await fs.mkdir(piDir, { recursive: true });
+    await fs.writeFile(path.join(piDir, "models.json"), JSON.stringify({
+      providers: { zai: { models: [{ id: "glm-4.5-air" }] } },
+    }));
+    await fs.writeFile(path.join(piDir, "models.yml"), [
+      "providers:",
+      "  zai:",
+      "    baseUrl: https://api.z.ai/v1",
+      "    api: openai-completions",
+      "    apiKey: zai-key",
+      "    discovery:",
+      "      type: openai-models-list",
+    ].join("\n"));
+    await fs.writeFile(path.join(piDir, "settings.json"), JSON.stringify({}));
+    const { GET, POST, DELETE } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
+    expect((await POST(post())).status).toBe(200);
+
+    const yml = parseYaml(await fs.readFile(path.join(piDir, "models.yml"), "utf8"));
+    expect(yml.providers.switchboard).toMatchObject({
+      baseUrl: "http://127.0.0.1:20128/v1",
+      api: "openai-completions",
+      discovery: { type: "openai-models-list" },
+    });
+    expect(yml.providers.switchboard.models.map((entry) => entry.id)).toEqual(payload.models);
+    expect(yml.providers.zai).toEqual({
+      baseUrl: "https://api.z.ai/v1",
+      api: "openai-completions",
+      apiKey: "zai-key",
+      discovery: { type: "openai-models-list" },
+    });
+
+    const json = JSON.parse(await fs.readFile(path.join(piDir, "models.json"), "utf8"));
+    expect(json.providers.switchboard.models.map((entry) => entry.id)).toEqual(payload.models);
+    expect(json.providers.switchboard.discovery).toBeUndefined();
+
+    const status = await (await GET()).json();
+    expect(status.configPath.endsWith("models.yml")).toBe(true);
+    expect(status.settings.models).toEqual(payload.models);
+
+    expect((await DELETE()).status).toBe(200);
+    const restoredYml = parseYaml(await fs.readFile(path.join(piDir, "models.yml"), "utf8"));
+    expect(restoredYml.providers.switchboard).toBeUndefined();
+    expect(restoredYml.providers.zai.apiKey).toBe("zai-key");
+    expect(JSON.parse(await fs.readFile(path.join(piDir, "models.json"), "utf8")).providers.switchboard).toBeUndefined();
+  });
+
+  it("reads a hand-authored discovery-only models.yml as configured", async () => {
+    const piDir = path.join(home, ".pi/agent");
+    await fs.mkdir(piDir, { recursive: true });
+    await fs.rm(path.join(piDir, "models.yml"), { force: true });
+    await fs.writeFile(path.join(piDir, "models.json"), JSON.stringify({
+      providers: {
+        switchboard: {
+          baseUrl: "http://127.0.0.1:20128/v1",
+          models: [{ id: "glm/glm-5.3", name: "GLM 5.3" }],
+        },
+      },
+    }));
+    await fs.writeFile(path.join(piDir, "settings.json"), JSON.stringify({}));
+    const { GET } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
+    const status = await (await GET()).json();
+    expect(status.hasSwitchboard).toBe(true);
+    expect(status.settings.models).toEqual(["glm/glm-5.3"]);
+  });
+
+  it("restores models.json from legacy backups written before models.yml management", async () => {
+    const piDir = path.join(home, ".pi/agent");
+    await fs.mkdir(piDir, { recursive: true });
+    await fs.rm(path.join(piDir, "models.yml"), { force: true });
+    await fs.writeFile(path.join(piDir, "models.json"), JSON.stringify({
+      providers: { switchboard: { baseUrl: "https://prior.example/v1", models: [{ id: "prior/model" }] } },
+    }));
+    await fs.writeFile(path.join(piDir, "settings.json"), JSON.stringify({}));
+    const { POST, DELETE } = await import("../../src/app/api/cli-tools/pi-settings/route.js");
+    expect((await POST(post())).status).toBe(200);
+
+    const backupPath = path.join(piDir, "switchboard-backup.json");
+    const backup = JSON.parse(await fs.readFile(backupPath, "utf8"));
+    // Old code snapshotted only the models.json provider; mirror that shape.
+    backup.provider = backup.legacyProvider;
+    delete backup.legacyProvider;
+    delete backup.managedLegacyProvider;
+    await fs.writeFile(backupPath, JSON.stringify(backup));
+
+    expect((await DELETE()).status).toBe(200);
+    expect(JSON.parse(await fs.readFile(path.join(piDir, "models.json"), "utf8")).providers.switchboard).toEqual({
+      baseUrl: "https://prior.example/v1",
+      models: [{ id: "prior/model" }],
+    });
+  });
+
   it("writes a source-safe Grok env and restores the previous user configuration", async () => {
     const grokDir = path.join(home, ".grok");
     const settingsPath = path.join(grokDir, "user-settings.json");

@@ -2,8 +2,10 @@
 "use server";
 
 /**
- * Pi coding agent (@earendil-works/pi-coding-agent)
- * Custom OpenAI-compatible provider via ~/.pi/agent/models.json
+ * Pi coding agent (@earendil-works/pi-coding-agent / omp)
+ * Custom OpenAI-compatible provider via ~/.pi/agent/models.yml with live
+ * model discovery (omp >= v18 reads models.yml; plain pi still reads
+ * models.json, so both stay in sync).
  * docs: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md
  */
 import { NextResponse } from "next/server";
@@ -12,6 +14,7 @@ import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
   buildPiModelEntries,
   isNonEmptyString,
@@ -42,6 +45,9 @@ const getAgentDir = () => path.join(os.homedir(), ".pi", "agent");
 const getModelsPath = () => path.join(getAgentDir(), "models.json");
 const getSettingsPath = () => path.join(getAgentDir(), "settings.json");
 const getBackupPath = () => path.join(getAgentDir(), "switchboard-backup.json");
+// omp (Pi >= v18) reads models.yml and ignores models.json; plain pi still
+// reads models.json. Both are written so every Pi variant sees the provider.
+const getModelsYmlPath = () => path.join(getAgentDir(), "models.yml");
 
 const normalizeBaseUrl = (baseUrl) => {
   const u = String(baseUrl || "").replace(/\/+$/, "");
@@ -92,6 +98,22 @@ const readModels = () => readJsonFile(getModelsPath(), { providers: {} });
 const readSettings = () => readJsonFile(getSettingsPath(), {});
 const readBackup = () => readJsonFile(getBackupPath(), null);
 
+const readYamlFile = async (filePath, fallback) => {
+  try {
+    const raw = await fs.readFile(filePath, "utf-8");
+    const parsed = raw.trim() === "" ? {} : parseYaml(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new TypeError(`${filePath} must contain a YAML object`);
+    }
+    return parsed;
+  } catch (e) {
+    if (e.code === "ENOENT") return fallback;
+    throw e;
+  }
+};
+
+const readModelsYml = () => readYamlFile(getModelsYmlPath(), { providers: {} });
+
 const canonicalModelIds = (models) => models.map((model) => `${PROVIDER_ID}/${model}`);
 
 /** Keep other providers visible. A switchboard-only whitelist is lifted. */
@@ -132,7 +154,7 @@ const validateBackup = (backup) => {
   return backup;
 };
 
-const writePiState = async (models, settings, backup) => {
+const writePiState = async (modelsYml, models, settings, backup) => {
   await fs.mkdir(getAgentDir(), { recursive: true });
   await replaceCliFiles([
     {
@@ -140,6 +162,9 @@ const writePiState = async (models, settings, backup) => {
       content: backup ? JSON.stringify(backup, null, 2) : null,
       secret: true,
     },
+    // Writing models.yml also bumps its mtime, which makes omp treat its
+    // discovery cache as older than the config and refetch /v1/models.
+    { filePath: getModelsYmlPath(), content: stringifyYaml(modelsYml), secret: true },
     { filePath: getModelsPath(), content: JSON.stringify(models, null, 2), secret: true },
     { filePath: getSettingsPath(), content: JSON.stringify(settings, null, 2), secret: true },
   ]);
@@ -167,13 +192,23 @@ async function getPiSettings() {
       });
     }
 
-    const [data, piSettings] = await Promise.all([readModels(), readSettings()]);
-    const provider = data?.providers?.[PROVIDER_ID] || null;
-    const models = Array.isArray(provider?.models)
-      ? provider.models.map((entry) => entry?.id).filter(Boolean)
-      : [];
+    const [ymlData, data, piSettings] = await Promise.all([
+      readModelsYml(),
+      readModels(),
+      readSettings(),
+    ]);
+    // models.yml is canonical for omp; fall back to models.json for plain
+    // pi setups and legacy installs that predate the migration.
+    const ymlProvider = ymlData?.providers?.[PROVIDER_ID] || null;
+    const provider = ymlProvider || data?.providers?.[PROVIDER_ID] || null;
+    const staticEntries = Array.isArray(ymlProvider?.models)
+      ? ymlProvider.models
+      : (Array.isArray(data?.providers?.[PROVIDER_ID]?.models)
+        ? data.providers[PROVIDER_ID].models
+        : []);
+    const models = staticEntries.map((entry) => entry?.id).filter(Boolean);
     const pickerLabels = Object.fromEntries(
-      (Array.isArray(provider?.models) ? provider.models : [])
+      staticEntries
         .filter((entry) => entry?.id && entry?.name)
         .map((entry) => [entry.id, entry.name]),
     );
@@ -199,7 +234,7 @@ async function getPiSettings() {
         provider: PROVIDER_ID,
         scopeConfigured,
       },
-      configPath: getModelsPath(),
+      configPath: getModelsYmlPath(),
       settingsPath: getSettingsPath(),
     });
   } catch (error) {
@@ -228,16 +263,19 @@ async function postPiSettings(request) {
       defaultModel,
       pickerLabels: requestedPickerLabels,
     } = body || {};
-    const [data, piSettings, rawBackup] = await Promise.all([
+    const [ymlData, data, piSettings, rawBackup] = await Promise.all([
+      readModelsYml(),
       readModels(),
       readSettings(),
       readBackup(),
     ]);
     const validatedBackup = validateBackup(rawBackup);
     const storedBackup = validatedBackup?.state === "restored" ? null : validatedBackup;
-    const previousModels = Array.isArray(data?.providers?.[PROVIDER_ID]?.models)
-      ? data.providers[PROVIDER_ID].models
-      : [];
+    const previousModels = Array.isArray(ymlData?.providers?.[PROVIDER_ID]?.models)
+      ? ymlData.providers[PROVIDER_ID].models
+      : (Array.isArray(data?.providers?.[PROVIDER_ID]?.models)
+        ? data.providers[PROVIDER_ID].models
+        : []);
     const legacyModels = requestedModels === undefined
       ? [model, ...previousModels.map((entry) => entry?.id)]
       : requestedModels;
@@ -262,9 +300,13 @@ async function postPiSettings(request) {
     const key = apiKey || "sk_switchboard";
     const activeModel = resolveDefaultModel(defaultModel || model, models);
     const pickerLabels = normalizeClaudeCatalogPickerLabels(requestedPickerLabels, models);
-    if (!data.providers || typeof data.providers !== "object" || Array.isArray(data.providers)) {
-      data.providers = {};
-    }
+    const ensureProviders = (fileData) => {
+      if (!fileData.providers || typeof fileData.providers !== "object" || Array.isArray(fileData.providers)) {
+        fileData.providers = {};
+      }
+    };
+    ensureProviders(ymlData);
+    ensureProviders(data);
 
     const managedProvider = {
       baseUrl: normalized,
@@ -278,29 +320,38 @@ async function postPiSettings(request) {
       },
       models: buildPiModelEntries(models, previousModels, pickerLabels),
     };
+    // omp: curated entries stay pinned (labels/context), discovery exposes
+    // every other live Switchboard model without a dashboard round-trip.
+    const managedYmlProvider = {
+      ...managedProvider,
+      discovery: { type: "openai-models-list" },
+    };
     const backup = storedBackup?.version === BACKUP_VERSION
       ? storedBackup
       : {
           version: BACKUP_VERSION,
           state: "active",
-          provider: snapshotObjectKeys(data.providers, [PROVIDER_ID])[PROVIDER_ID],
+          provider: snapshotObjectKeys(ymlData.providers, [PROVIDER_ID])[PROVIDER_ID],
+          legacyProvider: snapshotObjectKeys(data.providers, [PROVIDER_ID])[PROVIDER_ID],
           settings: snapshotObjectKeys(piSettings, ["defaultProvider", "defaultModel", "enabledModels"]),
         };
 
+    ymlData.providers[PROVIDER_ID] = managedYmlProvider;
     data.providers[PROVIDER_ID] = managedProvider;
     piSettings.defaultProvider = PROVIDER_ID;
     piSettings.defaultModel = activeModel;
     const mergedEnabled = mergeEnabledModels(piSettings.enabledModels, canonicalModelIds(models));
     if (mergedEnabled) piSettings.enabledModels = mergedEnabled;
     else delete piSettings.enabledModels;
-    backup.managedProvider = managedProvider;
+    backup.managedProvider = managedYmlProvider;
+    backup.managedLegacyProvider = managedProvider;
     backup.managedSettings = {
       defaultProvider: PROVIDER_ID,
       defaultModel: activeModel,
       enabledModels: piSettings.enabledModels,
     };
 
-    await writePiState(data, piSettings, backup);
+    await writePiState(ymlData, data, piSettings, backup);
 
     return NextResponse.json({
       success: true,
@@ -308,7 +359,7 @@ async function postPiSettings(request) {
       pickerLabels: Object.fromEntries(
         managedProvider.models.map((entry) => [entry.id, entry.name]),
       ),
-      configPath: getModelsPath(),
+      configPath: getModelsYmlPath(),
       settingsPath: getSettingsPath(),
     });
   } catch (error) {
@@ -323,7 +374,8 @@ export async function POST(request) {
 
 async function deletePiSettings() {
   try {
-    const [data, piSettings, rawBackup] = await Promise.all([
+    const [ymlData, data, piSettings, rawBackup] = await Promise.all([
+      readModelsYml(),
       readModels(),
       readSettings(),
       readBackup(),
@@ -335,7 +387,9 @@ async function deletePiSettings() {
         message: "No Switchboard Pi settings to reset",
       });
     }
-    const hasManagedProvider = !!data?.providers?.[PROVIDER_ID];
+    const ymlProvider = ymlData?.providers?.[PROVIDER_ID];
+    const jsonProvider = data?.providers?.[PROVIDER_ID];
+    const hasManagedProvider = !!(ymlProvider || jsonProvider);
     const hasManagedSettings = piSettings.defaultProvider === PROVIDER_ID
       || (Array.isArray(piSettings.enabledModels)
         && piSettings.enabledModels.some((entry) => typeof entry === "string" && entry.startsWith(`${PROVIDER_ID}/`)));
@@ -345,10 +399,20 @@ async function deletePiSettings() {
         message: "No Switchboard Pi settings to reset",
       });
     }
-    if (hasManagedProvider
-      && (!backup?.managedProvider || sameJson(data.providers[PROVIDER_ID], backup.managedProvider))) {
+    if (ymlProvider
+      && (!backup?.managedProvider || sameJson(ymlProvider, backup.managedProvider))) {
       if (backup?.version === BACKUP_VERSION) {
-        restoreObjectKeys(data.providers, { [PROVIDER_ID]: backup.provider });
+        restoreObjectKeys(ymlData.providers, { [PROVIDER_ID]: backup.provider });
+      } else {
+        delete ymlData.providers[PROVIDER_ID];
+      }
+    }
+    if (jsonProvider
+      && (!backup?.managedLegacyProvider || sameJson(jsonProvider, backup.managedLegacyProvider))) {
+      if (backup?.version === BACKUP_VERSION) {
+        // Backups written before models.yml was managed only snapshot the
+        // models.json provider; reuse it for both files.
+        restoreObjectKeys(data.providers, { [PROVIDER_ID]: backup.legacyProvider ?? backup.provider });
       } else {
         delete data.providers[PROVIDER_ID];
       }
@@ -369,7 +433,7 @@ async function deletePiSettings() {
       );
       if (piSettings.enabledModels.length === 0) delete piSettings.enabledModels;
     }
-    await writePiState(data, piSettings, {
+    await writePiState(ymlData, data, piSettings, {
       version: BACKUP_VERSION,
       state: "restored",
     });
