@@ -1,3 +1,8 @@
+# v0.9.2 (2026-08-27)
+
+## Fixes
+- **omp/Pi live model discovery**: dashboard Pi integration now writes `~/.pi/agent/models.yml` (omp ≥ v18's canonical config, previously only legacy `models.json` was written) with `discovery: openai-models-list`, so every live Switchboard model appears in omp's picker without a dashboard round-trip; dashboard Apply also invalidates omp's 24h discovery cache, and Disconnect restores both files (legacy single-file backups still restore correctly)
+
 # v0.9.1 (2026-08-27)
 
 ## Features
