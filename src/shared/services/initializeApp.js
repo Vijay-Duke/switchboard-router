@@ -70,6 +70,11 @@ export async function initializeApp() {
     registerShutdownHandlers();
     await cleanupProviderConnections();
 
+    // Auto-import seed configuration (YAML/JSON) if present
+    import("@/lib/configImporter.js")
+      .then(({ autoImportConfigFile }) => autoImportConfigFile())
+      .catch((e) => console.log("[ConfigImporter] auto-import failed:", e.message));
+
     // Sync mitmAlias DB → JSON cache so standalone MITM server can read it
     syncMitmAliasCache().catch(() => {});
 

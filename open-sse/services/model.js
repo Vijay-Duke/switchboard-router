@@ -55,10 +55,29 @@ export function parseModel(modelStr) {
  * Format: { "alias": "provider/model" }
  */
 export function resolveModelAliasFromMap(alias, aliases) {
-  if (!aliases) return null;
+  if (!aliases || typeof alias !== "string") return null;
 
-  // Check if alias exists
-  const resolved = aliases[alias];
+  // 1. Exact alias match
+  let resolved = aliases[alias];
+
+  // 2. Wildcard / glob match if exact match not found (e.g. "gpt-4*", "claude-3-7*", "*-flash")
+  if (!resolved) {
+    for (const [pattern, target] of Object.entries(aliases)) {
+      if (typeof pattern === "string" && pattern.includes("*")) {
+        try {
+          const regexStr = "^" + pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$";
+          const re = new RegExp(regexStr, "i");
+          if (re.test(alias)) {
+            resolved = target;
+            break;
+          }
+        } catch {
+          // ignore invalid regex
+        }
+      }
+    }
+  }
+
   if (!resolved) return null;
 
   // Resolved value is "provider/model" format
@@ -76,6 +95,14 @@ export function resolveModelAliasFromMap(alias, aliases) {
     return {
       provider: resolveProviderAlias(resolved.provider),
       model: resolved.model,
+    };
+  }
+
+  // Or combo string (model name without slash)
+  if (typeof resolved === "string") {
+    return {
+      provider: null,
+      model: resolved,
     };
   }
 

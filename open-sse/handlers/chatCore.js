@@ -396,7 +396,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       providerRequest: translatedBody || null,
       response: { error: error.message || String(error), status: error.name === "AbortError" ? 499 : 502, thinking: null },
       status: "error",
-      pxpipe: pxpipeSummary || undefined
+      pxpipe: pxpipeSummary || undefined,
+      rtk: rtkStats || undefined
     })).catch(() => { });
 
     if (error.name === "AbortError") {
@@ -455,7 +456,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       providerRequest: finalBody || translatedBody || null,
       response: { error: message, status: statusCode, thinking: null },
       status: "error",
-      pxpipe: pxpipeSummary || undefined
+      pxpipe: pxpipeSummary || undefined,
+      rtk: rtkStats || undefined
     })).catch(() => { });
 
     const errMsg = formatProviderError(new Error(message), provider, model, statusCode);
@@ -525,5 +527,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
 export function isTokenExpiringSoon(expiresAt, bufferMs = 5 * 60 * 1000) {
   if (!expiresAt) return false;
-  return new Date(expiresAt).getTime() - Date.now() < bufferMs;
+  const expiryMs = typeof expiresAt === "number" ? expiresAt : new Date(expiresAt).getTime();
+  if (!Number.isFinite(expiryMs)) return false;
+  return expiryMs - Date.now() < bufferMs;
 }

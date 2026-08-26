@@ -272,7 +272,13 @@ export async function pollIdentityVersions(fetchImpl = globalThis.fetch) {
 export function startIdentityPolling(fetchImpl = globalThis.fetch) {
   if (pollTimer || typeof fetchImpl !== "function") return pollTimer;
   void pollIdentityVersions(fetchImpl);
-  pollTimer = setInterval(() => void pollIdentityVersions(fetchImpl), POLL_INTERVAL_MS);
+  // ponytail: re-check snapshot age on every poll tick so a long-running process
+  // that loses npm access still surfaces staleness.
+  checkSnapshotAge();
+  pollTimer = setInterval(() => {
+    void pollIdentityVersions(fetchImpl);
+    checkSnapshotAge();
+  }, POLL_INTERVAL_MS);
   pollTimer.unref?.();
   return pollTimer;
 }
@@ -291,6 +297,24 @@ export function resetIdentityState() {
 
 export function knownProfileIds() {
   return Object.keys(PROFILES);
+}
+
+// ponytail: max acceptable snapshot age in ms. After this, we log a warning
+// even if the registry poll cannot reach npm (offline / blocked). 30 days.
+const SNAPSHOT_STALE_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+function checkSnapshotAge() {
+  const now = Date.now();
+  for (const profileId of Object.keys(PROFILES)) {
+    const snap = getConsistentSnapshot(profileId) || fallbackSnapshot(profileId);
+    const captured = snap?.capturedAt;
+    if (!captured) continue;
+    const age = now - new Date(captured).getTime();
+    if (Number.isFinite(age) && age > SNAPSHOT_STALE_AGE_MS) {
+      const days = Math.floor(age / (24 * 60 * 60 * 1000));
+      markStale(profileId, `snapshot is ${days}d old; run npm run identity:refresh`);
+    }
+  }
 }
 
 if (process.env.NODE_ENV !== "test" && process.env.SWITCHBOARD_DISABLE_IDENTITY_POLL !== "1") {

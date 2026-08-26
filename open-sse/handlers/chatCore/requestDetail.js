@@ -70,6 +70,7 @@ export function buildRequestDetail(base, overrides = {}) {
     providerResponse: base.providerResponse || null,
     response: base.response || {},
     pxpipe: base.pxpipe || undefined,
+    rtk: base.rtk || undefined,
     status: base.status || "success",
     ...overrides
   };

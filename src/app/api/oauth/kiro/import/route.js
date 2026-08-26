@@ -11,7 +11,13 @@ import { createProviderConnection } from "@/models";
  */
 export async function POST(request) {
   try {
-    const { refreshToken, clientId, clientSecret, region, authMethod, profileArn } = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const { refreshToken, clientId, clientSecret, region, authMethod, profileArn } = body || {};
 
     if (!refreshToken || typeof refreshToken !== "string") {
       return NextResponse.json(

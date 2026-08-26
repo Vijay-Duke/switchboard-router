@@ -3,6 +3,7 @@ import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS, getModelKind } from "@/shared/co
 import {
   AI_PROVIDERS,
   getProviderAlias,
+  resolveProviderId,
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
@@ -37,6 +38,7 @@ import {
   readClaudeCatalogPickerLabelsFromHeaders,
   readClaudeCatalogSelectionFromHeaders,
 } from "@/shared/claudeGateway.js";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 
 // Per-provider live model resolvers. Each receives a connection record and
@@ -241,12 +243,17 @@ function comboMatchesKinds(combo, kindFilter) {
  */
 export async function buildModelsList(kindFilter, { signal = null, skipCompatibleDiscovery = false } = {}) {
   let connections = [];
+  let connectionsFetchFailed = false;
   try {
     connections = await getProviderConnections();
-    connections = connections.filter(c => c.isActive !== false);
   } catch (e) {
+    connectionsFetchFailed = true;
     console.log("Could not fetch providers, returning all models");
   }
+  // Active-only view for routing availability; the unfiltered list still
+  // distinguishes "DB down" (fail open) from "all connections disabled"
+  // (stop advertising — Switchboard#models-advertise).
+  const activeConnections = connections.filter((c) => c.isActive !== false);
 
   let combos = [];
   try {
@@ -289,7 +296,7 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
   };
 
   const activeConnectionByProvider = new Map();
-  for (const conn of connections) {
+  for (const conn of activeConnections) {
     if (signal?.aborted) break;
     if (!activeConnectionByProvider.has(conn.provider)) {
       activeConnectionByProvider.set(conn.provider, conn);
@@ -337,9 +344,31 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
 
   const models = [];
 
+  // Availability: when real connection data exists, stop advertising entries
+  // whose every target provably belongs to a provider with no active
+  // connection. Undetermined prefixes (custom nodes, bare names) stay visible —
+  // fail-open, matching the route's live-catalog fallback philosophy. With no
+  // connection data (DB unavailable) nothing is hidden.
+  const isModelStringUnavailable = (modelStr) => {
+    if (typeof modelStr !== "string") return false;
+    const slash = modelStr.indexOf("/");
+    if (slash <= 0) return false; // bare name: alias/combo target — undetermined
+    const prefix = modelStr.slice(0, slash);
+    const resolvedProvider = resolveProviderId(prefix);
+    if (!resolvedProvider || !AI_PROVIDERS[resolvedProvider]) return false;
+    return !activeConnectionByProvider.has(resolvedProvider);
+  };
+  const hasConnectionsData = !connectionsFetchFailed;
+
   // Combos first (filtered by kind). Web combos expose `kind` so AI knows search vs fetch.
   for (const combo of combos) {
     if (!comboMatchesKinds(combo, kindFilter)) continue;
+    // A combo with zero routable members is dead weight in the list; a combo
+    // with any live (or undetermined) member keeps serving fallback semantics.
+    if (hasConnectionsData) {
+      const members = Array.isArray(combo.models) ? combo.models : [];
+      if (members.length > 0 && members.every(isModelStringUnavailable)) continue;
+    }
     const entry = {
       id: combo.name,
       object: "model",
@@ -357,8 +386,9 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
   // provider/model targets) so users can add arbitrary Switchboard-backed
   // models to Claude's picker without confusing provider parsing.
   if (kindFilter.includes(LLM_KIND)) {
-    for (const alias of Object.keys(modelAliases || {})) {
+    for (const [alias, target] of Object.entries(modelAliases || {})) {
       if (!isClaudeGatewayAlias(alias)) continue;
+      if (hasConnectionsData && isModelStringUnavailable(target)) continue;
       models.push({
         id: alias,
         object: "model",
@@ -370,11 +400,8 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
 
   if (connections.length === 0) {
     // DB unavailable -> return static models, filtered by per-model kind
-    const aliasToProviderId = Object.fromEntries(
-      Object.entries(PROVIDER_ID_TO_ALIAS).map(([id, alias]) => [alias, id])
-    );
     for (const [alias, providerModels] of Object.entries(PROVIDER_MODELS)) {
-      const providerId = aliasToProviderId[alias] || alias;
+      const providerId = resolveProviderId(alias);
       if (!providerMatchesKinds(providerId, kindFilter)) continue;
       for (const model of providerModels) {
         if (!kindFilter.includes(modelKind(model))) continue;

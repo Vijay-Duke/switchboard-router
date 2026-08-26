@@ -39,9 +39,14 @@ export async function GET(request) {
 /** POST /api/mgmt/v1/combos */
 export async function POST(request) {
   const denied = await requireManagementAuth(request);
-  if (denied) return denied;
+  let body;
   try {
-    const combo = await createComboWrite(await request.json());
+    body = await request.json();
+  } catch {
+    return fail(400, "Invalid JSON body", "bad_request");
+  }
+  try {
+    const combo = await createComboWrite(body);
     return ok(combo, { status: 201 });
   } catch (error) {
     if (error instanceof ComboWriteError) {

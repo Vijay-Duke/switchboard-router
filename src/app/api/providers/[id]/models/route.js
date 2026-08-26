@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { getProviderConnectionById } from "@/models";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
-import { GEMINI_CONFIG } from "@/lib/oauth/constants/oauth";
+import { GEMINI_CONFIG, ANTIGRAVITY_CONFIG } from "@/lib/oauth/constants/oauth";
 import {
   refreshGoogleToken,
   refreshImportedCursorCredentials,
@@ -185,13 +185,26 @@ const PROVIDER_MODELS_CONFIG = {
     parseResponse: parseCodexModels
   },
   antigravity: {
-    url: "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:models",
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    authHeader: "Authorization",
-    authPrefix: "Bearer ",
-    body: {},
-    parseResponse: (data) => data.models || []
+    customResolver: buildOAuthResolver({
+      refreshFn: (conn) => refreshGoogleToken(conn.refreshToken, ANTIGRAVITY_CONFIG.clientId, ANTIGRAVITY_CONFIG.clientSecret),
+      fetchFn: (token, conn) => {
+        const projectId = conn.projectId || conn.providerSpecificData?.projectId;
+        const body = projectId ? { project: projectId } : {};
+        return fetch("https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+            "X-Client-Name": "antigravity",
+            "User-Agent": "google-api-nodejs-client/9.15.1",
+            "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1"
+          },
+          body: JSON.stringify(body)
+        });
+      },
+      parseFn: parseGeminiCliModels,
+      errorLabel: "Failed to fetch Antigravity models"
+    })
   },
   github: {
     url: "https://api.githubcopilot.com/models",
@@ -443,6 +456,9 @@ const PROVIDER_MODELS_CONFIG = {
   }
 };
 
+const MODEL_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+const discoveryCache = (global.__providerModelDiscoveryCache ??= new Map());
+
 /**
  * GET /api/providers/[id]/models - Get models list from provider
  */
@@ -455,6 +471,32 @@ export async function GET(request, { params }) {
     if (!connection) {
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
     }
+
+    const urlObj = new URL(request.url);
+    const forceRefresh = urlObj.searchParams.get("refresh") === "true" ||
+      urlObj.searchParams.get("force") === "true" ||
+      request.headers.get("cache-control")?.includes("no-cache");
+
+    const cacheKey = [
+      connection.id,
+      connection.provider,
+      connection.apiKey || connection.accessToken || "",
+      connection.providerSpecificData?.baseUrl || "",
+    ].join(":");
+
+    if (!forceRefresh) {
+      const cached = discoveryCache.get(cacheKey);
+      if (cached && Date.now() - cached.timestamp < MODEL_CACHE_TTL_MS) {
+        return NextResponse.json(cached.payload);
+      }
+    }
+
+    const respondAndCache = (payload, status = 200) => {
+      if (status === 200 && payload?.models?.length) {
+        discoveryCache.set(cacheKey, { timestamp: Date.now(), payload });
+      }
+      return NextResponse.json(payload, { status });
+    };
 
     if (isOpenAICompatibleProvider(connection.provider)) {
       const baseUrl = connection.providerSpecificData?.baseUrl;
@@ -486,7 +528,7 @@ export async function GET(request, { params }) {
       const data = await response.json();
       const models = data.data || data.models || [];
 
-      return NextResponse.json({
+      return respondAndCache({
         provider: connection.provider,
         connectionId: connection.id,
         models
@@ -531,7 +573,7 @@ export async function GET(request, { params }) {
       const data = await response.json();
       const models = data.data || data.models || [];
 
-      return NextResponse.json({
+      return respondAndCache({
         provider: connection.provider,
         connectionId: connection.id,
         models
@@ -547,7 +589,7 @@ export async function GET(request, { params }) {
         `Provider ${connection.provider} does not expose a configured model endpoint`,
       );
       if (resolved.models?.length) {
-        return NextResponse.json({
+        return respondAndCache({
           provider: connection.provider,
           connectionId: connection.id,
           models: resolved.models,
@@ -568,7 +610,7 @@ export async function GET(request, { params }) {
         if (!fallback.models?.length) {
           return NextResponse.json({ error: result.error }, { status: result.status || 500 });
         }
-        return NextResponse.json({
+        return respondAndCache({
           provider: connection.provider,
           connectionId: connection.id,
           models: fallback.models,
@@ -576,7 +618,7 @@ export async function GET(request, { params }) {
         });
       }
       const resolved = withStaticFallback(connection.provider, result);
-      return NextResponse.json({
+      return respondAndCache({
         provider: connection.provider,
         connectionId: connection.id,
         models: resolved.models,
@@ -625,7 +667,7 @@ export async function GET(request, { params }) {
       console.log(`Error fetching models from ${connection.provider}:`, errorText);
       const staticModels = getStaticProviderModels(connection.provider);
       if (staticModels.length) {
-        return NextResponse.json({
+        return respondAndCache({
           provider: connection.provider,
           connectionId: connection.id,
           models: staticModels,
@@ -642,7 +684,7 @@ export async function GET(request, { params }) {
     const models = config.parseResponse(data);
     const resolvedModels = models.length ? models : getStaticProviderModels(connection.provider);
 
-    return NextResponse.json({
+    return respondAndCache({
       provider: connection.provider,
       connectionId: connection.id,
       models: resolvedModels,

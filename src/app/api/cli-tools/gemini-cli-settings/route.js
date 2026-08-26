@@ -134,7 +134,13 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, model, models: requestedModels, defaultModel } = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const { baseUrl, apiKey, model, models: requestedModels, defaultModel } = body || {};
     const models = normalizeModelIds(requestedModels ?? model);
     if (!isNonEmptyString(baseUrl) || !isOptionalString(apiKey) || models.length === 0) {
       return NextResponse.json({ error: "baseUrl and at least one model are required" }, { status: 400 });

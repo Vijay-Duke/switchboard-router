@@ -16,12 +16,18 @@ export const dynamic = "force-dynamic";
 export async function PUT(request, { params }) {
   const denied = await requireManagementAuth(request);
   if (denied) return denied;
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return fail(400, "Invalid JSON body", "bad_request");
+  }
   try {
     const { id } = await params;
     const combo = await getComboById(id);
     if (!combo) return fail(404, "Combo not found", "not_found");
 
-    const strategy = await updateComboStrategyChecked(combo.name, await request.json());
+    const strategy = await updateComboStrategyChecked(combo.name, body);
     return ok({ combo: combo.name, strategy });
   } catch (error) {
     if (error instanceof ComboWriteError) {

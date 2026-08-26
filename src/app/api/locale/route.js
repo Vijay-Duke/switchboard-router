@@ -5,7 +5,16 @@ import { LOCALE_COOKIE, normalizeLocale, isSupportedLocale } from "@/i18n/config
 
 export async function POST(request) {
   try {
-    const { locale } = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON body" },
+        { status: 400 }
+      );
+    }
+    const { locale } = body || {};
     
     if (!locale || !isSupportedLocale(locale)) {
       return NextResponse.json(

@@ -149,6 +149,8 @@ async function flushToDatabase() {
             providerResponse: truncateField(item.providerResponse, config.maxJsonSize),
             response: truncateField(item.response, config.maxJsonSize),
             pxpipe: item.pxpipe || undefined,
+            // Cap hits: one entry per compressed tool_result; pathological histories stay bounded.
+            rtk: item.rtk ? { ...item.rtk, hits: item.rtk.hits?.slice(0, 50) } : undefined,
           };
 
           db.run(
@@ -224,8 +226,14 @@ export async function getRequestDetails(filter = {}) {
   if (filter.model) { conds.push("model = ?"); params.push(filter.model); }
   if (filter.connectionId) { conds.push("connectionId = ?"); params.push(filter.connectionId); }
   if (filter.status) { conds.push("status = ?"); params.push(filter.status); }
-  if (filter.startDate) { conds.push("timestamp >= ?"); params.push(new Date(filter.startDate).toISOString()); }
-  if (filter.endDate) { conds.push("timestamp <= ?"); params.push(new Date(filter.endDate).toISOString()); }
+  const isoOrNull = (value) => {
+    const ms = new Date(value).getTime();
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+  };
+  const startIso = filter.startDate ? isoOrNull(filter.startDate) : null;
+  const endIso = filter.endDate ? isoOrNull(filter.endDate) : null;
+  if (startIso) { conds.push("timestamp >= ?"); params.push(startIso); }
+  if (endIso) { conds.push("timestamp <= ?"); params.push(endIso); }
 
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   const cntRow = db.get(`SELECT COUNT(*) as c FROM requestDetails ${where}`, params);

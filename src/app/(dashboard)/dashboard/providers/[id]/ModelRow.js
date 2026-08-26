@@ -4,102 +4,111 @@ import { CapacityBadges } from "@/shared/components";
 
 export default function ModelRow({ model, fullModel, alias, copied, onCopy, testStatus, isCustom, isFree, onDeleteAlias, onTest, isTesting, onDisable, caps, thinkingSuffix, latencyMs, probeState }) {
   const displayModel = thinkingSuffix ? `${fullModel}(${thinkingSuffix})` : fullModel;
-  const borderColor = testStatus === "ok"
-    ? "border-green-500/40"
-    : testStatus === "error"
-    ? "border-red-500/40"
-    : "border-border";
+  const isOk = testStatus === "ok" || probeState === "ok";
+  const isDead = testStatus === "error" || probeState === "dead";
+  const isPending = probeState === "retry" || isTesting || probeState === "testing";
 
-  const iconColor = testStatus === "ok"
-    ? "#22c55e"
-    : testStatus === "error"
-    ? "#ef4444"
-    : undefined;
+  const borderColor = isOk
+    ? "border-green-500/30 hover:border-green-500/50"
+    : isDead
+    ? "border-red-500/30 hover:border-red-500/50"
+    : isPending
+    ? "border-amber-500/30 hover:border-amber-500/50"
+    : "border-border/60 hover:border-primary/40";
 
   return (
-    <div className={`group min-w-0 max-w-full rounded-lg border px-3 py-2 ${borderColor} hover:bg-sidebar/50`}>
-      <div className="flex min-w-0 items-start gap-2 sm:items-center">
-        <span
-          className="material-symbols-outlined shrink-0 text-base"
-          style={iconColor ? { color: iconColor } : undefined}
-          role={testStatus ? "img" : undefined}
-          aria-label={testStatus === "ok" ? "Test passed" : testStatus === "error" ? "Test failed" : undefined}
-          aria-hidden={testStatus ? undefined : "true"}
-        >
-          {testStatus === "ok" ? "check_circle" : testStatus === "error" ? "cancel" : "smart_toy"}
-        </span>
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <div className="flex items-center gap-1.5">
-            <code className="max-w-[72vw] truncate rounded bg-sidebar px-1.5 py-0.5 font-mono text-xs text-text-muted sm:max-w-[360px]">{displayModel}</code>
-            {probeState && (
-              probeState === "testing" ? (
-                <span className="material-symbols-outlined shrink-0 animate-spin text-[14px] text-text-muted" title="Testing...">progress_activity</span>
-              ) : (
-                <span
-                  title={probeState === "ok" ? "Reachable" : probeState === "dead" ? "Unavailable (dead)" : "Retry later"}
-                  className={`shrink-0 inline-block h-2 w-2 rounded-full ${probeState === "ok" ? "bg-green-500" : probeState === "dead" ? "bg-red-500" : "bg-amber-500"}`}
-                />
-              )
+    <div className={`group relative min-w-0 max-w-full rounded-xl border bg-surface/50 p-3 transition-all hover:bg-surface/80 hover:shadow-soft ${borderColor}`}>
+      <div className="flex min-w-0 items-start justify-between gap-2.5">
+        <div className="flex min-w-0 flex-1 items-start gap-2.5">
+          {/* Status icon / model avatar */}
+          <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-surface-2 border border-border/40 text-text-muted">
+            {isTesting || probeState === "testing" ? (
+              <span className="material-symbols-outlined shrink-0 animate-spin text-[15px] text-primary" title="Testing model...">progress_activity</span>
+            ) : isOk ? (
+              <span className="material-symbols-outlined shrink-0 text-[16px] text-green-500" title="Model reachable">check_circle</span>
+            ) : isDead ? (
+              <span className="material-symbols-outlined shrink-0 text-[16px] text-red-500" title="Model unavailable">cancel</span>
+            ) : probeState === "retry" ? (
+              <span className="material-symbols-outlined shrink-0 text-[16px] text-amber-500" title="Retry later">schedule</span>
+            ) : (
+              <span className="material-symbols-outlined shrink-0 text-[16px]" aria-hidden="true">smart_toy</span>
             )}
           </div>
-          <span className="flex min-w-0 items-center text-[9px] gap-1 pl-1">
-            {model.name && <span className="truncate text-[9px] italic text-text-muted/70">{model.name}</span>}
-            {Number.isFinite(latencyMs) && (
-              <span className="shrink-0 text-[9px] text-text-muted/70 tabular-nums">{Math.round(latencyMs)}ms</span>
-            )}
-            <CapacityBadges caps={caps} colorOverride="text-text-muted/70" size={12} />
-          </span>
+
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <code className="max-w-[70vw] truncate rounded-md bg-surface-2 border border-border/40 px-2 py-0.5 font-mono text-xs font-medium text-text-main sm:max-w-[340px]">
+                {displayModel}
+              </code>
+              {isCustom && (
+                <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                  Custom
+                </span>
+              )}
+            </div>
+
+            <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs">
+              {model.name && (
+                <span className="truncate text-xs text-text-muted">
+                  {model.name}
+                </span>
+              )}
+              {Number.isFinite(latencyMs) && (
+                <span className="inline-flex items-center gap-0.5 text-[11px] font-medium text-text-muted tabular-nums">
+                  <span className="material-symbols-outlined text-[12px] text-primary">bolt</span>
+                  {Math.round(latencyMs)}ms
+                </span>
+              )}
+              <CapacityBadges caps={caps} colorOverride="text-text-muted/80" size={13} />
+            </div>
+          </div>
         </div>
-        {onTest && (
-          <div className="relative shrink-0 group/btn">
+
+        {/* Action buttons */}
+        <div className="flex items-center gap-1 shrink-0">
+          {onTest && (
             <button
               onClick={onTest}
               disabled={isTesting}
               aria-label={isTesting ? `Testing ${displayModel}` : `Test ${displayModel}`}
-              className={`rounded p-0.5 text-text-muted transition-opacity hover:bg-sidebar hover:text-primary ${isTesting ? "opacity-100" : "opacity-100 sm:opacity-0 sm:group-hover:opacity-100"}`}
+              title={isTesting ? "Testing..." : "Test model"}
+              className={`rounded-lg p-1 text-text-muted transition-all hover:bg-surface-2 hover:text-primary ${isTesting ? "opacity-100" : "opacity-70 group-hover:opacity-100"}`}
             >
-              <span className="material-symbols-outlined text-sm" aria-hidden="true" style={isTesting ? { animation: "spin 1s linear infinite" } : undefined}>
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true" style={isTesting ? { animation: "spin 1s linear infinite" } : undefined}>
                 {isTesting ? "progress_activity" : "science"}
               </span>
             </button>
-            <span className="pointer-events-none absolute mt-1 top-5 left-1/2 -translate-x-1/2 text-[10px] text-text-muted whitespace-nowrap opacity-0 group-hover/btn:opacity-100 transition-opacity" aria-hidden="true">
-              {isTesting ? "Testing..." : "Test"}
-            </span>
-          </div>
-        )}
-        <div className="relative shrink-0 group/btn">
+          )}
           <button
             onClick={() => onCopy(displayModel, `model-${model.id}`)}
             aria-label={copied === `model-${model.id}` ? `Copied ${displayModel}` : `Copy ${displayModel}`}
-            className="rounded p-0.5 text-text-muted hover:bg-sidebar hover:text-primary"
+            title={copied === `model-${model.id}` ? "Copied!" : "Copy model name"}
+            className="rounded-lg p-1 text-text-muted transition-all hover:bg-surface-2 hover:text-primary opacity-70 group-hover:opacity-100"
           >
-            <span className="material-symbols-outlined text-sm" aria-hidden="true">
+            <span className="material-symbols-outlined text-[16px]" aria-hidden="true">
               {copied === `model-${model.id}` ? "check" : "content_copy"}
             </span>
           </button>
-          <span className="pointer-events-none absolute mt-1 top-5 left-1/2 -translate-x-1/2 text-[10px] text-text-muted whitespace-nowrap opacity-0 group-hover/btn:opacity-100 transition-opacity" aria-hidden="true">
-            {copied === `model-${model.id}` ? "Copied!" : "Copy"}
-          </span>
+          {isCustom ? (
+            <button
+              onClick={onDeleteAlias}
+              className="rounded-lg p-1 text-text-muted transition-all hover:bg-red-500/10 hover:text-red-400 opacity-60 hover:opacity-100"
+              aria-label={`Remove custom model ${displayModel}`}
+              title="Remove custom model"
+            >
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">close</span>
+            </button>
+          ) : onDisable ? (
+            <button
+              onClick={onDisable}
+              className="rounded-lg p-1 text-text-muted transition-all hover:bg-red-500/10 hover:text-red-400 opacity-60 hover:opacity-100"
+              aria-label={`Disable ${displayModel}`}
+              title="Disable this model"
+            >
+              <span className="material-symbols-outlined text-[16px]" aria-hidden="true">close</span>
+            </button>
+          ) : null}
         </div>
-        {isCustom ? (
-          <button
-            onClick={onDeleteAlias}
-            className="ml-auto rounded p-0.5 text-text-muted opacity-100 transition-opacity hover:bg-red-500/10 hover:text-red-500 sm:opacity-0 sm:group-hover:opacity-100"
-            aria-label={`Remove custom model ${displayModel}`}
-            title="Remove custom model"
-          >
-            <span className="material-symbols-outlined text-sm" aria-hidden="true">close</span>
-          </button>
-        ) : onDisable ? (
-          <button
-            onClick={onDisable}
-            className="ml-auto rounded p-0.5 text-text-muted opacity-100 transition-opacity hover:bg-red-500/10 hover:text-red-500 sm:opacity-0 sm:group-hover:opacity-100"
-            aria-label={`Disable ${displayModel}`}
-            title="Disable this model"
-          >
-            <span className="material-symbols-outlined text-sm" aria-hidden="true">close</span>
-          </button>
-        ) : null}
       </div>
     </div>
   );

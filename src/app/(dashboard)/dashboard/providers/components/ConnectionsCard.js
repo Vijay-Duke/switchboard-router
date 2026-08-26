@@ -403,64 +403,130 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
 
   if (loading) return <Card><div className="h-20 animate-pulse bg-black/5 rounded-lg" /></Card>;
 
+  const activeStrategyMode = schedulerEnabled
+    ? "balanced"
+    : providerStrategy === "round-robin"
+      ? "round-robin"
+      : "fill-first";
+
+  const handleStrategyModeChange = async (mode) => {
+    if (mode === "balanced") {
+      if (await saveScheduler(true, affinityMinutes)) {
+        setSchedulerEnabled(true);
+      }
+    } else if (mode === "round-robin") {
+      if (schedulerEnabled) {
+        await saveScheduler(false, affinityMinutes);
+        setSchedulerEnabled(false);
+      }
+      if (await saveStrategy("round-robin", providerStickyLimit || "1")) {
+        setProviderStrategy("round-robin");
+      }
+    } else {
+      if (schedulerEnabled) {
+        await saveScheduler(false, affinityMinutes);
+        setSchedulerEnabled(false);
+      }
+      if (await saveStrategy("fill-first", "")) {
+        setProviderStrategy("fill-first");
+      }
+    }
+  };
+
   return (
     <>
       <Card>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
-          <h2 className="text-lg font-semibold">Connections</h2>
-          <div className="flex max-w-full flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-text-muted font-medium">Balanced scheduler</span>
-              <Toggle
-                checked={schedulerEnabled}
-                onChange={handleSchedulerToggle}
-              />
-              {schedulerEnabled && (
-                <label className="flex items-center gap-1.5 text-xs text-text-muted">
-                  Affinity
-                  <input
-                    aria-label="Session affinity minutes"
-                    type="number"
-                    min={1}
-                    max={1440}
-                    value={affinityMinutes}
-                    onChange={(event) => handleAffinityMinutesChange(event.target.value)}
-                    className="w-16 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary"
-                  />
-                  min
-                </label>
-              )}
-            </div>
-            <p className="max-w-xl text-xs text-text-muted">
-              Process-local least-inflight scheduling with fresh quota signals. Sessions stay on one account and rebind on failure, cooldown, or a best-effort connection cap. Caps use observed in-flight counts, so simultaneous selections can briefly exceed them. Round Robin stays saved but inactive while this is on.
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4">
+          <div>
+            <h2 className="text-lg font-semibold">Connections</h2>
+            <p className="text-xs text-text-muted mt-0.5">
+              Manage accounts and selection strategy for {providerId}
             </p>
-            <div
-              className="flex flex-wrap items-center gap-2"
-              title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
-            >
-              <span className="text-xs text-text-muted font-medium">Round Robin</span>
-              <Toggle
-                checked={providerStrategy === "round-robin"}
-                disabled={schedulerEnabled}
-                title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
-                onChange={handleRoundRobinToggle}
-              />
-              {providerStrategy === "round-robin" && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-xs text-text-muted">Sticky:</span>
-                  <input
-                    type="number"
-                    min={1}
-                    value={providerStickyLimit}
-                    disabled={schedulerEnabled}
-                    title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
-                    onChange={(event) => handleStickyLimitChange(event.target.value)}
-                    className="w-16 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-                  />
+          </div>
+          {connections.length > 1 && (
+            <div className="flex flex-col gap-2 rounded-xl border border-border/40 bg-surface-2/40 p-3 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-text-main">Account Strategy</span>
+                <div className="inline-flex rounded-lg border border-border/60 bg-background/60 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => handleStrategyModeChange("fill-first")}
+                    className={`rounded-md px-2 py-1 text-[11px] font-medium transition-all ${
+                      activeStrategyMode === "fill-first"
+                        ? "bg-primary text-black font-semibold shadow-xs"
+                        : "text-text-muted hover:text-text-main"
+                    }`}
+                  >
+                    Fill-First
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleStrategyModeChange("round-robin")}
+                    className={`rounded-md px-2 py-1 text-[11px] font-medium transition-all ${
+                      activeStrategyMode === "round-robin"
+                        ? "bg-primary text-black font-semibold shadow-xs"
+                        : "text-text-muted hover:text-text-main"
+                    }`}
+                  >
+                    Round Robin
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleStrategyModeChange("balanced")}
+                    className={`rounded-md px-2 py-1 text-[11px] font-medium transition-all ${
+                      activeStrategyMode === "balanced"
+                        ? "bg-primary text-black font-semibold shadow-xs"
+                        : "text-text-muted hover:text-text-main"
+                    }`}
+                  >
+                    Balanced
+                  </button>
+                </div>
+              </div>
+
+              {activeStrategyMode === "fill-first" && (
+                <p className="max-w-md text-[11px] text-text-muted">
+                  Routes all requests to top-priority connection first. Spills over to subsequent accounts on rate limit (429) or quota exhaustion.
+                </p>
+              )}
+
+              {activeStrategyMode === "round-robin" && (
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
+                  <span>Cycles evenly across accounts.</span>
+                  <label className="inline-flex items-center gap-1">
+                    Sticky limit:
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={providerStickyLimit}
+                      onChange={(event) => handleStickyLimitChange(event.target.value)}
+                      className="w-12 px-1.5 py-0.5 text-[11px] border border-border rounded bg-background focus:outline-none focus:border-primary"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {activeStrategyMode === "balanced" && (
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
+                  <span>Least in-flight concurrency with session affinity.</span>
+                  <label className="inline-flex items-center gap-1">
+                    Affinity:
+                    <input
+                      aria-label="Session affinity minutes"
+                      type="number"
+                      min={1}
+                      max={1440}
+                      value={affinityMinutes}
+                      onChange={(event) => handleAffinityMinutesChange(event.target.value)}
+                      className="w-14 px-1.5 py-0.5 text-[11px] border border-border rounded bg-background focus:outline-none focus:border-primary"
+                    />
+                    min
+                  </label>
                 </div>
               )}
             </div>
-          </div>
+          )}
         </div>
 
         {connections.length === 0 ? (

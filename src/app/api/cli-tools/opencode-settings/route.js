@@ -91,7 +91,13 @@ export async function GET() {
 // POST - Apply Switchboard as openai-compatible provider (multi-model support)
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, model, models, activeModel, subagentModel } = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const { baseUrl, apiKey, model, models, activeModel, subagentModel } = body || {};
 
     // Accept either `model` (string, legacy) or `models` (array of strings)
     const modelsArray = Array.isArray(models) ? models.slice() : (typeof model === "string" ? [model] : []);
@@ -176,7 +182,13 @@ export async function POST(request) {
 // PATCH - Update specific settings (e.g., clear active model)
 export async function PATCH(request) {
   try {
-    const { clearActiveModel } = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const { clearActiveModel } = body || {};
     const configPath = getConfigPath();
 
     let config = {};

@@ -19,7 +19,12 @@ export async function GET() {
 // POST /api/keys - Create new API key
 export async function POST(request) {
   try {
-    const body = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
     if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.name !== "string" || !body.name.trim()) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
     }

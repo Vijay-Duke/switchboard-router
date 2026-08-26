@@ -97,7 +97,13 @@ export async function GET() {
 // Also accepts `activeModel` to set which model is active/primary
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, model, models, activeModel } = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const { baseUrl, apiKey, model, models, activeModel } = body || {};
     
     // Accept either `models` (array) or `model` (string, legacy)
     const modelsArray = normalizeManagedModelNames(

@@ -19,7 +19,12 @@ export async function GET() {
 // POST /api/combos - Create new combo
 export async function POST(request) {
   try {
-    const body = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
     const combo = await createComboWrite(body);
     return NextResponse.json(combo, { status: 201 });
   } catch (error) {

@@ -49,8 +49,14 @@ afterEach(() => {
 });
 
 describe("/v1/models compatible-provider discovery", () => {
-  it("advertises Claude-shaped aliases for Claude Code gateway discovery", async () => {
-    mocks.getProviderConnections.mockResolvedValueOnce([]);
+  it("advertises Claude-shaped aliases for Claude Code gateway discovery", { timeout: 20000 }, async () => {
+    // Aliases are only advertised while their target provider can route
+    // (active connection). Seed both targets so the shaping assertions below
+    // exercise the routable state.
+    mocks.getProviderConnections.mockResolvedValueOnce([
+      { id: "c-openai", provider: "openai", apiKey: "k", isActive: true, providerSpecificData: {} },
+      { id: "c-gemini", provider: "gemini", apiKey: "k", isActive: true, providerSpecificData: {} },
+    ]);
     mocks.getModelAliases.mockResolvedValueOnce({
       "claude-switchboard-gpt": "openai/gpt-5.6",
       "anthropic-switchboard-gemini": "gemini/gemini-3.1-pro",

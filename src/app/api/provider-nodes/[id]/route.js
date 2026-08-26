@@ -6,8 +6,13 @@ import { deleteProviderConnectionsByProvider, deleteProviderNode, getProviderCon
 export async function PUT(request, { params }) {
   try {
     const { id } = await params;
-    const body = await request.json();
-    const { name, apiType, baseUrl } = body;
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const { name, apiType, baseUrl } = body || {};
     const node = await getProviderNodeById(id);
 
     if (!node) {

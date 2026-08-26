@@ -27,7 +27,15 @@ export async function GET() {
  */
 export async function PATCH(request) {
   try {
-    const body = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid pricing data format" },
+        { status: 400 }
+      );
+    }
 
     // Validate body structure
     if (typeof body !== "object" || body === null) {

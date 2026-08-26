@@ -18,8 +18,13 @@ export async function GET() {
 // PUT /api/models/alias - Set model alias
 export async function PUT(request) {
   try {
-    const body = await request.json();
-    const { model, alias } = body;
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const { model, alias } = body || {};
 
     if (!model || !alias) {
       return NextResponse.json({ error: "Model and alias required" }, { status: 400 });

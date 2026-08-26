@@ -38,6 +38,17 @@ export async function resolveModelAlias(alias) {
  */
 export async function getModelInfo(modelStr) {
   const canonicalModel = decodeClaudeCatalogModelId(modelStr) || modelStr;
+
+  // Check if this matches a direct or wildcard model alias first
+  const directResolved = await resolveModelAlias(canonicalModel);
+  if (directResolved) {
+    if (!directResolved.provider && directResolved.model) {
+      const combo = await getComboByName(directResolved.model);
+      if (combo) return { provider: null, model: directResolved.model };
+    }
+    return directResolved;
+  }
+
   const parsed = parseModel(canonicalModel);
 
   if (!parsed.isAlias) {

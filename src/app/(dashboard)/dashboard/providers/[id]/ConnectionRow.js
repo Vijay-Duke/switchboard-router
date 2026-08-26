@@ -11,6 +11,71 @@ export default function ConnectionRow({ connection, isOAuth, isFirst, isLast, on
   // An SSRF block is the one error the user can self-resolve: the gateway is
   // reachable but resolves to a private/VPN IP the guard rejects by default.
   const isSsrfBlocked = /SSRF blocked|Blocked URL: (private IP|internal host)/i.test(connection.lastError || "");
+
+  const formatConnectionError = (rawError) => {
+    if (!rawError) return null;
+    let text = String(rawError).trim();
+
+    try {
+      const jsonMatch = text.match(/\{[\s\S]*\}$/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        const extracted = parsed?.error?.message || parsed?.message || parsed?.error;
+        if (typeof extracted === "string" && extracted.trim()) {
+          text = extracted.trim();
+        }
+      }
+    } catch {
+      // not JSON
+    }
+
+    text = text.replace(/^\[\d+\]:\s*/, "");
+
+    if (/not have a valid license|license of this product|license required/i.test(text)) {
+      return {
+        type: "license",
+        title: "License Required",
+        message: "No active Gemini Code Assist or Antigravity license found for this Google account. Visit antigravity.google to activate, or reconnect.",
+        action: isOAuthConnection ? "reconnect" : null,
+      };
+    }
+
+    if (/invalid_grant|token expired|credentials expired|expired or revoked|session expired/i.test(text)) {
+      return {
+        type: "auth",
+        title: "Session Expired",
+        message: "OAuth token expired or was revoked. Please reconnect.",
+        action: isOAuthConnection ? "reconnect" : null,
+      };
+    }
+
+    if (/rate limit|quota|429|resource has been exhausted/i.test(text)) {
+      return {
+        type: "quota",
+        title: "Rate Limited",
+        message: text || "Upstream rate limit reached.",
+        action: null,
+      };
+    }
+
+    if (isSsrfBlocked) {
+      return {
+        type: "ssrf",
+        title: "Network Guard",
+        message: "SSRF guard blocked local/private IP address.",
+        action: "allowlist",
+      };
+    }
+
+    return {
+      type: "error",
+      title: "Error",
+      message: text,
+      action: isOAuthConnection ? "reconnect" : null,
+    };
+  };
+
+  const errorInfo = formatConnectionError(connection.lastError);
   const hasLegacyProxy = connection.providerSpecificData?.connectionProxyEnabled === true && !!connection.providerSpecificData?.connectionProxyUrl;
   const hasAnyProxy = hasLegacyProxy;
   const proxyDisplayText = hasLegacyProxy
@@ -78,7 +143,7 @@ export default function ConnectionRow({ connection, isOAuth, isFirst, isLast, on
 
   // Determine effective status (override unavailable if cooldown expired)
   const effectiveStatus = (connection.testStatus === "unavailable" && !isCooldown)
-    ? "active"  // Cooldown expired u2192 treat as active
+    ? "active"  // Cooldown expired → treat as active
     : connection.testStatus;
 
   const getStatusVariant = () => getConnectionStatusVariant(connection.isActive, effectiveStatus);
@@ -101,122 +166,160 @@ export default function ConnectionRow({ connection, isOAuth, isFirst, isLast, on
   };
 
   return (
-    <div className={`group flex min-w-0 flex-col gap-3 rounded-lg p-2 transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.02] sm:flex-row sm:items-center sm:justify-between ${connection.isActive === false ? "opacity-60" : ""}`}>
-      <div className="flex min-w-0 flex-1 items-start gap-2 sm:items-center sm:gap-3">
-        {/* Priority arrows */}
-        <div className="flex shrink-0 flex-col">
-          <button
-            onClick={onMoveUp}
-            disabled={isFirst}
-            aria-label={`Move ${displayName} up`}
-            title={`Move ${displayName} up`}
-            className={`p-0.5 rounded ${isFirst ? "text-text-muted/30 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}
-          >
-            <span className="material-symbols-outlined text-sm" aria-hidden="true">keyboard_arrow_up</span>
-          </button>
-          <button
-            onClick={onMoveDown}
-            disabled={isLast}
-            aria-label={`Move ${displayName} down`}
-            title={`Move ${displayName} down`}
-            className={`p-0.5 rounded ${isLast ? "text-text-muted/30 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}
-          >
-            <span className="material-symbols-outlined text-sm" aria-hidden="true">keyboard_arrow_down</span>
-          </button>
-        </div>
-        <span className="material-symbols-outlined shrink-0 text-base text-text-muted" aria-hidden="true">
-          {authIcon}
-        </span>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{displayName}</p>
-          {secondaryDisplayName && (
-            <p className="text-xs text-text-muted truncate">{secondaryDisplayName}</p>
-          )}
-          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 sm:gap-2">
-            <Badge variant={getStatusVariant()} size="sm" dot>
-              {connection.isActive === false ? "disabled" : (effectiveStatus || "Unknown")}
-            </Badge>
-            <Badge variant="default" size="sm">
-              {authLabel}
-            </Badge>
-            {hasAnyProxy && (
-              <Badge variant={proxyBadgeVariant} size="sm">
-                Proxy
-              </Badge>
-            )}
-            {isCooldown && connection.isActive !== false && <CooldownTimer until={modelLockUntil} />}
-            {connection.lastError && connection.isActive !== false && (
-              <span className="max-w-full truncate text-xs text-red-500 sm:max-w-[300px]" title={connection.lastError}>
-                {connection.lastError}
+    <div className={`group flex min-w-0 flex-col gap-3 rounded-xl border border-border/60 bg-surface/40 p-3 transition-all hover:border-border hover:bg-surface/70 ${connection.isActive === false ? "opacity-60" : ""}`}>
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            {/* Priority arrows */}
+            <div className="flex shrink-0 flex-col">
+              <button
+                onClick={onMoveUp}
+                disabled={isFirst}
+                aria-label={`Move ${displayName} up`}
+                title={`Move ${displayName} up`}
+                className={`p-0.5 rounded ${isFirst ? "text-text-muted/30 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}
+              >
+                <span className="material-symbols-outlined text-sm" aria-hidden="true">keyboard_arrow_up</span>
+              </button>
+              <button
+                onClick={onMoveDown}
+                disabled={isLast}
+                aria-label={`Move ${displayName} down`}
+                title={`Move ${displayName} down`}
+                className={`p-0.5 rounded ${isLast ? "text-text-muted/30 cursor-not-allowed" : "hover:bg-sidebar text-text-muted hover:text-primary"}`}
+              >
+                <span className="material-symbols-outlined text-sm" aria-hidden="true">keyboard_arrow_down</span>
+              </button>
+            </div>
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-surface-2 border border-border/40 text-text-muted">
+              <span className="material-symbols-outlined text-[18px]" aria-hidden="true">
+                {authIcon}
               </span>
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-text-main truncate">{displayName}</p>
+              {secondaryDisplayName && (
+                <p className="text-xs text-text-muted truncate">{secondaryDisplayName}</p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1">
+              {autoPing && (
+                <Tooltip text={autoPingTooltip}>
+                  <button
+                    onClick={() => autoPing.onToggle(!autoPing.on)}
+                    className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs transition-colors hover:bg-white/5 ${autoPing.on ? "text-primary bg-primary/10 font-medium" : "text-text-muted hover:text-primary"}`}
+                  >
+                    <span className="material-symbols-outlined text-[16px]">bolt</span>
+                    <span className="hidden sm:inline text-xs">Auto-ping</span>
+                  </button>
+                </Tooltip>
+              )}
+              <button
+                onClick={onEdit}
+                className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs text-text-muted hover:bg-white/5 hover:text-primary transition-colors"
+                title="Edit connection"
+              >
+                <span className="material-symbols-outlined text-[16px]">edit</span>
+                <span className="hidden sm:inline">Edit</span>
+              </button>
+              <button
+                onClick={onDelete}
+                className="flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs text-red-400 hover:bg-red-500/10 transition-colors"
+                title="Delete connection"
+              >
+                <span className="material-symbols-outlined text-[16px]">delete</span>
+                <span className="hidden sm:inline">Delete</span>
+              </button>
+            </div>
+            <div className="h-4 w-px bg-border/60 mx-1" />
+            <Toggle
+              size="sm"
+              checked={connection.isActive ?? true}
+              onChange={onToggleActive}
+              title={(connection.isActive ?? true) ? "Disable connection" : "Enable connection"}
+            />
+          </div>
+        </div>
+
+        {/* Badges row */}
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5 pl-0 sm:pl-10">
+          <Badge variant={getStatusVariant()} size="sm" dot>
+            {connection.isActive === false ? "disabled" : (effectiveStatus || "Unknown")}
+          </Badge>
+          <Badge variant="default" size="sm">
+            {authLabel}
+          </Badge>
+          {hasAnyProxy && (
+            <Badge variant={proxyBadgeVariant} size="sm">
+              Proxy
+            </Badge>
+          )}
+          {isCooldown && connection.isActive !== false && <CooldownTimer until={modelLockUntil} />}
+          <span className="text-xs text-text-muted">#{connection.priority}</span>
+          {connection.globalPriority && (
+            <span className="text-xs text-text-muted">Auto: {connection.globalPriority}</span>
+          )}
+          {getOneByOneLabel() && (
+            <Badge variant={getOneByOneVariant()} size="sm">
+              {getOneByOneLabel()}
+            </Badge>
+          )}
+        </div>
+
+        {/* Actionable Error Callout */}
+        {errorInfo && connection.isActive !== false && (
+          <div className="mt-1.5 flex min-w-0 flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-lg border border-red-500/25 bg-red-500/8 px-3 py-2 text-xs text-red-600 dark:text-red-400 sm:ml-10">
+            <div className="flex min-w-0 items-start sm:items-center gap-2">
+              <span className="material-symbols-outlined shrink-0 text-[16px] text-red-500 mt-0.5 sm:mt-0">
+                {errorInfo.type === "license" ? "workspace_premium" : errorInfo.type === "auth" ? "key_off" : "error"}
+              </span>
+              <div className="min-w-0">
+                <span className="font-semibold">{errorInfo.title}: </span>
+                <span className="break-words">{errorInfo.message}</span>
+              </div>
+            </div>
+            {errorInfo.action === "reconnect" && (
+              <button
+                onClick={onEdit}
+                className="inline-flex shrink-0 items-center justify-center gap-1 rounded-md bg-red-500/15 hover:bg-red-500/25 px-2.5 py-1 text-xs font-medium text-red-600 dark:text-red-300 transition-colors"
+              >
+                <span className="material-symbols-outlined text-[14px]">refresh</span>
+                Reconnect
+              </button>
             )}
-            {isSsrfBlocked && connection.isActive !== false && onAllowlistHost && (
+            {errorInfo.action === "allowlist" && onAllowlistHost && (
               <button
                 onClick={onAllowlistHost}
-                title="Trust this host past the SSRF guard and retry"
-                className="inline-flex items-center gap-1 rounded border border-amber-500/40 px-1.5 py-0.5 text-xs text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                className="inline-flex shrink-0 items-center justify-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-600 dark:text-amber-300 hover:bg-amber-500/20 transition-colors"
               >
                 <span className="material-symbols-outlined text-[14px]">verified_user</span>
                 Add to allow list
               </button>
             )}
-            <span className="text-xs text-text-muted">#{connection.priority}</span>
-            {connection.globalPriority && (
-              <span className="text-xs text-text-muted">Auto: {connection.globalPriority}</span>
+          </div>
+        )}
+
+        {/* Proxy info row */}
+        {hasAnyProxy && (
+          <div className="mt-1 flex items-center gap-2 flex-wrap sm:ml-10">
+            <span className="max-w-full truncate text-[11px] text-text-muted sm:max-w-[420px]" title={proxyDisplayText}>
+              {proxyDisplayText}
+            </span>
+            {maskedProxyUrl && (
+              <code className="max-w-full truncate rounded bg-black/5 px-1 py-0.5 font-mono text-[10px] text-text-muted dark:bg-white/5 sm:max-w-[260px]">
+                {maskedProxyUrl}
+              </code>
             )}
-            {getOneByOneLabel() && (
-              <Badge variant={getOneByOneVariant()} size="sm">
-                {getOneByOneLabel()}
-              </Badge>
+            {noProxyText && (
+              <span className="max-w-full truncate text-[11px] text-text-muted sm:max-w-[320px]" title={noProxyText}>
+                no_proxy: {noProxyText}
+              </span>
             )}
           </div>
-          {hasAnyProxy && (
-            <div className="mt-1 flex items-center gap-2 flex-wrap">
-              <span className="max-w-full truncate text-[11px] text-text-muted sm:max-w-[420px]" title={proxyDisplayText}>
-                {proxyDisplayText}
-              </span>
-              {maskedProxyUrl && (
-                <code className="max-w-full truncate rounded bg-black/5 px-1 py-0.5 font-mono text-[10px] text-text-muted dark:bg-white/5 sm:max-w-[260px]">
-                  {maskedProxyUrl}
-                </code>
-              )}
-              {noProxyText && (
-                <span className="max-w-full truncate text-[11px] text-text-muted sm:max-w-[320px]" title={noProxyText}>
-                  no_proxy: {noProxyText}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-      <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-end">
-        <div className="grid flex-1 grid-cols-3 gap-1 sm:flex sm:flex-none">
-          {autoPing && (
-            <Tooltip text={autoPingTooltip}>
-              <button
-                onClick={() => autoPing.onToggle(!autoPing.on)}
-                className={`flex w-full flex-col items-center rounded px-2 py-1 transition-colors hover:bg-black/5 dark:hover:bg-white/5 ${autoPing.on ? "text-primary" : "text-text-muted hover:text-primary"}`}
-              >
-                <span className="material-symbols-outlined text-[18px]">bolt</span>
-                <span className="text-[10px] leading-tight">Auto-ping</span>
-              </button>
-            </Tooltip>
-          )}
-          <button onClick={onEdit} className="flex flex-col items-center rounded px-2 py-1 text-text-muted hover:bg-black/5 hover:text-primary dark:hover:bg-white/5">
-            <span className="material-symbols-outlined text-[18px]">edit</span>
-            <span className="text-[10px] leading-tight">Edit</span>
-          </button>
-          <button onClick={onDelete} className="flex flex-col items-center rounded px-2 py-1 text-red-500 hover:bg-red-500/10">
-            <span className="material-symbols-outlined text-[18px]">delete</span>
-            <span className="text-[10px] leading-tight">Delete</span>
-          </button>
-        </div>
-        <Toggle
-          size="sm"
-          checked={connection.isActive ?? true}
-          onChange={onToggleActive}
-          title={(connection.isActive ?? true) ? "Disable connection" : "Enable connection"}
-        />
+        )}
       </div>
     </div>
   );

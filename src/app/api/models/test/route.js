@@ -6,7 +6,13 @@ import { pingModelByKind } from "./ping";
 // POST /api/models/test - Ping a single model via internal completions or embeddings
 export async function POST(request) {
   try {
-    const { model, kind } = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const { model, kind } = body || {};
     if (!model) return NextResponse.json({ error: "Model required" }, { status: 400 });
     const result = await pingModelByKind(model, kind || "llm");
     return NextResponse.json(result);

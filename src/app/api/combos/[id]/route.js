@@ -28,7 +28,13 @@ export async function GET(request, { params }) {
 export async function PUT(request, { params }) {
   try {
     const { id } = await params;
-    const combo = await updateComboWrite(id, await request.json());
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const combo = await updateComboWrite(id, body);
 
     if (!combo) {
       return NextResponse.json({ error: "Combo not found" }, { status: 404 });

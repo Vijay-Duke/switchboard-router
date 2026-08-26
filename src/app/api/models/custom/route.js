@@ -23,7 +23,12 @@ export async function GET() {
 // POST /api/models/custom - Add one model, or bulk { models: [...] }
 export async function POST(request) {
   try {
-    const body = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
 
     // Bulk import: { models: [{ providerAlias, id, type?, name? }, ...] }
     if (Array.isArray(body?.models)) {

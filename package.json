@@ -1,6 +1,6 @@
 {
   "name": "switchboard-app",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Switchboard — intelligent model routing dashboard",
   "private": true,
   "engines": {
@@ -23,7 +23,10 @@
     "check:versions": "node scripts/assert-release-version.mjs",
     "lint": "eslint .",
     "cli:pack": "npm --prefix cli run pack:cli",
-    "cli:publish": "npm --prefix cli run publish:cli"
+    "cli:publish": "npm --prefix cli run publish:cli",
+    "preflight": "npm run lint && npm run check:i18n && npm run check:providers && npm run check:versions",
+    "test": "cd tests && ./node_modules/.bin/vitest run",
+    "clean": "rm -rf .next .next-cli-build out build cli/.build-home cli/app/dist"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

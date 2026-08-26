@@ -143,8 +143,14 @@ const writeAgentModels = async (agentDir, models, baseUrl, apiKey) => {
 // POST - Update Switchboard settings (merge with existing settings)
 export async function POST(request) {
   try {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
     // agentModels: { [agentId]: modelId } for per-agent override
-    const { baseUrl, apiKey, model, models: requestedModels, defaultModel, agentModels = {} } = await request.json();
+    const { baseUrl, apiKey, model, models: requestedModels, defaultModel, agentModels = {} } = body || {};
     const models = normalizeModelIds(requestedModels ?? model);
     const activeModel = models.includes(defaultModel || model) ? (defaultModel || model) : models[0];
     

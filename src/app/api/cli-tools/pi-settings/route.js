@@ -214,6 +214,12 @@ export async function GET() {
 
 async function postPiSettings(request) {
   try {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
     const {
       baseUrl,
       apiKey,
@@ -221,7 +227,7 @@ async function postPiSettings(request) {
       models: requestedModels,
       defaultModel,
       pickerLabels: requestedPickerLabels,
-    } = await request.json();
+    } = body || {};
     const [data, piSettings, rawBackup] = await Promise.all([
       readModels(),
       readSettings(),

@@ -144,7 +144,13 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const { baseUrl, apiKey, model } = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const { baseUrl, apiKey, model } = body || {};
     if (!isSingleLineString(baseUrl)
       || !isOptionalString(apiKey)
       || (typeof apiKey === "string" && !isSingleLineString(apiKey, { allowEmpty: true }))

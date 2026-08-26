@@ -135,7 +135,21 @@ export async function GET() {
 
 export async function PATCH(request) {
   try {
-    const body = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON body" },
+        { status: 400, headers: SETTINGS_RESPONSE_HEADERS }
+      );
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json(
+        { error: "Invalid JSON body shape" },
+        { status: 400, headers: SETTINGS_RESPONSE_HEADERS }
+      );
+    }
 
     for (const key of PROTECTED_SETTING_KEYS) delete body[key];
     for (const key of IGNORED_SETTING_KEYS) delete body[key];

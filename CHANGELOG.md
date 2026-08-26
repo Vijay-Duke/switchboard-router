@@ -1,3 +1,15 @@
+# v0.9.1 (2026-08-27)
+
+## Features
+- **Multi-Account Routing Strategies**: user-selectable multi-account strategy control (`Fill-First` priority spillover, `Round Robin` sequential load-smoothing with sticky counts, and `Balanced` least-concurrency with session affinity)
+- **Wildcard & Glob Model Aliasing**: support glob alias patterns (`gpt-4*`, `claude-3-7*`, `*-flash`, `combo-*`) with prefix and pattern matching
+- **Declarative Config Importer**: startup auto-importer (`config.yaml`/`config.json`) supporting seed import of provider connections, model aliases, combos, API keys, and settings for headless and Docker deployments
+
+## Fixes
+- **CLI Tools & Settings Body Hardening**: safe JSON parsing and 400 responses across all CLI tools settings endpoints (`aider`, `cline`, `codex`, `cowork`, `deepseek-tui`, `droid`, `gemini-cli`, `grok`, `hermes`, `jcode`, `kilo`, `openclaw`, `opencode`, `pi`), keys, and settings
+- **Provider Connection Priority Sorting**: use nullish coalescing for priority assignment so 0-indexed priorities are preserved rather than converted to default 999
+- **Provider Model Availability Resolution**: resolve aliases uniformly via `resolveProviderId` in `/v1/models` availability checks
+
 # v0.9.0 (2026-08-23)
 
 ## Features

@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, IFlowCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal } from "@/shared/components";
+import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, IFlowCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal, Tooltip } from "@/shared/components";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS } from "@/shared/constants/providers";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
@@ -1234,14 +1234,26 @@ export default function ProviderDetailPage() {
     return (
       <div className="flex flex-col gap-3">
         {/* Filter control */}
-        <div className="mb-2 flex gap-1 text-xs">
-          {["all", "ok", "dead", "retry"].map((f) => (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5 text-xs">
+          {[
+            { id: "all", label: "All", count: displayModels.length + customModelRows.filter((m) => !isProviderModelDisabled(m.id)).length },
+            { id: "ok", label: "Reachable", count: [...displayModels, ...customModelRows].filter((m) => !isProviderModelDisabled(m.id) && (probeByModel[canonicalModelId(m.id, providerStorageAlias)] === "ok" || modelTestResults[m.id] === "ok")).length },
+            { id: "dead", label: "Dead", count: [...displayModels, ...customModelRows].filter((m) => !isProviderModelDisabled(m.id) && (probeByModel[canonicalModelId(m.id, providerStorageAlias)] === "dead" || modelTestResults[m.id] === "error")).length },
+            { id: "retry", label: "Retry", count: [...displayModels, ...customModelRows].filter((m) => !isProviderModelDisabled(m.id) && probeByModel[canonicalModelId(m.id, providerStorageAlias)] === "retry").length },
+          ].map((f) => (
             <button
-              key={f}
-              onClick={() => setModelFilter(f)}
-              className={`rounded px-2 py-0.5 ${modelFilter === f ? "bg-primary text-white" : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5"}`}
+              key={f.id}
+              onClick={() => setModelFilter(f.id)}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+                modelFilter === f.id
+                  ? "bg-primary text-black font-semibold shadow-sm"
+                  : "bg-surface-2/60 border border-border/40 text-text-muted hover:border-border hover:text-text-main"
+              }`}
             >
-              {f === "all" ? "All" : f === "ok" ? "OK" : f === "dead" ? "Dead" : "Retry"}
+              <span>{f.label}</span>
+              <span className={`rounded-full px-1.5 py-0.2 text-[10px] tabular-nums ${modelFilter === f.id ? "bg-black/20 text-black font-bold" : "bg-black/10 dark:bg-white/10 text-text-muted"}`}>
+                {f.count}
+              </span>
             </button>
           ))}
         </div>
@@ -1321,10 +1333,10 @@ export default function ProviderDetailPage() {
         {/* Add model button — inline, same style as model chips */}
         <button
           onClick={() => setShowAddCustomModel(true)}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-primary/40 px-3 py-2 text-xs text-primary transition-colors hover:border-primary hover:bg-primary/5 sm:w-auto"
+          className="flex min-h-[58px] min-w-[200px] flex-1 items-center justify-center gap-2 rounded-xl border border-dashed border-primary/40 bg-primary/5 px-4 py-3 text-xs font-medium text-primary transition-all hover:border-primary hover:bg-primary/10 hover:shadow-soft sm:flex-none"
         >
-          <span className="material-symbols-outlined text-sm">add</span>
-          Add Model
+          <span className="material-symbols-outlined text-[18px]">add_circle</span>
+          Add Custom Model
         </button>
 
         {/* Suggested models from provider API — show only models not yet added */}
@@ -1470,9 +1482,9 @@ export default function ProviderDetailPage() {
       </div>
 
       {providerInfo.deprecated && (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
-          <span className="material-symbols-outlined text-[16px] text-yellow-500 mt-0.5 shrink-0">warning</span>
-          <p className="text-xs text-red-600 dark:text-yellow-400 leading-relaxed">{providerInfo.deprecationNotice}</p>
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/25 bg-amber-500/8 px-4 py-3 text-xs text-amber-600 dark:text-amber-400">
+          <span className="material-symbols-outlined shrink-0 text-base text-amber-500 mt-0.5">warning</span>
+          <p className="leading-relaxed font-normal">{String(providerInfo.deprecationNotice).replace(/^⚠️\s*⚠️?\s*/, "")}</p>
         </div>
       )}
 
@@ -1596,56 +1608,68 @@ export default function ProviderDetailPage() {
                   )}
                 </>
               )}
-              <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs text-text-muted font-medium">Balanced scheduler</span>
-                  <Toggle checked={schedulerEnabled} onChange={handleSchedulerToggle} aria-label="Balanced scheduler" />
-                  {schedulerEnabled && (
-                    <label className="flex items-center gap-1.5 text-xs text-text-muted">
-                      Affinity
-                      <input
-                        aria-label="Session affinity minutes"
-                        type="number"
-                        min={1}
-                        max={1440}
-                        value={affinityMinutes}
-                        onChange={(event) => handleAffinityMinutesChange(event.target.value)}
-                        className="w-16 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary"
-                      />
-                      min
-                    </label>
-                  )}
+              <div className="flex flex-col gap-2 rounded-xl border border-border/60 bg-surface-2/40 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-text-main">Balanced Scheduler</span>
+                    <Tooltip text="Process-local least-inflight scheduling with fresh quota signals. Sessions stay on one account and rebind on failure, cooldown, or cap.">
+                      <span className="material-symbols-outlined text-[15px] text-text-muted cursor-help">info</span>
+                    </Tooltip>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {schedulerEnabled && (
+                      <label className="flex items-center gap-1.5 text-xs text-text-muted">
+                        Affinity
+                        <input
+                          aria-label="Session affinity minutes"
+                          type="number"
+                          min={1}
+                          max={1440}
+                          value={affinityMinutes}
+                          onChange={(event) => handleAffinityMinutesChange(event.target.value)}
+                          className="w-14 px-2 py-0.5 text-xs border border-border rounded-md bg-background text-text-main focus:outline-none focus:border-primary"
+                        />
+                        <span className="text-[11px]">min</span>
+                      </label>
+                    )}
+                    <Toggle checked={schedulerEnabled} onChange={handleSchedulerToggle} aria-label="Balanced scheduler" />
+                  </div>
                 </div>
-                <p className="max-w-xl text-xs text-text-muted">
-                  Process-local least-inflight scheduling with fresh quota signals. Sessions stay on one account and rebind on failure, cooldown, or a best-effort connection cap. Caps use observed in-flight counts, so simultaneous selections can briefly exceed them. Round Robin stays saved but inactive while this is on.
-                </p>
+
                 <div
-                  className="flex flex-wrap items-center gap-2"
+                  className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-border/40"
                   title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
                 >
-                  <span className="text-xs text-text-muted font-medium">Round Robin</span>
-                   <Toggle
-                     checked={providerStrategy === "round-robin"}
-                     onChange={handleRoundRobinToggle}
-                    aria-label="Round Robin"
-                    disabled={schedulerEnabled}
-                    title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
-                  />
-                  {providerStrategy === "round-robin" && (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs text-text-muted">Sticky:</span>
-                      <input
-                        type="number"
-                        min={1}
-                        value={providerStickyLimit}
-                        onChange={(event) => handleStickyLimitChange(event.target.value)}
-                        placeholder="1"
-                        disabled={schedulerEnabled}
-                        title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
-                        className="w-14 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-                      />
-                    </div>
-                  )}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-text-main">Round Robin</span>
+                    <Tooltip text="Cycles through connections sequentially in round-robin fashion.">
+                      <span className="material-symbols-outlined text-[15px] text-text-muted cursor-help">info</span>
+                    </Tooltip>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {providerStrategy === "round-robin" && (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-text-muted">Sticky:</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={providerStickyLimit}
+                          onChange={(event) => handleStickyLimitChange(event.target.value)}
+                          placeholder="1"
+                          disabled={schedulerEnabled}
+                          title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
+                          className="w-14 px-2 py-0.5 text-xs border border-border rounded-md bg-background text-text-main focus:outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                        />
+                      </div>
+                    )}
+                    <Toggle
+                      checked={providerStrategy === "round-robin"}
+                      onChange={handleRoundRobinToggle}
+                      aria-label="Round Robin"
+                      disabled={schedulerEnabled}
+                      title={schedulerEnabled ? "Saved and used again when balanced scheduling is off" : undefined}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -1866,7 +1890,19 @@ export default function ProviderDetailPage() {
           <p className="text-xs text-red-500 mb-3 break-words">{modelsTestError}</p>
         )}
         {importModelsMessage && (
-          <p className="text-xs text-text-muted mb-3">{importModelsMessage}</p>
+          <div className="mb-3 flex items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary/10 px-3.5 py-2 text-xs font-medium text-text-main">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[16px] text-primary">info</span>
+              <span>{importModelsMessage}</span>
+            </div>
+            <button
+              onClick={() => setImportModelsMessage("")}
+              className="text-text-muted hover:text-text-main p-0.5 rounded"
+              title="Dismiss"
+            >
+              <span className="material-symbols-outlined text-sm">close</span>
+            </button>
+          </div>
         )}
         {showVerifyPanel && (() => {
           const activeConnection =

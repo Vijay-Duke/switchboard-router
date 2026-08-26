@@ -157,12 +157,25 @@ function parseProviderErrorMessage(bodyText, fallback) {
   try {
     const parsed = JSON.parse(bodyText);
     const message = parsed?.error?.message || parsed?.message || parsed?.error;
-    if (typeof message === "string" && message.trim()) return message.trim();
+    if (typeof message === "string" && message.trim()) {
+      const clean = message.trim();
+      if (/not have a valid license/i.test(clean)) {
+        return "License required: No active Gemini Code Assist / Antigravity license found for this Google account. Visit antigravity.google to activate, or reconnect.";
+      }
+      if (/invalid_grant|token expired|credentials expired/i.test(clean)) {
+        return "Authentication token expired. Please reconnect.";
+      }
+      return clean;
+    }
     if (message) return JSON.stringify(message);
   } catch {
     // fall through
   }
-  return bodyText.trim() || fallback;
+  const raw = bodyText.trim();
+  if (/not have a valid license/i.test(raw)) {
+    return "License required: No active Gemini Code Assist / Antigravity license found for this Google account. Visit antigravity.google to activate, or reconnect.";
+  }
+  return raw || fallback;
 }
 
 async function probeCloudCodeAssistAccess(connection, accessToken, effectiveProxy = null) {

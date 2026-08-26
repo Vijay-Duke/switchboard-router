@@ -115,7 +115,7 @@ export async function getProviderConnections(filter = {}) {
   const sql = `SELECT * FROM providerConnections${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
   const rows = db.all(sql, params);
   const list = rows.map(rowToConn);
-  list.sort((a, b) => (a.priority || 999) - (b.priority || 999));
+  list.sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
   return list;
 }
 
@@ -152,7 +152,7 @@ export async function getProviderQuotaHeadroom(freshMs = DEFAULT_QUOTA_FRESH_MS)
 function reorderInTx(db, providerId) {
   const list = db.all(`SELECT * FROM providerConnections WHERE provider = ?`, [providerId]).map(rowToConn);
   list.sort((a, b) => {
-    const pDiff = (a.priority || 0) - (b.priority || 0);
+    const pDiff = (a.priority ?? 999) - (b.priority ?? 999);
     if (pDiff !== 0) return pDiff;
     return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
   });
@@ -210,7 +210,7 @@ export async function createProviderConnection(data) {
       connectionName = data.email || `Account ${all.length + 1}`;
     }
     let connectionPriority = data.priority;
-    if (!connectionPriority) {
+    if (connectionPriority === undefined || connectionPriority === null) {
       connectionPriority = all.reduce((m, c) => Math.max(m, c.priority || 0), 0) + 1;
     }
 
