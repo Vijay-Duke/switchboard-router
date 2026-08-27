@@ -237,13 +237,22 @@ export default function BasicChatPageClient() {
       setLoadError("");
 
       try {
-        const providersRes = await fetch("/api/providers", { cache: "no-store" });
+        const [providersRes, combosRes] = await Promise.all([
+          fetch("/api/providers", { cache: "no-store" }),
+          fetch("/api/combos", { cache: "no-store" }).catch(() => null),
+        ]);
         const providersData = await providersRes.json().catch(() => ({}));
+        const combosData = combosRes && combosRes.ok ? await combosRes.json().catch(() => ({})) : {};
+
         const connections = Array.isArray(providersData.connections)
           ? providersData.connections.filter((connection) => connection?.isActive !== false)
           : [];
 
-        if (connections.length === 0) {
+        const llmCombos = Array.isArray(combosData?.combos)
+          ? combosData.combos.filter((c) => !c.kind || c.kind === "llm")
+          : [];
+
+        if (connections.length === 0 && llmCombos.length === 0) {
           if (!cancelled) {
             setProviderGroups([]);
             setLoadError("No providers connected yet.");
@@ -313,6 +322,24 @@ export default function BasicChatPageClient() {
           }))
           .filter((group) => group.models.length > 0)
           .sort((a, b) => a.providerName.localeCompare(b.providerName));
+
+        if (llmCombos.length > 0) {
+          const comboModels = llmCombos.map((combo) => ({
+            id: combo.name,
+            requestModel: combo.name,
+            name: `${combo.name} (${combo.models?.length || 0} models)`,
+            providerId: "combos",
+            providerName: "Combos & Routing",
+            source: "combo",
+          }));
+          normalized.unshift({
+            providerId: "combos",
+            providerName: "Combos & Routing",
+            providerType: "combo",
+            connections: [],
+            models: comboModels,
+          });
+        }
 
         if (!cancelled) {
           setProviderGroups(normalized);

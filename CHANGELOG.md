@@ -1,3 +1,18 @@
+# v0.9.3 (2026-08-27)
+
+## Features
+- **Protocol Endpoints Hub**: Comprehensive Protocol Endpoints card (`/dashboard/endpoint`) with tabbed breakdown for OpenAI (`/v1/chat/completions`, `/v1/responses`, `/v1/models`), Claude (`/v1/messages`), Gemini (`/v1beta/models/{model}:generateContent`), Media (TTS, STT, Embeddings, Images, Videos), and CLI code snippets
+- **Endpoint Guidance & 1-Click Copy**: Added endpoint banners and 1-click copy action buttons across all media modality pages (`/dashboard/media-providers/[kind]`), web search/fetch (`/dashboard/media-providers/web`), Overview (`/dashboard`), Skills prompt (`/dashboard/skills`), and Console Logs (`/dashboard/console-log`)
+- **Unified Basic Chat**: Integrated Combos and Auto Routing into Basic Chat (`/dashboard/basic-chat`)
+- **Provider Onboarding Enhancements**: Added cookie authentication input, OAuth guidance, and Get API Key links in `/dashboard/providers/new`
+
+## Fixes
+- **Claude-to-OpenAI Multimodal Tool Results**: Extracted base64/URL image blocks in `CLAUDE_BLOCK.TOOL_RESULT` to preserve screenshots and multimodal tool returns across the OpenAI bridge
+- **OpenAI-to-Cursor Multimodal Array Messages**: Retained image parts in user message arrays during OpenAI to Cursor translation
+- **OpenAI-to-CommandCode Tool Arguments**: Preserved raw tool arguments on non-JSON input in `safeParseJson` and preserved image structures
+- **Cold-Start Messages Route Fix**: Added missing `initTranslators` import in `src/app/api/v1/messages/route.js`
+- **Antigravity MITM & Unit Test Hardening**: Fixed missing `vi` import in `tests/unit/verify-job.test.js` and ensured 100% strict `no-undef` compliance
+
 # v0.9.2 (2026-08-27)
 
 ## Fixes

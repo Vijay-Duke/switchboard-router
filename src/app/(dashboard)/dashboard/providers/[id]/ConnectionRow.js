@@ -8,6 +8,21 @@ import { Badge, Toggle, Tooltip } from "@/shared/components";
 import CooldownTimer from "./CooldownTimer";
 
 export default function ConnectionRow({ connection, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onEdit, onDelete, onAllowlistHost = null, oneByOneStatus = null, autoPing = null }) {
+  const rowAuthType = connection.authType || (isOAuth ? "oauth" : "apikey");
+  const isOAuthConnection = rowAuthType === "oauth";
+  const isCookieConnection = rowAuthType === "cookie";
+  const authIcon = isCookieConnection ? "cookie" : isOAuthConnection ? "lock" : "key";
+  const authLabel = isOAuthConnection ? "OAuth" : isCookieConnection ? "Cookie" : "API Key";
+  const displayName = connection.name?.trim()
+    || connection.email?.trim()
+    || connection.displayName?.trim()
+    || (isOAuthConnection ? "OAuth Account" : isCookieConnection ? "Cookie Account" : "API Key");
+  const secondaryDisplayName = connection.name?.trim() && connection.email?.trim() && connection.name.trim() !== connection.email.trim()
+    ? connection.email.trim()
+    : connection.name?.trim() && connection.displayName?.trim() && connection.name.trim() !== connection.displayName.trim()
+      ? connection.displayName.trim()
+      : null;
+
   // An SSRF block is the one error the user can self-resolve: the gateway is
   // reachable but resolves to a private/VPN IP the guard rejects by default.
   const isSsrfBlocked = /SSRF blocked|Blocked URL: (private IP|internal host)/i.test(connection.lastError || "");
@@ -98,21 +113,6 @@ export default function ConnectionRow({ connection, isOAuth, isFirst, isLast, on
 
   const noProxyText = connection.providerSpecificData?.connectionNoProxy || "";
   const proxyBadgeVariant = hasLegacyProxy ? "success" : "default";
-
-  const rowAuthType = connection.authType || (isOAuth ? "oauth" : "apikey");
-  const isOAuthConnection = rowAuthType === "oauth";
-  const isCookieConnection = rowAuthType === "cookie";
-  const authIcon = isCookieConnection ? "cookie" : isOAuthConnection ? "lock" : "key";
-  const authLabel = isOAuthConnection ? "OAuth" : isCookieConnection ? "Cookie" : "API Key";
-  const displayName = connection.name?.trim()
-    || connection.email?.trim()
-    || connection.displayName?.trim()
-    || (isOAuthConnection ? "OAuth Account" : isCookieConnection ? "Cookie Account" : "API Key");
-  const secondaryDisplayName = connection.name?.trim() && connection.email?.trim() && connection.name.trim() !== connection.email.trim()
-    ? connection.email.trim()
-    : connection.name?.trim() && connection.displayName?.trim() && connection.name.trim() !== connection.displayName.trim()
-      ? connection.displayName.trim()
-      : null;
 
   // Use useState + useEffect for impure Date.now() to avoid calling during render
   const [isCooldown, setIsCooldown] = useState(false);

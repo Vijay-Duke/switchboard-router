@@ -4,7 +4,8 @@
 import { useParams, notFound, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Card, Badge, Button, Toggle, AddCustomEmbeddingModal } from "@/shared/components";
+import { Card, Badge, Button, Toggle, Input, AddCustomEmbeddingModal } from "@/shared/components";
+import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS, getProvidersByKind } from "@/shared/constants/providers";
 import MediaKindTabs from "../MediaKindTabs";
@@ -140,6 +141,39 @@ function ComboList({ combos }) {
   );
 }
 
+const KIND_ENDPOINT_META = {
+  image: {
+    method: "POST",
+    path: "/v1/images/generations",
+    desc: "OpenAI-compatible text-to-image synthesis endpoint",
+    payloadExample: '{ "model": "...", "prompt": "..." }',
+  },
+  video: {
+    method: "POST",
+    path: "/v1/videos/generations",
+    desc: "Video generation and edit endpoint",
+    payloadExample: '{ "model": "...", "prompt": "..." }',
+  },
+  tts: {
+    method: "POST",
+    path: "/v1/audio/speech",
+    desc: "OpenAI-compatible text-to-speech audio synthesis",
+    payloadExample: '{ "model": "...", "input": "...", "voice": "alloy" }',
+  },
+  stt: {
+    method: "POST",
+    path: "/v1/audio/transcriptions",
+    desc: "OpenAI-compatible multipart speech-to-text audio transcription",
+    payloadExample: "multipart/form-data with 'file' and 'model'",
+  },
+  embedding: {
+    method: "POST",
+    path: "/v1/embeddings",
+    desc: "OpenAI-compatible vector embeddings endpoint",
+    payloadExample: '{ "model": "...", "input": "..." }',
+  },
+};
+
 export default function MediaProviderKindPage() {
   const { kind } = useParams();
   const router = useRouter();
@@ -147,6 +181,14 @@ export default function MediaProviderKindPage() {
   const [customNodes, setCustomNodes] = useState([]);
   const [combos, setCombos] = useState([]);
   const [showAddCustomEmbedding, setShowAddCustomEmbedding] = useState(false);
+  const [origin, setOrigin] = useState("http://127.0.0.1:20128");
+  const { copied, copy } = useCopyToClipboard();
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setOrigin(window.location.origin);
+    }
+  }, []);
 
   // webSearch/webFetch listing pages are merged into /web
   useEffect(() => {
@@ -158,6 +200,7 @@ export default function MediaProviderKindPage() {
   const kindConfig = MEDIA_PROVIDER_KINDS.find((k) => k.id === kind);
   const isEmbedding = kind === "embedding";
   const supportsCombo = COMBO_KINDS.has(kind);
+  const endpointMeta = KIND_ENDPOINT_META[kind];
 
   useEffect(() => {
     if (!kindConfig) return;
@@ -230,6 +273,8 @@ export default function MediaProviderKindPage() {
     }
   };
 
+  const endpointUrl = endpointMeta ? `${origin.replace(/\/+$/, "")}${endpointMeta.path}` : "";
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
@@ -239,6 +284,47 @@ export default function MediaProviderKindPage() {
         </p>
       </div>
       <MediaKindTabs activeKind={kind} />
+
+      {endpointMeta && (
+        <Card padding="xs" className="border border-border/80 bg-surface-2/60">
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20 shrink-0">
+                  {endpointMeta.method}
+                </span>
+                <span className="text-xs font-semibold text-text-main truncate">
+                  {kindConfig.label} API Endpoint
+                </span>
+              </div>
+              <span className="text-[11px] font-mono text-text-muted hidden sm:inline truncate">
+                {endpointMeta.payloadExample}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 min-w-0">
+              <Input
+                value={endpointUrl}
+                readOnly
+                className="flex-1 min-w-0"
+                inputClassName="font-mono text-xs bg-surface"
+              />
+              <button
+                type="button"
+                onClick={() => copy(endpointUrl, "media_endpoint")}
+                className="p-2 hover:bg-surface rounded text-text-muted hover:text-primary transition-colors shrink-0 border border-border/60"
+                title="Copy Endpoint URL"
+                aria-label={`Copy ${kindConfig.label} Endpoint URL`}
+              >
+                <span className="material-symbols-outlined text-[18px] leading-none">
+                  {copied === "media_endpoint" ? "check" : "content_copy"}
+                </span>
+              </button>
+            </div>
+            <p className="text-[11px] text-text-muted">{endpointMeta.desc}</p>
+          </div>
+        </Card>
+      )}
 
       {(isEmbedding || supportsCombo) && (
         <div className="flex items-center justify-end gap-2">

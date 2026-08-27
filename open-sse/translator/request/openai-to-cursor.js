@@ -104,11 +104,32 @@ function convertMessages(messages) {
     if (msg.role === ROLE.USER || msg.role === ROLE.ASSISTANT) {
       if (msg.role === ROLE.USER && Array.isArray(msg.content)) {
         const parts = [];
+        let hasNonText = false;
         for (const block of msg.content) {
           if (!block || typeof block !== "object") continue;
-          if (block.type === CLAUDE_BLOCK.TEXT) {
+          if (block.type === OPENAI_BLOCK.TEXT || block.type === CLAUDE_BLOCK.TEXT) {
             if (typeof block.text === "string") {
-              parts.push(block.text || "");
+              parts.push({ type: OPENAI_BLOCK.TEXT, text: block.text || "" });
+            }
+            continue;
+          }
+          if (block.type === OPENAI_BLOCK.IMAGE_URL) {
+            hasNonText = true;
+            parts.push(block);
+            continue;
+          }
+          if (block.type === CLAUDE_BLOCK.IMAGE) {
+            hasNonText = true;
+            if (block.source?.type === "base64" && block.source?.data) {
+              parts.push({
+                type: OPENAI_BLOCK.IMAGE_URL,
+                image_url: { url: `data:${block.source.media_type || "image/png"};base64,${block.source.data}` }
+              });
+            } else if (block.source?.type === "url" && block.source.url) {
+              parts.push({
+                type: OPENAI_BLOCK.IMAGE_URL,
+                image_url: { url: block.source.url }
+              });
             }
             continue;
           }
@@ -119,11 +140,15 @@ function convertMessages(messages) {
               toolCallMetaMap.get(normalizeToolCallId(toolCallId));
             const toolName = toolMeta?.name || "tool";
             const toolContent = extractContent(block.content);
-            parts.push(buildToolResultBlock(toolName, toolCallId, toolContent));
+            parts.push({ type: OPENAI_BLOCK.TEXT, text: buildToolResultBlock(toolName, toolCallId, toolContent) });
           }
         }
-        const joined = parts.filter(Boolean).join("\n");
-        if (joined) result.push({ role: ROLE.USER, content: joined });
+        if (hasNonText) {
+          result.push({ role: ROLE.USER, content: parts });
+        } else {
+          const joined = parts.map(p => p.text).filter(Boolean).join("\n");
+          if (joined) result.push({ role: ROLE.USER, content: joined });
+        }
         continue;
       }
 
@@ -174,11 +199,14 @@ export function openaiToCursorRequest(model, body, stream, credentials) {
 
   // Strip fields irrelevant to Cursor (OpenAI/Anthropic-specific)
   const { user, metadata, tool_choice, stream_options, system, ...rest } = body;
+  const maxTokens = typeof body.max_tokens === "number"
+    ? body.max_tokens
+    : (typeof body.max_completion_tokens === "number" ? body.max_completion_tokens : DEFAULT_MIN_TOKENS);
 
   return {
     ...rest,
     messages,
-    max_tokens: DEFAULT_MIN_TOKENS
+    max_tokens: maxTokens,
   };
 }
 

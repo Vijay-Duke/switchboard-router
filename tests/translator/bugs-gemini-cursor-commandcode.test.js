@@ -23,9 +23,8 @@ describe("OpenAI → Gemini", () => {
 });
 
 describe("OpenAI → Cursor", () => {
-  // openai-to-cursor.js:12-24 — image content fully dropped (text only)
-  // KNOWN BUG
-  it.fails("image content is preserved", () => {
+  // openai-to-cursor.js: image content preserved
+  it("image content is preserved", () => {
     const out = O2C({
       messages: [{ role: "user", content: [
         { type: "text", text: "look" },
@@ -35,18 +34,16 @@ describe("OpenAI → Cursor", () => {
     expect(JSON.stringify(out), "image dropped").toContain("AAAA");
   });
 
-  // openai-to-cursor.js:179 — max_tokens hardcoded to 32000
-  // KNOWN BUG
-  it.fails("respects client max_tokens", () => {
+  // openai-to-cursor.js: respects client max_tokens
+  it("respects client max_tokens", () => {
     const out = O2C({ max_tokens: 200, messages: [{ role: "user", content: "hi" }] });
     expect(out.max_tokens).toBe(200);
   });
 });
 
 describe("OpenAI → CommandCode", () => {
-  // openai-to-commandcode.js:53-57 — safeParseJson returns {} on bad JSON (args silently lost)
-  // KNOWN BUG
-  it.fails("malformed tool arguments are not silently emptied", () => {
+  // openai-to-commandcode.js: safeParseJson preserves malformed args in raw property
+  it("malformed tool arguments are not silently emptied", () => {
     const out = O2CC({
       messages: [
         { role: "user", content: "go" },
@@ -61,9 +58,8 @@ describe("OpenAI → CommandCode", () => {
     expect(Object.keys(call.input).length, "arguments silently dropped to {}").toBeGreaterThan(0);
   });
 
-  // openai-to-commandcode.js:41-42 — image becomes "[image omitted]"
-  // KNOWN BUG
-  it.fails("image content is preserved", () => {
+  // openai-to-commandcode.js: image content preserved
+  it("image content is preserved", () => {
     const out = O2CC({
       messages: [{ role: "user", content: [
         { type: "text", text: "look" },

@@ -100,6 +100,40 @@ export default function ProviderDetailPage() {
 
   const AG_RISK_STORAGE_KEY = "ag_risk_confirmed";
 
+  const providerInfo = providerNode
+    ? {
+        id: providerNode.id,
+        name: providerNode.name || (providerNode.type === "anthropic-compatible" ? "Anthropic Compatible" : "OpenAI Compatible"),
+        color: providerNode.type === "anthropic-compatible" ? "#D97757" : "#10A37F",
+        textIcon: providerNode.type === "anthropic-compatible" ? "AC" : "OC",
+        apiType: providerNode.apiType,
+        baseUrl: providerNode.baseUrl,
+        type: providerNode.type,
+      }
+    : (OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId] || FREE_PROVIDERS[providerId] || FREE_TIER_PROVIDERS[providerId] || WEB_COOKIE_PROVIDERS[providerId]);
+  const authModes = providerInfo?.authModes || [];
+  const isOAuth = !!OAUTH_PROVIDERS[providerId] || !!FREE_PROVIDERS[providerId] || authModes.includes("oauth");
+  const supportsApiKeyAuth = !!APIKEY_PROVIDERS[providerId] || authModes.includes("apikey");
+  const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
+  const staticModels = getModelsByProviderId(providerId);
+  const models = (() => {
+    const byId = new Map(staticModels.map((model) => [model.id, model]));
+    for (const model of discoveredModels) {
+      if (model?.id) byId.set(model.id, { ...byId.get(model.id), ...model });
+    }
+    return [...byId.values()];
+  })();
+  const providerAlias = getProviderAlias(providerId);
+  
+  const isOpenAICompatible = isOpenAICompatibleProvider(providerId);
+  const isAnthropicCompatible = isAnthropicCompatibleProvider(providerId);
+  const isCompatible = isOpenAICompatible || isAnthropicCompatible;
+  const hasActiveConnection = connections.some((connection) => connection.isActive !== false);
+  const modelToolbarActions = getProviderModelToolbarActions({ isCompatible, hasActiveConnection });
+  const hasDualAuthModes = !isCompatible && isOAuth && supportsApiKeyAuth;
+  const oauthConnectionLabel = providerId === "xai" ? "Grok Build OAuth" : "OAuth";
+  const apiKeyConnectionLabel = providerId === "xai" ? "xAI API Key" : "API Key";
+
   const openOAuthConnection = () => {
     setShowOAuthModal(true);
   };
@@ -144,40 +178,6 @@ export default function ProviderDetailPage() {
     }
     triggerApiKeyConnection();
   };
-
-  const providerInfo = providerNode
-    ? {
-        id: providerNode.id,
-        name: providerNode.name || (providerNode.type === "anthropic-compatible" ? "Anthropic Compatible" : "OpenAI Compatible"),
-        color: providerNode.type === "anthropic-compatible" ? "#D97757" : "#10A37F",
-        textIcon: providerNode.type === "anthropic-compatible" ? "AC" : "OC",
-        apiType: providerNode.apiType,
-        baseUrl: providerNode.baseUrl,
-        type: providerNode.type,
-      }
-    : (OAUTH_PROVIDERS[providerId] || APIKEY_PROVIDERS[providerId] || FREE_PROVIDERS[providerId] || FREE_TIER_PROVIDERS[providerId] || WEB_COOKIE_PROVIDERS[providerId]);
-  const authModes = providerInfo?.authModes || [];
-  const isOAuth = !!OAUTH_PROVIDERS[providerId] || !!FREE_PROVIDERS[providerId] || authModes.includes("oauth");
-  const supportsApiKeyAuth = !!APIKEY_PROVIDERS[providerId] || authModes.includes("apikey");
-  const isFreeNoAuth = !!FREE_PROVIDERS[providerId]?.noAuth;
-  const staticModels = getModelsByProviderId(providerId);
-  const models = (() => {
-    const byId = new Map(staticModels.map((model) => [model.id, model]));
-    for (const model of discoveredModels) {
-      if (model?.id) byId.set(model.id, { ...byId.get(model.id), ...model });
-    }
-    return [...byId.values()];
-  })();
-  const providerAlias = getProviderAlias(providerId);
-  
-  const isOpenAICompatible = isOpenAICompatibleProvider(providerId);
-  const isAnthropicCompatible = isAnthropicCompatibleProvider(providerId);
-  const isCompatible = isOpenAICompatible || isAnthropicCompatible;
-  const hasActiveConnection = connections.some((connection) => connection.isActive !== false);
-  const modelToolbarActions = getProviderModelToolbarActions({ isCompatible, hasActiveConnection });
-  const hasDualAuthModes = !isCompatible && isOAuth && supportsApiKeyAuth;
-  const oauthConnectionLabel = providerId === "xai" ? "Grok Build OAuth" : "OAuth";
-  const apiKeyConnectionLabel = providerId === "xai" ? "xAI API Key" : "API Key";
   // Resolve suffix "(level)" for a model when a thinking level is picked and the model supports it.
   const resolveThinkingSuffix = (modelId) => {
     if (!thinkingMode || thinkingMode === "auto") return null;

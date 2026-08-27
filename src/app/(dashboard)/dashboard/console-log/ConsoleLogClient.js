@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Card, Button } from "@/shared/components";
+import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { CONSOLE_LOG_CONFIG } from "@/shared/constants/config";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 
@@ -50,21 +51,25 @@ export default function ConsoleLogClient() {
     };
 
     es.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === "init") {
-        setLogs(msg.logs.slice(-CONSOLE_LOG_CONFIG.maxLines));
-      } else if (msg.type === "line") {
-        setLogs((prev) => {
-          const next = [...prev, msg.line];
-          return next.length > CONSOLE_LOG_CONFIG.maxLines ? next.slice(-CONSOLE_LOG_CONFIG.maxLines) : next;
-        });
-      } else if (msg.type === "lines") {
-        setLogs((prev) => {
-          const next = [...prev, ...msg.lines];
-          return next.length > CONSOLE_LOG_CONFIG.maxLines ? next.slice(-CONSOLE_LOG_CONFIG.maxLines) : next;
-        });
-      } else if (msg.type === "clear") {
-        setLogs([]);
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "init") {
+          setLogs(Array.isArray(msg.logs) ? msg.logs.slice(-CONSOLE_LOG_CONFIG.maxLines) : []);
+        } else if (msg.type === "line") {
+          setLogs((prev) => {
+            const next = [...prev, msg.line];
+            return next.length > CONSOLE_LOG_CONFIG.maxLines ? next.slice(-CONSOLE_LOG_CONFIG.maxLines) : next;
+          });
+        } else if (msg.type === "lines") {
+          setLogs((prev) => {
+            const next = [...prev, ...(Array.isArray(msg.lines) ? msg.lines : [])];
+            return next.length > CONSOLE_LOG_CONFIG.maxLines ? next.slice(-CONSOLE_LOG_CONFIG.maxLines) : next;
+          });
+        } else if (msg.type === "clear") {
+          setLogs([]);
+        }
+      } catch (err) {
+        reportClientError("Failed to parse console log SSE message:", err);
       }
     };
 
@@ -92,6 +97,12 @@ export default function ConsoleLogClient() {
     logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [logs]);
 
+  const { copied, copy } = useCopyToClipboard();
+
+  const handleCopyLogs = () => {
+    copy(logs.join("\n"), "console_logs");
+  };
+
   return (
     <div className="">
       <Card>
@@ -106,6 +117,16 @@ export default function ConsoleLogClient() {
           {streamError && (
             <Button size="sm" variant="outline" icon="refresh" onClick={handleReconnect}>
               Reconnect
+            </Button>
+          )}
+          {logs.length > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              icon={copied === "console_logs" ? "check" : "content_copy"}
+              onClick={handleCopyLogs}
+            >
+              {copied === "console_logs" ? "Copied" : "Copy Logs"}
             </Button>
           )}
           <Button size="sm" variant="outline" icon="delete" onClick={handleClear}>

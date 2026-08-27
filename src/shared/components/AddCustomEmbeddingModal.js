@@ -3,7 +3,10 @@
 
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
-import { Modal, Input, Button, Badge } from "@/shared/components";
+import Modal from "./Modal";
+import Input from "./Input";
+import Button from "./Button";
+import Badge from "./Badge";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";

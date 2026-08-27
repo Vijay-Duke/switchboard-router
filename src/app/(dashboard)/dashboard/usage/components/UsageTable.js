@@ -114,7 +114,10 @@ export default function UsageTable({
   useEffect(() => {
     try {
       const saved = localStorage.getItem(storageKey);
-      if (saved) setExpanded(new Set(JSON.parse(saved)));
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) setExpanded(new Set(parsed));
+      }
     } catch (e) {
       reportClientError(`Failed to load ${storageKey}:`, e);
     }

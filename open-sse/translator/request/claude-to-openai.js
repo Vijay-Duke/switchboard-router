@@ -178,6 +178,10 @@ function convertClaudeMessage(msg) {
           if (block.signature && !reasoningSignature) reasoningSignature = block.signature;
           break;
 
+        case CLAUDE_BLOCK.REDACTED_THINKING:
+          if (block.data) reasoningContent += block.data;
+          break;
+
         case CLAUDE_BLOCK.IMAGE:
           if (block.source?.type === "base64") {
             parts.push({
@@ -211,19 +215,51 @@ function convertClaudeMessage(msg) {
           if (typeof block.content === "string") {
             resultContent = block.content;
           } else if (Array.isArray(block.content)) {
-            resultContent = block.content
-              .filter(c => c.type === CLAUDE_BLOCK.TEXT)
-              .map(c => c.text)
-              .join("\n") || JSON.stringify(block.content);
+            const textParts = [];
+            const imageParts = [];
+            for (const c of block.content) {
+              if (!c || typeof c !== "object") continue;
+              if (c.type === CLAUDE_BLOCK.TEXT && typeof c.text === "string") {
+                textParts.push(c.text);
+              } else if (c.type === CLAUDE_BLOCK.IMAGE) {
+                if (c.source?.type === "base64" && c.source?.data) {
+                  imageParts.push({
+                    type: OPENAI_BLOCK.IMAGE_URL,
+                    image_url: { url: encodeDataUri(c.source.media_type, c.source.data) }
+                  });
+                } else if (c.source?.type === "url" && c.source.url) {
+                  imageParts.push({
+                    type: OPENAI_BLOCK.IMAGE_URL,
+                    image_url: { url: c.source.url }
+                  });
+                }
+              }
+            }
+            if (imageParts.length > 0) {
+              const combined = [];
+              if (textParts.length > 0) {
+                combined.push({ type: OPENAI_BLOCK.TEXT, text: textParts.join("\n") });
+              }
+              combined.push(...imageParts);
+              resultContent = combined;
+            } else if (textParts.length > 0) {
+              resultContent = textParts.join("\n");
+            } else {
+              resultContent = JSON.stringify(block.content);
+            }
           } else if (block.content) {
             resultContent = JSON.stringify(block.content);
           }
           
-          toolResults.push({
+          const toolMsg = {
             role: ROLE.TOOL,
             tool_call_id: block.tool_use_id,
             content: resultContent
-          });
+          };
+          if (block.is_error !== undefined) {
+            toolMsg.is_error = Boolean(block.is_error);
+          }
+          toolResults.push(toolMsg);
           break;
       }
     }

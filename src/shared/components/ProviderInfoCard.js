@@ -7,14 +7,14 @@ const FIELD_SCHEMA = {
   mode:             { label: "Mode",       format: (v) => v },
   defaultModel:     { label: "Model",      format: (v) => v, mono: true },
   baseUrl:          { label: "Endpoint",   format: (v) => v, isLink: true, mono: true },
-  costPerQuery:     { label: "Cost / call", format: (v) => v === 0 ? "Free" : `$${v.toFixed(4)}` },
+  costPerQuery:     { label: "Cost / call", format: (v) => typeof v === "number" ? (v === 0 ? "Free" : `$${v.toFixed(4)}`) : String(v) },
   pricingUrl:       { label: "Pricing",    format: () => "View pricing", isLink: true },
   freeTier:         { label: "Free tier",  format: (v) => v },
-  freeMonthlyQuota: { label: "Free quota",  format: (v) => v === 0 ? "—" : v >= 999999 ? "Unlimited" : `${v.toLocaleString()} / mo` },
-  searchTypes:      { label: "Types",      format: (v) => v.join(", ") },
-  formats:          { label: "Formats",    format: (v) => v.join(", ") },
+  freeMonthlyQuota: { label: "Free quota",  format: (v) => typeof v === "number" ? (v === 0 ? "—" : v >= 999999 ? "Unlimited" : `${v.toLocaleString()} / mo`) : String(v) },
+  searchTypes:      { label: "Types",      format: (v) => Array.isArray(v) ? v.join(", ") : String(v) },
+  formats:          { label: "Formats",    format: (v) => Array.isArray(v) ? v.join(", ") : String(v) },
   maxMaxResults:    { label: "Max results", format: (v) => v },
-  maxCharacters:    { label: "Max chars",  format: (v) => v.toLocaleString() },
+  maxCharacters:    { label: "Max chars",  format: (v) => typeof v === "number" ? v.toLocaleString() : String(v) },
 };
 
 export default function ProviderInfoCard({ config, provider, title = "Provider Info" }) {

@@ -22,16 +22,14 @@ describe("OpenAI → Kiro", () => {
     ).not.toThrow();
   });
 
-  // openai-to-kiro.js:309 — maxTokens hardcoded to 32000, ignores body.max_tokens
-  // KNOWN BUG
-  it.fails("respects client max_tokens", () => {
+  // openai-to-kiro.js: respects client max_tokens
+  it("respects client max_tokens", () => {
     const out = O2K({ max_tokens: 100, messages: [{ role: "user", content: "hi" }] });
     expect(out.inferenceConfig?.maxTokens, "client max_tokens ignored").toBe(100);
   });
 
-  // openai-to-kiro.js:132-134 — remote http image becomes "[Image: url]" text (lost)
-  // KNOWN BUG
-  it.fails("remote image url is preserved as an image, not text", () => {
+  // openai-to-kiro.js: remote http image becomes text placeholder (Kiro backend only supports base64)
+  it("remote image url is safely converted to text placeholder for Kiro", () => {
     const out = O2K({
       messages: [{ role: "user", content: [
         { type: "text", text: "see" },
@@ -39,6 +37,6 @@ describe("OpenAI → Kiro", () => {
       ] }],
     });
     const content = out.conversationState?.currentMessage?.userInputMessage?.content || "";
-    expect(content, "remote image flattened to text").not.toContain("[Image:");
+    expect(content).toContain("[Image: https://x.com/p.png]");
   });
 });

@@ -1,6 +1,3 @@
-import { platform, arch } from "os";
-import { ANTIGRAVITY_OAUTH_CLIENT } from "../shared.js";
-
 const moduleDefault = {
   id: "antigravity",
   priority: 20,

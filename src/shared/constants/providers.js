@@ -103,9 +103,9 @@ export const AI_PROVIDERS = { ...FREE_PROVIDERS, ...FREE_TIER_PROVIDERS, ...OAUT
 
 // Auth methods
 export const AUTH_METHODS = {
-  oauth: { id: "oauth" },
-  apikey: { id: "apikey" },
-  cookie: { id: "cookie" },
+  oauth: { id: "oauth", name: "OAuth" },
+  apikey: { id: "apikey", name: "API Key" },
+  cookie: { id: "cookie", name: "Cookie" },
 };
 
 // Helper: Get provider by alias

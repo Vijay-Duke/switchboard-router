@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import PropTypes from "prop-types";
+import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 
 const STRATEGY_LABELS = {
   fallback: "fallback",
@@ -17,6 +18,7 @@ const STRATEGY_LABELS = {
 export default function OverviewClient({ initialData }) {
   const [host, setHost] = useState(initialData?.endpointHost || "127.0.0.1:20128");
   const [stats, setStats] = useState(null);
+  const { copied, copy } = useCopyToClipboard();
 
   const providerCount = initialData?.providerCount ?? 0;
   const readyProviderCount = initialData?.readyProviderCount ?? 0;
@@ -192,16 +194,28 @@ export default function OverviewClient({ initialData }) {
                 {endpointReady ? "online" : providerCount > 0 ? "providers unavailable" : "no providers"}
               </span>
             </div>
-            <div
-              style={{
-                fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
-                fontSize: 16,
-                color: "#E5B454",
-                marginBottom: 4,
-                wordBreak: "break-all",
-              }}
-            >
-              {endpointUrl}
+            <div className="flex items-center justify-between gap-2">
+              <div
+                style={{
+                  fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
+                  fontSize: 16,
+                  color: "#E5B454",
+                  wordBreak: "break-all",
+                }}
+              >
+                {endpointUrl}
+              </div>
+              <button
+                type="button"
+                onClick={() => copy(endpointUrl, "overview_endpoint")}
+                className="p-1.5 rounded hover:bg-white/10 text-[#8A7F66] hover:text-[#E5B454] transition-colors shrink-0"
+                title="Copy endpoint URL"
+                aria-label="Copy endpoint URL"
+              >
+                <span className="material-symbols-outlined text-[16px] leading-none">
+                  {copied === "overview_endpoint" ? "check" : "content_copy"}
+                </span>
+              </button>
             </div>
           </div>
           <div

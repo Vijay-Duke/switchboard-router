@@ -77,8 +77,17 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
           if (c.type === RESPONSES_ITEM.INPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
           if (c.type === RESPONSES_ITEM.OUTPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
           if (c.type === RESPONSES_ITEM.INPUT_IMAGE) {
-            const url = c.image_url || c.file_id || "";
-            return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url, detail: c.detail || "auto" } };
+            if (c.image_url) {
+              const url = typeof c.image_url === "object" ? c.image_url.url : c.image_url;
+              return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url, detail: c.detail || "auto" } };
+            }
+            if (c.file_id) {
+              return {
+                type: OPENAI_BLOCK.FILE,
+                file: { file_id: c.file_id, ...(c.filename ? { filename: c.filename } : {}) },
+              };
+            }
+            return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url: "", detail: c.detail || "auto" } };
           }
           if (c.type === RESPONSES_ITEM.INPUT_FILE) {
             const fileData = c.file_data || c.data || c.file_url || c.file_id || "";

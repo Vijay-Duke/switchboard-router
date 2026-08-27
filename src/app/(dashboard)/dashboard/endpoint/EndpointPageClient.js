@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, Button, Input, Modal, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import EndpointRow from "./components/EndpointRow";
+import ProtocolEndpointsCard from "./components/ProtocolEndpointsCard";
 import SecurityWarning from "./components/SecurityWarning";
 import KeyPolicyModal from "./components/KeyPolicyModal";
 import { queryKeys } from "@/shared/query/keys";
@@ -69,8 +70,12 @@ export default function EndpointPageClient({ initialData }) {
 
   // Client-only origin so SSR/hydrate don't stick on bare "/v1"
   const [baseUrl, setBaseUrl] = useState("/v1");
+  const [origin, setOrigin] = useState("http://127.0.0.1:20128");
   useEffect(() => {
-    setBaseUrl(`${window.location.origin}/v1`);
+    if (typeof window !== "undefined") {
+      setBaseUrl(`${window.location.origin}/v1`);
+      setOrigin(window.location.origin);
+    }
   }, []);
 
   const { copied, copy } = useCopyToClipboard();
@@ -173,6 +178,12 @@ export default function EndpointPageClient({ initialData }) {
           <p className="mt-3 text-xs text-text-muted font-mono">Machine: {machineId}</p>
         ) : null}
       </Card>
+
+      <ProtocolEndpointsCard
+        origin={origin}
+        copied={copied}
+        onCopy={copy}
+      />
 
       <Card id="require-api-key">
         <div className="flex items-center justify-between mb-4">

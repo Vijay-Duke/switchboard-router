@@ -4,7 +4,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Card, Badge, Button } from "@/shared/components";
+import { Card, Badge, Button, Input } from "@/shared/components";
+import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS, getProvidersByKind } from "@/shared/constants/providers";
 import MediaKindTabs from "../MediaKindTabs";
@@ -110,7 +111,23 @@ function ComboList({ combos }) {
   );
 }
 
-function Section({ title, icon, kind, providers, connections, combos, onCreateCombo }) {
+function Section({ title, icon, kind, providers, connections, combos, onCreateCombo, origin, copied, onCopy }) {
+  const endpointMeta = kind === "webSearch"
+    ? {
+        method: "POST",
+        path: "/v1/search",
+        desc: "Web search query endpoint across connected search providers & combos",
+        payloadExample: '{ "query": "..." }',
+      }
+    : {
+        method: "POST",
+        path: "/v1/web/fetch",
+        desc: "Direct web page markdown and content fetcher endpoint",
+        payloadExample: '{ "url": "https://..." }',
+      };
+
+  const endpointUrl = `${origin.replace(/\/+$/, "")}${endpointMeta.path}`;
+
   return (
     <div>
       {/* Header — title left, Create Combo right */}
@@ -122,6 +139,45 @@ function Section({ title, icon, kind, providers, connections, combos, onCreateCo
         </div>
         <Button size="sm" icon="add" onClick={onCreateCombo}>Create Combo</Button>
       </div>
+
+      <Card padding="xs" className="mb-4 border border-border/80 bg-surface-2/60">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20 shrink-0">
+                {endpointMeta.method}
+              </span>
+              <span className="text-xs font-semibold text-text-main truncate">
+                {title} Endpoint
+              </span>
+            </div>
+            <span className="text-[11px] font-mono text-text-muted hidden sm:inline truncate">
+              {endpointMeta.payloadExample}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 min-w-0">
+            <Input
+              value={endpointUrl}
+              readOnly
+              className="flex-1 min-w-0"
+              inputClassName="font-mono text-xs bg-surface"
+            />
+            <button
+              type="button"
+              onClick={() => onCopy(endpointUrl, `endpoint_${kind}`)}
+              className="p-2 hover:bg-surface rounded text-text-muted hover:text-primary transition-colors shrink-0 border border-border/60"
+              title="Copy Endpoint URL"
+              aria-label={`Copy ${title} Endpoint URL`}
+            >
+              <span className="material-symbols-outlined text-[18px] leading-none">
+                {copied === `endpoint_${kind}` ? "check" : "content_copy"}
+              </span>
+            </button>
+          </div>
+          <p className="text-[11px] text-text-muted">{endpointMeta.desc}</p>
+        </div>
+      </Card>
 
       {/* Combos — top */}
       {combos.length > 0 && (
@@ -150,6 +206,14 @@ export default function WebProvidersPage() {
   const router = useRouter();
   const [connections, setConnections] = useState([]);
   const [combos, setCombos] = useState([]);
+  const [origin, setOrigin] = useState("http://127.0.0.1:20128");
+  const { copied, copy } = useCopyToClipboard();
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setOrigin(window.location.origin);
+    }
+  }, []);
 
   const fetchAll = async () => {
     try {
@@ -202,6 +266,7 @@ export default function WebProvidersPage() {
         title="Web Search" icon="search" kind="webSearch"
         providers={searchProviders} connections={connections} combos={searchCombos}
         onCreateCombo={() => handleCreateCombo("webSearch")}
+        origin={origin} copied={copied} onCopy={copy}
       />
 
       {/* Divider between sections */}
@@ -211,6 +276,7 @@ export default function WebProvidersPage() {
         title="Web Fetch" icon="travel_explore" kind="webFetch"
         providers={fetchProviders} connections={connections} combos={fetchCombos}
         onCreateCombo={() => handleCreateCombo("webFetch")}
+        origin={origin} copied={copied} onCopy={copy}
       />
     </div>
   );

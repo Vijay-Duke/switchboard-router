@@ -39,9 +39,8 @@ describe("Claude Code CLI context → OpenAI", () => {
     expect(JSON.stringify(out)).toContain("step-by-step plan");
   });
 
-  // claude-to-openai.js:128 — redacted_thinking also dropped
-  // KNOWN BUG
-  it.fails("redacted_thinking block is not silently dropped", () => {
+  // claude-to-openai.js: redacted_thinking preserved
+  it("redacted_thinking block is not silently dropped", () => {
     const out = T(FORMATS.CLAUDE, FORMATS.OPENAI, {
       messages: [
         { role: "assistant", content: [
@@ -54,9 +53,8 @@ describe("Claude Code CLI context → OpenAI", () => {
     expect(JSON.stringify(out)).toContain("ENCRYPTED_BLOB");
   });
 
-  // claude-to-openai.js:155-173 — tool_result image block stringified into raw JSON
-  // KNOWN BUG
-  it.fails("tool_result image block is preserved", () => {
+  // claude-to-openai.js: tool_result image block preserved
+  it("tool_result image block is preserved", () => {
     const out = T(FORMATS.CLAUDE, FORMATS.OPENAI, {
       messages: [
         { role: "assistant", content: [{ type: "tool_use", id: "call_1", name: "screenshot", input: {} }] },
@@ -68,6 +66,12 @@ describe("Claude Code CLI context → OpenAI", () => {
       ],
     });
     const tool = out.messages.find((m) => m.role === "tool");
-    expect(tool?.content, "image turned into raw JSON").not.toMatch(/^\[/);
+    expect(tool?.content, "tool message must have content").toBeDefined();
+    if (typeof tool?.content === "string") {
+      expect(tool.content, "image turned into raw JSON").not.toMatch(/^\[/);
+    } else {
+      expect(Array.isArray(tool?.content), "image content preserved as array of parts").toBe(true);
+      expect(JSON.stringify(tool?.content)).toContain("IMG");
+    }
   });
 });

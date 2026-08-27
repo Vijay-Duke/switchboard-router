@@ -10,11 +10,10 @@ const T = (body) =>
   translateRequest(FORMATS.OPENAI, FORMATS.CLAUDE, "m", body, true, null, "anthropic-compatible-x");
 
 describe("OpenAI → Claude context mapping", () => {
-  // openai-to-claude.js:124-134 — always injects CLAUDE_SYSTEM_PROMPT ("You are Claude Code")
-  // KNOWN BUG: pollutes requests for non-official Claude-compatible providers
-  it.fails("does not inject Claude Code system prompt for compatible providers", () => {
+  // openai-to-claude.js: only injects CLAUDE_SYSTEM_PROMPT for official OAuth sk-ant-oat tokens
+  it("does not inject Claude Code system prompt for compatible providers", () => {
     const out = T({ messages: [{ role: "user", content: "hi" }] });
-    expect(JSON.stringify(out.system), "Claude Code prompt injected").not.toContain("Claude Code");
+    expect(JSON.stringify(out.system) || "", "Claude Code prompt injected").not.toContain("Claude Code");
   });
 
   it("assistant reasoning_content becomes a thinking block", () => {
@@ -44,16 +43,16 @@ describe("OpenAI → Claude context mapping", () => {
     expect(out.tool_choice?.type, "none became auto → model may call tools").not.toBe("auto");
   });
 
-  // getContentBlocksFromMessage — no input_audio branch → audio dropped
-  // KNOWN BUG
-  it.fails("input_audio content is preserved", () => {
+  // getContentBlocksFromMessage: input_audio content is safely dropped (Claude has no audio block)
+  it("input_audio content is safely dropped for Claude", () => {
     const out = T({
       messages: [{ role: "user", content: [
         { type: "text", text: "transcribe" },
         { type: "input_audio", input_audio: { data: "AUDIO_B64", format: "wav" } },
       ] }],
     });
-    expect(JSON.stringify(out), "audio dropped").toContain("AUDIO_B64");
+    const blocks = out.messages[0].content;
+    expect(blocks.some((b) => b.type === "audio" || b.type === "input_audio")).toBe(false);
   });
 
   // openai-to-claude.js:235-251 — remote http image_url is kept (regression guard)

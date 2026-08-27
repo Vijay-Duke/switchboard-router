@@ -41,7 +41,18 @@ function toContentBlocks(content) {
         if (part.type === OPENAI_BLOCK.TEXT && typeof part.text === "string") {
           blocks.push({ type: OPENAI_BLOCK.TEXT, text: part.text });
         } else if (part.type === OPENAI_BLOCK.IMAGE_URL || part.type === OPENAI_BLOCK.IMAGE) {
-          blocks.push({ type: OPENAI_BLOCK.TEXT, text: "[image omitted]" });
+          if (part.image_url?.url) {
+            blocks.push({ type: "image_url", image_url: { url: part.image_url.url } });
+          } else if (part.url) {
+            blocks.push({ type: "image_url", image_url: { url: part.url } });
+          } else if (part.source?.data) {
+            blocks.push({
+              type: "image",
+              source: part.source
+            });
+          } else {
+            blocks.push(part);
+          }
         } else if (typeof part.text === "string") {
           blocks.push({ type: OPENAI_BLOCK.TEXT, text: part.text });
         }
@@ -55,7 +66,7 @@ function toContentBlocks(content) {
 function safeParseJson(s) {
   if (s == null) return {};
   if (typeof s !== "string") return s;
-  try { return JSON.parse(s); } catch { return {}; }
+  try { return JSON.parse(s); } catch { return { raw: s }; }
 }
 
 function convertMessages(messages = []) {

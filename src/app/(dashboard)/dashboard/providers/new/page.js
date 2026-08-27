@@ -22,7 +22,7 @@ export default function NewProviderPage() {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     provider: "",
-    authMethod: "api_key",
+    authMethod: "apikey",
     apiKey: "",
     displayName: "",
     isActive: true,
@@ -39,7 +39,7 @@ export default function NewProviderPage() {
   const validate = () => {
     const newErrors = {};
     if (!formData.provider) newErrors.provider = "Please select a provider";
-    if (formData.authMethod === "api_key" && !formData.apiKey.trim()) {
+    if (formData.authMethod === "apikey" && !formData.apiKey.trim()) {
       newErrors.apiKey = "API Key is required";
     }
     setErrors(newErrors);
@@ -146,14 +146,14 @@ export default function NewProviderPage() {
                   }`}
                 >
                   <span className="material-symbols-outlined" aria-hidden="true">
-                    {method.value === "api_key" ? "key" : "lock"}
+                    {method.value === "apikey" ? "key" : method.value === "cookie" ? "cookie" : "lock"}
                   </span>
                   <span className="font-medium">{method.label}</span>
                 </button>
               ))}
             </div>
           </div>
-          {formData.authMethod === "api_key" && (
+          {formData.authMethod === "apikey" && (
             <Input
               label="API Key"
               type="password"
@@ -162,9 +162,51 @@ export default function NewProviderPage() {
               value={formData.apiKey}
               onChange={(e) => handleChange("apiKey", e.target.value)}
               error={errors.apiKey}
-              hint="Your API key will be encrypted and stored securely."
+              hint={
+                selectedProvider?.notice?.apiKeyUrl ? (
+                  <span>
+                    Your key is encrypted and stored locally.{" "}
+                    <a
+                      href={selectedProvider.notice.apiKeyUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline inline-flex items-center gap-0.5"
+                    >
+                      Get API Key <span className="material-symbols-outlined text-xs">open_in_new</span>
+                    </a>
+                  </span>
+                ) : (
+                  "Your API key will be encrypted and stored securely."
+                )
+              }
               required
             />
+          )}
+
+          {formData.authMethod === "cookie" && (
+            <Input
+              label="Session Cookie / Token"
+              type="password"
+              autoComplete="off"
+              placeholder="Paste your session cookie or token"
+              value={formData.apiKey}
+              onChange={(e) => handleChange("apiKey", e.target.value)}
+              error={errors.apiKey}
+              hint="Your cookie credential will be encrypted and stored securely."
+              required
+            />
+          )}
+
+          {formData.authMethod === "oauth" && (
+            <div className="p-4 rounded-lg bg-surface-2 border border-border text-sm text-text-muted flex items-start gap-3">
+              <span className="material-symbols-outlined text-primary text-lg mt-0.5">lock_open</span>
+              <div className="flex-1">
+                <p className="font-medium text-text-main">OAuth Authentication</p>
+                <p className="text-xs text-text-muted mt-0.5">
+                  OAuth authorization for {selectedProvider?.name || "this provider"} will launch via official browser sign-in on the Provider Settings page.
+                </p>
+              </div>
+            </div>
           )}
 
           {/* Display Name */}

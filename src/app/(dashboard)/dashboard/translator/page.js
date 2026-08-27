@@ -30,6 +30,7 @@ const EDITOR_OPTIONS = {
 };
 
 export default function TranslatorPage() {
+  const { copy } = useCopyToClipboard();
   const [contents, setContents] = useState({});
   const [expanded, setExpanded] = useState({ 1: true });
   const [loading, setLoading] = useState({});
@@ -214,8 +215,6 @@ export default function TranslatorPage() {
       setLoad("send", false);
     }
   };
-
-  const { copy } = useCopyToClipboard();
 
   const handleCopy = async (id) => {
     if (!contents[id]) return;
