@@ -8,7 +8,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { parseTOML, stringifyTOML } from "confbox";
-import { replaceCliFiles, snapshotObjectKeys, restoreObjectKeys, writeCliFile } from "@/lib/cli/fileIo.js";
+import { snapshotObjectKeys, restoreObjectKeys, writeCliFile } from "@/lib/cli/fileIo.js";
 
 const execAsync = promisify(exec);
 
@@ -160,39 +160,35 @@ export async function POST(request) {
           exists: parsed.agents?.subagent !== undefined,
           value: parsed.agents?.subagent,
         },
+        agents: snapshotObjectKeys(
+          parsed.agents && typeof parsed.agents === "object" ? parsed.agents : {},
+          ["default_subagent_model"],
+        ),
         auth: snapshotObjectKeys(authData, ["OPENAI_API_KEY", "auth_mode"]),
       };
       await writeCliFile(getBackupPath(), JSON.stringify(backup, null, 2), { secret: true });
     }
 
-    // Update only Switchboard related fields (api_key goes to auth.json, not config.toml)
+    // Update only Switchboard related fields
     parsed.model = model;
     parsed.model_provider = "switchboard";
 
-    // Update or create switchboard provider section (no api_key - Codex reads from auth.json)
-    // Ensure /v1 suffix is added only once
+    // Update or create switchboard provider section. Ensure /v1 suffix is added only once.
     const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+    // Custom providers ignore auth.json - the key must travel as a static header
     setNestedSection(parsed, "model_providers.switchboard", {
       name: "Switchboard",
       base_url: normalizedBaseUrl,
       wire_api: "responses",
+      http_headers: { Authorization: `Bearer ${apiKey}` },
     });
 
-    // Add subagent configuration
-    const effectiveSubagentModel = subagentModel || model;
-    setNestedSection(parsed, "agents.subagent", {
-      model: effectiveSubagentModel,
-    });
+    // Subagent model is a scalar under [agents]; agents.<role> now means a custom role
+    deleteNestedSection(parsed, "agents.subagent");
+    setNestedSection(parsed, "agents.default_subagent_model", subagentModel || model);
 
-    // Force apikey mode (keep existing tokens untouched for ChatGPT login reuse)
-    authData.OPENAI_API_KEY = apiKey;
-    authData.auth_mode = "apikey";
-
-    // Write both files atomically: a later failure restores earlier files (T121).
-    await replaceCliFiles([
-      { filePath: configPath, content: stringifyTOML(parsed) },
-      { filePath: authPath, content: JSON.stringify(authData, null, 2), secret: true },
-    ]);
+    // Write merged config; auth.json is left alone so a ChatGPT login survives
+    await writeCliFile(configPath, stringifyTOML(parsed));
 
     return NextResponse.json({
       success: true,
@@ -235,7 +231,8 @@ export async function DELETE() {
     // Remove switchboard provider section
     deleteNestedSection(parsed, "model_providers.switchboard");
 
-    // Remove subagent configuration
+    // Remove subagent configuration (both the current key and the legacy role form)
+    deleteNestedSection(parsed, "agents.default_subagent_model");
     deleteNestedSection(parsed, "agents.subagent");
 
     // Restore the pre-Apply values captured by POST, if any (T121).
@@ -249,13 +246,21 @@ export async function DELETE() {
         if (parsed.agents == null || typeof parsed.agents !== "object") parsed.agents = {};
         parsed.agents.subagent = backup.subagent.value;
       }
+      if (backup.agents) {
+        if (parsed.agents == null || typeof parsed.agents !== "object") parsed.agents = {};
+        restoreObjectKeys(parsed.agents, backup.agents);
+      }
+    }
+    if (parsed.agents && typeof parsed.agents === "object" && Object.keys(parsed.agents).length === 0) {
+      delete parsed.agents;
     }
 
     // Write updated config
     const configContent = stringifyTOML(parsed);
     await writeCliFile(configPath, configContent);
 
-    // Remove OPENAI_API_KEY from auth.json (restoring any pre-existing key)
+    // Remove OPENAI_API_KEY from auth.json (restoring any pre-existing key). Apply no
+    // longer writes it, but this repairs machines configured by older versions.
     const authPath = getCodexAuthPath();
     try {
       const existingAuth = await fs.readFile(authPath, "utf-8");

@@ -77,8 +77,9 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
     const modelMatch = codexStatus.config.match(/^model\s*=\s*"([^"]+)"/m);
     if (modelMatch) setSelectedModel(modelMatch[1]);
 
-    // Parse subagent settings
-    const subagentModelMatch = codexStatus.config.match(/\[agents\.subagent\]\s*\n\s*model\s*=\s*"([^"]+)"/m);
+    // Parse subagent settings: current scalar form, falling back to the legacy role table
+    const subagentModelMatch = codexStatus.config.match(/^default_subagent_model\s*=\s*"([^"]+)"/m)
+      || codexStatus.config.match(/\[agents\.subagent\]\s*\n\s*model\s*=\s*"([^"]+)"/m);
     if (subagentModelMatch) setSubagentModel(subagentModelMatch[1]);
 
     // Seed the endpoint dropdown from the server until the user touches it.
@@ -200,23 +201,17 @@ name = "Switchboard"
 base_url = "${getEffectiveBaseUrl()}"
 wire_api = "responses"
 
-[agents.subagent]
-model = "${effectiveSubagentModel}"
-`;
+[model_providers.switchboard.http_headers]
+Authorization = "Bearer ${keyToUse}"
 
-    const authContent = JSON.stringify({
-      auth_mode: "apikey",
-      OPENAI_API_KEY: keyToUse
-    }, null, 2);
+[agents]
+default_subagent_model = "${effectiveSubagentModel}"
+`;
 
     return [
       {
         filename: "~/.codex/config.toml",
         content: configContent,
-      },
-      {
-        filename: "~/.codex/auth.json",
-        content: authContent,
       },
     ];
   };
@@ -302,7 +297,7 @@ model = "${effectiveSubagentModel}"
                     <p className="text-text-muted">After installation, run <code className="px-1 bg-black/5 dark:bg-white/5 rounded">codex</code> to verify.</p>
                     <div className="pt-2 border-t border-border">
                       <p className="text-text-muted text-xs">
-                        Codex uses <code className="px-1 bg-black/5 dark:bg-white/5 rounded">~/.codex/auth.json</code> with <code className="px-1 bg-black/5 dark:bg-white/5 rounded">OPENAI_API_KEY</code>.
+                        Codex reads custom providers from <code className="px-1 bg-black/5 dark:bg-white/5 rounded">~/.codex/config.toml</code>.
                         Click &quot;Apply&quot; to auto-configure.
                       </p>
                     </div>

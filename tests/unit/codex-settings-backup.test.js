@@ -116,7 +116,37 @@ describe("codex-settings Apply → Disconnect round-trip (T121)", () => {
       body: JSON.stringify({ baseUrl: "http://127.0.0.1:20128", apiKey: null, model: "sw/model-a" }),
     }));
     expect(res.status).toBe(200);
-    const auth = JSON.parse(await fs.readFile(path.join(homes.dir, ".codex", "auth.json"), "utf-8"));
-    expect(auth.OPENAI_API_KEY).toBe("sk_switchboard");
+    const cfg = await fs.readFile(path.join(homes.dir, ".codex", "config.toml"), "utf-8");
+    expect(cfg).toContain("[model_providers.switchboard.http_headers]");
+    expect(cfg).toContain('Authorization = "Bearer sk_switchboard"');
+  });
+
+  it("sends the key as an http header and leaves an existing ChatGPT login in auth.json alone", async () => {
+    const cfgDir = path.join(homes.dir, ".codex");
+    await fs.mkdir(cfgDir, { recursive: true });
+    const login = { auth_mode: "chatgpt", tokens: { access_token: "t" } };
+    await fs.writeFile(path.join(cfgDir, "auth.json"), JSON.stringify(login));
+
+    expect((await post()).status).toBe(200);
+    const cfg = await fs.readFile(path.join(cfgDir, "config.toml"), "utf-8");
+    expect(cfg).toContain('Authorization = "Bearer sk_switchboard"');
+    // Subagent model is the [agents] scalar, not the legacy [agents.subagent] role table.
+    expect(cfg).toMatch(/default_subagent_model = "sw\/model-a"/);
+    expect(cfg).not.toContain("[agents.subagent]");
+    expect(JSON.parse(await fs.readFile(path.join(cfgDir, "auth.json"), "utf-8"))).toEqual(login);
+
+    await DELETE();
+    const restored = await fs.readFile(path.join(cfgDir, "config.toml"), "utf-8");
+    expect(restored).not.toContain("default_subagent_model");
+    expect(restored).not.toContain("Authorization");
+  });
+
+  it("restores a pre-existing default_subagent_model on Disconnect", async () => {
+    const cfgDir = path.join(homes.dir, ".codex");
+    await fs.mkdir(cfgDir, { recursive: true });
+    await fs.writeFile(path.join(cfgDir, "config.toml"), '[agents]\ndefault_subagent_model = "o4-mini"\n');
+    await post();
+    await DELETE();
+    expect(await fs.readFile(path.join(cfgDir, "config.toml"), "utf-8")).toContain('default_subagent_model = "o4-mini"');
   });
 });
