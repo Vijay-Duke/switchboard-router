@@ -9,6 +9,7 @@ import { getExecutor, hasSpecializedExecutor } from "../../open-sse/executors/in
 import { resolveTransport } from "../../open-sse/services/provider.js";
 
 const CHAT_MODELS = [
+  "glm-5.3-flash",
   "glm-5.2",
   "glm-5.1",
   // OpenCode Go docs' endpoint table currently says kimi-k2.7, but its
@@ -17,6 +18,7 @@ const CHAT_MODELS = [
   "kimi-k2.6",
   "deepseek-v4-pro",
   "deepseek-v4-flash",
+  "deepseek-v4-flash-vision-exp",
   "mimo-v2.5",
   "mimo-v2.5-pro",
 ];
@@ -30,7 +32,7 @@ const MESSAGES_MODELS = [
   "qwen3.6-plus",
 ];
 
-const MULTI_TRANSPORT_MODELS = ["deepseek-v4-pro", "deepseek-v4-flash"];
+const MULTI_TRANSPORT_MODELS = ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"];
 
 describe("OpenCode Go official model catalog", () => {
   it("matches the documented OpenCode Go model IDs", () => {

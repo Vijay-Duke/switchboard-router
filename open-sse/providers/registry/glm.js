@@ -49,6 +49,7 @@ const moduleDefault = {
   ],
   models: [
     { id: "glm-5.3", name: "GLM 5.3" },
+    { id: "glm-5.3-flash", name: "GLM 5.3 Flash (Vision)" },
     { id: "glm-5.2", name: "GLM 5.2" },
     { id: "glm-5.1", name: "GLM 5.1" },
     { id: "glm-5-turbo", name: "GLM 5 Turbo" },
