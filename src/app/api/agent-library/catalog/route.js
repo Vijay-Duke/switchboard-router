@@ -5,6 +5,7 @@ import {
   loadSettings,
   resolveLibraryRoot,
   CATALOG_PRESETS,
+  MCP_PRESETS,
   installFromUrl,
   previewUrl,
   resolveSkillInput,
@@ -16,7 +17,7 @@ async function activeRootAndSettings() {
 }
 
 export async function GET() {
-  return NextResponse.json({ presets: CATALOG_PRESETS });
+  return NextResponse.json({ presets: CATALOG_PRESETS, mcpPresets: MCP_PRESETS });
 }
 
 export async function POST(request) {

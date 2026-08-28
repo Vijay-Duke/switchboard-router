@@ -46,6 +46,55 @@ export const CATALOG_PRESETS = [
   },
 ];
 
+/**
+ * Known safe MCP server presets ready for 1-click install.
+ */
+export const MCP_PRESETS = [
+  {
+    id: "executor",
+    name: "Executor.sh (Tool Gateway)",
+    description:
+      "Unified MCP tool gateway for OpenAPI, GraphQL, MCP servers & sandboxed JavaScript functions (executor.sh)",
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "executor", "mcp"],
+    notes: "Executor.sh tool execution gateway (https://executor.sh)",
+    docsUrl: "https://executor.sh",
+    featured: true,
+  },
+  {
+    id: "filesystem",
+    name: "Filesystem MCP",
+    description: "Official Model Context Protocol local filesystem access server",
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "."],
+    notes: "Local workspace filesystem provider",
+    docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
+  },
+  {
+    id: "github",
+    name: "GitHub MCP",
+    description: "GitHub issues, pull requests, commits, and repository operations",
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-github"],
+    env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}" },
+    notes: "Requires GITHUB_TOKEN environment variable",
+    docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/github",
+  },
+  {
+    id: "fetch",
+    name: "Fetch MCP",
+    description: "Web content fetching and HTML to markdown converter",
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-fetch"],
+    notes: "Web page extraction provider",
+    docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch",
+  },
+];
+
 const ALLOWED_HOST_SUFFIXES = [
   "githubusercontent.com",
   "github.com",

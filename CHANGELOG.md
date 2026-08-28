@@ -4,6 +4,7 @@
 - **Smart Skill Import & CLI Command Resolver**: Support pasting commands (e.g. `npx skills add citrolabs/ego-lite`), repository shorthands (`citrolabs/ego-lite`, `citrolabs/ego-lite@branch`), GitHub web/tree/blob URLs, and direct raw URLs directly into the Agent Library Catalog.
 - **GitHub Repository Tree Auto-Discovery**: Automatically discover `SKILL.md` files across repositories (with multi-skill picker for monorepos like `anthropics/skills`) using GitHub tree discovery with candidate probing fallbacks.
 - **Interactive Previews & Instant Multi-Harness Sync**: Live `SKILL.md` previewing with frontmatter parsing, security confirmation guards, and 1-click post-install Apply Sync to project skills across Claude Code, Codex, Gemini CLI, OpenCode, and Cursor.
+- **Featured Executor.sh MCP Gateway Preset**: 1-click integration for Executor.sh (`npx -y executor mcp`) in the Agent Library MCP tab ([/dashboard/agent-library](http://127.0.0.1:20128/dashboard/agent-library)), projecting a unified tool execution gateway across Claude Code, Codex, Gemini CLI, OpenCode, and Cursor.
 - **Skills Page & Catalog Guidance Enhancements**: Added cross-harness guidance banners on `/dashboard/skills` pointing to the Agent Library, along with 1-click quick-try sample chips on the Catalog tab.
 
 # v0.9.3 (2026-08-27)

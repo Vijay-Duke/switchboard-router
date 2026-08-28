@@ -24,6 +24,7 @@ import {
 import { applySync, cleanSync, runDoctor } from "./sync.js";
 import {
   CATALOG_PRESETS,
+  MCP_PRESETS,
   installFromUrl,
   previewUrl,
   parseSkillInput,
@@ -53,6 +54,7 @@ export {
   cleanSync,
   runDoctor,
   CATALOG_PRESETS,
+  MCP_PRESETS,
   installFromUrl,
   previewUrl,
   parseSkillInput,

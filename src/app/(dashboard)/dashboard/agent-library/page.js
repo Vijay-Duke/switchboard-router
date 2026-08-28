@@ -31,6 +31,7 @@ export default function AgentLibraryPage() {
 
   // Catalog & Smart Resolver
   const [presets, setPresets] = useState([]);
+  const [mcpPresets, setMcpPresets] = useState(/** @type {Array<any>} */ ([]));
   const [smartInput, setSmartInput] = useState("");
   const [discoveredSkills, setDiscoveredSkills] = useState(/** @type {Array<any>} */ ([]));
   const [justInstalledSkillId, setJustInstalledSkillId] = useState("");
@@ -84,7 +85,10 @@ export default function AgentLibraryPage() {
     checkUpdates();
     fetch("/api/agent-library/catalog")
       .then((r) => r.json())
-      .then((j) => setPresets(j.presets || []))
+      .then((j) => {
+        setPresets(j.presets || []);
+        setMcpPresets(j.mcpPresets || []);
+      })
       .catch(() => {});
   }, [load, checkUpdates]);
 
@@ -206,6 +210,54 @@ export default function AgentLibraryPage() {
     } finally {
       setBusy("");
     }
+  }
+
+  async function installMcpPreset(preset) {
+    setBusy(`mcp-preset-${preset.id}`);
+    setMessage(null);
+    try {
+      const r = await fetch("/api/agent-library/mcp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: preset.id,
+          name: preset.name || preset.id,
+          transport: preset.transport || "stdio",
+          command: preset.command,
+          args: preset.args,
+          url: preset.url,
+          env: preset.env,
+          notes: preset.notes,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "MCP preset save failed");
+      setMessage({
+        type: "success",
+        text: `MCP ${j.server?.id || preset.id} saved to library. Click Apply sync to project to agents.`,
+      });
+      await load();
+    } catch (err) {
+      setMessage({ type: "error", text: err.message });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  function prefillMcpForm(preset) {
+    setMcpForm({
+      id: preset.id,
+      name: preset.name || preset.id,
+      transport: preset.transport || "stdio",
+      command: preset.command || "npx",
+      args: (preset.args || []).join(" "),
+      url: preset.url || "",
+      notes: preset.notes || "",
+    });
+    setMessage({
+      type: "success",
+      text: `Loaded ${preset.name} into form below. Edit parameters as needed and click Save.`,
+    });
   }
 
   async function deleteMcp(id) {
@@ -948,6 +1000,140 @@ export default function AgentLibraryPage() {
 
       {!loading && tab === "mcp" && (
         <div className="space-y-4">
+          {/* Featured MCP Gateway: Executor.sh */}
+          {(() => {
+            const executorPreset = mcpPresets.find((p) => p.id === "executor") || {
+              id: "executor",
+              name: "Executor.sh (Tool Gateway)",
+              description: "Unified MCP tool gateway for OpenAPI, GraphQL, MCP servers & sandboxed JavaScript functions (executor.sh)",
+              transport: "stdio",
+              command: "npx",
+              args: ["-y", "executor", "mcp"],
+              notes: "Executor.sh tool execution gateway (https://executor.sh)",
+              docsUrl: "https://executor.sh",
+            };
+            const isInstalled = (data?.mcpServers || []).some(
+              (s) => s.id === "executor" || s.id === "sb-executor"
+            );
+
+            return (
+              <Card padding="md" className="border-primary/30 bg-primary/5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="space-y-1 max-w-xl">
+                    <div className="flex items-center gap-2">
+                      <span className="material-symbols-outlined text-primary text-[20px]">hub</span>
+                      <h2 className="text-sm font-semibold text-text-main">
+                        Executor.sh Tool Gateway
+                      </h2>
+                      <Badge variant="primary" size="sm">
+                        FEATURED GATEWAY
+                      </Badge>
+                      {isInstalled && (
+                        <Badge variant="default" size="sm">
+                          Installed in Library
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-text-muted leading-relaxed">
+                      Connect your AI agents to OpenAPI, GraphQL, MCP servers, and custom JavaScript functions through a single managed endpoint with local-first credential management.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-3 pt-1 text-[11px] font-mono text-text-subtle">
+                      <span>Command: <code className="text-text-main">npx -y executor mcp</code></span>
+                      <span>·</span>
+                      <a
+                        href="https://executor.sh"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline inline-flex items-center gap-0.5"
+                      >
+                        executor.sh docs
+                        <span className="material-symbols-outlined text-[12px]">open_in_new</span>
+                      </a>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 shrink-0">
+                    <Button
+                      size="sm"
+                      variant={isInstalled ? "outline" : "primary"}
+                      disabled={isInstalled || !!busy}
+                      loading={busy === "mcp-preset-executor"}
+                      onClick={() => installMcpPreset(executorPreset)}
+                    >
+                      {isInstalled ? "Installed" : "Add Executor Gateway"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={!!busy}
+                      onClick={() => prefillMcpForm(executorPreset)}
+                    >
+                      Customize
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            );
+          })()}
+
+          {/* Standard MCP Presets */}
+          {mcpPresets.filter((p) => p.id !== "executor").length > 0 && (
+            <Card padding="md">
+              <h2 className="text-sm font-semibold text-text-main mb-1">Popular MCP Server Presets</h2>
+              <p className="text-[11px] text-text-subtle mb-3">
+                1-click presets for common Model Context Protocol servers.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {mcpPresets
+                  .filter((p) => p.id !== "executor")
+                  .map((p) => {
+                    const isInst = (data?.mcpServers || []).some(
+                      (s) => s.id === p.id || s.id === `sb-${p.id}`
+                    );
+                    return (
+                      <div
+                        key={p.id}
+                        className="p-3 rounded-lg border border-border-subtle bg-surface-2/40 hover:bg-surface-2/70 flex flex-col justify-between gap-2"
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-xs font-semibold text-text-main">{p.name}</span>
+                            {isInst && (
+                              <Badge size="sm" variant="default">
+                                Installed
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-text-muted mt-1 line-clamp-2">
+                            {p.description}
+                          </p>
+                        </div>
+                        <div className="flex gap-1.5 pt-1">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            disabled={isInst || !!busy}
+                            loading={busy === `mcp-preset-${p.id}`}
+                            onClick={() => installMcpPreset(p)}
+                          >
+                            {isInst ? "Installed" : "Add"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={!!busy}
+                            onClick={() => prefillMcpForm(p)}
+                          >
+                            Customize
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </Card>
+          )}
+
+          {/* MCP servers in library */}
           <Card padding="md">
             <h2 className="text-sm font-semibold text-text-main mb-1">MCP servers in library</h2>
             <p className="text-[11px] text-text-subtle mb-3">
@@ -977,13 +1163,13 @@ export default function AgentLibraryPage() {
                 </div>
               ))}
               {!data?.mcpServers?.length && (
-                <p className="text-xs text-text-muted">No MCP servers in library yet.</p>
+                <p className="text-xs text-text-muted">No MCP servers in library yet. Add Executor.sh or another preset above.</p>
               )}
             </div>
           </Card>
 
           <Card padding="md">
-            <h2 className="text-sm font-semibold text-text-main mb-3">Add MCP server</h2>
+            <h2 className="text-sm font-semibold text-text-main mb-3">Add Custom MCP server</h2>
             <form className="grid gap-2 sm:grid-cols-2" onSubmit={saveMcp}>
               <input
                 required

@@ -12,8 +12,12 @@ import {
   parseSkillInput,
   findSkillsInGitHubRepo,
   resolveSkillInput,
+  MCP_PRESETS,
 } from "@/lib/agent-library/catalog.js";
-import { POST as catalogPost } from "@/app/api/agent-library/catalog/route.js";
+import {
+  GET as catalogGet,
+  POST as catalogPost,
+} from "@/app/api/agent-library/catalog/route.js";
 
 const MD_EGO = `---
 name: ego-browser
@@ -300,5 +304,29 @@ describe("catalog API route action: resolve", () => {
     const j = await res.json();
     expect(j.ok).toBe(false);
     expect(j.error).toBe("input_required");
+  });
+});
+
+describe("MCP_PRESETS and GET /api/agent-library/catalog", () => {
+  it("includes Executor.sh tool gateway as featured preset", () => {
+    const executor = MCP_PRESETS.find((p) => p.id === "executor");
+    expect(executor).toBeDefined();
+    expect(executor).toMatchObject({
+      id: "executor",
+      name: "Executor.sh (Tool Gateway)",
+      transport: "stdio",
+      command: "npx",
+      args: ["-y", "executor", "mcp"],
+      featured: true,
+    });
+  });
+
+  it("GET /api/agent-library/catalog returns both skill presets and MCP presets", async () => {
+    const res = await catalogGet();
+    expect(res.status).toBe(200);
+    const j = await res.json();
+    expect(Array.isArray(j.presets)).toBe(true);
+    expect(Array.isArray(j.mcpPresets)).toBe(true);
+    expect(j.mcpPresets.some((p) => p.id === "executor")).toBe(true);
   });
 });
