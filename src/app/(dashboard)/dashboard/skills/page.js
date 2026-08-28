@@ -149,19 +149,27 @@ export default function SkillsPage() {
           <div className="space-y-1 max-w-xl">
             <div className="text-xs font-semibold text-text-main flex items-center gap-1.5">
               <span className="material-symbols-outlined text-[16px] text-primary">sync_alt</span>
-              Looking to install & share skills across all AI harnesses?
+              Looking for Community Skills & MCP Tool Gateways (Executor.sh)?
             </div>
             <p className="text-[11px] text-text-muted leading-relaxed">
-              Use the <strong className="text-text-main">Agent Library</strong> to import community skills (via commands like <code className="font-mono text-primary">npx skills add citrolabs/ego-lite</code> or GitHub repos) and project them into Claude Code, Codex, Gemini CLI, OpenCode, and Cursor.
+              Use the <strong className="text-text-main">Agent Library</strong> to import community skills (e.g. <code className="font-mono text-primary">npx skills add citrolabs/ego-lite</code>) and connect MCP tool gateways like <strong>Executor.sh</strong> (<code className="font-mono text-primary">npx -y executor mcp</code>), projected across Claude Code, Codex, Gemini CLI, OpenCode, and Cursor.
             </p>
           </div>
-          <a
-            href="/dashboard/agent-library"
-            className="px-3 py-1.5 rounded-md bg-primary text-on-primary text-xs font-medium hover:bg-primary/90 transition-colors inline-flex items-center gap-1 shrink-0"
-          >
-            Go to Agent Library
-            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
-          </a>
+          <div className="flex flex-wrap gap-2 shrink-0">
+            <a
+              href="/dashboard/agent-library?tab=catalog"
+              className="px-3 py-1.5 rounded-md bg-surface border border-border text-text-main text-xs font-medium hover:bg-surface-2 transition-colors inline-flex items-center gap-1"
+            >
+              Skills Catalog
+            </a>
+            <a
+              href="/dashboard/agent-library?tab=mcp"
+              className="px-3 py-1.5 rounded-md bg-primary text-on-primary text-xs font-medium hover:bg-primary/90 transition-colors inline-flex items-center gap-1"
+            >
+              <span className="material-symbols-outlined text-[14px]">hub</span>
+              MCP Gateways (Executor.sh)
+            </a>
+          </div>
         </div>
       </Card>
 

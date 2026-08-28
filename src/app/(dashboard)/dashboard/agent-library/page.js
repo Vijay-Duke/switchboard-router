@@ -18,6 +18,17 @@ export default function AgentLibraryPage() {
   const [syncResult, setSyncResult] = useState(/** @type {any} */ (null));
   const [tab, setTab] = useState(/** @type {"overview"|"skills"|"mcp"|"catalog"|"advanced"} */ ("overview"));
 
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const urlTab = params.get("tab");
+      if (urlTab && ["overview", "skills", "mcp", "catalog", "advanced"].includes(urlTab)) {
+        // @ts-ignore
+        setTab(urlTab);
+      }
+    }
+  }, []);
+
   // MCP form
   const [mcpForm, setMcpForm] = useState({
     id: "",
@@ -753,6 +764,28 @@ export default function AgentLibraryPage() {
                   Auto-include Switchboard product skills (entry + chat)
                 </span>
               </label>
+            </div>
+          </Card>
+
+          {/* Executor.sh & MCP Presets Callout */}
+          <Card padding="md" className="border-primary/20 bg-primary/5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-1 max-w-xl">
+                <div className="text-xs font-semibold text-text-main flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[18px] text-primary">hub</span>
+                  Featured: Executor.sh Tool Gateway & MCP Presets
+                </div>
+                <p className="text-[11px] text-text-muted leading-relaxed">
+                  Connect your AI agents to OpenAPI, GraphQL, MCP servers, and custom JavaScript functions via <strong>Executor.sh</strong> (<code className="font-mono text-primary">npx -y executor mcp</code>).
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => setTab("mcp")}
+              >
+                Manage MCP Gateways
+              </Button>
             </div>
           </Card>
 
