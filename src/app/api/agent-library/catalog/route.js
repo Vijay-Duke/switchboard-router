@@ -7,6 +7,7 @@ import {
   CATALOG_PRESETS,
   installFromUrl,
   previewUrl,
+  resolveSkillInput,
 } from "@/lib/agent-library/index.js";
 
 async function activeRootAndSettings() {
@@ -22,6 +23,19 @@ export async function POST(request) {
   try {
     const body = await request.json().catch(() => ({}));
     const { root, settings } = await activeRootAndSettings();
+
+    if (body.action === "resolve") {
+      const input = body.input || body.url || "";
+      if (!input) {
+        return NextResponse.json(
+          { ok: false, error: "input_required", message: "Input is required" },
+          { status: 400 }
+        );
+      }
+      const res = await resolveSkillInput(input);
+      const status = res.ok ? 200 : 400;
+      return NextResponse.json(res, { status });
+    }
 
     if (body.action === "preview" && body.url) {
       const res = await previewUrl(body.url);

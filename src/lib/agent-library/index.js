@@ -22,7 +22,14 @@ import {
   removeMcpServer,
 } from "./mcp-store.js";
 import { applySync, cleanSync, runDoctor } from "./sync.js";
-import { CATALOG_PRESETS, installFromUrl, previewUrl } from "./catalog.js";
+import {
+  CATALOG_PRESETS,
+  installFromUrl,
+  previewUrl,
+  parseSkillInput,
+  findSkillsInGitHubRepo,
+  resolveSkillInput,
+} from "./catalog.js";
 import {
   checkSkillUpdates,
   previewSkillUpdate,
@@ -48,6 +55,9 @@ export {
   CATALOG_PRESETS,
   installFromUrl,
   previewUrl,
+  parseSkillInput,
+  findSkillsInGitHubRepo,
+  resolveSkillInput,
   checkSkillUpdates,
   previewSkillUpdate,
   updateSkillFromSource,

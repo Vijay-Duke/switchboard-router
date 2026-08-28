@@ -298,3 +298,404 @@ export async function previewUrl(url) {
     return { ok: false, error: e?.message || "fetch failed" };
   }
 }
+
+/**
+ * Parse an arbitrary user input string (CLI command, repo identifier, GitHub URL, raw URL)
+ * into a structured skill source target.
+ *
+ * Supported formats:
+ * - "npx skills add citrolabs/ego-lite"
+ * - "skills add citrolabs/ego-lite"
+ * - "citrolabs/ego-lite"
+ * - "citrolabs/ego-lite@main"
+ * - "github.com/citrolabs/ego-lite"
+ * - "https://github.com/citrolabs/ego-lite"
+ * - "https://github.com/citrolabs/ego-lite/tree/main/skills/ego-browser"
+ * - "https://github.com/citrolabs/ego-lite/blob/main/skills/ego-browser/SKILL.md"
+ * - "https://raw.githubusercontent.com/citrolabs/ego-lite/main/skills/ego-browser/SKILL.md"
+ *
+ * @param {string} input
+ * @returns {{
+ *   type: "github_repo" | "direct_url" | "invalid",
+ *   owner?: string,
+ *   repo?: string,
+ *   branch?: string,
+ *   subpath?: string,
+ *   url?: string,
+ *   suggestedId?: string,
+ *   error?: string
+ * }}
+ */
+export function parseSkillInput(input) {
+  let s = String(input || "").trim();
+  if (!s) return { type: "invalid", error: "Empty input" };
+
+  // Strip wrapping quotes
+  s = s.replace(/^["'`]|["'`]$/g, "").trim();
+
+  // Strip CLI prefixes (e.g. `npx skills add`, `skills add`, `npx switchboard skill add`, `switchboard skill add`, `add`)
+  s = s.replace(/^(?:npx\s+)?(?:skills|switchboard|agentsync|agent-library)\s+(?:add|install)\s+/i, "");
+  s = s.replace(/^(?:add|install)\s+/i, "");
+
+  // Strip CLI flags (e.g. -g, --global, -y, --yes, etc.)
+  const tokens = s.split(/\s+/).filter((token) => {
+    return !/^-(?:g|y|p|d|f|v)$|^--(?:global|yes|project|confirm|dry-run|force|verbose)$/i.test(token);
+  });
+  s = tokens.join(" ").trim();
+  s = s.replace(/^["'`]|["'`]$/g, "").trim();
+
+  if (!s) return { type: "invalid", error: "Empty skill target" };
+
+  // Direct URLs or GitHub URLs
+  if (/^https?:\/\//i.test(s)) {
+    let u;
+    try {
+      u = new URL(s);
+    } catch {
+      return { type: "invalid", error: "Invalid URL" };
+    }
+
+    const host = u.hostname.toLowerCase();
+    const pathname = u.pathname.replace(/^\/+|\/+$/g, "");
+    const segments = pathname.split("/").filter(Boolean);
+
+    // Case 1: raw.githubusercontent.com
+    if (host === "raw.githubusercontent.com" || host.endsWith(".githubusercontent.com")) {
+      if (segments.length >= 3) {
+        const owner = segments[0];
+        const repo = segments[1];
+        const branch = segments[2];
+        const filePath = segments.slice(3).join("/");
+        let suggestedId = "";
+        if (filePath.endsWith("SKILL.md")) {
+          const parts = filePath.split("/").filter(Boolean);
+          suggestedId = parts.length > 1 ? parts[parts.length - 2] : repo;
+        } else {
+          suggestedId = repo;
+        }
+        return {
+          type: "direct_url",
+          url: s,
+          suggestedId: librarySkillDirName(suggestedId) || "skill",
+        };
+      }
+      return { type: "direct_url", url: s };
+    }
+
+    // Case 2: github.com
+    if (host === "github.com" || host === "www.github.com") {
+      if (segments.length >= 2) {
+        const owner = segments[0];
+        const repo = segments[1].replace(/\.git$/i, "");
+
+        // e.g. /owner/repo/blob/branch/path/to/SKILL.md
+        if (segments[2] === "blob" && segments.length >= 4) {
+          const branch = segments[3];
+          const subpath = segments.slice(4).join("/");
+          const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${subpath}`;
+          let suggestedId = repo;
+          if (subpath.endsWith("SKILL.md")) {
+            const parts = subpath.split("/").filter(Boolean);
+            suggestedId = parts.length > 1 ? parts[parts.length - 2] : repo;
+          }
+          return {
+            type: "direct_url",
+            url: rawUrl,
+            suggestedId: librarySkillDirName(suggestedId) || "skill",
+          };
+        }
+
+        // e.g. /owner/repo/tree/branch/subpath
+        if (segments[2] === "tree" && segments.length >= 4) {
+          const branch = segments[3];
+          const subpath = segments.slice(4).join("/");
+          return {
+            type: "github_repo",
+            owner,
+            repo,
+            branch: branch || "main",
+            subpath: subpath || undefined,
+          };
+        }
+
+        // Standard /owner/repo
+        return {
+          type: "github_repo",
+          owner,
+          repo,
+          branch: "main",
+        };
+      }
+    }
+
+    // Other direct URL (GitLab, custom CDN, etc.)
+    let suggestedId = "skill";
+    if (segments.length > 0) {
+      const last = segments[segments.length - 1];
+      if (last.toLowerCase() === "skill.md" && segments.length > 1) {
+        suggestedId = segments[segments.length - 2];
+      } else {
+        suggestedId = last.replace(/\.[^.]+$/, "");
+      }
+    }
+    return {
+      type: "direct_url",
+      url: s,
+      suggestedId: librarySkillDirName(suggestedId) || "skill",
+    };
+  }
+
+  // Strip github: prefix or github.com/ prefix
+  s = s.replace(/^(?:github:|github\.com\/)/i, "").trim();
+
+  // Pattern: owner/repo with optional @branch and optional subpath
+  // e.g. citrolabs/ego-lite, citrolabs/ego-lite@main, citrolabs/ego-lite/skills/ego-browser
+  const match = s.match(/^([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)(?:@([a-zA-Z0-9_.-]+))?(?:\/(.*))?$/);
+  if (match) {
+    const owner = match[1];
+    const repo = match[2].replace(/\.git$/i, "");
+    const branch = match[3] || "main";
+    const subpath = match[4] || undefined;
+    return {
+      type: "github_repo",
+      owner,
+      repo,
+      branch,
+      subpath,
+    };
+  }
+
+  return { type: "invalid", error: `Unrecognized skill format: "${input}"` };
+}
+
+/**
+ * Query GitHub repository tree or probe candidate paths to discover SKILL.md files.
+ *
+ * @param {string} owner
+ * @param {string} repo
+ * @param {string} [branch]
+ * @param {string} [subpath]
+ * @param {{ timeoutMs?: number }} [opts]
+ */
+export async function findSkillsInGitHubRepo(owner, repo, branch = "main", subpath, opts = {}) {
+  const repoSlug = `${owner}/${repo}`;
+  const timeoutMs = opts.timeoutMs ?? 15_000;
+
+  /** @type {Array<{ skillId: string, path: string, rawUrl: string, title?: string, description?: string, preview?: string, bytes?: number }>} */
+  const discovered = [];
+
+  // Helper to query GitHub tree API for a branch
+  async function queryTreeApi(targetBranch) {
+    const apiUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${targetBranch}?recursive=1`;
+    const safe = await assertSafeCatalogUrl(apiUrl);
+    if (!safe.ok) return null;
+
+    try {
+      const res = await fetch(safe.url.toString(), {
+        headers: {
+          Accept: "application/vnd.github.v3+json",
+          "User-Agent": "Switchboard-Agent-Library/1.0",
+        },
+        signal: AbortSignal.timeout(timeoutMs),
+        redirect: "error",
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (!data || !Array.isArray(data.tree)) return null;
+      return data.tree;
+    } catch {
+      return null;
+    }
+  }
+
+  let effectiveBranch = branch;
+  let tree = await queryTreeApi(effectiveBranch);
+
+  // If default "main" failed, try "master" as well
+  if (!tree && branch === "main") {
+    const masterTree = await queryTreeApi("master");
+    if (masterTree) {
+      tree = masterTree;
+      effectiveBranch = "master";
+    }
+  }
+
+  if (tree && tree.length > 0) {
+    for (const item of tree) {
+      if (item.type !== "blob") continue;
+      const p = item.path;
+      if (p !== "SKILL.md" && !p.endsWith("/SKILL.md")) continue;
+
+      if (subpath && !p.startsWith(subpath)) continue;
+
+      // Extract skillId
+      let candidateId = repo;
+      if (p === "SKILL.md") {
+        candidateId = repo;
+      } else {
+        const segments = p.split("/").filter(Boolean);
+        candidateId = segments.length > 1 ? segments[segments.length - 2] : repo;
+      }
+
+      const skillId = librarySkillDirName(candidateId) || "skill";
+      const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${effectiveBranch}/${p}`;
+
+      discovered.push({
+        skillId,
+        path: p,
+        rawUrl,
+      });
+    }
+  }
+
+  // Fallback: if tree API failed or was empty, probe standard candidate locations
+  if (discovered.length === 0) {
+    const probeCandidates = [
+      { path: "SKILL.md", skillId: repo },
+      { path: `skills/${repo}/SKILL.md`, skillId: repo },
+      ...(subpath ? [{ path: `${subpath.replace(/\/+$/, "")}/SKILL.md`, skillId: subpath.split("/").pop() || repo }] : []),
+      { path: `skills/ego-browser/SKILL.md`, skillId: "ego-browser" },
+      { path: `.claude/skills/${repo}/SKILL.md`, skillId: repo },
+      { path: `.agents/skills/${repo}/SKILL.md`, skillId: repo },
+    ];
+
+    for (const cand of probeCandidates) {
+      const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${effectiveBranch}/${cand.path}`;
+      const probe = await fetchSkillMarkdown(rawUrl, { timeoutMs: 5000 });
+      if (probe.ok && "markdown" in probe) {
+        let title = cand.skillId;
+        let description = "";
+        const mName = probe.markdown.match(/^name:\s*(.+)$/m);
+        const mDesc = probe.markdown.match(/^description:\s*(.+)$/m);
+        if (mName) title = mName[1].trim().replace(/^["']|["']$/g, "");
+        if (mDesc) description = mDesc[1].trim().replace(/^["']|["']$/g, "");
+        const skillId = librarySkillDirName(mName ? mName[1] : cand.skillId) || cand.skillId;
+
+        discovered.push({
+          skillId,
+          path: cand.path,
+          rawUrl,
+          title,
+          description,
+          preview: probe.markdown.slice(0, 4000),
+          bytes: probe.markdown.length,
+        });
+        break; // found one valid candidate
+      }
+    }
+  }
+
+  if (discovered.length === 0) {
+    return {
+      ok: false,
+      error: "no_skills_found",
+      message: `No SKILL.md found in ${repoSlug} (branch: ${effectiveBranch})`,
+    };
+  }
+
+  // If only 1 skill discovered and preview is missing, fetch it now
+  if (discovered.length === 1 && !discovered[0].preview) {
+    const fetched = await fetchSkillMarkdown(discovered[0].rawUrl, { timeoutMs });
+    if (fetched.ok && "markdown" in fetched) {
+      const m = fetched.markdown;
+      const mName = m.match(/^name:\s*(.+)$/m);
+      const mDesc = m.match(/^description:\s*(.+)$/m);
+      if (mName) {
+        discovered[0].title = mName[1].trim().replace(/^["']|["']$/g, "");
+        discovered[0].skillId = librarySkillDirName(mName[1]) || discovered[0].skillId;
+      }
+      if (mDesc) discovered[0].description = mDesc[1].trim().replace(/^["']|["']$/g, "");
+      discovered[0].preview = m.slice(0, 4000);
+      discovered[0].bytes = m.length;
+    }
+  }
+
+  return {
+    ok: true,
+    type: discovered.length === 1 ? "single" : "multiple",
+    repo: repoSlug,
+    branch: effectiveBranch,
+    skills: discovered,
+  };
+}
+
+/**
+ * Discover and resolve candidate skills from an input string (command, repo, or URL).
+ *
+ * @param {string} input
+ * @param {{ timeoutMs?: number }} [opts]
+ * @returns {Promise<{
+ *   ok: boolean,
+ *   type?: "single" | "multiple",
+ *   repo?: string,
+ *   branch?: string,
+ *   skills?: Array<{
+ *     skillId: string,
+ *     title?: string,
+ *     description?: string,
+ *     path?: string,
+ *     rawUrl: string,
+ *     preview?: string,
+ *     bytes?: number
+ *   }>,
+ *   error?: string,
+ *   message?: string
+ * }>}
+ */
+export async function resolveSkillInput(input, opts = {}) {
+  const parsed = parseSkillInput(input);
+  if (parsed.type === "invalid" || !parsed) {
+    return {
+      ok: false,
+      error: "invalid_input",
+      message: parsed.error || "Invalid skill input",
+    };
+  }
+
+  // 1. Direct URL path
+  if (parsed.type === "direct_url" && parsed.url) {
+    const fetched = await fetchSkillMarkdown(parsed.url, opts);
+    if (!fetched.ok) {
+      return {
+        ok: false,
+        error: fetched.error,
+        message: fetched.message,
+      };
+    }
+    if (fetched.notModified || !("markdown" in fetched)) {
+      return { ok: false, error: "empty_content", message: "Empty skill content" };
+    }
+
+    const { markdown } = fetched;
+    let title = parsed.suggestedId || "skill";
+    let description = "";
+    const mName = markdown.match(/^name:\s*(.+)$/m);
+    const mDesc = markdown.match(/^description:\s*(.+)$/m);
+    if (mName) title = mName[1].trim().replace(/^["']|["']$/g, "");
+    if (mDesc) description = mDesc[1].trim().replace(/^["']|["']$/g, "");
+
+    const skillId = librarySkillDirName(mName ? mName[1] : parsed.suggestedId) || "skill";
+
+    return {
+      ok: true,
+      type: "single",
+      skills: [
+        {
+          skillId,
+          title,
+          description,
+          rawUrl: parsed.url,
+          preview: markdown.slice(0, 4000),
+          bytes: markdown.length,
+        },
+      ],
+    };
+  }
+
+  // 2. GitHub Repo Discovery
+  if (parsed.type === "github_repo" && parsed.owner && parsed.repo) {
+    return findSkillsInGitHubRepo(parsed.owner, parsed.repo, parsed.branch || "main", parsed.subpath, opts);
+  }
+
+  return { ok: false, error: "unsupported", message: "Unsupported skill format" };
+}

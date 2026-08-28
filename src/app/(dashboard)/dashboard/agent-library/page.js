@@ -29,8 +29,11 @@ export default function AgentLibraryPage() {
     notes: "",
   });
 
-  // Catalog
+  // Catalog & Smart Resolver
   const [presets, setPresets] = useState([]);
+  const [smartInput, setSmartInput] = useState("");
+  const [discoveredSkills, setDiscoveredSkills] = useState(/** @type {Array<any>} */ ([]));
+  const [justInstalledSkillId, setJustInstalledSkillId] = useState("");
   const [catalogUrl, setCatalogUrl] = useState("");
   const [catalogSkillId, setCatalogSkillId] = useState("");
   const [catalogPreview, setCatalogPreview] = useState("");
@@ -310,6 +313,58 @@ export default function AgentLibraryPage() {
     }
   }
 
+  async function resolveSmartInput(e) {
+    e?.preventDefault?.();
+    if (!smartInput.trim()) return;
+    setBusy("resolve");
+    setMessage(null);
+    setJustInstalledSkillId("");
+    try {
+      const r = await fetch("/api/agent-library/catalog", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "resolve", input: smartInput.trim() }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.message || j.error || "Resolution failed");
+
+      const skills = j.skills || [];
+      setDiscoveredSkills(skills);
+
+      if (skills.length === 1) {
+        setCatalogSkillId(skills[0].skillId);
+        setCatalogUrl(skills[0].rawUrl);
+        setCatalogPreview(skills[0].preview || "");
+        setCatalogConfirm(false);
+        setMessage({ type: "success", text: `Resolved skill: ${skills[0].skillId}` });
+      } else if (skills.length > 1) {
+        setCatalogSkillId("");
+        setCatalogUrl("");
+        setCatalogPreview("");
+        setCatalogConfirm(false);
+        setMessage({
+          type: "success",
+          text: `Found ${skills.length} skills in ${j.repo || "repository"}. Select one below.`,
+        });
+      }
+    } catch (err) {
+      setMessage({ type: "error", text: err.message });
+    } finally {
+      setBusy("");
+    }
+  }
+
+  function selectDiscoveredSkill(s) {
+    setCatalogSkillId(s.skillId);
+    setCatalogUrl(s.rawUrl);
+    setCatalogConfirm(false);
+    if (s.preview) {
+      setCatalogPreview(s.preview);
+    } else {
+      fetchCatalogPreview(s.rawUrl);
+    }
+  }
+
   async function fetchCatalogPreview(url) {
     setBusy("preview");
     try {
@@ -344,6 +399,7 @@ export default function AgentLibraryPage() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.message || j.error || "Install failed");
+      setJustInstalledSkillId(j.id || catalogSkillId);
       setMessage({ type: "success", text: j.warning || `Installed ${j.id}` });
       setCatalogConfirm(false);
       await load();
@@ -987,28 +1043,258 @@ export default function AgentLibraryPage() {
       {!loading && tab === "catalog" && (
         <div className="space-y-4">
           <Card padding="md">
+            <h2 className="text-sm font-semibold text-text-main mb-1">Smart Import (Command, Repo, or URL)</h2>
+            <p className="text-[11px] text-text-subtle mb-3">
+              Paste CLI commands like <code className="font-mono text-primary">npx skills add citrolabs/ego-lite</code>,
+              GitHub repositories like <code className="font-mono text-primary">citrolabs/ego-lite</code>, or direct <code className="font-mono text-primary">SKILL.md</code> URLs.
+            </p>
+            <form onSubmit={resolveSmartInput} className="space-y-2.5">
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 bg-surface border border-border rounded-md px-2.5 py-1.5 text-xs font-mono text-text-main placeholder:text-text-subtle"
+                  placeholder="e.g. npx skills add citrolabs/ego-lite, anthropics/skills, or https://github.com/..."
+                  value={smartInput}
+                  disabled={!!busy}
+                  onChange={(e) => {
+                    setSmartInput(e.target.value);
+                    setJustInstalledSkillId("");
+                  }}
+                />
+                <Button
+                  size="sm"
+                  type="submit"
+                  disabled={!smartInput.trim() || !!busy}
+                  loading={busy === "resolve"}
+                >
+                  Resolve & Preview
+                </Button>
+                {smartInput && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={!!busy}
+                    onClick={() => {
+                      setSmartInput("");
+                      setDiscoveredSkills([]);
+                      setCatalogSkillId("");
+                      setCatalogUrl("");
+                      setCatalogPreview("");
+                      setCatalogConfirm(false);
+                      setJustInstalledSkillId("");
+                    }}
+                  >
+                    Clear
+                  </Button>
+                )}
+              </div>
+
+              {/* Quick Try example chips */}
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-text-subtle pt-1">
+                <span className="font-medium text-text-muted">Quick try:</span>
+                {[
+                  "npx skills add citrolabs/ego-lite",
+                  "anthropics/skills",
+                  "citrolabs/ego-lite",
+                ].map((example) => (
+                  <button
+                    key={example}
+                    type="button"
+                    className="px-2 py-0.5 rounded border border-border-subtle bg-surface-2 hover:bg-surface text-text-main hover:border-primary font-mono text-[10px] transition-colors cursor-pointer"
+                    disabled={!!busy}
+                    onClick={() => {
+                      setSmartInput(example);
+                      setJustInstalledSkillId("");
+                      // Trigger resolution directly
+                      setBusy("resolve");
+                      setMessage(null);
+                      fetch("/api/agent-library/catalog", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ action: "resolve", input: example }),
+                      })
+                        .then((r) => r.json())
+                        .then((j) => {
+                          if (!j.ok) throw new Error(j.message || j.error || "Resolution failed");
+                          const skills = j.skills || [];
+                          setDiscoveredSkills(skills);
+                          if (skills.length === 1) {
+                            setCatalogSkillId(skills[0].skillId);
+                            setCatalogUrl(skills[0].rawUrl);
+                            setCatalogPreview(skills[0].preview || "");
+                            setCatalogConfirm(false);
+                            setMessage({ type: "success", text: `Resolved skill: ${skills[0].skillId}` });
+                          } else if (skills.length > 1) {
+                            setCatalogSkillId("");
+                            setCatalogUrl("");
+                            setCatalogPreview("");
+                            setCatalogConfirm(false);
+                            setMessage({
+                              type: "success",
+                              text: `Found ${skills.length} skills in ${j.repo || "repository"}. Select one below.`,
+                            });
+                          }
+                        })
+                        .catch((err) => setMessage({ type: "error", text: err.message }))
+                        .finally(() => setBusy(""));
+                    }}
+                  >
+                    {example}
+                  </button>
+                ))}
+              </div>
+            </form>
+
+            {/* Multiple skills picker if repository contains multiple skills */}
+            {discoveredSkills.length > 1 && (
+              <div className="mt-4 pt-3 border-t border-border-subtle space-y-2">
+                <div className="text-xs font-medium text-text-main flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[16px] text-primary">folder_open</span>
+                  Found {discoveredSkills.length} skills in repository:
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {discoveredSkills.map((s) => (
+                    <div
+                      key={s.path || s.skillId}
+                      className={`p-2.5 rounded-lg border transition-all text-xs cursor-pointer ${
+                        catalogUrl === s.rawUrl
+                          ? "border-primary bg-primary/5 shadow-sm"
+                          : "border-border-subtle hover:border-border bg-surface-2/40"
+                      }`}
+                      onClick={() => selectDiscoveredSkill(s)}
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="font-semibold text-text-main">{s.title || s.skillId}</span>
+                        <Badge size="sm" variant={catalogUrl === s.rawUrl ? "primary" : "default"}>
+                          <code className="text-[10px]">sb-{s.skillId}</code>
+                        </Badge>
+                      </div>
+                      <div className="text-[11px] font-mono text-text-subtle mt-1 truncate">
+                        {s.path}
+                      </div>
+                      {s.description && (
+                        <p className="text-[11px] text-text-muted mt-1 line-clamp-2">{s.description}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Resolved Skill Preview & Install Form */}
+            {catalogUrl && (
+              <div className="mt-4 pt-3 border-t border-border-subtle space-y-3">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-text-muted">Skill ID (installed as sb-{catalogSkillId || "..."})</span>
+                    <input
+                      className="w-full bg-surface border border-border rounded-md px-2 py-1.5 text-xs font-mono text-text-main"
+                      placeholder="skill-id"
+                      value={catalogSkillId}
+                      disabled={!!busy}
+                      onChange={(e) => setCatalogSkillId(e.target.value)}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[11px] text-text-muted">Resolved Raw Source URL</span>
+                    <input
+                      className="w-full bg-surface border border-border rounded-md px-2 py-1.5 text-xs font-mono text-text-main"
+                      placeholder="https://.../SKILL.md"
+                      value={catalogUrl}
+                      disabled={!!busy}
+                      onChange={(e) => setCatalogUrl(e.target.value)}
+                    />
+                  </label>
+                </div>
+
+                {catalogPreview ? (
+                  <div className="space-y-1">
+                    <span className="text-[11px] text-text-muted">SKILL.md preview:</span>
+                    <pre className="text-[10px] font-mono max-h-56 overflow-auto bg-surface-2 p-2.5 rounded-lg border border-border-subtle whitespace-pre-wrap">
+                      {catalogPreview}
+                    </pre>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={!catalogUrl || !!busy}
+                    loading={busy === "preview"}
+                    onClick={() => fetchCatalogPreview(catalogUrl)}
+                  >
+                    Load Preview
+                  </Button>
+                )}
+
+                <label className="flex items-start gap-2 text-xs text-text-muted cursor-pointer">
+                  <input
+                    type="checkbox"
+                    aria-label="I reviewed this catalog skill and understand it may instruct agents to run tools or shell commands"
+                    checked={catalogConfirm}
+                    disabled={!!busy}
+                    onChange={(e) => setCatalogConfirm(e.target.checked)}
+                  />
+                  <span>
+                    I reviewed this skill and understand it may instruct agents to run tools or shell commands.
+                  </span>
+                </label>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    disabled={!catalogUrl || !catalogSkillId || !catalogConfirm || !!busy}
+                    loading={busy === "catalog"}
+                    onClick={catalogInstall}
+                  >
+                    Install into library
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Quick Apply sync prompt right after successful install */}
+            {justInstalledSkillId && (
+              <div className="mt-4 p-3 rounded-lg bg-green-500/10 border border-green-500/30 flex flex-wrap items-center justify-between gap-3">
+                <div className="text-xs text-green-700 dark:text-green-300">
+                  <strong>{justInstalledSkillId}</strong> is installed in your Switchboard library. Apply sync to project it into Claude, Codex, Gemini, OpenCode, and Cursor.
+                </div>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  loading={busy === "apply"}
+                  disabled={!!busy}
+                  onClick={() => runSync("apply")}
+                >
+                  Apply sync to all agents now
+                </Button>
+              </div>
+            )}
+          </Card>
+
+          <Card padding="md">
             <h2 className="text-sm font-semibold text-text-main mb-1">Trusted presets</h2>
             <p className="text-[11px] text-text-subtle mb-3">
-              Fetches SKILL.md only — never runs install scripts. You must confirm and then Apply
-              sync.
+              One-click standard skills from official sources.
             </p>
             <div className="space-y-2">
               {presets.map((p) => (
                 <div
                   key={p.id}
-                  className="flex flex-wrap items-center justify-between gap-2 p-2 rounded border border-border-subtle"
+                  className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-lg border border-border-subtle bg-surface-2/40 hover:bg-surface-2/70 transition-colors"
                 >
                   <div>
-                    <div className="text-sm text-text-main">{p.name}</div>
+                    <div className="text-xs font-semibold text-text-main">{p.name}</div>
                     <div className="text-[11px] text-text-muted">{p.description}</div>
                   </div>
-                  <div className="flex gap-1">
+                  <div className="flex gap-1.5">
                     <Button
                       size="sm"
                       variant="ghost"
                       onClick={() => {
+                        setSmartInput(p.rawUrl);
                         setCatalogUrl(p.rawUrl);
                         setCatalogSkillId(p.skillId);
+                        setDiscoveredSkills([]);
+                        setJustInstalledSkillId("");
                         fetchCatalogPreview(p.rawUrl);
                       }}
                     >
@@ -1018,9 +1304,13 @@ export default function AgentLibraryPage() {
                       size="sm"
                       variant="secondary"
                       onClick={() => {
+                        setSmartInput(p.rawUrl);
                         setCatalogUrl(p.rawUrl);
                         setCatalogSkillId(p.skillId);
+                        setDiscoveredSkills([]);
                         setCatalogConfirm(false);
+                        setJustInstalledSkillId("");
+                        fetchCatalogPreview(p.rawUrl);
                       }}
                     >
                       Select
@@ -1028,56 +1318,6 @@ export default function AgentLibraryPage() {
                   </div>
                 </div>
               ))}
-            </div>
-          </Card>
-
-          <Card padding="md">
-            <h2 className="text-sm font-semibold text-text-main mb-2">Install from URL</h2>
-            <div className="space-y-2">
-              <input
-                className="w-full bg-surface border border-border rounded-md px-2 py-1.5 text-xs font-mono"
-                placeholder="skill-id"
-                value={catalogSkillId}
-                onChange={(e) => setCatalogSkillId(e.target.value)}
-              />
-              <input
-                className="w-full bg-surface border border-border rounded-md px-2 py-1.5 text-xs font-mono"
-                placeholder="https://.../SKILL.md"
-                value={catalogUrl}
-                onChange={(e) => setCatalogUrl(e.target.value)}
-              />
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={!catalogUrl || !!busy}
-                  onClick={() => fetchCatalogPreview(catalogUrl)}
-                >
-                  Preview
-                </Button>
-              </div>
-              {catalogPreview && (
-                <pre className="text-[10px] font-mono max-h-48 overflow-auto bg-surface-2 p-2 rounded border border-border-subtle whitespace-pre-wrap">
-                  {catalogPreview}
-                </pre>
-              )}
-              <label className="flex items-start gap-2 text-xs text-text-muted cursor-pointer">
-                <input
-                  type="checkbox"
-                  aria-label="I reviewed this catalog skill and understand it may instruct agents to run tools or shell commands"
-                  checked={catalogConfirm}
-                  onChange={(e) => setCatalogConfirm(e.target.checked)}
-                />
-                I reviewed this skill and understand it may instruct agents to run tools/shell commands.
-              </label>
-              <Button
-                size="sm"
-                disabled={!catalogUrl || !catalogSkillId || !catalogConfirm || !!busy}
-                loading={busy === "catalog"}
-                onClick={catalogInstall}
-              >
-                Install into library
-              </Button>
             </div>
           </Card>
         </div>

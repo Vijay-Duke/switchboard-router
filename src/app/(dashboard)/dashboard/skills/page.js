@@ -144,6 +144,27 @@ export default function SkillsPage() {
         ))}
       </div>
 
+      <Card padding="md" className="border-primary/20 bg-primary/5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-1 max-w-xl">
+            <div className="text-xs font-semibold text-text-main flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[16px] text-primary">sync_alt</span>
+              Looking to install & share skills across all AI harnesses?
+            </div>
+            <p className="text-[11px] text-text-muted leading-relaxed">
+              Use the <strong className="text-text-main">Agent Library</strong> to import community skills (via commands like <code className="font-mono text-primary">npx skills add citrolabs/ego-lite</code> or GitHub repos) and project them into Claude Code, Codex, Gemini CLI, OpenCode, and Cursor.
+            </p>
+          </div>
+          <a
+            href="/dashboard/agent-library"
+            className="px-3 py-1.5 rounded-md bg-primary text-on-primary text-xs font-medium hover:bg-primary/90 transition-colors inline-flex items-center gap-1 shrink-0"
+          >
+            Go to Agent Library
+            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
+          </a>
+        </div>
+      </Card>
+
       <Card padding="md">
         <p className="text-xs text-text-muted leading-relaxed">
           <strong className="text-text-main">Open</strong> opens a readable docs page in a new
