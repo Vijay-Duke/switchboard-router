@@ -441,6 +441,8 @@ async function fetchWithConnectionProxy(provider, url, options = {}, effectivePr
   const config = PROVIDERS[provider];
   const fetchOptions = {
     ...options,
+    // Time out connection tests so a hung upstream cannot exhaust the connection pool.
+    signal: options.signal ?? AbortSignal.timeout(15000),
     identity: config?.identity,
     provider,
     format: config?.format,
