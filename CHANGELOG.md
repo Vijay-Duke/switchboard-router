@@ -1,3 +1,8 @@
+# v0.9.6 (2026-08-31)
+
+## Fixes
+- **OMP terminal event delivery**: emit OpenAI `data: [DONE]` as soon as a translated Codex Responses terminal event arrives, before upstream EOF, so later socket closure cannot trigger OMP/Bun retries.
+
 # v0.9.5 (2026-08-28)
 
 ## Features

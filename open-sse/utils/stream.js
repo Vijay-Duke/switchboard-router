@@ -288,9 +288,9 @@ export function createSSEStream(options = {}) {
           ? getOpenAIResponsesEventName(currentOpenAIResponsesEvent, parsed)
           : null;
 
-        if (isOpenAIResponsesStream && isOpenAIResponsesTerminalEvent(openAIResponsesEventName, parsed)) {
-          openAIResponsesTerminalSeen = true;
-        }
+        const openAIResponsesTerminal = isOpenAIResponsesStream
+          && isOpenAIResponsesTerminalEvent(openAIResponsesEventName, parsed);
+        if (openAIResponsesTerminal) openAIResponsesTerminalSeen = true;
 
         // Extract <think> tags on OpenAI-shaped provider chunks before translation
         // (PASSTHROUGH already does this; TRANSLATE path was missing it — wave9).
@@ -420,6 +420,12 @@ export function createSSEStream(options = {}) {
             controller.enqueue(sharedEncoder.encode(output));
             sseEmittedCount++;
           }
+        }
+        if (openAIResponsesTerminal && sourceFormat === FORMATS.OPENAI && !streamDoneSent) {
+          const doneOutput = "data: [DONE]\n\n";
+          reqLogger?.appendConvertedChunk?.(doneOutput);
+          controller.enqueue(sharedEncoder.encode(doneOutput));
+          streamDoneSent = true;
         }
       }
     },

@@ -102,4 +102,24 @@ describe("OpenAI Responses streaming termination", () => {
 
     expect(output).toContain("data: [DONE]");
   });
+  it("emits DONE when response.completed arrives before upstream EOF", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: { id: "resp_test", status: "completed" } })}\n\n`));
+      },
+    });
+    const output = stream.pipeThrough(createSSETransformStreamWithLogger(
+      FORMATS.OPENAI_RESPONSES, FORMATS.OPENAI, "codex", null, null, "gpt-5.5",
+    ));
+    const reader = output.getReader();
+    const reads = await Promise.race([
+      Promise.all([reader.read(), reader.read()]),
+      new Promise((resolve) => setTimeout(() => resolve([]), 100)),
+    ]);
+    await reader.cancel();
+    const text = reads.map(({ value }) => new TextDecoder().decode(value)).join("");
+
+    expect(text).toContain("data: [DONE]");
+  });
 });
