@@ -1,3 +1,8 @@
+# v0.9.7 (2026-08-31)
+
+## Fixes
+- **OMP stream transport closure**: close the client SSE stream immediately after the terminal `[DONE]` sentinel on translated Codex Responses streams (usage + completion bookkeeping runs at that seam). OMP/Bun no longer waits on an open HTTP body and reports an unexpected socket close.
+
 # v0.9.6 (2026-08-31)
 
 ## Fixes

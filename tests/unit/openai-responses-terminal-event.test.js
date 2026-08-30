@@ -102,7 +102,7 @@ describe("OpenAI Responses streaming termination", () => {
 
     expect(output).toContain("data: [DONE]");
   });
-  it("emits DONE when response.completed arrives before upstream EOF", async () => {
+  it("closes when response.completed arrives before upstream EOF", async () => {
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       start(controller) {
@@ -114,12 +114,13 @@ describe("OpenAI Responses streaming termination", () => {
     ));
     const reader = output.getReader();
     const reads = await Promise.race([
-      Promise.all([reader.read(), reader.read()]),
+      Promise.all([reader.read(), reader.read(), reader.read()]),
       new Promise((resolve) => setTimeout(() => resolve([]), 100)),
     ]);
     await reader.cancel();
-    const text = reads.map(({ value }) => new TextDecoder().decode(value)).join("");
+    const text = reads.map(({ value }) => value ? new TextDecoder().decode(value) : "").join("");
 
     expect(text).toContain("data: [DONE]");
+    expect(reads.at(-1)?.done).toBe(true);
   });
 });

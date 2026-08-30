@@ -426,6 +426,20 @@ export function createSSEStream(options = {}) {
           reqLogger?.appendConvertedChunk?.(doneOutput);
           controller.enqueue(sharedEncoder.encode(doneOutput));
           streamDoneSent = true;
+          // Terminate() closes the readable and errors the writable, so flush()
+          // never runs — do its bookkeeping here, then close the transport.
+          trackPendingRequest(model, provider, connectionId, false);
+          if (!hasValidUsage(state?.usage) && totalContentLength > 0) {
+            state.usage = estimateUsage(body, totalContentLength, sourceFormat);
+          }
+          if (hasValidUsage(state?.usage)) {
+            logUsage(state.provider || targetFormat, state.usage, model, connectionId, clientKeyId);
+          }
+          if (onStreamComplete) {
+            onStreamComplete({ content: accumulatedContent, thinking: accumulatedThinking }, state?.usage, ttftAt).catch(() => {});
+          }
+          controller.terminate();
+          return;
         }
       }
     },
