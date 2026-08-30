@@ -4,6 +4,9 @@
 - **Featured Executor.sh MCP Gateway Preset**: 1-click integration for Executor.sh (`npx -y executor mcp`) in the Agent Library MCP tab ([/dashboard/agent-library](http://127.0.0.1:20128/dashboard/agent-library)), projecting a unified tool execution gateway (OpenAPI, GraphQL, MCP, sandboxed JS) across Claude Code, Codex, Gemini CLI, OpenCode, and Cursor.
 - **Popular MCP Server Presets**: 1-click presets for Filesystem MCP (`@modelcontextprotocol/server-filesystem`), GitHub MCP (`@modelcontextprotocol/server-github`), and Fetch MCP (`@modelcontextprotocol/server-fetch`) with prefill customization.
 
+## Fixes
+- **OMP streaming termination**: emit the OpenAI `data: [DONE]` sentinel when translating Codex Responses streams to Chat Completions, preventing OMP/Bun from waiting 30 seconds and reporting an unexpected socket close.
+
 # v0.9.4 (2026-08-28)
 
 ## Features
