@@ -1,3 +1,8 @@
+# v0.9.8 (2026-08-31)
+
+## Fixes
+- **Codex responses_websocket transport**: OpenAI capped the legacy HTTP SSE path at 30 seconds (long streams died with `reqwest Body TimedOut` and clients saw unexpected socket closes). The codex executor now streams full responses over the official WebSocket transport — one `response.create` frame in, Responses events bridged to SSE out — with automatic fallback to HTTP on handshake failure. Disable with `CODEX_WS_TRANSPORT=off`.
+
 # v0.9.7 (2026-08-31)
 
 ## Fixes

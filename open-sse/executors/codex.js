@@ -11,6 +11,7 @@ import { getModelUpstreamId } from "../config/providerModels.js";
 import { dbg } from "../utils/debugLog.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { executeWithPreOutputSseRetry } from "../utils/sseTransientRetry.js";
+import { streamResponsesOverWebSocket, toWsUrl } from "./codexWsTransport.js";
 
 // Server-generated item id prefixes that Codex /responses cannot resolve when store=false
 const SERVER_ID_PATTERN = /^(rs|fc|resp|msg)_/;
@@ -187,6 +188,9 @@ export class CodexExecutor extends BaseExecutor {
       await this.prefetchImages(args.body);
     }
 
+    const ws = await this._executeOverWebSocket(args);
+    if (ws) return ws;
+
     return executeWithPreOutputSseRetry({
       execute: () => super.execute(args),
       retryConfig: this.config.retry,
@@ -194,6 +198,37 @@ export class CodexExecutor extends BaseExecutor {
       log: args.log,
       provider: "codex",
     });
+  }
+
+
+  // OpenAI caps the legacy HTTP SSE path at 30s; the official CLI streams over
+  // responses_websocket. Use WS for full responses requests and fall back to
+  // HTTP on any handshake failure. Disable with CODEX_WS_TRANSPORT=off.
+  async _executeOverWebSocket(args) {
+    if (process.env.CODEX_WS_TRANSPORT === "off" || process.env.VITEST) return null;
+    if (this._isCompact || args.stream === false) return null;
+
+    try {
+      const transformedBody = this.transformRequest(args.model, args.body, args.stream, args.credentials);
+      const url = this.buildUrl(args.model, args.stream, 0, args.credentials);
+      const headers = { ...this.buildHeaders(args.credentials, args.stream, url, args.model) };
+      delete headers["Content-Type"];
+      delete headers["Accept"];
+
+      const result = streamResponsesOverWebSocket({
+        wsUrl: toWsUrl(url),
+        headers,
+        request: transformedBody,
+        signal: args.signal,
+      });
+      await result.ready;
+      dbg("CODEX-WS", `transport=responses_websocket | ${url}`);
+      return { response: result.response, url, headers, transformedBody };
+    } catch (error) {
+      args.log?.warn?.("CODEX-WS", `websocket transport failed, falling back to HTTP: ${error.message}`);
+      dbg("CODEX-WS", `handshake failed: ${error.message}`);
+      return null;
+    }
   }
 
   // Parse Codex usage_limit_reached to extract precise resetsAtMs; fallback to default otherwise
