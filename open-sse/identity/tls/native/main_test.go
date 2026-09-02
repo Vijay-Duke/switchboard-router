@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,44 @@ func (c *deadlineConn) RemoteAddr() net.Addr             { return nil }
 func (c *deadlineConn) SetDeadline(t time.Time) error    { c.deadline = t; return c.deadlineErr }
 func (c *deadlineConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *deadlineConn) SetWriteDeadline(time.Time) error { return nil }
+
+func TestClientHelloMatchesClaudeCode258Capture(t *testing.T) {
+	spec := clientHelloSpec()
+	var curves []tls.CurveID
+	var keyShares []tls.KeyShare
+	for _, extension := range spec.Extensions {
+		switch ext := extension.(type) {
+		case *tls.SupportedCurvesExtension:
+			curves = ext.Curves
+		case *tls.KeyShareExtension:
+			keyShares = ext.KeyShares
+		case *tls.UtlsPaddingExtension, *tls.UtlsPreSharedKeyExtension:
+			t.Fatalf("stale extension %T remains in Claude Code 2.1.258 capture", extension)
+		}
+	}
+	wantCurves := []tls.CurveID{tls.X25519MLKEM768, tls.X25519, tls.CurveP256, tls.CurveP384}
+	if !slices.Equal(curves, wantCurves) {
+		t.Fatalf("supported curves = %v, want %v", curves, wantCurves)
+	}
+	if len(keyShares) != 1 || keyShares[0].Group != tls.X25519MLKEM768 {
+		t.Fatalf("key shares = %v, want X25519MLKEM768 only", keyShares)
+	}
+}
+
+func TestPrepareClaude258MLKEMState(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	conn := tls.UClient(client, &tls.Config{ServerName: "localhost"}, tls.HelloCustom)
+	if err := conn.ApplyPreset(clientHelloSpec()); err != nil {
+		t.Fatal(err)
+	}
+	prepareClaude258MLKEMState(conn)
+	keys := conn.HandshakeState.State13.KeyShareKeys
+	if keys.Ecdhe == nil || keys.Ecdhe != keys.MlkemEcdhe {
+		t.Fatal("Claude 2.1.258 ML-KEM ECDHE state is not wired for the uTLS handshake")
+	}
+}
 
 func TestDialTLSUsesContextDialerAndSetsConnectionDeadline(t *testing.T) {
 	originalBuildDialer := buildDialerForRequest

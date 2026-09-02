@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { CodexExecutor } from "../../open-sse/executors/codex.js";
 import { streamResponsesOverWebSocket } from "../../open-sse/executors/codexWsTransport.js";
 
 class FakeWebSocket {
@@ -20,6 +21,7 @@ class FakeWebSocket {
   serverOpen() { this.onopen?.(); }
   serverMessage(text) { this.onmessage?.({ data: text }); }
   serverClose() { this.onclose?.(); }
+  serverError() { this.onerror?.(); }
 }
 FakeWebSocket.instances = [];
 
@@ -38,8 +40,37 @@ async function readBody(body) {
   }
   return text;
 }
+afterEach(() => {
+  delete process.env.CODEX_WS_TRANSPORT;
+  vi.restoreAllMocks();
+});
 
+it("keeps WebSocket transport opt-in", async () => {
+  const executor = new CodexExecutor();
+  const execute = vi.spyOn(executor, "_executeOverWebSocket").mockResolvedValue(null);
+  vi.spyOn(executor, "prefetchImages").mockResolvedValue();
+  vi.spyOn(Object.getPrototypeOf(CodexExecutor.prototype), "execute").mockResolvedValue({ response: new Response() });
+
+  await executor.execute({ body: { input: [] }, stream: true });
+
+  expect(execute).not.toHaveBeenCalled();
+});
+
+it("returns the successful opt-in WebSocket execution without HTTP fallback", async () => {
+  process.env.CODEX_WS_TRANSPORT = "on";
+  const executor = new CodexExecutor();
+  vi.spyOn(executor, "prefetchImages").mockResolvedValue();
+  const websocketResult = { response: new Response("ws") };
+  vi.spyOn(executor, "_executeOverWebSocket").mockResolvedValue(websocketResult);
+  const httpExecute = vi.spyOn(Object.getPrototypeOf(CodexExecutor.prototype), "execute").mockResolvedValue({ response: new Response("http") });
+
+  const result = await executor.execute({ body: { input: [] }, stream: true });
+
+  expect(result).toBe(websocketResult);
+  expect(httpExecute).not.toHaveBeenCalled();
+});
 describe("codex responses_websocket transport", () => {
+
   it("wraps the request as response.create and bridges frames to SSE bytes", async () => {
     FakeWebSocket.instances.length = 0;
     const { response } = streamResponsesOverWebSocket({
@@ -107,6 +138,18 @@ describe("codex responses_websocket transport", () => {
     ws.serverOpen();
     ctrl.abort();
 
+    expect(ws.closed).toBe(true);
+  });
+
+  it("disposes a socket when the handshake fails", async () => {
+    FakeWebSocket.instances.length = 0;
+    const { ready } = streamResponsesOverWebSocket({
+      wsUrl: "wss://x/responses", headers: {}, request: makeRequest(), WebSocket: FakeWebSocket,
+    });
+    const ws = FakeWebSocket.instances[0];
+    ws.serverError();
+
+    await expect(ready).rejects.toThrow(/handshake failed/i);
     expect(ws.closed).toBe(true);
   });
 });

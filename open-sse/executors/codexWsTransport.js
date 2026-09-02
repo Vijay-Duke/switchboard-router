@@ -40,37 +40,60 @@ export function streamResponsesOverWebSocket({ wsUrl, headers, request, WebSocke
     throw new Error(`codex ws connect failed: ${error.message}`);
   }
 
+  let controller = null;
+  let readySettled = false;
   let streamDone = false;
-  const onAbort = () => { try { ws.close(); } catch { /* already closed */ } };
-  signal?.addEventListener?.("abort", onAbort, { once: true });
+  let opened = false;
+  let resolveReady;
+  let rejectReady;
 
   const ready = new Promise((resolve, reject) => {
-    ws.onopen = () => {
-      try {
-        ws.send(JSON.stringify({ type: "response.create", ...request }));
-        dbg("CODEX-WS", `opened ${wsUrl} | request sent`);
-        resolve();
-      } catch (error) {
-        reject(new Error(`codex ws send failed: ${error.message}`));
-      }
-    };
-    ws.onerror = () => reject(new Error("codex ws handshake failed"));
+    resolveReady = resolve;
+    rejectReady = reject;
   });
 
-  const body = new ReadableStream({
-    start(controller) {
-      const finish = (error) => {
-        if (streamDone) return;
-        streamDone = true;
-        signal?.removeEventListener?.("abort", onAbort);
-        try { ws.close(); } catch { /* already closed */ }
-        try {
-          if (error) controller.error(error);
-          else controller.close();
-        } catch { /* downstream already closed */ }
-      };
+  const closeSocket = () => {
+    try { ws.close(); } catch { /* already closed */ }
+  };
 
+  const finish = (error, closeStream = true) => {
+    if (streamDone) return;
+    streamDone = true;
+    signal?.removeEventListener?.("abort", onAbort);
+    closeSocket();
+    if (!readySettled) {
+      readySettled = true;
+      if (error) rejectReady(error);
+      else resolveReady();
+    }
+    if (!closeStream || !controller) return;
+    try {
+      if (error) controller.error(error);
+      else controller.close();
+    } catch { /* downstream already closed */ }
+  };
+
+  const onAbort = () => finish(new DOMException("The operation was aborted.", "AbortError"));
+  signal?.addEventListener?.("abort", onAbort, { once: true });
+
+  ws.onopen = () => {
+    try {
+      ws.send(JSON.stringify({ type: "response.create", ...request }));
+      opened = true;
+      readySettled = true;
+      dbg("CODEX-WS", `opened ${wsUrl} | request sent`);
+      resolveReady();
+    } catch (error) {
+      finish(new Error(`codex ws send failed: ${error.message}`));
+    }
+  };
+  ws.onerror = () => finish(new Error(opened ? "codex ws transport failed" : "codex ws handshake failed"));
+
+  const body = new ReadableStream({
+    start(streamController) {
+      controller = streamController;
       ws.onmessage = (event) => {
+        if (streamDone) return;
         const raw = typeof event.data === "string" ? event.data : "";
         let type = null;
         try { type = JSON.parse(raw)?.type || null; } catch { /* non-JSON frame */ }
@@ -84,9 +107,7 @@ export function streamResponsesOverWebSocket({ wsUrl, headers, request, WebSocke
       ws.onclose = () => finish(streamDone ? null : new Error("codex ws closed before terminal event"));
     },
     cancel() {
-      streamDone = true;
-      signal?.removeEventListener?.("abort", onAbort);
-      try { ws.close(); } catch { /* already closed */ }
+      finish(null, false);
     },
   });
 

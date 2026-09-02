@@ -188,7 +188,9 @@ export class CodexExecutor extends BaseExecutor {
       await this.prefetchImages(args.body);
     }
 
-    const ws = await this._executeOverWebSocket(args);
+    const ws = process.env.CODEX_WS_TRANSPORT === "on"
+      ? await this._executeOverWebSocket(args)
+      : null;
     if (ws) return ws;
 
     return executeWithPreOutputSseRetry({
@@ -201,11 +203,11 @@ export class CodexExecutor extends BaseExecutor {
   }
 
 
-  // OpenAI caps the legacy HTTP SSE path at 30s; the official CLI streams over
-  // responses_websocket. Use WS for full responses requests and fall back to
-  // HTTP on any handshake failure. Disable with CODEX_WS_TRANSPORT=off.
+  // Native/Undici WebSocket clients retain substantial RSS across failed
+  // handshakes under sustained routing load. Keep stable HTTP SSE as the
+  // default; operators can explicitly enable the WebSocket transport.
   async _executeOverWebSocket(args) {
-    if (process.env.CODEX_WS_TRANSPORT === "off" || process.env.VITEST) return null;
+    if (process.env.CODEX_WS_TRANSPORT !== "on" || process.env.VITEST) return null;
     if (this._isCompact || args.stream === false) return null;
 
     try {

@@ -129,7 +129,7 @@ describe("wrapHeaders", () => {
         },
       },
     );
-    expect(headers["User-Agent"]).toContain("claude-cli/2.1.220");
+    expect(headers["User-Agent"]).toContain("claude-cli/2.1.258");
     expect(headers["X-Stainless-Package-Version"]).not.toBe("0.99.0");
     expect(headers["Anthropic-Beta"]).not.toBe("new-beta");
     expect(headers["x-claude-code-session-id"]).toBe("session-new");
@@ -144,7 +144,7 @@ describe("wrapHeaders", () => {
         snapshot: {
           version: "2.1.239",
           billingVersion: "2.1.239",
-          tlsSpecRev: "claude-code-2.1.220",
+          tlsSpecRev: "claude-code-2.1.258",
           userAgent: "claude-cli/2.1.239 (external, cli)",
           packageVersion: "0.99.0",
           runtimeVersion: "v24.0.0",
@@ -175,39 +175,39 @@ describe("harvest", () => {
   beforeEach(() => resetIdentityState());
 
   it("ignores partial claude harvest without Stainless", () => {
-    expect(harvest("claude-cli", { "user-agent": "claude-cli/2.1.220 (external, cli)" })).toBe(false);
-    expect(getSnapshot("claude-cli")?.version).toBe("2.1.220");
+    expect(harvest("claude-cli", { "user-agent": "claude-cli/2.1.258 (external, cli)" })).toBe(false);
+    expect(getSnapshot("claude-cli")?.version).toBe("2.1.258");
   });
 
   it("stores a complete claude tuple", () => {
     expect(harvest("claude-cli", {
-      "user-agent": "claude-cli/2.1.220 (external, cli)",
-      "x-stainless-package-version": "0.94.0",
-      "x-stainless-runtime-version": "v22.19.0",
+      "user-agent": "claude-cli/2.1.258 (external, cli)",
+      "x-stainless-package-version": "0.112.1",
+      "x-stainless-runtime-version": "v26.3.0",
       "anthropic-beta": "oauth-2025-04-20",
       "x-stainless-os": "Linux",
       "x-stainless-arch": "x64",
     })).toBe(true);
     const snap = getSnapshot("claude-cli");
-    expect(snap.version).toBe("2.1.220");
-    expect(snap.packageVersion).toBe("0.94.0");
+    expect(snap.version).toBe("2.1.258");
+    expect(snap.packageVersion).toBe("0.112.1");
   });
 
   it("ignores complete-looking tuples without a Claude version", () => {
     expect(harvest("claude-cli", {
       "user-agent": "custom-client (external, cli)",
-      "x-stainless-package-version": "0.94.0",
-      "x-stainless-runtime-version": "v22.19.0",
+      "x-stainless-package-version": "0.112.1",
+      "x-stainless-runtime-version": "v26.3.0",
       "anthropic-beta": "oauth-2025-04-20",
     })).toBe(false);
-    expect(getSnapshot("claude-cli")?.version).toBe("2.1.220");
+    expect(getSnapshot("claude-cli")?.version).toBe("2.1.258");
   });
 
   it("never persists authentication headers", () => {
     expect(harvest("claude-cli", {
-      "user-agent": "claude-cli/2.1.220 (external, cli)",
-      "x-stainless-package-version": "0.94.0",
-      "x-stainless-runtime-version": "v22.19.0",
+      "user-agent": "claude-cli/2.1.258 (external, cli)",
+      "x-stainless-package-version": "0.112.1",
+      "x-stainless-runtime-version": "v26.3.0",
       "anthropic-beta": "oauth-2025-04-20",
       authorization: "Bearer secret",
       "x-api-key": "secret-key",
@@ -218,12 +218,12 @@ describe("harvest", () => {
     expect(serialized).not.toContain("x-api-key");
   });
 
-  it("harvests an exact fully confirmed 2.1.220 tuple into the snapshot", () => {
+  it("harvests an exact fully confirmed 2.1.258 tuple into the snapshot", () => {
     const headers = {
-      "user-agent": "claude-cli/2.1.220 (external, cli)",
+      "user-agent": "claude-cli/2.1.258 (external, cli)",
       "anthropic-beta": "oauth-2025-04-20",
-      "x-stainless-runtime-version": "v22.19.0",
-      "x-stainless-package-version": "0.94.0",
+      "x-stainless-runtime-version": "v26.3.0",
+      "x-stainless-package-version": "0.112.1",
       "x-stainless-os": "Linux",
       "x-stainless-arch": "x64",
       "x-app": "cli",
@@ -232,23 +232,23 @@ describe("harvest", () => {
 
     expect(isConfirmedClaudeClient(headers, body)).toBe(true);
     expect(getSnapshot("claude-cli")).toMatchObject({
-      version: "2.1.220",
-      packageVersion: "0.94.0",
-      runtimeVersion: "v22.19.0",
+      version: "2.1.258",
+      packageVersion: "0.112.1",
+      runtimeVersion: "v26.3.0",
     });
   });
 
   it("keeps harvested OS and arch stable after a later tuple", () => {
     expect(harvest("claude-cli", {
-      "user-agent": "claude-cli/2.1.220 (external, cli)",
-      "x-stainless-package-version": "0.94.0",
-      "x-stainless-runtime-version": "v22.19.0",
+      "user-agent": "claude-cli/2.1.258 (external, cli)",
+      "x-stainless-package-version": "0.112.1",
+      "x-stainless-runtime-version": "v26.3.0",
       "anthropic-beta": "oauth-2025-04-20",
       "x-stainless-os": "Linux",
       "x-stainless-arch": "x64",
     })).toBe(true);
     expect(harvest("claude-cli", {
-      "user-agent": "claude-cli/2.1.220 (external, cli)",
+      "user-agent": "claude-cli/2.1.258 (external, cli)",
       "x-stainless-package-version": "0.94.1",
       "x-stainless-runtime-version": "v22.19.1",
       "anthropic-beta": "oauth-2025-04-20",
@@ -263,14 +263,14 @@ describe("snapshot lifecycle", () => {
   beforeEach(() => {
     resetIdentityState();
     setSnapshot("claude-cli", {
-      version: "2.1.220",
-      billingVersion: "2.1.220",
-      tlsSpecRev: "claude-code-2.1.220",
-      latestVersion: "2.1.239",
+      version: "2.1.258",
+      billingVersion: "2.1.258",
+      tlsSpecRev: "claude-code-2.1.258",
+      latestVersion: "2.1.258",
       entrypoint: "cli",
-      userAgent: "claude-cli/2.1.220 (external, cli)",
-      packageVersion: "0.94.0",
-      runtimeVersion: "v22.19.0",
+      userAgent: "claude-cli/2.1.258 (external, cli)",
+      packageVersion: "0.112.1",
+      runtimeVersion: "v26.3.0",
       betas: "oauth-2025-04-20",
     });
   });
@@ -278,12 +278,12 @@ describe("snapshot lifecycle", () => {
   it("records newer npm Claude metadata without upgrading the wire tuple", async () => {
     await pollIdentityVersions(async (url) => ({
       ok: true,
-      json: async () => ({ version: url.includes("claude-code") ? "2.1.240" : "0.149.0" }),
+      json: async () => ({ version: url.includes("claude-code") ? "2.1.259" : "0.149.0" }),
     }));
     const snapshot = getSnapshot("claude-cli");
-    expect(snapshot.version).toBe("2.1.220");
-    expect(snapshot.billingVersion).toBe("2.1.220");
-    expect(snapshot.latestVersion).toBe("2.1.240");
+    expect(snapshot.version).toBe("2.1.258");
+    expect(snapshot.billingVersion).toBe("2.1.258");
+    expect(snapshot.latestVersion).toBe("2.1.259");
   });
 
   it("overrides frozen Claude registry identity with the live tuple", () => {
@@ -292,7 +292,7 @@ describe("snapshot lifecycle", () => {
       "User-Agent": "claude-cli/2.1.92 (external, sdk-cli)",
     }, { identity: "claude-cli", credentialId: "credential-a" });
 
-    expect(headers["User-Agent"]).toContain("claude-cli/2.1.220 (external, cli)");
+    expect(headers["User-Agent"]).toContain("claude-cli/2.1.258 (external, cli)");
     expect(headers["User-Agent"]).not.toContain("2.1.92");
     expect(headers["User-Agent"]).not.toContain("sdk-cli");
   });
@@ -329,7 +329,7 @@ describe("applyIdentity overlay", () => {
       { snapshot: getSnapshot("claude-cli"), overlay: { "user-agent": "claude-cli/9.9.9 (external, cli)", Authorization: "Bearer steal" } },
     );
     expect(merged.Authorization).toBe("Bearer keep");
-    expect(merged["User-Agent"]).toContain("claude-cli/2.1.220");
+    expect(merged["User-Agent"]).toContain("claude-cli/2.1.258");
   });
 
   it("deduplicates identity headers case-insensitively while caller auth wins", () => {
@@ -389,33 +389,33 @@ describe("confirmed client harvest", () => {
 
   it.each([
     ["UA only", {
-      "user-agent": "claude-cli/2.1.220 (external, cli)",
+      "user-agent": "claude-cli/2.1.258 (external, cli)",
     }, { metadata: { user_id: '{"session_id":"session-220"}' } }],
     ["missing x-app", {
-      "user-agent": "claude-cli/2.1.220 (external, cli)",
+      "user-agent": "claude-cli/2.1.258 (external, cli)",
       "anthropic-beta": "oauth-2025-04-20",
-      "x-stainless-runtime-version": "v22.19.0",
-      "x-stainless-package-version": "0.94.0",
+      "x-stainless-runtime-version": "v26.3.0",
+      "x-stainless-package-version": "0.112.1",
     }, { metadata: { user_id: '{"session_id":"session-220"}' } }],
     ["missing beta", {
-      "user-agent": "claude-cli/2.1.220 (external, cli)",
+      "user-agent": "claude-cli/2.1.258 (external, cli)",
       "x-app": "cli",
-      "x-stainless-runtime-version": "v22.19.0",
-      "x-stainless-package-version": "0.94.0",
+      "x-stainless-runtime-version": "v26.3.0",
+      "x-stainless-package-version": "0.112.1",
     }, { metadata: { user_id: '{"session_id":"session-220"}' } }],
     ["missing metadata", {
-      "user-agent": "claude-cli/2.1.220 (external, cli)",
+      "user-agent": "claude-cli/2.1.258 (external, cli)",
       "x-app": "cli",
       "anthropic-beta": "oauth-2025-04-20",
-      "x-stainless-runtime-version": "v22.19.0",
-      "x-stainless-package-version": "0.94.0",
+      "x-stainless-runtime-version": "v26.3.0",
+      "x-stainless-package-version": "0.112.1",
     }, {}],
     ["invalid metadata", {
-      "user-agent": "claude-cli/2.1.220 (external, cli)",
+      "user-agent": "claude-cli/2.1.258 (external, cli)",
       "x-app": "cli",
       "anthropic-beta": "oauth-2025-04-20",
-      "x-stainless-runtime-version": "v22.19.0",
-      "x-stainless-package-version": "0.94.0",
+      "x-stainless-runtime-version": "v26.3.0",
+      "x-stainless-package-version": "0.112.1",
     }, { metadata: { user_id: '{"session_id":""}' } }],
   ])("detects Claude routing but does not harvest an unconfirmed %s request", (_case, headers, body) => {
     expect(detectClientTool(headers, body)).toBe("claude");
@@ -424,11 +424,11 @@ describe("confirmed client harvest", () => {
   });
   it("accepts the existing Claude _session_ metadata form", () => {
     const headers = {
-      "user-agent": "claude-code/2.1.220 (external, cli)",
+      "user-agent": "claude-code/2.1.258 (external, cli)",
       "x-app": "cli",
       "anthropic-beta": "oauth-2025-04-20",
-      "x-stainless-runtime-version": "v22.19.0",
-      "x-stainless-package-version": "0.94.0",
+      "x-stainless-runtime-version": "v26.3.0",
+      "x-stainless-package-version": "0.112.1",
       "x-stainless-os": "Linux",
       "x-stainless-arch": "x64",
     };
@@ -437,7 +437,7 @@ describe("confirmed client harvest", () => {
   });
 
   it("does not let a mismatched Claude version poison the current snapshot", () => {
-    // Snapshot is already seeded at 2.1.220 by the earlier harvest test; a
+    // Snapshot is already seeded at 2.1.258 by the earlier harvest test; a
     // different version must be detected but never harvested.
     const headers = {
       "user-agent": "claude-cli/2.1.239 (external, cli)",
@@ -452,9 +452,9 @@ describe("confirmed client harvest", () => {
     expect(detectClientTool(headers, body)).toBe("claude");
     expect(harvestDetectedClient("claude", headers, body)).toBe(false);
     expect(getSnapshot("claude-cli")).toMatchObject({
-      version: "2.1.220",
-      packageVersion: "0.94.0",
-      runtimeVersion: "v22.19.0",
+      version: "2.1.258",
+      packageVersion: "0.112.1",
+      runtimeVersion: "v26.3.0",
     });
   });
 

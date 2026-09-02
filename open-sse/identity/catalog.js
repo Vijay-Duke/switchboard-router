@@ -2,7 +2,7 @@ import { ANTHROPIC_API_VERSION } from "../providers/shared.js";
 import { mapStainlessArch, mapStainlessOs, hostArch, hostPlatform } from "./os.js";
 import { GROK_CLI_CLIENT_IDENTIFIER, GROK_CLI_VERSION } from "../config/grokCli.js";
 
-const CLAUDE_BETAS = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advanced-tool-use-2025-11-20,effort-2025-11-24,structured-outputs-2025-12-15,fast-mode-2026-02-01,redact-thinking-2026-02-12,token-efficient-tools-2026-03-28";
+const CLAUDE_BETAS = "claude-code-20250219,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24,structured-outputs-2025-12-15";
 
 const CLAUDE_MESSAGES_HEADER_ORDER = [
   "Accept",
@@ -34,7 +34,7 @@ const CLAUDE_COUNT_TOKENS_HEADER_ORDER = CLAUDE_MESSAGES_HEADER_ORDER.filter(
 );
 
 function claudeHeaders(snapshot) {
-  const version = snapshot?.version || "2.1.220";
+  const version = snapshot?.version || "2.1.258";
   const entrypoint = snapshot?.entrypoint || "cli";
   return {
     "Anthropic-Version": ANTHROPIC_API_VERSION,
@@ -43,7 +43,7 @@ function claudeHeaders(snapshot) {
     "User-Agent": snapshot?.userAgent || `claude-cli/${version} (external, ${entrypoint})`,
     "X-App": "cli",
     "X-Stainless-Runtime-Version": snapshot?.runtimeVersion || process.version,
-    "X-Stainless-Package-Version": snapshot?.packageVersion || "0.94.0",
+    "X-Stainless-Package-Version": snapshot?.packageVersion || "0.112.1",
     "X-Stainless-Runtime": "node",
     "X-Stainless-Lang": "js",
     "X-Stainless-Arch": snapshot?.arch || mapStainlessArch(),

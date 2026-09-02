@@ -9,8 +9,8 @@ const { openBrowser: openBrowserWithoutShell } = require("./src/shared/openBrows
 const pkg = require("./package.json");
 const { DEFAULT_HOST, DEFAULT_PORT, formatHelp, isLoopbackHost, parseCliArgs } = require("./src/cli/cliOptions");
 const processTools = require("./src/cli/processManager");
-const { findListeningPids } = processTools;
-const { probeSwitchboard, probeTcp, waitForSwitchboard } = require("./src/cli/serverStatus");
+const { findListeningPids, observeChildExit } = processTools;
+const { probeSwitchboard, probeTcp, startHealthWatchdog, waitForSwitchboard } = require("./src/cli/serverStatus");
 
 // Subcommands (`switchboard xai video …`) run against an already-running
 // gateway and skip the launcher flow (no arg parsing, no server spawn).
@@ -683,6 +683,27 @@ function startServer(latestVersion) {
   let isShuttingDown = false;
   let shutdownPromise = null;
   let restartTimer = null;
+  let watchdogRestarting = false;
+  const stopHealthWatchdog = startHealthWatchdog({
+    port,
+    hostname: getProbeHost(),
+    onUnhealthy: async () => {
+      if (isShuttingDown || watchdogRestarting || !server?.pid) return;
+      watchdogRestarting = true;
+      const unhealthyServer = server;
+      clearTimeout(restartTimer);
+      restartTimer = null;
+      console.error("\nServer health checks failed repeatedly; restarting the owned server process.");
+      try {
+        const terminated = await processTools.terminatePid(unhealthyServer.pid, { timeoutMs: 2500, processGroup: true });
+        if (!terminated || isShuttingDown || server !== unhealthyServer) return;
+        server = spawnServer();
+        attachServerEvents();
+      } finally {
+        watchdogRestarting = false;
+      }
+    },
+  });
 
   async function cleanup() {
     if (isCleaningUp) return;
@@ -707,6 +728,7 @@ function startServer(latestVersion) {
     if (shutdownPromise) return shutdownPromise;
     isShuttingDown = true;
     if (restartTimer) clearTimeout(restartTimer);
+    stopHealthWatchdog();
     if (message) console.log(message);
     shutdownPromise = cleanup().finally(() => process.exit(exitCode));
     return shutdownPromise;
@@ -892,11 +914,8 @@ function startServer(latestVersion) {
 
   function attachServerEvents() {
     const observedServer = server;
-    let terminalEventHandled = false;
-    const handleTerminalEvent = (code, signal, error) => {
-      if (terminalEventHandled) return;
-      terminalEventHandled = true;
-      if (isShuttingDown) return;
+    observeChildExit(observedServer, (code, signal, error) => {
+      if (isShuttingDown || watchdogRestarting || observedServer !== server) return;
       if (error) console.error("Failed to start server:", error.message);
       if (error?.code === "EADDRINUSE" || isPortConflict()) {
         void stopForPortConflict();
@@ -908,14 +927,6 @@ function startServer(latestVersion) {
         return;
       }
       tryRestart(code, signal);
-    };
-
-    observedServer.on("error", (err) => {
-      handleTerminalEvent(null, null, err);
-    });
-
-    observedServer.on("close", (code, signal) => {
-      handleTerminalEvent(code, signal, null);
     });
   }
 

@@ -28,13 +28,13 @@ describe("pickClaudeIdentityHeaders", () => {
 
   it("picks only the known identity headers, request-scoped", () => {
     const picked = mod.pickClaudeIdentityHeaders({
-      "user-agent": "claude-cli/2.1.220 (external, cli)",
+      "user-agent": "claude-cli/2.1.258 (external, cli)",
       "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
       "content-type": "application/json",
       authorization: "Bearer secret",
       "x-api-key": "secret-key",
     });
-    expect(picked["user-agent"]).toBe("claude-cli/2.1.220 (external, cli)");
+    expect(picked["user-agent"]).toBe("claude-cli/2.1.258 (external, cli)");
     expect(picked["anthropic-beta"]).toContain("oauth-2025-04-20");
     const serialized = JSON.stringify(picked);
     expect(serialized).not.toContain("secret");

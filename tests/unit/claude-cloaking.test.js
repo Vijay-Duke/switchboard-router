@@ -15,13 +15,13 @@ import { CLAUDE_TOOL_SUFFIX } from "../../open-sse/config/appConstants.js";
 beforeEach(() => {
   resetIdentityState();
   setSnapshot("claude-cli", {
-    version: "2.1.220",
-    billingVersion: "2.1.220",
-    tlsSpecRev: "claude-code-2.1.220",
+    version: "2.1.258",
+    billingVersion: "2.1.258",
+    tlsSpecRev: "claude-code-2.1.258",
     entrypoint: "cli",
-    userAgent: "claude-cli/2.1.220 (external, cli)",
-    packageVersion: "0.94.0",
-    runtimeVersion: "v22.19.0",
+    userAgent: "claude-cli/2.1.258 (external, cli)",
+    packageVersion: "0.112.1",
+    runtimeVersion: "v26.3.0",
     betas: "oauth-2025-04-20",
   });
 });
@@ -33,7 +33,7 @@ describe("applyCloaking", () => {
     const second = applyCloaking(body, "sk-ant-oat-credential-a", "session-a");
 
     expect(first.system[0].text).toBe(second.system[0].text);
-    expect(first.system[0].text).toContain("cc_version=2.1.220.");
+    expect(first.system[0].text).toContain("cc_version=2.1.258.");
     expect(first.system[0].text).toContain("cc_entrypoint=cli;");
     expect(JSON.parse(first.metadata.user_id)).toEqual(JSON.parse(second.metadata.user_id));
   });
@@ -69,8 +69,8 @@ describe("applyCloaking", () => {
     const billing = body.system[0].text;
     const user = JSON.parse(body.metadata.user_id);
 
-    expect(outbound["User-Agent"]).toContain("claude-cli/2.1.220");
-    expect(billing).toContain("cc_version=2.1.220.");
+    expect(outbound["User-Agent"]).toContain("claude-cli/2.1.258");
+    expect(billing).toContain("cc_version=2.1.258.");
     expect(user.session_id).toBe(outbound["X-Claude-Code-Session-Id"]);
   });
 

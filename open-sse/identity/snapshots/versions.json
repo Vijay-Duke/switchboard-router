@@ -1,11 +1,15 @@
 {
   "claude-cli": {
     "npm": "@anthropic-ai/claude-code",
-    "version": "2.1.220",
-    "latestVersion": "2.1.239",
-    "capturedAt": "2026-08-22T00:00:00.000Z",
-    "releasedAt": "2026-08-22T00:00:00.000Z",
-    "tlsSpecRev": "claude-code-2.1.220"
+    "version": "2.1.258",
+    "latestVersion": "2.1.258",
+    "capturedAt": "2026-09-02T04:39:33.000Z",
+    "releasedAt": "2026-09-01T22:25:07.449Z",
+    "tlsSpecRev": "claude-code-2.1.258",
+    "packageVersion": "0.112.1",
+    "runtimeVersion": "v26.3.0",
+    "entrypoint": "cli",
+    "betas": "claude-code-20250219,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24,structured-outputs-2025-12-15"
   },
   "codex-cli": {
     "npm": "@openai/codex",

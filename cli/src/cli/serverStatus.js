@@ -61,14 +61,18 @@ function probeTcp(port, timeoutMs = 1000, hostname = "127.0.0.1") {
   });
 }
 
+async function probeHealth(port, timeoutMs = 1000, hostname = "127.0.0.1") {
+  const response = await requestJson({ hostname, port, path: "/api/health", timeoutMs });
+  return response?.statusCode === 200 && response?.body?.ok === true;
+}
+
 async function probeSwitchboard(port, timeoutMs = 1000, hostname = "127.0.0.1") {
   const response = await requestJson({ hostname, port, path: "/api/mgmt/v1/version", timeoutMs });
   const data = response?.body?.data;
   if (response?.statusCode === 200 && data?.name === "switchboard-app") return data;
 
   // Compatibility with older bundles that predate the management version API.
-  const health = await requestJson({ hostname, port, path: "/api/health", timeoutMs });
-  if (health?.statusCode === 200 && health?.body?.ok === true) {
+  if (await probeHealth(port, timeoutMs, hostname)) {
     return { name: "switchboard-app", version: null, startedAt: null, legacyHealth: true };
   }
   return null;
@@ -87,4 +91,39 @@ async function waitForSwitchboard(port, { timeoutMs = 20000, intervalMs = 250, h
   return null;
 }
 
-module.exports = { probeSwitchboard, probeTcp, waitForSwitchboard };
+function startHealthWatchdog({
+  port,
+  hostname = "127.0.0.1",
+  graceMs = 60_000,
+  intervalMs = 10_000,
+  timeoutMs = 2_000,
+  maxFailures = 3,
+  probe = probeHealth,
+  onUnhealthy,
+} = {}) {
+  let stopped = false;
+  let timer = null;
+  let failures = 0;
+
+  const tick = async () => {
+    if (stopped) return;
+    const status = await probe(port, timeoutMs, hostname).catch(() => null);
+    if (status) failures = 0;
+    else failures++;
+
+    if (failures >= maxFailures) {
+      failures = 0;
+      await onUnhealthy?.();
+      if (stopped) return;
+    }
+    timer = setTimeout(tick, intervalMs);
+  };
+
+  timer = setTimeout(tick, graceMs);
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+  };
+}
+
+module.exports = { probeHealth, probeSwitchboard, probeTcp, startHealthWatchdog, waitForSwitchboard };

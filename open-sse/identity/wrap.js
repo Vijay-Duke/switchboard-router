@@ -3,7 +3,7 @@ import { applyIdentity, resolveProfileId, getProfile, orderHeaders, CLAUDE_COUNT
 import { claudeSnapshotVersions, getConsistentSnapshot, getDeviceProfile } from "./snapshot.js";
 
 const AUTH_FALLBACK_UA = {
-  "claude-cli": "claude-cli/2.1.220 (external, cli)",
+  "claude-cli": "claude-cli/2.1.258 (external, cli)",
   "codex-cli": "codex_cli_rs/0.149.0",
   "gemini-cli": "GeminiCLI/0.56.0/unknown (linux; x64; terminal)",
   cline: "Cline/3.0.0",

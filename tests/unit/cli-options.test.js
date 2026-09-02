@@ -5,11 +5,11 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const { formatHelp, isLoopbackHost, parseCliArgs } = require("../../cli/src/cli/cliOptions.js");
-const { probeSwitchboard, waitForSwitchboard } = require("../../cli/src/cli/serverStatus.js");
+const { probeHealth, probeSwitchboard, startHealthWatchdog, waitForSwitchboard } = require("../../cli/src/cli/serverStatus.js");
 const { getLaunchArgs } = require("../../cli/src/cli/tray/autostart.js");
 const { renderHeader } = require("../../cli/src/cli/terminalUI.js");
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -163,6 +163,60 @@ describe("CLI option contract", () => {
       expect(accepted).toMatchObject({ name: "switchboard-app", tcpOnly: true });
     } finally {
       await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it("uses one health request per watchdog probe", async () => {
+    const paths = [];
+    const server = http.createServer((req, res) => {
+      paths.push(req.url);
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ ok: true }));
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      await expect(probeHealth(server.address().port, 1000)).resolves.toBe(true);
+      expect(paths).toEqual(["/api/health"]);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it("recovers after each run of three failed health probes", async () => {
+    vi.useFakeTimers();
+    const probe = vi.fn().mockResolvedValue(null);
+    const onUnhealthy = vi.fn();
+    const stop = startHealthWatchdog({
+      port: 20128,
+      graceMs: 0,
+      intervalMs: 10,
+      timeoutMs: 1,
+      maxFailures: 3,
+      probe,
+      onUnhealthy,
+    });
+
+    try {
+      await vi.advanceTimersByTimeAsync(55);
+      expect(probe).toHaveBeenCalledTimes(6);
+      expect(onUnhealthy).toHaveBeenCalledTimes(2);
+    } finally {
+      stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the health timer referenced so the lifecycle parent survives child recovery", () => {
+    const unref = vi.fn();
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout").mockReturnValue({ unref });
+    const stop = startHealthWatchdog({ port: 20128 });
+
+    try {
+      expect(setTimeoutSpy).toHaveBeenCalledOnce();
+      expect(unref).not.toHaveBeenCalled();
+    } finally {
+      stop();
+      setTimeoutSpy.mockRestore();
     }
   });
 });

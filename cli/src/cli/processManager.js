@@ -171,7 +171,20 @@ async function terminatePid(pid, { timeoutMs = 2000, processGroup = false } = {}
       process.kill(unixTarget, "SIGKILL");
     }
   } catch { /* best effort */ }
+  const killDeadline = Date.now() + Math.min(timeoutMs, 1000);
+  while (targetIsAlive() && Date.now() < killDeadline) await sleep(25);
   return !targetIsAlive();
+}
+
+function observeChildExit(child, onTerminal) {
+  let handled = false;
+  const finish = (code, signal, error) => {
+    if (handled) return;
+    handled = true;
+    onTerminal(code, signal, error);
+  };
+  child.once("error", (error) => finish(null, null, error));
+  child.once("exit", (code, signal) => finish(code, signal, null));
 }
 
 module.exports = {
@@ -180,6 +193,7 @@ module.exports = {
   getProcessCommand,
   getProcessCwd,
   isPidAlive,
+  observeChildExit,
   matchesRecordedProcess,
   processMatchesRecordedPath,
   terminatePid,

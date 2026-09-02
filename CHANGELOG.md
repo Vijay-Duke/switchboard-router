@@ -1,3 +1,12 @@
+# v0.9.9 (2026-09-02)
+
+## Features
+- **Claude Code 2.1.258 identity**: refresh the measured interactive Claude CLI tuple (`cc_version`, Stainless package/runtime, beta order, headers, and HTTP/1.1 ClientHello) and regenerate every platform TLS helper with the native X25519+ML-KEM key share.
+
+## Fixes
+- **Gateway self-recovery**: the long-lived CLI parent now probes `/api/health`, terminates only its owned server process after three consecutive failures, and respawns it without double-start races.
+- **Codex transport stability**: keep HTTP SSE as the default and make `responses_websocket` explicit via `CODEX_WS_TRANSPORT=on`; failed, aborted, and completed WebSocket paths now close their native resources exactly once.
+
 # v0.9.8 (2026-08-31)
 
 ## Fixes

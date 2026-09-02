@@ -64,6 +64,7 @@ All values are positive integer milliseconds unless stated otherwise.
 | `FETCH_CONNECT_TIMEOUT_MS` | `60000` | General upstream wait for response headers. |
 | `GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS` | `45000` | Gemini native TTS response-header timeout. |
 | `USAGE_HISTORY_MAX` | `50000` | Maximum retained usage-history rows during cleanup. |
+| `CODEX_WS_TRANSPORT` | unset (`off`) | Set to exactly `on` to opt into Codex Responses WebSocket transport. HTTP SSE remains default because failed WebSocket handshakes retain native memory under sustained fallback load. |
 
 The MITM bypass transport also has a fixed ten-second connection timeout so a
 broken local interception path cannot hang indefinitely.

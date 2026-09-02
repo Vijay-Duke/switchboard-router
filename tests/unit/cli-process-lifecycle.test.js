@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 const {
   acquireLifecycleLock,
   matchesRecordedProcess,
+  observeChildExit,
   terminatePid,
 } = require("../../cli/src/cli/processManager.js");
 const {
@@ -109,6 +110,31 @@ describe("CLI lifecycle serialization", () => {
     } finally {
       try { process.kill(-parent.pid, "SIGKILL"); } catch { /* already stopped */ }
     }
+  });
+});
+
+  it.runIf(process.platform !== "win32")("confirms a stopped child is dead after forced termination", async () => {
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      process.kill(child.pid, "SIGSTOP");
+      await expect(terminatePid(child.pid, { processGroup: true, timeoutMs: 1000 })).resolves.toBe(true);
+    } finally {
+      try { process.kill(-child.pid, "SIGKILL"); } catch { /* already stopped */ }
+    }
+  });
+
+describe("server child lifecycle", () => {
+  it("observes exit without waiting for inherited stdio to close", () => {
+    const child = new EventEmitter();
+    const terminal = vi.fn();
+    observeChildExit(child, terminal);
+
+    child.emit("exit", null, "SIGKILL");
+    child.emit("close", null, "SIGKILL");
+
+    expect(terminal).toHaveBeenCalledOnce();
+    expect(terminal).toHaveBeenCalledWith(null, "SIGKILL", null);
   });
 });
 
