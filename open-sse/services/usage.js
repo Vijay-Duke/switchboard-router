@@ -16,6 +16,7 @@ import { getKimiUsage } from "./usage/kimi.js";
 import { getDeepseekUsage } from "./usage/deepseek.js";
 import { getGrokCliUsage } from "./usage/grok-cli.js";
 import { getMuseUsage } from "./usage/muse.js";
+import { getGroqUsage } from "./usage/groq.js";
 import {
   getQwenUsage,
   getIflowUsage,
@@ -54,6 +55,7 @@ const USAGE_HANDLERS = {
   "grok-cli": (c) => getGrokCliUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   // Muse quota auth is the DCA device token, not the minted inference key.
   muse: (c) => getMuseUsage(c.providerSpecificData?.dcaToken || c.refreshToken, c.providerSpecificData, c.proxyOptions),
+  groq: (c) => getGroqUsage(c.apiKey, c.proxyOptions),
 };
 
 export async function getUsageForProvider(connection, proxyOptions = null, options = {}) {
