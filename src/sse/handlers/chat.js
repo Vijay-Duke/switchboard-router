@@ -7,7 +7,7 @@ import {
   clearAccountError,
   extractApiKey,
 } from "../services/auth.js";
-import { handleAntigravityQuotaError } from "../services/antigravityQuota.js";
+import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { bindClaudeThreadResponse, resolveClaudeThreadOwner } from "../services/claudeThreadOwnership.js";
 import { hasClaudeThread, isClaudeThreadContinuation } from "open-sse/utils/claudeThread.js";
 import { resolveAffinitySessionId } from "open-sse/utils/sessionManager.js";
@@ -939,6 +939,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       onRequestSuccess: async () => {
         if (credentials.ephemeral) return;
         await clearAccountError(credentials.connectionId, credentials, model);
+        // "Consecutive" strikes: a success clears the breaker for this pair.
+        clearAntigravityStrikes(credentials.connectionId, model);
       },
       // Antigravity empty-stream exhaustion: bench this account so the client's
       // next retry (or outer account loop) can rotate. Switchboard PR#2462.
