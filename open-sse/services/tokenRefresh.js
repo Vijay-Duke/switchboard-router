@@ -275,6 +275,10 @@ export async function refreshWithRetry(refreshFn, maxRetries = 3, log = null) {
 
     try {
       const result = await refreshFn();
+      // Permanent failure (revoked refresh token) is final: return at once
+      // instead of burning further attempts + backoff sleeps on a dead
+      // credential. The marker flows to re-auth handling downstream.
+      if (isUnrecoverableRefreshError(result)) return result;
       if (result) return result;
     } catch (error) {
       log?.warn?.("TOKEN_REFRESH", `Attempt ${attempt + 1}/${maxRetries} failed: ${error.message}`);

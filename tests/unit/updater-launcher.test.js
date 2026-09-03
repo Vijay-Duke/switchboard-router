@@ -10,6 +10,7 @@ import { EventEmitter } from "node:events";
 const childProcessMock = {
   spawn: vi.fn(),
   execSync: vi.fn(),
+  execFileSync: vi.fn(),
 };
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -196,6 +197,7 @@ describe("application updater ownership and relaunch settings", () => {
   let originalEnv;
   let appUpdater;
   let mockedSpawn;
+  let globalCli;
 
   beforeEach(async () => {
     originalEnv = { ...process.env };
@@ -211,6 +213,12 @@ describe("application updater ownership and relaunch settings", () => {
     appUpdater = await import("../../src/lib/appUpdater.js");
     mockedSpawn = childProcessMock.spawn;
     vi.clearAllMocks();
+    // Fake `npm root -g` holding an installed switchboard-router.
+    const globalRoot = path.join(dataDir, "global-root");
+    globalCli = path.join(globalRoot, "switchboard-router", "cli.js");
+    fs.mkdirSync(path.dirname(globalCli), { recursive: true });
+    fs.writeFileSync(globalCli, "");
+    childProcessMock.execFileSync.mockReturnValue(`${globalRoot}\n`);
     mockedSpawn.mockImplementation(() => Object.assign(new EventEmitter(), {
       pid: 321,
       unref: vi.fn(),
@@ -238,13 +246,45 @@ describe("application updater ownership and relaunch settings", () => {
     const relaunchArgs = JSON.parse(options.env.UPDATER_RELAUNCH_ARGS);
 
     expect(options.env.UPDATER_APP_PORT).toBe("24567");
+    expect(options.env.UPDATER_RELAUNCH_CMD).toBe(process.execPath);
     expect(relaunchArgs).toEqual([
-      "switchboard-router",
+      globalCli,
       "--port", "24567",
       "--host", "0.0.0.0",
       "--skip-update",
     ]);
+    const [npmCmd, npmArgs] = childProcessMock.execFileSync.mock.calls[0];
+    expect(npmCmd).toMatch(/^npm(\.cmd)?$/);
+    expect(npmArgs).toEqual(["root", "-g"]);
     expect(options.env.UPDATER_PKG_NAME).toBe("switchboard-router-test");
+    fs.mkdirSync(path.dirname(options.env.UPDATER_READY_FILE), { recursive: true });
+    fs.writeFileSync(options.env.UPDATER_READY_FILE, options.env.UPDATER_READY_TOKEN);
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(startup).resolves.toEqual({ started: true });
+  });
+
+  it("relaunches the global cli.js entry the published package actually ships", () => {
+    // resolveRelaunchCommand hardcodes <npm root -g>/<pkg>/cli.js; keep it
+    // pinned to the bin the CLI package publishes.
+    const cliPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, "cli", "package.json"), "utf8"));
+    expect(cliPkg.name).toBe("switchboard-router");
+    expect(cliPkg.bin.switchboard).toBe("./cli.js");
+  });
+
+  it("falls back to npx with an explicit bin when the global install cannot be resolved", async () => {
+    // npm refuses `npx <pkg>` when the package has multiple bins and none
+    // matches the package name — so the fallback argv must name a real bin.
+    childProcessMock.execFileSync.mockImplementation(() => { throw new Error("ENOENT"); });
+    const startup = appUpdater.spawnUpdaterAndExit("switchboard-router-test");
+
+    const [, , options] = mockedSpawn.mock.calls[0];
+    const relaunchArgs = JSON.parse(options.env.UPDATER_RELAUNCH_ARGS);
+    const cliPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, "cli", "package.json"), "utf8"));
+
+    expect(options.env.UPDATER_RELAUNCH_CMD).toMatch(/npx/);
+    expect(relaunchArgs.slice(0, 3)).toEqual(["--yes", "--package", cliPkg.name]);
+    expect(Object.keys(cliPkg.bin)).toContain(relaunchArgs[3]);
+
     fs.mkdirSync(path.dirname(options.env.UPDATER_READY_FILE), { recursive: true });
     fs.writeFileSync(options.env.UPDATER_READY_FILE, options.env.UPDATER_READY_TOKEN);
     await vi.advanceTimersByTimeAsync(100);

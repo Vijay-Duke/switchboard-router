@@ -776,5 +776,21 @@
   "Binary File": "二进制文件",
   "⚠️ Risk Notice: This provider uses a subscription/OAuth session not officially licensed for proxy/router use. Account may be restricted or banned. Use at your own risk.": "⚠️ 风险提示：此提供商使用的订阅/OAuth 会话未获官方授权用于代理/路由器使用。账户可能被限制或封禁。使用风险自负。",
   "⚠️ MITM intercepts HTTPS traffic of IDE tools (Antigravity, GitHub Copilot, Kiro) via local CA to redirect requests to your providers. May violate ToS → account ban. Use at your own risk.": "⚠️ MITM 通过本地 CA 拦截 IDE 工具（Antigravity、GitHub Copilot、Kiro）的 HTTPS 流量，将请求重定向到您的提供商。可能违反 ToS → 账户封禁风险。使用风险自负。",
-  "Endpoint is exposed without an API key.": "端点未设置 API 密钥即对外暴露。"
+  "Endpoint is exposed without an API key.": "端点未设置 API 密钥即对外暴露。",
+  "Operate": "操作",
+  "Tools": "工具",
+  "Diagnostics": "诊断",
+  "Agent library": "智能体库",
+  "Token saver": "Token 节省器",
+  "Endpoint & keys": "端点与密钥",
+  "CLI tools": "命令行工具",
+  "Media": "媒体",
+  "Skills": "技能",
+  "Quota": "配额",
+  "Console": "控制台",
+  "Connect your first provider to get started": "连接您的首个提供商以开始使用",
+  "Add an API key for any provider to start routing requests through Switchboard.": "为任意提供商添加 API 密钥，即可开始通过 Switchboard 路由请求。",
+  "Connect Provider": "连接提供商",
+  "Skill removed from library": "已从库中移除技能",
+  "MCP removed from library": "已从库中移除 MCP"
 }

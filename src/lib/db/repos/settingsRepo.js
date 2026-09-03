@@ -66,6 +66,19 @@ async function readRaw() {
   return row ? parseJson(row.data, {}) : {};
 }
 
+// P9: getSettings() was re-reading + re-parsing the blob 4-6x per request.
+// 2 s memo; invalidated by updateSettings / exportSettings / importDb.
+const SETTINGS_CACHE_TTL_MS = 2000;
+let memo = { value: null, at: 0 };
+
+export function __resetSettingsCacheForTests() {
+  memo = { value: null, at: 0 };
+}
+
+function invalidateSettingsCache() {
+  memo.at = 0;
+}
+
 // Merge raw settings with defaults; backward-compat for missing keys
 function mergeWithDefaults(raw) {
   const merged = { ...DEFAULT_SETTINGS, ...(raw || {}) };
@@ -89,8 +102,12 @@ function mergeWithDefaults(raw) {
 }
 
 export async function getSettings() {
+  if (memo.value && Date.now() - memo.at < SETTINGS_CACHE_TTL_MS) {
+    return { ...memo.value };
+  }
   const raw = await readRaw();
-  return mergeWithDefaults(raw);
+  memo = { value: mergeWithDefaults(raw), at: Date.now() };
+  return { ...memo.value };
 }
 
 // Atomic read-merge-write inside transaction (prevents losing concurrent updates)
@@ -106,6 +123,7 @@ export async function updateSettings(updates) {
       [stringifyJson(next)]
     );
   });
+  invalidateSettingsCache();
   return mergeWithDefaults(next);
 }
 
@@ -119,5 +137,6 @@ export async function getCloudUrl() {
 }
 
 export async function exportSettings() {
+  invalidateSettingsCache();
   return await readRaw();
 }

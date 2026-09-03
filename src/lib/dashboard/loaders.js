@@ -39,6 +39,13 @@ function sanitizeSettings(settings) {
     oidcLoginLabel,
     authMode,
     requireLogin,
+    // No client consumer reads these from initialData (providers page fetches
+    // /api/settings when editing the allowlist), so keep them out of the RSC
+    // payload. outboundProxyUrl/outboundNoProxy stay: ProfilePageClient
+    // hydrates its proxy form from initialData without a refetch, and the
+    // /dashboard guard now gates the payload exactly like /api/settings.
+    mitmSudoEncrypted,
+    ssrfAllowHosts,
     ...safe
   } = settings || {};
   return {

@@ -204,32 +204,45 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
         let held = null; // this attempt's withheld terminal
         let terminalForwarded = false;
         let endReason = "empty";
+        // Single interval per attempt: reads only refresh lastReadAt, so hot
+        // chunks cost no timer ops. On silence the interval cancels the
+        // reader and the pending read settles as a stall, never a retryable
+        // empty. Cleared in the finally below on every attempt exit.
+        let lastReadAt = Date.now();
+        let stallFired = false;
+        let stallInterval = null;
+        const clearStallInterval = () => {
+          if (stallInterval) { clearInterval(stallInterval); stallInterval = null; }
+        };
+        if (stallTimeoutMs > 0) {
+          stallInterval = setInterval(() => {
+            if (Date.now() - lastReadAt >= stallTimeoutMs) {
+              stallFired = true;
+              try { currentReader.cancel().catch(() => { }); } catch { /* already closed */ }
+            }
+          }, Math.min(stallTimeoutMs, 5000));
+        }
 
+        try {
         readAttempt: while (true) {
           if (signal?.aborted) return abortStream();
 
           let readResult;
-          let stallTimer;
           try {
             // Defensive stall escape: a byte-silent upstream must not hang the pipe.
-            readResult = await Promise.race([
-              currentReader.read(),
-              new Promise((resolve) => { stallTimer = setTimeout(() => resolve({ __stalled: true }), stallTimeoutMs); }),
-            ]);
+            readResult = await currentReader.read();
           } catch {
             // A client abort rejects the pending read — never treat it as an
             // empty attempt or a disconnect turns into a retry/error.
             if (signal?.aborted) return abortStream();
-            endReason = "read_error";
+            endReason = stallFired ? "stall" : "read_error";
             break readAttempt; // truncated attempt
-          } finally {
-            clearTimeout(stallTimer);
           }
-          if (readResult.__stalled) {
-            try { currentReader.cancel().catch(() => { }); } catch { /* already closed */ }
+          if (stallFired) {
             endReason = "stall";
             break readAttempt;
           }
+          lastReadAt = Date.now();
 
           const { done, value } = readResult;
           if (done) break readAttempt;
@@ -266,6 +279,9 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
             if (decision.terminal) terminalForwarded = true;
             await emit(line + "\n");
           }
+        }
+        } finally {
+          clearStallInterval();
         }
 
         // Attempt over. Content or a forwarded terminal ends the stream here —

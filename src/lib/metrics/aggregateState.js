@@ -3,16 +3,43 @@ import { requireMetricNumber } from "./numeric.js";
 const USAGE_INTEGER_FIELDS = ["requests", "promptTokens", "completionTokens", "cachedTokens"];
 const ROUTING_TOTAL_FIELDS = ["requests", "errors", "fallbacks"];
 
+// P7: tables never disappear at runtime — memoize existence per adapter so
+// per-request metric paths stop probing sqlite_master on every call.
+const tableExistsMemo = new WeakMap();
+
 function tableExists(db, name) {
-  return Boolean(db.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, [name]));
+  let perDb = tableExistsMemo.get(db);
+  if (!perDb) {
+    perDb = new Map();
+    tableExistsMemo.set(db, perDb);
+  }
+  if (perDb.has(name)) return perDb.get(name);
+  const exists = Boolean(db.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, [name]));
+  perDb.set(name, exists);
+  return exists;
 }
 
+// P7: the availability probe (sqlite_master + state row) ran on every
+// mutation; cache the verdict for 5 s per adapter.
+const AVAILABILITY_TTL_MS = 5000;
+const availabilityMemo = new WeakMap();
+
 export function markPrometheusMetricsUnavailable(db) {
+  availabilityMemo.delete(db);
   if (!tableExists(db, "prometheusMetricState")) return;
   db.run(`UPDATE prometheusMetricState SET available = 0 WHERE id = 1`);
 }
 
 function metricMutationsAvailable(db) {
+  const now = Date.now();
+  const cached = availabilityMemo.get(db);
+  if (cached && cached.expiresAt > now) return cached.value;
+  const value = checkMetricMutationsAvailable(db);
+  availabilityMemo.set(db, { value, expiresAt: now + AVAILABILITY_TTL_MS });
+  return value;
+}
+
+function checkMetricMutationsAvailable(db) {
   if (!tableExists(db, "prometheusMetricState")) return false;
   const row = db.get(`SELECT available FROM prometheusMetricState WHERE id = 1`);
   try {

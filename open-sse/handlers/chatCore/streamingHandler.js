@@ -5,7 +5,7 @@ import { pipeWithDisconnect } from "../../utils/streamHandler.js";
 import { PROVIDERS } from "../../config/providers.js";
 import { STREAM_STALL_TIMEOUT_MS } from "../../config/runtimeConfig.js";
 import { buildAbortedResponsesTerminalBytes } from "../../utils/responsesStreamHelpers.js";
-import { buildRequestDetail, extractRequestConfig, saveUsageStats } from "./requestDetail.js";
+import { buildRequestDetail, extractRequestConfig, settleUsageStats } from "./requestDetail.js";
 import { saveRequestDetail } from "../../runtimeDeps.js";
 import { SSE_HEADERS_CORS as SSE_HEADERS } from "../../utils/sseConstants.js";
 
@@ -62,7 +62,7 @@ const CODEX_SOURCE_TO_TARGET = {
 /**
  * Determine which SSE transform stream to use based on provider/format.
  */
-function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, clientKeyId }) {
+function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, clientKeyId, terminateOnResponsesTerminal }) {
   const isDroidCLI = userAgent?.toLowerCase().includes("droid") || userAgent?.toLowerCase().includes("codex-cli");
   // Responses-API providers (e.g. codex) emit Responses SSE → translate into client format
   const isResponsesProvider = PROVIDERS[provider]?.format === FORMATS.OPENAI_RESPONSES;
@@ -70,7 +70,7 @@ function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent,
 
   if (needsCodexTranslation) {
     const codexTarget = CODEX_SOURCE_TO_TARGET[sourceFormat] || FORMATS.OPENAI;
-    return createSSETransformStreamWithLogger(FORMATS.OPENAI_RESPONSES, codexTarget, provider, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, clientKeyId);
+    return createSSETransformStreamWithLogger(FORMATS.OPENAI_RESPONSES, codexTarget, provider, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, clientKeyId, terminateOnResponsesTerminal);
   }
 
   if (needsTranslation(targetFormat, sourceFormat)) {
@@ -83,7 +83,7 @@ function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent,
 /**
  * Handle streaming response — pipe provider SSE through transform stream to client.
  */
-export async function handleStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, userAgent, body, stream, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, requestId, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, streamController, onStreamComplete, streamDetailId, pxpipe }) {
+export async function handleStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, userAgent, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, requestId, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, streamController, onStreamComplete, streamDetailId, pxpipe }) {
   // When upstream returns HTML/text instead of SSE (e.g. Cloudflare 5xx error
   // page), piping it through the SSE transform stream causes Next.js
   // "failed to pipe response" and crashes the chat router. Read the body,
@@ -132,7 +132,8 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
       });
   }
 
-  const transformStream = buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, clientKeyId });
+  const terminateOnResponsesTerminal = providerResponse.headers.get("x-switchboard-transport") !== "responses-websocket";
+  const transformStream = buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, clientKeyId, terminateOnResponsesTerminal });
 
   // Responses passthrough: synthesize response.failed + [DONE] if the stream aborts/stalls before a terminal event
   const isResponsesPassthrough = sourceFormat === FORMATS.OPENAI_RESPONSES && targetFormat === FORMATS.OPENAI_RESPONSES;
@@ -144,7 +145,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
     provider, model, connectionId,
     latency: { ttft: 0, total: Date.now() - requestStartTime },
     tokens: { prompt_tokens: 0, completion_tokens: 0 },
-    request: extractRequestConfig(body, stream),
+    request: requestConfig ?? extractRequestConfig(body, stream),
     providerRequest: finalBody || translatedBody || null,
     providerResponse: "[Streaming - raw response not captured]",
     response: { content: "[Streaming in progress...]", thinking: null, type: "streaming" },
@@ -163,7 +164,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
 /**
  * Build onStreamComplete callback for streaming usage tracking.
  */
-export function buildOnStreamComplete({ provider, model, connectionId, clientKeyId, requestStartTime, body, stream, finalBody, translatedBody, requestId, clientRawRequest, pxpipe }) {
+export function buildOnStreamComplete({ provider, model, connectionId, clientKeyId, requestStartTime, body, stream, requestConfig, finalBody, translatedBody, requestId, clientRawRequest, pxpipe }) {
   const streamDetailId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
   const onStreamComplete = async (contentObj, usage, ttftAt) => {
@@ -178,7 +179,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, clientKey
       provider, model, connectionId,
       latency,
       tokens: usage || { prompt_tokens: 0, completion_tokens: 0 },
-      request: extractRequestConfig(body, stream),
+      request: requestConfig ?? extractRequestConfig(body, stream),
       providerRequest: finalBody || translatedBody || null,
       providerResponse: safeContent,
       response: { content: safeContent, thinking: safeThinking, type: "streaming" },
@@ -188,7 +189,8 @@ export function buildOnStreamComplete({ provider, model, connectionId, clientKey
       console.error("[RequestDetail] Failed to update streaming content:", err.message);
     });
 
-    await saveUsageStats({ provider, model, tokens: usage, connectionId, clientKeyId, requestId, endpoint: clientRawRequest?.endpoint, label: "STREAM USAGE" });
+    // Awaited only for client-keyed requests (spend limits); see settleUsageStats.
+    await settleUsageStats({ provider, model, tokens: usage, connectionId, clientKeyId, requestId, endpoint: clientRawRequest?.endpoint, label: "STREAM USAGE" });
   };
 
   return { onStreamComplete, streamDetailId };

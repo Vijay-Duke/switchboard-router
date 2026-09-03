@@ -15,6 +15,7 @@
 import { createHash } from "crypto";
 
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { PROVIDERS } from "../providers/index.js";
 import { buildCosyHeaders } from "../shared/qoder/cosy.js";
 import {
   QODER_MODEL_LIST_URL,
@@ -97,6 +98,9 @@ async function fetchQoderCatalogRaw(credentials, signal, proxyOptions = null) {
         method: "GET",
         headers,
         signal: controller.signal,
+        identity: PROVIDERS.qoder.identity,
+        provider: "qoder",
+        format: PROVIDERS.qoder.format,
       },
       proxyOptions,
     );

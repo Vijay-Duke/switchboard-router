@@ -5,7 +5,7 @@ import {
   getConnectionInFlightCount,
 } from "@/lib/db/index.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
-import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
+import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, REAUTH_REQUIRED_STATUS } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import * as log from "../utils/logger.js";
@@ -111,11 +111,14 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
 
     // Filter out model-locked and excluded connections
-    const availableConnections = candidateConnections.filter(c => {
-      if (excludeSet.has(c.id)) return false;
-      if (isModelLockActive(c, model)) return false;
-      return true;
-    });
+    const eligible = candidateConnections.filter(c => !excludeSet.has(c.id) && !isModelLockActive(c, model));
+    // A connection whose refresh token was revoked is skipped while a healthy
+    // sibling exists. When it is the only one left it is still selected: the
+    // request then fails with an explicit "reconnect" error instead of a
+    // silent "no credentials", and the account never sits benched forever
+    // behind a status the user cannot see.
+    const healthy = eligible.filter(c => c.testStatus !== REAUTH_REQUIRED_STATUS);
+    const availableConnections = healthy.length > 0 ? healthy : eligible;
 
     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${candidateConnections.length}`);
     candidateConnections.forEach(c => {
@@ -320,11 +323,14 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
 
   const reason = typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";
   const lockUpdate = buildModelLockUpdate(model, cooldownMs);
+  // The re-auth marker outlives per-request errors: the 401 that follows a
+  // revoked refresh token must not downgrade it to a transient "unavailable".
+  const reauth = conn?.testStatus === REAUTH_REQUIRED_STATUS;
 
   await updateProviderConnection(connectionId, {
     ...lockUpdate,
-    testStatus: "unavailable",
-    lastError: reason,
+    testStatus: reauth ? REAUTH_REQUIRED_STATUS : "unavailable",
+    lastError: reauth ? (conn.lastError || reason) : reason,
     errorCode: status,
     lastErrorAt: new Date().toISOString(),
     backoffLevel: newBackoffLevel ?? backoffLevel,

@@ -20,6 +20,9 @@ import { atomicWriteFile } from "./fs-utils.js";
  * @property {Record<string,string>} [headers]
  * @property {boolean} [enabled]
  * @property {string} [notes]
+ * @property {number} [startupTimeoutSec]  // codex-only passthrough
+ * @property {number} [toolTimeoutSec]     // codex-only passthrough
+ * @property {Record<string, Record<string, string|number|boolean>>} [tools] // codex per-tool config, e.g. { evaluate: { approval_mode: "approve", output_token_limit: 4000 } }
  */
 
 /**
@@ -63,6 +66,14 @@ async function saveMcpServers(libraryRoot, servers) {
 }
 
 /**
+ * @param {unknown} v
+ */
+function isPlainRecord(v) {
+  if (v == null || typeof v !== "object" || Array.isArray(v)) return {};
+  return /** @type {Record<string, unknown>} */ (v);
+}
+
+/**
  * @param {string} libraryRoot
  * @param {Partial<McpServerDef> & { id: string }} def
  */
@@ -100,6 +111,28 @@ export async function upsertMcpServer(libraryRoot, def) {
         : undefined,
     enabled: def.enabled !== false,
     notes: def.notes || undefined,
+    startupTimeoutSec:
+      typeof def.startupTimeoutSec === "number" ? def.startupTimeoutSec : undefined,
+    toolTimeoutSec:
+      typeof def.toolTimeoutSec === "number" ? def.toolTimeoutSec : undefined,
+    tools:
+      def.tools && typeof def.tools === "object"
+        ? Object.fromEntries(
+            Object.entries(def.tools).map(([k, v]) => [
+              k,
+              // Keep native TOML scalar types (string/number/boolean); drop
+              // anything else so the Codex writer never stringifies a number.
+              Object.fromEntries(
+                Object.entries(isPlainRecord(v)).filter(
+                  ([, v2]) =>
+                    typeof v2 === "string" ||
+                    typeof v2 === "number" ||
+                    typeof v2 === "boolean"
+                )
+              ),
+            ])
+          )
+        : undefined,
   };
 
   const servers = await listMcpServers(libraryRoot);

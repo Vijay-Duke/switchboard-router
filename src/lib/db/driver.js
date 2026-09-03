@@ -99,13 +99,25 @@ async function initAdapter() {
   }
 
   const { runMigrationOnce } = await import("./migrate.js");
-  await runMigrationOnce(adapter);
+  try {
+    await runMigrationOnce(adapter);
+  } catch (err) {
+    try { await adapter.close?.(); } catch {}
+    throw err;
+  }
   return adapter;
 }
 
 export async function getAdapter() {
   if (state.instance) return state.instance;
-  if (!state.initPromise) state.initPromise = initAdapter().then((a) => { state.instance = a; return a; });
+  if (!state.initPromise) {
+    state.initPromise = initAdapter().then(
+      (a) => { state.instance = a; return a; },
+      // S7: a transient init failure (SQLITE_BUSY on restart, EBUSY/EPERM,
+      // fs hiccup) must not wedge the process — clear so the next caller retries.
+      (err) => { state.initPromise = null; throw err; }
+    );
+  }
   return state.initPromise;
 }
 

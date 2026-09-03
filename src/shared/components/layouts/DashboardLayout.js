@@ -55,7 +55,12 @@ export default function DashboardLayout({ children, endpointHost }) {
       className="flex h-screen w-full overflow-hidden"
       style={{ background: "#16130E" }}
     >
-      <div className="fixed top-4 right-4 z-[80] flex w-[min(92vw,380px)] flex-col gap-2">
+      <div
+        className="fixed top-4 right-4 z-[80] flex w-[min(92vw,380px)] flex-col gap-2"
+        role="status"
+        aria-live="polite"
+        aria-relevant="additions"
+      >
         {notifications.map((n) => {
           const style = getToastStyle(n.type);
           return (
@@ -63,6 +68,7 @@ export default function DashboardLayout({ children, endpointHost }) {
               key={n.id}
               className={`rounded-lg border px-3 py-2 shadow-lg backdrop-blur-sm ${style.wrapper}`}
               style={{ background: "#1E1A13" }}
+              {...(n.type === "error" ? { role: "alert" } : {})}
             >
               <div className="flex items-start gap-2">
                 <span className="material-symbols-outlined text-[18px] leading-5">{style.icon}</span>

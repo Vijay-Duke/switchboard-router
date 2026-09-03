@@ -138,3 +138,25 @@ describe.skipIf(process.platform === "win32")("server and CLI resolvers agree", 
     expect(cliGetDataDir()).toBe(serverGetDataDir());
   });
 });
+
+describe.skipIf(process.platform === "win32")("updater state follows the shared data dir", () => {
+  // appUpdater's owned-processes.json lookup and ready-token files must land
+  // in the same directory as the DB — including the adopted legacy dir.
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "sb-updater-datadir-"));
+    process.env.HOME = home;
+    delete process.env.DATA_DIR;
+  });
+
+  afterEach(() => {
+    process.env.HOME = originalHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("a legacy-state home makes appUpdater resolve inside the legacy dir", async () => {
+    populate(path.join(home, ".9router"));
+    vi.resetModules();
+    const { getDataDir: appUpdaterGetDataDir } = await import("../../src/lib/appUpdater.js");
+    expect(appUpdaterGetDataDir()).toBe(path.join(home, ".9router"));
+  });
+});

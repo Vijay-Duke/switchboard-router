@@ -1,12 +1,23 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { APP_CONFIG, UPDATER_CONFIG } from "@/shared/constants/config";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { useGatewayHealth } from "@/shared/hooks/useGatewayHealth";
+import { cn } from "@/shared/utils/cn";
 import { ConfirmModal } from "./Modal";
+
+/**
+ * Pending indicator for a nav Link. Must render inside the Link so
+ * useLinkStatus() can observe the navigation transition (Next 16).
+ */
+function NavPending() {
+  const { pending } = useLinkStatus();
+  return <span aria-hidden="true" className={cn("console-nav-dot", pending && "animate-pulse")} />;
+}
 
 /**
  * Nav structure matches Switchboard Console standalone mock:
@@ -18,6 +29,7 @@ const NAV_SECTIONS = [
     label: "Operate",
     items: [
       { href: "/dashboard", label: "Overview", match: (p) => p === "/dashboard" },
+      { href: "/dashboard/basic-chat", label: "Chat", match: (p) => p.startsWith("/dashboard/basic-chat") },
       { href: "/dashboard/combos", label: "Combos", match: (p) => p.startsWith("/dashboard/combos") },
       { href: "/dashboard/usage", label: "Usage", match: (p) => p.startsWith("/dashboard/usage") },
       { href: "/dashboard/quota", label: "Quota", match: (p) => p.startsWith("/dashboard/quota") },
@@ -68,6 +80,9 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [shutdownCountdown, setShutdownCountdown] = useState(0);
+  const shutdownTimerRef = useRef(null);
+  const { online: gatewayOnline } = useGatewayHealth();
+  const isOffline = isDisconnected || !gatewayOnline;
   // Server passes the real runtime port (see dashboard layout); window.location
   // wins after mount so a proxied/LAN host still displays correctly.
   const [endpointHost, setEndpointHost] = useState(initialEndpointHost || `127.0.0.1:${UPDATER_CONFIG.appPort}`);
@@ -107,6 +122,7 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
   };
 
   const handleCopyAndShutdown = async () => {
+    if (shutdownTimerRef.current) return;
     try {
       await navigator.clipboard.writeText(INSTALL_CMD);
     } catch {
@@ -115,11 +131,12 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
     copy(INSTALL_CMD);
     let remaining = UPDATER_CONFIG.shutdownCountdownSec;
     setShutdownCountdown(remaining);
-    const timer = setInterval(() => {
+    shutdownTimerRef.current = setInterval(() => {
       remaining -= 1;
       setShutdownCountdown(remaining);
       if (remaining <= 0) {
-        clearInterval(timer);
+        clearInterval(shutdownTimerRef.current);
+        shutdownTimerRef.current = null;
         fetch("/api/version/shutdown", { method: "POST" }).catch(() => {});
         setIsDisconnected(true);
       }
@@ -127,9 +144,20 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
   };
 
   const handleCancelUpdate = () => {
+    if (shutdownTimerRef.current) {
+      clearInterval(shutdownTimerRef.current);
+      shutdownTimerRef.current = null;
+    }
     setIsUpdating(false);
     setShutdownCountdown(0);
   };
+
+  useEffect(
+    () => () => {
+      if (shutdownTimerRef.current) clearInterval(shutdownTimerRef.current);
+    },
+    []
+  );
 
   return (
     <>
@@ -173,7 +201,7 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
               <span
                 style={{
                   fontSize: 10.5,
-                  color: "#6F6653",
+                  color: "var(--color-text-subtle)",
                   fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
                 }}
               >
@@ -185,7 +213,7 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
             <button
               type="button"
               onClick={onClose}
-              className="lg:hidden ml-auto text-[#6F6653] hover:text-[#ECE4D2]"
+              className="lg:hidden ml-auto text-text-subtle hover:text-[#ECE4D2]"
               aria-label="Close menu"
             >
               <span className="material-symbols-outlined text-[20px]">close</span>
@@ -225,8 +253,9 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
                     onClick={onClose}
                     className="console-nav-item"
                     data-active={active ? "true" : "false"}
+                    aria-current={active ? "page" : undefined}
                   >
-                    <span className="console-nav-dot" />
+                    <NavPending />
                     {item.label}
                   </Link>
                 );
@@ -247,7 +276,7 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
               style={{
                 fontSize: 10,
                 letterSpacing: "1.4px",
-                color: "#6F6653",
+                color: "var(--color-text-subtle)",
                 textTransform: "uppercase",
                 fontWeight: 600,
                 marginBottom: 6,
@@ -258,7 +287,7 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
             <div
               style={{
                 fontSize: 11,
-                color: "#7A7059",
+                color: "var(--color-text-subtle)",
                 fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
                 lineHeight: 1.7,
               }}
@@ -270,13 +299,9 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
               <Link href="/dashboard/translator" onClick={onClose} className="hover:text-[#E5B454]">
                 translator
               </Link>
-              <br />
+              {" · "}
               <Link href="/dashboard/mitm" onClick={onClose} className="hover:text-[#E5B454]">
                 mitm
-              </Link>
-              {" · "}
-              <Link href="/dashboard/cli-tools" onClick={onClose} className="hover:text-[#E5B454]">
-                cli tools
               </Link>
             </div>
           </div>
@@ -298,7 +323,7 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
                 style={{
                   fontSize: 9.5,
                   letterSpacing: "1px",
-                  color: "#6F6653",
+                  color: "var(--color-text-subtle)",
                   textTransform: "uppercase",
                 }}
               >
@@ -315,7 +340,14 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
                 {endpointHost}
               </span>
             </div>
-            <span className="console-online-dot" title="online" />
+            <span
+              className={isOffline ? "console-offline-dot" : "console-online-dot"}
+              title={isOffline ? "offline" : "online"}
+              role="status"
+              aria-label={isOffline ? "Gateway offline" : "Gateway online"}
+            >
+              <span className="sr-only">{isOffline ? "offline" : "online"}</span>
+            </span>
           </div>
         </div>
       </aside>
@@ -340,7 +372,8 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
               <button
                 type="button"
                 onClick={handleCopyAndShutdown}
-                className="px-3 py-1.5 rounded-lg bg-primary text-[#1B1710] text-xs font-semibold"
+                disabled={shutdownCountdown > 0}
+                className="px-3 py-1.5 rounded-lg bg-primary text-[#1B1710] text-xs font-semibold disabled:opacity-60"
               >
                 {copied ? "Copied" : "Copy & shutdown"}
                 {shutdownCountdown > 0 ? ` (${shutdownCountdown})` : ""}

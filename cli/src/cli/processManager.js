@@ -3,7 +3,8 @@ const path = require("path");
 const { execFileSync, execSync } = require("child_process");
 
 function normalizePath(value) {
-  try { return path.resolve(value); } catch { return ""; }
+  try { return fs.realpathSync(path.resolve(value)); }
+  catch { try { return path.resolve(value); } catch { return ""; } }
 }
 
 function tokenizeCommand(command) {
@@ -176,6 +177,16 @@ async function terminatePid(pid, { timeoutMs = 2000, processGroup = false } = {}
   return !targetIsAlive();
 }
 
+// After a detached child has exited, its process group may still hold
+// grandchildren. Sweep the group only while the leader PID itself is gone: a
+// live PID means the OS reused it, and that process's group is not ours.
+async function terminateOrphanedGroup(pid, { timeoutMs = 2000 } = {}) {
+  const numericPid = Number(pid);
+  if (process.platform === "win32" || !Number.isInteger(numericPid) || numericPid <= 1) return true;
+  if (isPidAlive(numericPid) || !isPidAlive(-numericPid)) return true;
+  return terminatePid(numericPid, { timeoutMs, processGroup: true });
+}
+
 function observeChildExit(child, onTerminal) {
   let handled = false;
   const finish = (code, signal, error) => {
@@ -187,14 +198,49 @@ function observeChildExit(child, onTerminal) {
   child.once("exit", (code, signal) => finish(code, signal, null));
 }
 
+function nextRestartDelay(attempt) {
+  const exponent = Math.min(Math.max(Number(attempt) || 0, 0), 5);
+  return Math.min(1000 * (2 ** exponent), 30000);
+}
+
+// Give up on deterministic boot failures: a child that never served a healthy
+// probe after maxBootFailures consecutive crashes will never recover by
+// retrying. Once a child has been healthy, restarts stay unbounded.
+function shouldAbandonRestarts({ consecutiveCrashes, everHealthy, maxBootFailures = 5 } = {}) {
+  return !everHealthy && Number(consecutiveCrashes) >= Number(maxBootFailures);
+}
+
+// True only for a child that the OS may still deliver signals to. A crashed
+// child keeps its pid property after exit, so signalling it risks hitting an
+// unrelated process if the OS has reused the PID.
+function childIsLive(child) {
+  return !!child?.pid && child.exitCode === null && child.signalCode === null;
+}
+
+// Echo the crash log on the first attempt of a backoff cycle and whenever it
+// changes; after 10 consecutive crashes the launcher keeps restarting at the
+// 30 s cap but stays quiet (the log is still available via --log).
+function shouldPrintCrashLog(attempt, log, lastPrinted) {
+  if (Number(attempt) > 10) return false;
+  const text = Array.isArray(log) ? log.join("\n") : String(log ?? "");
+  if (!text) return false;
+  if (Number(attempt) <= 1) return true;
+  return text !== String(lastPrinted ?? "");
+}
+
 module.exports = {
   acquireLifecycleLock,
+  childIsLive,
   findListeningPids,
   getProcessCommand,
   getProcessCwd,
   isPidAlive,
   observeChildExit,
+  nextRestartDelay,
+  shouldAbandonRestarts,
+  shouldPrintCrashLog,
   matchesRecordedProcess,
   processMatchesRecordedPath,
+  terminateOrphanedGroup,
   terminatePid,
 };

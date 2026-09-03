@@ -6,6 +6,9 @@ import {
   ensureLibraryDirs,
   getSkillsDir,
   librarySkillDirName,
+  getAgentSkillsRoot,
+  AGENT_TARGETS,
+  SB_NAMESPACE,
 } from "./paths.js";
 import { getSkillsRoot, readSkillMarkdown } from "@/lib/skills/paths.js";
 import { SKILLS as PRODUCT_SKILLS } from "@/shared/constants/skills.js";
@@ -26,17 +29,7 @@ export async function listLibrarySkills(libraryRoot) {
   for (const name of names) {
     const skillMd = path.join(dir, name, "SKILL.md");
     if (!existsSync(skillMd)) continue;
-    let description = "";
-    let title = name;
-    try {
-      const raw = await fs.readFile(skillMd, "utf-8");
-      const mName = raw.match(/^name:\s*(.+)$/m);
-      const mDesc = raw.match(/^description:\s*(.+)$/m);
-      if (mName) title = mName[1].trim().replace(/^["']|["']$/g, "");
-      if (mDesc) description = mDesc[1].trim().replace(/^["']|["']$/g, "");
-    } catch {
-      /* ignore */
-    }
+    const { title, description } = await readSkillMeta(skillMd, name);
     const st = await fs.stat(skillMd);
     out.push({
       id: name,
@@ -48,6 +41,67 @@ export async function listLibrarySkills(libraryRoot) {
     });
   }
   return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/**
+ * Parse `name:` / `description:` frontmatter lines from a SKILL.md.
+ * Falls back to the skill folder name on missing/unreadable frontmatter.
+ * @param {string} skillMdPath
+ * @param {string} [fallbackTitle]
+ */
+async function readSkillMeta(skillMdPath, fallbackTitle) {
+  let title = fallbackTitle || path.basename(path.dirname(skillMdPath));
+  let description = "";
+  try {
+    const raw = await fs.readFile(skillMdPath, "utf-8");
+    const mName = raw.match(/^name:\s*(.+)$/m);
+    const mDesc = raw.match(/^description:\s*(.+)$/m);
+    if (mName) title = mName[1].trim().replace(/^["']|["']$/g, "");
+    if (mDesc) description = mDesc[1].trim().replace(/^["']|["']$/g, "");
+  } catch {
+    /* unreadable — keep fallback */
+  }
+  return { title, description };
+}
+
+/**
+ * Read-only inventory of skill dirs already present in agent target roots
+ * (installed by other tooling). Never writes. Deduped by folder name;
+ * `agents` lists every agent root it was found in.
+ * @param {import("./settings.js").AgentLibrarySettings} [settings]
+ */
+export async function listDetectedAgentSkills(settings) {
+  const opts = { scope: settings?.scope, projectPath: settings?.projectPath };
+  const byId = new Map();
+  for (const agent of Object.values(AGENT_TARGETS)) {
+    if (!agent.supportsSkills) continue;
+    const root = getAgentSkillsRoot(agent.id, opts);
+    if (!root) continue;
+    let names = [];
+    try {
+      names = await fs.readdir(root);
+    } catch {
+      continue; // agent not installed / no skills dir
+    }
+    for (const name of names) {
+      const skillMd = path.join(root, name, "SKILL.md");
+      if (!existsSync(skillMd)) continue;
+      const prev = byId.get(name);
+      if (prev) {
+        prev.agents.push(agent.id);
+        continue;
+      }
+      const { title, description } = await readSkillMeta(skillMd, name);
+      byId.set(name, {
+        id: name,
+        title,
+        description,
+        managedBySwitchboard: name.startsWith(`${SB_NAMESPACE}-`),
+        agents: [agent.id],
+      });
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /**

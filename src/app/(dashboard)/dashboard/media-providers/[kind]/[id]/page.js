@@ -15,6 +15,7 @@ import { TtsExampleCard } from "./components/TtsExampleCard";
 import { GenericExampleCard } from "./components/GenericExampleCard";
 import { SttExampleCard } from "./components/SttExampleCard";
 import { reportClientError } from "@/shared/utils/clientFeedback";
+import { fetchJson } from "@/shared/query/fetchJson";
 import { requestConfirmation } from "@/store/confirmationStore";
 
 // MediaProviderDetailPage
@@ -27,8 +28,8 @@ export default function MediaProviderDetailPage() {
   const handleDeleteCustom = async () => {
     if (!await requestConfirmation({ message: "Delete this Custom Embedding node?", confirmText: "Continue" })) return;
     try {
-      const res = await fetch(`/api/provider-nodes/${id}`, { method: "DELETE" });
-      if (res.ok) router.push(`/dashboard/media-providers/${kind}`);
+      await fetchJson(`/api/provider-nodes/${id}`, { method: "DELETE" });
+      router.push(`/dashboard/media-providers/${kind}`);
     } catch (error) {
       reportClientError("Error deleting custom embedding node:", error);
     }

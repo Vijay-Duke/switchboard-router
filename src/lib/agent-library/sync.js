@@ -166,6 +166,24 @@ async function applySyncBody(settingsOverride, opts = {}) {
         skillResults.push({ agent: agentId, action: "skipped_disabled" });
         continue;
       }
+      if (agentId === "opencode") {
+        // OpenCode also discovers .claude/skills and .agents/skills, so
+        // projecting the same skill to its own root would list sb-<id>
+        // two or three times. Covered by claude/codex — skip, don't dupe.
+        const covering = ["claude", "codex"].filter(
+          (id) =>
+            settings.targets[id]?.skills !== false &&
+            getAgentSkillsRoot(id, scopeOpts)
+        );
+        if (covering.length) {
+          skillResults.push({
+            agent: "opencode",
+            action: "skipped_covered_by",
+            by: covering,
+          });
+          continue;
+        }
+      }
       const root = getAgentSkillsRoot(agentId, scopeOpts);
       if (!root) continue;
 

@@ -5,7 +5,8 @@ import { FORMATS } from "../translator/formats.js";
 import { normalizeClaudePassthrough, anchorClaudeCache } from "../translator/formats/claude.js";
 import { COLORS } from "../utils/stream.js";
 import { createStreamController } from "../utils/streamHandler.js";
-import { refreshWithRetry } from "../services/tokenRefresh.js";
+import { isUnrecoverableRefreshError, refreshWithRetry } from "../services/tokenRefresh.js";
+import { REAUTH_REQUIRED_STATUS } from "../services/accountFallback.js";
 import { withCredentialRefreshLock } from "../services/oauthCredentialManager.js";
 import { createRequestLogger } from "../utils/requestLogger.js";
 import { getModelSupportedFormats, getModelTargetFormat, getModelStrip, getModelUpstreamId, getModelType, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
@@ -377,6 +378,13 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     log?.debug?.("PROXY", `${provider.toUpperCase()} | ${model} | conn=${connectionName} | no_proxy=${proxyOptions.connectionNoProxy}`);
   }
 
+  // Snapshot the client request once, after every in-place body edit above
+  // (modality strip, image prefetch, orphan-tool strip reassigns
+  // body.messages) and before dispatch. Every completion/error path shares
+  // this one object so the start- and end-of-stream detail saves hit the
+  // identity memo in requestDetailsRepo instead of re-serializing.
+  const requestConfig = extractRequestConfig(body, stream);
+
   // Execute request
   let providerResponse, providerUrl, providerHeaders, finalBody;
   try {
@@ -388,11 +396,12 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
   } catch (error) {
     trackPendingRequest(model, provider, connectionId, false, true);
+    reqLogger?.close?.();
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId,
       latency: { ttft: 0, total: Date.now() - requestStartTime },
       tokens: { prompt_tokens: 0, completion_tokens: 0 },
-      request: extractRequestConfig(body, stream),
+      request: requestConfig,
       providerRequest: translatedBody || null,
       response: { error: error.message || String(error), status: error.name === "AbortError" ? 499 : 502, thinking: null },
       status: "error",
@@ -410,6 +419,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
 
   // Handle 401/403 - try token refresh (skip for noAuth providers)
+  let reauthMessage = null;
   if (!executor.noAuth && (providerResponse.status === HTTP_STATUS.UNAUTHORIZED || providerResponse.status === HTTP_STATUS.FORBIDDEN)) {
     try {
       // H7: serialize reactive 401 refresh with the same lock as proactive path
@@ -436,6 +446,26 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
           providerResponse = retryResult.response;
           providerUrl = retryResult.url;
         } catch { log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`); }
+      } else if (isUnrecoverableRefreshError(newCredentials)) {
+        // Permanent refresh failure (revoked/expired refresh token): persist
+        // re-auth state so account selection skips this connection and the
+        // dashboard tells the user to reconnect instead of retrying forever.
+        const code = newCredentials.code || "invalid_grant";
+        reauthMessage = `OAuth refresh token expired or revoked (${code}): reconnect the ${provider} account in the Switchboard dashboard`;
+        log?.warn?.("TOKEN", `${provider.toUpperCase()} | refresh token revoked, re-auth required (${code})`);
+        if (onCredentialsRefreshed) {
+          try {
+            // `reauthRequired` is the authoritative flag: app hooks spread
+            // `testStatus: "active"` over every refresh payload, so the
+            // persistence layer keys off the flag, not testStatus.
+            await onCredentialsRefreshed({
+              reauthRequired: true,
+              testStatus: REAUTH_REQUIRED_STATUS,
+              lastError: reauthMessage,
+              lastErrorAt: new Date().toISOString(),
+            });
+          } catch (e) { log?.warn?.("TOKEN", `onCredentialsRefreshed failed: ${e.message}`); }
+        }
       } else {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | refresh failed`);
       }
@@ -447,12 +477,15 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Provider returned error
   if (!providerResponse.ok) {
     trackPendingRequest(model, provider, connectionId, false, true);
-    const { statusCode, message, resetsAtMs } = await parseUpstreamError(providerResponse, executor);
+    reqLogger?.close?.();
+    const { statusCode, message: upstreamMessage, resetsAtMs } = await parseUpstreamError(providerResponse, executor);
+    // A dead refresh token is actionable by the user; the raw upstream 401 is not.
+    const message = reauthMessage || upstreamMessage;
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId,
       latency: { ttft: 0, total: Date.now() - requestStartTime },
       tokens: { prompt_tokens: 0, completion_tokens: 0 },
-      request: extractRequestConfig(body, stream),
+      request: requestConfig,
       providerRequest: finalBody || translatedBody || null,
       response: { error: message, status: statusCode, thinking: null },
       status: "error",
@@ -501,7 +534,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // One identity per completed request. Handlers pass it to saveUsageStats so a
   // replayed save is idempotent instead of double-counting usage.
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, clientRawRequest, onRequestSuccess, requestId, pxpipe: pxpipeSummary || undefined };
+  const sharedCtx = { provider, model, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, clientRawRequest, onRequestSuccess, requestId, pxpipe: pxpipeSummary || undefined };
   const appendLog = (extra) => {
     if (!vaultInternal) appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });
   };

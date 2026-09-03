@@ -110,7 +110,6 @@ function handleClick(index, options, onAutostartToggle) {
       if (changed) onAutostartToggle(!enabled);
     } catch (e) {}
   } else if (index === MENU_INDEX.QUIT) {
-    console.log("\n👋 Shutting down...");
     void handleQuit(onQuit);
   }
 }
@@ -121,6 +120,10 @@ async function handleQuit(onQuit, killTrayImpl = killTray, exitImpl = process.ex
   } catch (error) {
     process.stderr.write(`[switchboard] tray cleanup error: ${error?.message || error}\n`);
   }
+  // Logged only after the tray helper is stopped: after "Hide to Tray" plus a
+  // closed terminal, a console write can wedge the process, so no output may
+  // happen before killTrayImpl settles.
+  console.log("\n👋 Shutting down...");
   if (onQuit) await onQuit();
   else exitImpl(0);
 }

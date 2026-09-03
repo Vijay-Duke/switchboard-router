@@ -8,6 +8,7 @@ import { Card, Button, Input, Toggle, ModelSelectModal } from "@/shared/componen
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS, MEDIA_PROVIDER_KINDS } from "@/shared/constants/providers";
 import { reportClientError } from "@/shared/utils/clientFeedback";
+import { fetchJson } from "@/shared/query/fetchJson";
 import { requestConfirmation } from "@/store/confirmationStore";
 import Image from "next/image";
 
@@ -163,8 +164,12 @@ export default function ComboDetailPage() {
 
   const handleDelete = async () => {
     if (!await requestConfirmation({ message: `Delete combo "${combo.name?.trim() || id}"?`, confirmText: "Continue" })) return;
-    const res = await fetch(`/api/combos/${id}`, { method: "DELETE" });
-    if (res.ok) router.push(getListingHref(combo.kind));
+    try {
+      await fetchJson(`/api/combos/${id}`, { method: "DELETE" });
+      router.push(getListingHref(combo.kind));
+    } catch (error) {
+      reportClientError("Error deleting combo:", error);
+    }
   };
 
   const handleTest = async () => {

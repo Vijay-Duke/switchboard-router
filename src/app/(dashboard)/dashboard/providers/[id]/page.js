@@ -31,6 +31,7 @@ import VerifyModelsPanel from "./VerifyModelsPanel";
 import { getProviderModelToolbarActions } from "./providerModelActions";
 import { canonicalModelId } from "@/lib/model-probe/canonicalId.js";
 import { reportClientError } from "@/shared/utils/clientFeedback";
+import { fetchJson } from "@/shared/query/fetchJson";
 import { patchProviderStrategy } from "@/shared/utils/providerStrategySettings";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
@@ -218,12 +219,12 @@ export default function ProviderDetailPage() {
 
   const handleDisableModel = async (modelId) => {
     try {
-      const res = await fetch("/api/models/disabled", {
+      await fetchJson("/api/models/disabled", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ providerAlias: providerStorageAlias, ids: [modelId] }),
       });
-      if (res.ok) await fetchDisabledModels();
+      await fetchDisabledModels();
     } catch (error) {
       reportClientError("Error disabling model:", error);
     }
@@ -231,8 +232,7 @@ export default function ProviderDetailPage() {
 
   const handleEnableModel = async (modelId) => {
     try {
-      const res = await fetch(`/api/models/disabled?providerAlias=${encodeURIComponent(providerStorageAlias)}&id=${encodeURIComponent(modelId)}`, { method: "DELETE" });
-      if (!res.ok) return false;
+      await fetchJson(`/api/models/disabled?providerAlias=${encodeURIComponent(providerStorageAlias)}&id=${encodeURIComponent(modelId)}`, { method: "DELETE" });
       await fetchDisabledModels();
       return true;
     } catch (error) {
@@ -249,12 +249,12 @@ export default function ProviderDetailPage() {
       onConfirm: async () => {
         setConfirmState(null);
         try {
-          const res = await fetch("/api/models/disabled", {
+          await fetchJson("/api/models/disabled", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ providerAlias: providerStorageAlias, ids }),
           });
-          if (res.ok) await fetchDisabledModels();
+          await fetchDisabledModels();
         } catch (error) {
           reportClientError("Error disabling all models:", error);
         }
@@ -264,8 +264,8 @@ export default function ProviderDetailPage() {
 
   const handleEnableAll = async () => {
     try {
-      const res = await fetch(`/api/models/disabled?providerAlias=${encodeURIComponent(providerStorageAlias)}`, { method: "DELETE" });
-      if (res.ok) await fetchDisabledModels();
+      await fetchJson(`/api/models/disabled?providerAlias=${encodeURIComponent(providerStorageAlias)}`, { method: "DELETE" });
+      await fetchDisabledModels();
     } catch (error) {
       reportClientError("Error enabling all models:", error);
     }
@@ -641,12 +641,10 @@ export default function ProviderDetailPage() {
 
   const handleDeleteAlias = async (alias) => {
     try {
-      const res = await fetch(`/api/models/alias?alias=${encodeURIComponent(alias)}`, {
+      await fetchJson(`/api/models/alias?alias=${encodeURIComponent(alias)}`, {
         method: "DELETE",
       });
-      if (res.ok) {
-        await fetchAliases();
-      }
+      await fetchAliases();
     } catch (error) {
       reportClientError("Error deleting alias:", error);
     }
@@ -674,11 +672,9 @@ export default function ProviderDetailPage() {
   const handleDeleteCustomModel = async (modelId, type = "llm", providerAliasOverride = providerStorageAlias) => {
     try {
       const params = new URLSearchParams({ providerAlias: providerAliasOverride, id: modelId, type });
-      const res = await fetch(`/api/models/custom?${params}`, { method: "DELETE" });
-      if (res.ok) {
-        await fetchCustomModels();
-        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("customModelChanged"));
-      }
+      await fetchJson(`/api/models/custom?${params}`, { method: "DELETE" });
+      await fetchCustomModels();
+      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("customModelChanged"));
     } catch (error) {
       reportClientError("Error deleting custom model:", error);
     }
@@ -942,10 +938,8 @@ export default function ProviderDetailPage() {
       onConfirm: async () => {
         setConfirmState(null);
         try {
-          const res = await fetch(`/api/providers/${id}`, { method: "DELETE" });
-          if (res.ok) {
-            setConnections(prev => prev.filter(c => c.id !== id));
-          }
+          await fetchJson(`/api/providers/${id}`, { method: "DELETE" });
+          setConnections(prev => prev.filter(c => c.id !== id));
         } catch (error) {
           reportClientError("Error deleting connection:", error);
         }
@@ -1020,15 +1014,13 @@ export default function ProviderDetailPage() {
 
   const handleUpdateConnection = async (formData) => {
     try {
-      const res = await fetch(`/api/providers/${selectedConnection.id}`, {
+      await fetchJson(`/api/providers/${selectedConnection.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData),
       });
-      if (res.ok) {
-        await fetchConnections();
-        setShowEditModal(false);
-      }
+      await fetchConnections();
+      setShowEditModal(false);
     } catch (error) {
       reportClientError("Error updating connection:", error);
     }
@@ -1036,14 +1028,12 @@ export default function ProviderDetailPage() {
 
   const handleUpdateConnectionStatus = async (id, isActive) => {
     try {
-      const res = await fetch(`/api/providers/${id}`, {
+      await fetchJson(`/api/providers/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive }),
       });
-      if (res.ok) {
-        setConnections(prev => prev.map(c => c.id === id ? { ...c, isActive } : c));
-      }
+      setConnections(prev => prev.map(c => c.id === id ? { ...c, isActive } : c));
     } catch (error) {
       reportClientError("Error updating connection status:", error);
     }
@@ -1547,10 +1537,8 @@ export default function ProviderDetailPage() {
                     onConfirm: async () => {
                       setConfirmState(null);
                       try {
-                        const res = await fetch(`/api/provider-nodes/${providerId}`, { method: "DELETE" });
-                        if (res.ok) {
-                          router.push("/dashboard/providers");
-                        }
+                        await fetchJson(`/api/provider-nodes/${providerId}`, { method: "DELETE" });
+                        router.push("/dashboard/providers");
                       } catch (error) {
                         reportClientError("Error deleting provider node:", error);
                       }

@@ -35,6 +35,32 @@ describe("tray actions", () => {
     expect(onAutostartToggle).not.toHaveBeenCalled();
   });
 
+  it("detaches terminal output exactly once", () => {
+    const { detachTerminalOutput } = require("../../cli/src/cli/utils/display.js");
+    const stdoutBefore = process.stdout.listenerCount("error");
+    const stderrBefore = process.stderr.listenerCount("error");
+
+    detachTerminalOutput();
+    detachTerminalOutput();
+
+    expect(process.stdout.listenerCount("error")).toBe(stdoutBefore + 1);
+    expect(process.stderr.listenerCount("error")).toBe(stderrBefore + 1);
+  });
+
+  it("logs shutdown only after the tray process is stopped", async () => {
+    const order = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => { order.push("log"); });
+    try {
+      await tray.handleQuit(
+        () => { order.push("app-cleanup"); },
+        async () => { order.push("killTray"); },
+      );
+      expect(order).toEqual(["killTray", "log", "app-cleanup"]);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it("waits for the tray process to exit before invoking application cleanup", async () => {
     const order = [];
     let finishTray;

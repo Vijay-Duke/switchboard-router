@@ -261,8 +261,9 @@ export function extractUsage(chunk) {
     });
   }
 
-  // OpenAI Responses API format (response.completed or response.done)
-  if ((chunk.type === "response.completed" || chunk.type === "response.done") && chunk.response?.usage && typeof chunk.response.usage === "object") {
+  // OpenAI Responses API terminal events (response.completed / response.done /
+  // response.incomplete — a truncated turn still reports final usage)
+  if ((chunk.type === "response.completed" || chunk.type === "response.done" || chunk.type === "response.incomplete") && chunk.response?.usage && typeof chunk.response.usage === "object") {
     const usage = chunk.response.usage;
     const cachedTokens = usage.input_tokens_details?.cached_tokens;
     return normalizeUsage({
@@ -334,6 +335,28 @@ export function mergeUsage(prev, next) {
 }
 
 /**
+ * Memo of request-body char counts by object identity, so a stream-end
+ * estimate reuses the length from an earlier stringify of the same body
+ * instead of serializing a large agent context again. Bodies are not
+ * mutated after dispatch, so identity memo is safe.
+ */
+const bodyLenMemo = new WeakMap();
+
+/**
+ * Record a known serialized length for a body object (e.g. measured by
+ * requestDetailsRepo's truncation pass) so estimateInputTokens can reuse it.
+ */
+export function noteBodyLength(body, len) {
+  if (body && (typeof body === "object" || typeof body === "function") && Number.isFinite(len) && len >= 0) {
+    try {
+      bodyLenMemo.set(body, len);
+    } catch {
+      /* ignore non-keyable values */
+    }
+  }
+}
+
+/**
  * Estimate input tokens from request body
  * Calculate total body size for more accurate estimation
  */
@@ -341,9 +364,15 @@ export function estimateInputTokens(body) {
   if (!body || typeof body !== "object") return 0;
 
   try {
+    const memo = bodyLenMemo.get(body);
+    if (Number.isFinite(memo)) {
+      // Estimate: ~4 chars per token (rough average across all tokenizers)
+      return Math.ceil(memo / 4);
+    }
     // Calculate total body size (includes messages, tools, system, thinking config, etc.)
     const bodyStr = JSON.stringify(body);
     const totalChars = bodyStr.length;
+    noteBodyLength(body, totalChars);
 
     // Estimate: ~4 chars per token (rough average across all tokenizers)
     return Math.ceil(totalChars / 4);

@@ -629,8 +629,8 @@ async function showInterfaceMenu(latestVersion, { trayAvailable = true } = {}) {
   return menuItems[selected]?.action || "exit";
 }
 
-const MAX_RESTARTS = 2;
-const RESTART_RESET_MS = 30000; // Reset counter if alive > 30s
+
+const RESTART_RESET_MS = 30000;
 
 function startServer(latestVersion) {
   const displayHost = getDisplayHost();
@@ -641,15 +641,20 @@ function startServer(latestVersion) {
     if (reachableHost) console.log(`\x1b[33m⚠ Network-exposed: reachable at http://${reachableHost}:${port} (bound ${host}). Use --host 127.0.0.1 for local-only. Non-loopback /v1 requires an API key by default.\x1b[0m`);
   }
 
-  let restartCount = 0;
+  let consecutiveCrashes = 0;
+  let everHealthy = false;
   let serverStartTime = Date.now();
 
   const CRASH_LOG_LINES = 50;
   let crashLog = [];
+  let lastPrintedCrashLog = "";
 
   function spawnServer() {
     serverStartTime = Date.now();
     crashLog = [];
+    // A restarted child must prove itself healthy again before it earns
+    // unbounded restarts.
+    everHealthy = false;
     const child = spawn(RUNTIME, ["--max-old-space-size=6144", serverPath], {
       cwd: standaloneDir,
       stdio: ["ignore", "pipe", "pipe"],
@@ -687,8 +692,16 @@ function startServer(latestVersion) {
   const stopHealthWatchdog = startHealthWatchdog({
     port,
     hostname: getProbeHost(),
+    onHealthy: () => {
+      everHealthy = true;
+      if (!isShuttingDown && server?.pid) writeOwnedProcessState(server.pid);
+    },
     onUnhealthy: async () => {
-      if (isShuttingDown || watchdogRestarting || !server?.pid) return;
+      // A child that already exited belongs to the crash-restart path (its
+      // respawn timer is pending); signalling its PID could hit an unrelated
+      // process if the OS reused it, so leave it alone without touching
+      // restartTimer.
+      if (isShuttingDown || watchdogRestarting || !processTools.childIsLive(server)) return;
       watchdogRestarting = true;
       const unhealthyServer = server;
       clearTimeout(restartTimer);
@@ -697,8 +710,15 @@ function startServer(latestVersion) {
       try {
         const terminated = await processTools.terminatePid(unhealthyServer.pid, { timeoutMs: 2500, processGroup: true });
         if (!terminated || isShuttingDown || server !== unhealthyServer) return;
-        server = spawnServer();
-        attachServerEvents();
+        try {
+          server = spawnServer();
+          attachServerEvents();
+        } catch (error) {
+          // The watchdog swallows callback errors, so a failed respawn must
+          // exit here instead of leaving a launcher with no server.
+          console.error("Failed to restart server:", error.message);
+          void shutdown(1);
+        }
       } finally {
         watchdogRestarting = false;
       }
@@ -716,9 +736,12 @@ function startServer(latestVersion) {
       } catch (e) { }
       killProxyByPidFile();
       killTunnelByPidFile();
-      const serverCleanup = server?.pid
+      // An exited child is never signalled (its PID may be reused), but its
+      // process group can still hold grandchildren (MCP stdio bridges, MITM
+      // proxy) that must not outlive the launcher.
+      const serverCleanup = processTools.childIsLive(server)
         ? processTools.terminatePid(server.pid, { timeoutMs: 2500, processGroup: true })
-        : Promise.resolve(true);
+        : processTools.terminateOrphanedGroup(server?.pid, { timeoutMs: 2500 });
       const [, serverResult] = await Promise.allSettled([trayCleanup, serverCleanup]);
       if (serverResult.status === "fulfilled" && serverResult.value === true) clearOwnedProcessState();
     } catch (e) { }
@@ -779,6 +802,9 @@ function startServer(latestVersion) {
     // Ignore SIGHUP so macOS terminal close doesn't kill the background tray process
     process.removeAllListeners("SIGHUP");
     process.on("SIGHUP", () => {});
+    // The terminal may close while we keep running; a later console write to
+    // the dead pty would wedge the process, so fail those writes safely.
+    require("./src/cli/utils/display").detachTerminalOutput();
 
     console.log(`\n🚀 ${pkg.name} v${pkg.version}`);
     console.log(`Starting server at http://${displayHost}:${port}...`);
@@ -795,6 +821,7 @@ function startServer(latestVersion) {
         }
         return;
       }
+      everHealthy = true;
       const trayReady = await initTrayIcon();
       if (trayReady) {
         console.log("\nSwitchboard is ready in the system tray.");
@@ -823,6 +850,7 @@ function startServer(latestVersion) {
       }
       return;
     }
+    everHealthy = true;
     let trayReady = await initTrayIcon();
     if (!trayReady) {
       console.warn(`Tray icon unavailable. You can stop safely with Ctrl+C or "${APP_NAME} stop".`);
@@ -848,7 +876,7 @@ function startServer(latestVersion) {
         } else if (choice === "terminal") {
           // Start Terminal UI - it will return when user selects Back
           const { startTerminalUI } = require("./src/cli/terminalUI");
-          await startTerminalUI(port, { networkExposed: isNetworkExposed() });
+          await startTerminalUI(port, { networkExposed: isNetworkExposed(), host: getProbeHost() });
           // Loop continues, show menu again
         } else if (choice === "hide") {
           const { clearScreen } = require("./src/cli/utils/display");
@@ -872,6 +900,9 @@ function startServer(latestVersion) {
             // it outside the login session so NSStatusItem silently fails.
             process.removeAllListeners("SIGHUP");
             process.on("SIGHUP", () => {});
+            // The user may now close this terminal; detach output first so a
+            // later console write to the dead pty cannot wedge the launcher.
+            require("./src/cli/utils/display").detachTerminalOutput();
 
             console.log(`\n⏳ Switching to tray mode... (icon already visible in menu bar)`);
             console.log(`🔔 Switchboard is running in tray (PID: ${process.pid})`);
@@ -948,11 +979,16 @@ function startServer(latestVersion) {
       return;
     }
     const aliveMs = Date.now() - serverStartTime;
-    // Reset counter if last run was stable
-    if (aliveMs >= RESTART_RESET_MS) restartCount = 0;
+    // Stable runs reset backoff. Repeated crashes keep retrying at a bounded
+    // cadence so a transient runtime fault never leaves the gateway dead.
+    if (aliveMs >= RESTART_RESET_MS) {
+      consecutiveCrashes = 0;
+      lastPrintedCrashLog = "";
+    }
 
-    if (restartCount >= MAX_RESTARTS) {
-      console.error(`\nServer crashed ${MAX_RESTARTS} times. Giving up without changing your settings.`);
+    consecutiveCrashes++;
+    if (processTools.shouldAbandonRestarts({ consecutiveCrashes, everHealthy })) {
+      console.error(`\nServer crashed ${consecutiveCrashes} times without ever becoming healthy. Giving up without changing your settings.`);
       console.error(`Data directory: ${getAppDataDir()}`);
       console.error(`Retry with server logs: ${commandFor()} --log`);
       if (crashLog.length) {
@@ -963,15 +999,19 @@ function startServer(latestVersion) {
       void shutdown(1);
       return;
     }
-
-    restartCount++;
-    const delay = Math.min(1000 * restartCount, 10000);
+    const delay = processTools.nextRestartDelay(consecutiveCrashes - 1);
     const reason = signal ? `signal=${signal}` : `code=${code ?? "unknown"}`;
-    console.error(`\nServer exited (${reason}). Restarting in ${delay / 1000}s... (${restartCount}/${MAX_RESTARTS})`);
-    if (crashLog.length) {
-      console.error("\n--- Server crash log ---");
-      crashLog.forEach(l => console.error(l));
-      console.error("--- End crash log ---\n");
+    console.error(`\nServer exited (${reason}). Restarting in ${delay / 1000}s... (attempt ${consecutiveCrashes})`);
+    const logText = crashLog.join("\n");
+    if (processTools.shouldPrintCrashLog(consecutiveCrashes, crashLog, lastPrintedCrashLog)) {
+      if (crashLog.length) {
+        console.error("\n--- Server crash log ---");
+        crashLog.forEach(l => console.error(l));
+        console.error("--- End crash log ---\n");
+      }
+      lastPrintedCrashLog = logText;
+    } else if (consecutiveCrashes === 11 && logText) {
+      console.error(`suppressing repeated crash log; run \`${commandFor()} --log\` for full output`);
     }
 
     restartTimer = setTimeout(() => {
@@ -981,6 +1021,7 @@ function startServer(latestVersion) {
       attachServerEvents();
     }, delay);
   }
+
 
   attachServerEvents();
 }

@@ -6,20 +6,32 @@ const pricingKv = makeKv("pricing");
 const CACHE_TTL_MS = 5000;
 
 let cache = { value: null, expiresAt: 0 };
+let userPricingCache = { value: null, expiresAt: 0 };
 
 function invalidate() {
   cache = { value: null, expiresAt: 0 };
+  userPricingCache = { value: null, expiresAt: 0 };
 }
 
 async function getUserPricing() {
   return await pricingKv.getAll();
 }
 
+// P7: getPricingForModel() bypassed the 5 s cache and re-read + re-parsed
+// every pricing blob per request. Share one cached user-pricing read.
+async function getUserPricingCached() {
+  const now = Date.now();
+  if (userPricingCache.value && userPricingCache.expiresAt > now) return userPricingCache.value;
+  const userPricing = await getUserPricing();
+  userPricingCache = { value: userPricing, expiresAt: now + CACHE_TTL_MS };
+  return userPricing;
+}
+
 export async function getPricing() {
   const now = Date.now();
   if (cache.value && cache.expiresAt > now) return cache.value;
 
-  const userPricing = await getUserPricing();
+  const userPricing = await getUserPricingCached();
   const { PROVIDER_PRICING } = await import("open-sse/providers/pricing.js");
   const merged = {};
 
@@ -50,7 +62,7 @@ export async function getPricing() {
 
 export async function getPricingForModel(provider, model) {
   if (!model) return null;
-  const userPricing = await getUserPricing();
+  const userPricing = await getUserPricingCached();
   if (provider && userPricing[provider]?.[model]) return userPricing[provider][model];
   const { getPricingForModel: resolveConst } = await import("open-sse/providers/pricing.js");
   return resolveConst(provider, model);

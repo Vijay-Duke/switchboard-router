@@ -3,9 +3,11 @@ import { FORMATS } from "../translator/formats.js";
 import { formatSSE } from "./streamHelpers.js";
 
 // Responses API events that signal the stream has reached a terminal state
+// ("response.incomplete" = truncated turn, e.g. max_output_tokens / content_filter)
 const OPENAI_RESPONSES_TERMINAL_EVENTS = new Set([
   "response.completed",
   "response.done",
+  "response.incomplete",
   "response.failed",
   "error"
 ]);
@@ -20,7 +22,7 @@ export function isOpenAIResponsesTerminalEvent(eventName, chunk) {
   const type = getOpenAIResponsesEventName(eventName, chunk);
   if (OPENAI_RESPONSES_TERMINAL_EVENTS.has(type)) return true;
   const status = chunk?.response?.status;
-  return status === "completed" || status === "failed";
+  return status === "completed" || status === "failed" || status === "incomplete";
 }
 
 const sharedEncoder = new TextEncoder();

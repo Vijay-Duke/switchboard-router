@@ -2,6 +2,7 @@
 // @ts-check
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Card, Badge } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import {
@@ -124,7 +125,7 @@ export default function SkillsPage() {
       <div className="flex flex-col gap-1">
         <h1 className="text-[17px] font-semibold text-text-main">Skills</h1>
         <p className="text-xs font-mono text-text-subtle">
-          agent skill links · not Media providers
+          Skill docs for AI agents · manage installed skills in Agent library
         </p>
       </div>
 
@@ -156,19 +157,19 @@ export default function SkillsPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2 shrink-0">
-            <a
+            <Link
               href="/dashboard/agent-library?tab=catalog"
               className="px-3 py-1.5 rounded-md bg-surface border border-border text-text-main text-xs font-medium hover:bg-surface-2 transition-colors inline-flex items-center gap-1"
             >
               Skills Catalog
-            </a>
-            <a
+            </Link>
+            <Link
               href="/dashboard/agent-library?tab=mcp"
               className="px-3 py-1.5 rounded-md bg-primary text-on-primary text-xs font-medium hover:bg-primary/90 transition-colors inline-flex items-center gap-1"
             >
               <span className="material-symbols-outlined text-[14px]">hub</span>
               MCP Gateways (Executor.sh)
-            </a>
+            </Link>
           </div>
         </div>
       </Card>

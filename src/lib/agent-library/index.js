@@ -13,6 +13,7 @@ import { ensureLibraryDirs, AGENT_TARGETS } from "./paths.js";
 import {
   ensureProductSkillsInLibrary,
   listLibrarySkills,
+  listDetectedAgentSkills,
   installSkillMarkdown,
   removeLibrarySkill,
 } from "./skills-store.js";
@@ -44,6 +45,7 @@ export {
   saveSettings,
   resolveLibraryRoot,
   listLibrarySkills,
+  listDetectedAgentSkills,
   ensureProductSkillsInLibrary,
   installSkillMarkdown,
   removeLibrarySkill,
@@ -78,15 +80,17 @@ export async function getOverview(settings) {
   if (s.includeProductSkills) {
     await ensureProductSkillsInLibrary(root);
   }
-  const [skills, mcp, state] = await Promise.all([
+  const [skills, mcp, state, detectedSkills] = await Promise.all([
     listLibrarySkills(root),
     listMcpServers(root),
     loadState(root),
+    listDetectedAgentSkills(s),
   ]);
   return {
     settings: s,
     libraryRoot: root,
     skills,
+    detectedSkills,
     mcpServers: mcp,
     state,
     agents: AGENT_TARGETS,

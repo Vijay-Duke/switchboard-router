@@ -41,6 +41,12 @@ export const AGENT_TARGETS = {
     supportsSkills: true,
     supportsMcp: true,
   },
+  omp: {
+    id: "omp",
+    label: "Oh My Pi (omp)",
+    supportsSkills: true,
+    supportsMcp: true,
+  },
 };
 
 /**
@@ -131,6 +137,10 @@ export function getAgentSkillsRoot(agentId, opts = {}) {
       return project
         ? path.join(project, ".cursor", "skills")
         : path.join(home, ".cursor", "skills");
+    case "omp":
+      // pi/omp reads skills from <agent-dir>/skills (SKILL.md dirs, same format).
+      // Project-scope skill roots are not a pi convention — global only.
+      return project ? null : path.join(home, ".pi", "agent", "skills");
     default:
       return null;
   }
@@ -213,6 +223,15 @@ export function getAgentMcpConfig(agentId, opts = {}) {
           : path.join(home, ".cursor", "mcp.json"),
         format: "json",
         kind: "cursor",
+      };
+    case "omp":
+      // pi-mcp-adapter reads <agent-dir>/mcp.json (global) or <project>/.pi/mcp.json.
+      return {
+        path: project
+          ? path.join(project, ".pi", "mcp.json")
+          : path.join(home, ".pi", "agent", "mcp.json"),
+        format: "json",
+        kind: "omp",
       };
     default:
       return null;

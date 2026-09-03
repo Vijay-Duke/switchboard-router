@@ -28,8 +28,11 @@ const allowedStatusOrigins = new Set([
   `http://[::1]:${appPort}`,
 ]);
 
-// Data directory (match mitm/paths.js logic)
+// Data directory. The spawner pins the resolved dir (including legacy-dir
+// adoption from src/lib/dataDir.js) via UPDATER_DATA_DIR; fall back to the
+// same legacy-unaware default as before when running standalone.
 function getDataDir() {
+  if (process.env.UPDATER_DATA_DIR) return process.env.UPDATER_DATA_DIR;
   if (process.env.DATA_DIR) return process.env.DATA_DIR;
   if (process.platform === "win32") {
     return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "switchboard");
@@ -296,7 +299,9 @@ function relaunchApp() {
       detached: true,
       stdio: "ignore",
       windowsHide: true,
-      shell: isWin,
+      // Only .cmd/.bat shims need a shell; a direct node.exe path must not go
+      // through cmd.exe, which would split unquoted paths containing spaces.
+      shell: isWin && /\.(cmd|bat)$/i.test(cmd),
       env: { ...process.env, UPDATER_RELAUNCH: "", UPDATER_RELAUNCH_CMD: "", UPDATER_RELAUNCH_ARGS: "" },
     });
     child.once("error", (error) => {

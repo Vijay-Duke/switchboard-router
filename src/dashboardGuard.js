@@ -244,7 +244,15 @@ export async function proxy(request) {
     }
   }
 
-  // Dashboard HTML pages: open for local browser; data comes via gated /api/*
+  // Dashboard HTML pages embed DB-backed initialData in the RSC payload,
+  // so they get the same local-only gate as /api/* (peer + Host + Origin).
+  // A remote operator with MANAGEMENT_TOKEN still has /api/mgmt/*.
+  if (pathname === "/dashboard" || pathname.startsWith("/dashboard/")) {
+    if (!(await canAccessLocalOnlyRoute(request))) {
+      return NextResponse.json({ error: "Local only" }, { status: 403 });
+    }
+  }
+
   if (pathname === "/login" || pathname.startsWith("/login/")) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }

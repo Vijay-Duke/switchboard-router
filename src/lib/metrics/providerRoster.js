@@ -5,8 +5,20 @@ export const BUILT_IN_PROVIDER_IDS = new Set(
   REGISTRY.map((entry) => entry?.id).filter((id) => typeof id === "string" && id),
 );
 
+// P7: tables never disappear at runtime — memoize existence per adapter so
+// per-request provider checks stop probing sqlite_master on every call.
+const tableExistsMemo = new WeakMap();
+
 function tableExists(db, name) {
-  return Boolean(db.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, [name]));
+  let perDb = tableExistsMemo.get(db);
+  if (!perDb) {
+    perDb = new Map();
+    tableExistsMemo.set(db, perDb);
+  }
+  if (perDb.has(name)) return perDb.get(name);
+  const exists = Boolean(db.get(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, [name]));
+  perDb.set(name, exists);
+  return exists;
 }
 
 export function currentMetricProviderIds(db) {

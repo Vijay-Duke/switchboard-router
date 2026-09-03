@@ -154,14 +154,26 @@ function killProcess(pid, force = false, sudoPassword = null) {
   }
 }
 
-function deriveKey() {
+function loadCliSecretComponent() {
   try {
-    const { machineIdSync } = require("node-machine-id");
-    const raw = machineIdSync();
-    return crypto.createHash("sha256").update(raw + ENCRYPT_SALT).digest();
+    const p = path.join(DATA_DIR, "auth", "cli-secret");
+    const s = fs.readFileSync(p, "utf8").trim();
+    return s || "";
   } catch {
-    return crypto.createHash("sha256").update(ENCRYPT_SALT).digest();
+    return "";
   }
+}
+
+// Mix the random per-install auth/cli-secret into the key so it is not
+// derivable from the public machine id alone. cliSecret="" is the legacy key
+// (pre-secret ciphertexts); decryptPassword falls back to it and the loader
+// re-seals under the current key.
+function deriveKey(cliSecret = loadCliSecretComponent()) {
+  let raw = "";
+  try {
+    raw = require("node-machine-id").machineIdSync();
+  } catch { /* salt-only key */ }
+  return crypto.createHash("sha256").update(raw + ENCRYPT_SALT + cliSecret).digest();
 }
 
 function encryptPassword(plaintext) {
@@ -173,17 +185,28 @@ function encryptPassword(plaintext) {
   return `${iv.toString("hex")}:${tag.toString("hex")}:${encrypted.toString("hex")}`;
 }
 
-function decryptPassword(stored) {
+function decryptPasswordWithKey(stored, key) {
+  const [ivHex, tagHex, dataHex] = String(stored).split(":");
+  if (!ivHex || !tagHex || !dataHex) return null;
+  const decipher = crypto.createDecipheriv(ENCRYPT_ALGO, key, Buffer.from(ivHex, "hex"));
+  decipher.setAuthTag(Buffer.from(tagHex, "hex"));
+  return decipher.update(Buffer.from(dataHex, "hex")) + decipher.final("utf8");
+}
+
+/** @returns {{ password: string, legacy: boolean } | null} */
+function decryptPasswordDetailed(stored) {
   try {
-    const [ivHex, tagHex, dataHex] = stored.split(":");
-    if (!ivHex || !tagHex || !dataHex) return null;
-    const key = deriveKey();
-    const decipher = crypto.createDecipheriv(ENCRYPT_ALGO, key, Buffer.from(ivHex, "hex"));
-    decipher.setAuthTag(Buffer.from(tagHex, "hex"));
-    return decipher.update(Buffer.from(dataHex, "hex")) + decipher.final("utf8");
+    return { password: decryptPasswordWithKey(stored, deriveKey()), legacy: false };
+  } catch { /* try the pre-cli-secret key */ }
+  try {
+    return { password: decryptPasswordWithKey(stored, deriveKey("")), legacy: true };
   } catch {
     return null;
   }
+}
+
+function decryptPassword(stored) {
+  return decryptPasswordDetailed(stored)?.password ?? null;
 }
 
 let _getSettings = null;
@@ -219,7 +242,14 @@ async function loadEncryptedPassword() {
   try {
     const settings = await _getSettings();
     if (!settings.mitmSudoEncrypted) return null;
-    return decryptPassword(settings.mitmSudoEncrypted);
+    const result = decryptPasswordDetailed(settings.mitmSudoEncrypted);
+    if (result?.password && result.legacy && _updateSettings) {
+      // Lazily re-seal a pre-cli-secret ciphertext under the current key.
+      try {
+        await _updateSettings({ mitmSudoEncrypted: encryptPassword(result.password) });
+      } catch { /* retried on the next load */ }
+    }
+    return result?.password ?? null;
   } catch {
     return null;
   }
@@ -634,18 +664,22 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
     if (_updateSettings) await _updateSettings({ mitmCertInstalled: true }).catch(() => { });
   } else if (isSudoAvailable()) {
     // Pass HOME explicitly so os.homedir() resolves to the unprivileged user's home
-    // instead of /root when sudo resets the environment.
+    // instead of /root when sudo resets the environment. Secrets travel via
+    // spawn env (preserved by -E) so the gateway key never appears in `ps`.
     const inlineCmd = [
       `HOME=${shellQuoteSingle(os.homedir())}`,
-      `ROUTER_API_KEY=${shellQuoteSingle(apiKey)}`,
-      `MITM_ROUTER_BASE=${shellQuoteSingle(mitmRouterBase)}`,
       "NODE_ENV=production",
       shellQuoteSingle(process.execPath),
       shellQuoteSingle(effectiveServerPath),
     ].join(" ");
     serverProcess = spawn(
       "sudo", ["-S", "-E", "sh", "-c", inlineCmd],
-      { detached: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
+      {
+        detached: false,
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, ROUTER_API_KEY: apiKey, MITM_ROUTER_BASE: mitmRouterBase },
+      }
     );
     // Without a password this branch is NOPASSWD sudo, which ignores stdin.
     // Interpolating a missing value would feed sudo the literal "undefined".

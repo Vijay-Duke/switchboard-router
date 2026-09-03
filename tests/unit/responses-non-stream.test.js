@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("../../open-sse/handlers/chatCore/requestDetail.js", () => ({
   buildRequestDetail: vi.fn(() => ({})),
   extractRequestConfig: vi.fn(() => ({})),
-  saveUsageStats: vi.fn(),
+  settleUsageStats: vi.fn(),
 }));
 
 vi.mock("../../open-sse/runtimeDeps.js", () => ({

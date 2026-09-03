@@ -181,8 +181,9 @@ export function createDisconnectAwareStream(transformStream, streamController, o
  * Measuring stall on the transform output caused false stalls and the
  * "failed to pipe response" error in Next.
  *
- * Any upstream chunk resets the timer. If no bytes arrive for
- * STREAM_STALL_TIMEOUT_MS, abort the underlying fetch via the controller.
+ * Any upstream chunk refreshes the last-activity timestamp checked by a
+ * single interval. If no bytes arrive for STREAM_STALL_TIMEOUT_MS, abort
+ * the underlying fetch via the controller.
  *
  * @param {Response} providerResponse - Response from provider
  * @param {TransformStream} transformStream - Transform stream for SSE
@@ -196,7 +197,7 @@ export function pipeWithDisconnect(
   stallTimeoutMs = STREAM_STALL_TIMEOUT_MS,
   firstChunkTimeoutMs = STREAM_FIRST_CHUNK_TIMEOUT_MS
 ) {
-  let stallTimer = null;
+  let stallInterval = null;
   let firstChunkTimer = null;
   let chunkCount = 0;
   let totalBytes = 0;
@@ -204,20 +205,26 @@ export function pipeWithDisconnect(
   const t0 = Date.now();
   const tag = "STREAM";
   const clearStall = () => {
-    if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
+    if (stallInterval) { clearInterval(stallInterval); stallInterval = null; }
   };
   const clearFirstChunk = () => {
     if (firstChunkTimer) { clearTimeout(firstChunkTimer); firstChunkTimer = null; }
   };
   const clearAllTimers = () => { clearStall(); clearFirstChunk(); };
+  // One interval per stream: transform only refreshes lastChunkAt, so hot
+  // chunks cost no timer ops. The interval disarms itself when it fires.
   const armStall = () => {
-    clearStall();
-    stallTimer = setTimeout(() => {
-      stallTimer = null;
-      dbg(tag, `STALL TIMEOUT ${stallTimeoutMs}ms | chunks=${chunkCount} | bytes=${totalBytes} | sinceLast=${Date.now() - lastChunkAt}ms`);
-      streamController.handleError?.(new Error("stream stall timeout"));
-      streamController.abort?.();
-    }, stallTimeoutMs);
+    if (stallInterval || !(stallTimeoutMs > 0)) return;
+    stallInterval = setInterval(() => {
+      if (Date.now() - lastChunkAt >= stallTimeoutMs) {
+        const fired = stallInterval;
+        stallInterval = null;
+        if (fired) clearInterval(fired);
+        dbg(tag, `STALL TIMEOUT ${stallTimeoutMs}ms | chunks=${chunkCount} | bytes=${totalBytes} | sinceLast=${Date.now() - lastChunkAt}ms`);
+        streamController.handleError?.(new Error("stream stall timeout"));
+        streamController.abort?.();
+      }
+    }, Math.min(stallTimeoutMs, 5000));
   };
 
   // Wrap controller so every termination path clears the stall timer.
@@ -261,7 +268,6 @@ export function pipeWithDisconnect(
       if (isDebugEnabled && (chunkCount <= 5 || chunkCount % 20 === 0 || gap > 5000)) {
         dbg(tag, `chunk #${chunkCount} | size=${sz}B | gap=${gap}ms | total=${totalBytes}B`);
       }
-      if (chunkCount > 1) armStall();
       controller.enqueue(chunk);
     },
     flush() { dbg(tag, `upstream EOF | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearAllTimers(); }

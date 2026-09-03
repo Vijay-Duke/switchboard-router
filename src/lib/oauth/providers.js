@@ -41,6 +41,7 @@ import {
   getOAuthFetchProfile,
 } from "./providerHelpers";
 import { parseKiroProfileArn } from "open-sse/utils/kiroProfileArn.js";
+import { registerOAuthState } from "./utils/server.js";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 import {
   fetchGrokCliUser,
@@ -1516,6 +1517,11 @@ export async function generateAuthData(providerName, redirectUri, meta) {
   } else {
     authUrl = provider.buildAuthUrl(config, redirectUri, state, undefined, meta || {});
   }
+
+  // Bind state → verifier server-side so exchange can prove the flow started
+  // here instead of trusting client-supplied values. Device-code flows never
+  // redeem this entry; it expires via TTL.
+  registerOAuthState({ state, provider: providerName, codeVerifier, redirectUri: redirectUri || null });
 
   return {
     authUrl,

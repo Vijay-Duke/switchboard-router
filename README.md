@@ -68,15 +68,17 @@ npm i -g https://github.com/Vijay-Duke/switchboard-router/releases/latest/downlo
 
 **Docker:**
 ```bash
-docker run -d --name switchboard -p 127.0.0.1:20128:20128 \
+docker network create --subnet 172.30.0.0/24 --gateway 172.30.0.1 switchboard 2>/dev/null || true
+docker run -d --name switchboard --network switchboard -p 127.0.0.1:20128:20128 \
   -v "$HOME/.switchboard:/app/data" -e DATA_DIR=/app/data \
   -e SWITCHBOARD_LOCAL_PEERS=172.30.0.1 \
   ghcr.io/vijay-duke/switchboard-router:latest
 ```
 
 > The dashboard only answers *local* callers, and a Docker bridge peer is not
-> loopback. `SWITCHBOARD_LOCAL_PEERS` trusts only the fixed Compose gateway; the loopback-only
-> publish keeps that trust off your LAN. Keep the two together — see [DOCKER.md](DOCKER.md).
+> loopback. `SWITCHBOARD_LOCAL_PEERS` trusts only the gateway of the dedicated
+> `switchboard` bridge network created above (Compose provides the same subnet);
+> the loopback-only publish keeps that trust off your LAN. Keep the two together — see [DOCKER.md](DOCKER.md).
 
 > Package name is **`switchboard-router`**. The bare npm name `switchboard` is a different project.
 

@@ -5,6 +5,22 @@ import { dedupRefresh } from "./dedup.js";
 import { getOpenSseDeps } from "../../runtimeDeps.js";
 import { isValidAwsRegion } from "../../utils/awsRegion.js";
 
+/**
+ * Classify a non-2xx OAuth token response. Permanent failures (revoked or
+ * expired refresh token, e.g. `invalid_grant`) return the shared unrecoverable
+ * shape so callers stop retrying and surface re-auth instead; transient
+ * failures return null. Never logs raw bodies (may echo tokens).
+ */
+function unrecoverableRefreshResult(log, label, errorText, status) {
+  const failure = classifyOAuthRefreshError(errorText, status);
+  if (!failure.permanent) return null;
+  log?.error?.("TOKEN_REFRESH", `${label} refresh token revoked or expired. Re-auth required.`, {
+    status,
+    code: failure.code,
+  });
+  return { error: "unrecoverable_refresh_error", code: failure.code };
+}
+
 /** M10: never log raw OAuth error bodies (may echo tokens). Keep status + error code only. */
 function safeRefreshError(errorText = "", status = 0) {
   let code = "";
@@ -87,6 +103,8 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
 
     if (!response.ok) {
       const errorText = await response.text();
+      const unrecoverable = unrecoverableRefreshResult(log, provider, errorText, response.status);
+      if (unrecoverable) return unrecoverable;
       log?.error?.("TOKEN_REFRESH", `Failed to refresh token for ${provider}`, {
         status: response.status,
         error: safeRefreshError(errorText, response.status),
@@ -138,6 +156,8 @@ export async function refreshClaudeOAuthToken(refreshToken, log) {
 
     if (!response.ok) {
       const errorText = await response.text();
+      const unrecoverable = unrecoverableRefreshResult(log, "Claude", errorText, response.status);
+      if (unrecoverable) return unrecoverable;
       log?.error?.("TOKEN_REFRESH", "Failed to refresh Claude OAuth token", { status: response.status, error: safeRefreshError(errorText, response.status) });
       return null;
     }
@@ -178,6 +198,8 @@ export async function refreshGoogleToken(refreshToken, clientId, clientSecret, l
 
     if (!response.ok) {
       const errorText = await response.text();
+      const unrecoverable = unrecoverableRefreshResult(log, "Google", errorText, response.status);
+      if (unrecoverable) return unrecoverable;
       log?.error?.("TOKEN_REFRESH", "Failed to refresh Google token", { status: response.status, error: safeRefreshError(errorText, response.status) });
       return null;
     }
@@ -233,6 +255,8 @@ export async function refreshQwenToken(refreshToken, log) {
       };
     } else {
       const errorText = await response.text().catch(() => "");
+      const unrecoverable = unrecoverableRefreshResult(log, "Qwen", errorText, response.status);
+      if (unrecoverable) return unrecoverable;
       log?.warn?.("TOKEN_REFRESH", `Error with Qwen endpoint`, {
         status: response.status,
         error: safeRefreshError(errorText, response.status),
@@ -257,14 +281,19 @@ export function classifyOAuthRefreshError(errorText = "", status = 0) {
     parsed = null;
   }
 
-  const code = parsed?.error?.code || parsed?.error || parsed?.error_code || "";
-  const description = parsed?.error_description || parsed?.message || errorText || "";
+  // `error` is a string per RFC 6749; some providers nest an object instead.
+  const err = parsed?.error;
+  const code = (typeof err === "string" ? err : err?.code || err?.type) || parsed?.error_code || "";
+  const description = parsed?.error_description || parsed?.message || err?.message || errorText || "";
   const combined = `${code} ${description}`.toLowerCase();
-  const permanent = [
+  // 5xx is never permanent whatever the body says: a false positive here
+  // benches a healthy connection until the user reconnects.
+  const permanent = status < 500 && [
     "refresh_token_expired",
     "refresh_token_reused",
     "refresh_token_invalidated",
     "invalid_grant",
+    "bad_refresh_token", // GitHub
   ].some((marker) => combined.includes(marker));
 
   return { status, code, description, permanent };
@@ -510,6 +539,8 @@ export async function refreshIflowToken(refreshToken, log) {
 
   if (!response.ok) {
     const errorText = await response.text();
+    const unrecoverable = unrecoverableRefreshResult(log, "iFlow", errorText, response.status);
+    if (unrecoverable) return unrecoverable;
     log?.error?.("TOKEN_REFRESH", "Failed to refresh iFlow token", {
       status: response.status,
       error: safeRefreshError(errorText, response.status),
@@ -559,6 +590,8 @@ export async function refreshGitHubToken(refreshToken, log) {
 
   if (!response.ok) {
     const errorText = await response.text();
+    const unrecoverable = unrecoverableRefreshResult(log, "GitHub", errorText, response.status);
+    if (unrecoverable) return unrecoverable;
     log?.error?.("TOKEN_REFRESH", "Failed to refresh GitHub token", {
       status: response.status,
       error: safeRefreshError(errorText, response.status),
@@ -567,6 +600,17 @@ export async function refreshGitHubToken(refreshToken, log) {
   }
 
   const tokens = await response.json();
+  // GitHub answers a bad/expired refresh token with HTTP 200 + an OAuth error body.
+  if (tokens.error || !tokens.access_token) {
+    const errorText = JSON.stringify(tokens);
+    const unrecoverable = unrecoverableRefreshResult(log, "GitHub", errorText, response.status);
+    if (unrecoverable) return unrecoverable;
+    log?.error?.("TOKEN_REFRESH", "Failed to refresh GitHub token", {
+      status: response.status,
+      error: safeRefreshError(errorText, response.status),
+    });
+    return null;
+  }
 
   log?.info?.("TOKEN_REFRESH", "Successfully refreshed GitHub token", {
     hasNewAccessToken: !!tokens.access_token,

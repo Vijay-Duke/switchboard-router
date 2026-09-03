@@ -7,6 +7,7 @@ import PropTypes from "prop-types";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import HeaderMenu from "@/shared/components/HeaderMenu";
 import HeaderLanguage from "@/shared/components/HeaderLanguage";
+import { useGatewayHealth } from "@/shared/hooks/useGatewayHealth";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS } from "@/shared/constants/providers";
@@ -100,6 +101,7 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
   const pathname = usePathname();
   const pageInfo = useMemo(() => getPageInfo(pathname), [pathname]);
   const { section, crumb, breadcrumbs } = pageInfo;
+  const { online } = useGatewayHealth();
 
   return (
     <header
@@ -129,13 +131,13 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
             className="flex items-center gap-2 min-w-0 truncate"
             style={{
               fontSize: 12,
-              color: "#6F6653",
+              color: "var(--color-text-subtle)",
               fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
             }}
           >
             {breadcrumbs.map((c, index) => (
               <span key={`${c.label}-${index}`} className="flex items-center gap-2 min-w-0">
-                {index > 0 && <span style={{ color: "#4A4231" }}>/</span>}
+                {index > 0 && <span aria-hidden="true" style={{ color: "#4A4231" }}>/</span>}
                 {c.href ? (
                   <Link href={c.href} className="hover:text-[#A99E86] truncate">
                     {translate(c.label)}
@@ -162,7 +164,7 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
             className="truncate"
             style={{
               fontSize: 12,
-              color: "#6F6653",
+              color: "var(--color-text-subtle)",
               fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
             }}
           >
@@ -170,7 +172,7 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
             {crumb ? (
               <>
                 {" "}
-                <span style={{ color: "#4A4231" }}>/</span>{" "}
+                <span aria-hidden="true" style={{ color: "#4A4231" }}>/</span>{" "}
                 <span style={{ color: "#A99E86" }}>{translate(crumb)}</span>
               </>
             ) : null}
@@ -181,7 +183,7 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
       <div className="flex items-center gap-[9px] shrink-0">
         <HeaderSearch />
 
-        {/* online badge — mock */}
+        {/* gateway status badge — live via /api/health */}
         <div
           className="hidden sm:flex items-center gap-[7px]"
           style={{
@@ -190,8 +192,11 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
             borderRadius: 7,
             padding: "5px 10px",
           }}
+          role="status"
+          aria-label={online ? "Gateway online" : "Gateway offline"}
+          title={online ? "online" : "offline"}
         >
-          <span className="console-online-dot" />
+          <span className={online ? "console-online-dot" : "console-offline-dot"} />
           <span
             style={{
               fontSize: 11.5,
@@ -199,7 +204,7 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
               color: "#A99E86",
             }}
           >
-            online
+            {online ? "online" : "offline"}
           </span>
         </div>
 
@@ -250,21 +255,24 @@ function HeaderSearch() {
 
   return (
     <div className="relative w-[140px] sm:w-[200px]">
-      <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-[#6F6653] text-[16px] pointer-events-none">
+      <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-text-subtle text-[16px] pointer-events-none">
         search
       </span>
       <input
-        type="text"
+        type="search"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder={placeholder}
+        aria-label={placeholder || "Search"}
+        autoComplete="off"
+        enterKeyHint="search"
         className="w-full h-8 pl-7 pr-7 rounded-[7px] border border-[#2A2418] bg-[#211C14] text-[12px] font-mono text-[#A99E86] focus:outline-none focus:border-[#E5B454]/50"
       />
       {query && (
         <button
           type="button"
           onClick={() => setQuery("")}
-          className="absolute right-1 top-1/2 -translate-y-1/2 text-[#6F6653] hover:text-[#ECE4D2] p-0.5 rounded"
+          className="absolute right-1 top-1/2 -translate-y-1/2 text-text-subtle hover:text-[#ECE4D2] p-0.5 rounded"
           aria-label="Clear search"
         >
           <span className="material-symbols-outlined text-[16px]">close</span>

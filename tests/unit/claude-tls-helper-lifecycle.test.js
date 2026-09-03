@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  __drainClaudeCodeHelperPoolForTests,
   __setClaudeCodeSpawnForTest,
   createClaudeCodeFetch,
 } from "../../open-sse/identity/tls/claude-code.js";
@@ -13,6 +14,15 @@ class FakeChild extends EventEmitter {
     this.stdout = new PassThrough();
     this.stderr = new PassThrough();
     this.killed = false;
+    for (const handle of [this, this.stdin, this.stdout, this.stderr]) {
+      handle.refd = true;
+      handle.ref = () => { handle.refd = true; };
+      handle.unref = () => { handle.refd = false; };
+    }
+  }
+
+  refState() {
+    return [this, this.stdin, this.stdout, this.stderr].map((handle) => handle.refd);
   }
 
   kill(signal) {
@@ -25,7 +35,11 @@ class FakeChild extends EventEmitter {
 function installChild(child) {
   let markSpawned;
   const spawned = new Promise((resolve) => { markSpawned = resolve; });
+  let handed = false;
   __setClaudeCodeSpawnForTest(() => {
+    // First spawn is the fetch under test; later ones are pool refills.
+    if (handed) return new FakeChild();
+    handed = true;
     markSpawned();
     return child;
   });
@@ -50,6 +64,7 @@ function fetchWith(signal) {
 
 afterEach(() => {
   __setClaudeCodeSpawnForTest();
+  __drainClaudeCodeHelperPoolForTests();
 });
 
 it("sends a bounded timeout in helper metadata with init, transport, and default precedence", async () => {
@@ -208,5 +223,171 @@ describe("Claude TLS helper lifecycle", () => {
     expect(child.killSignal).toBe("SIGTERM");
     expect(child.listenerCount("exit")).toBe(0);
     expect(child.stderr.listenerCount("data")).toBe(0);
+  });
+});
+
+describe("Claude TLS helper pre-spawn pool", () => {
+  const POOL_URL = "https://api.anthropic.com/v1/messages";
+  const POOL_TRANSPORT = { alpn: ["http/1.1"] };
+  const POOL_CAP = 2;
+
+  // Counting fake: every spawn returns a DISTINCT child (unlike installChild
+  // above), so spawn counts prove pool reuse.
+  function installCountingSpawn() {
+    const list = [];
+    __setClaudeCodeSpawnForTest(() => {
+      const child = new FakeChild();
+      list.push(child);
+      return child;
+    });
+    return { list };
+  }
+
+  const flushImmediate = () => new Promise((resolve) => setImmediate(resolve));
+  const serving = (child) => child.stdout.listenerCount("data") > 0;
+
+  // Waits for a fetch to take a child. Settles microtasks only (never a
+  // macrotask), so a pending background refill cannot fire and skew counts.
+  // Falls back to immediate flushes only for the very first fetch, whose
+  // binary resolve needs real loop turns while no refill can be pending yet.
+  async function acquireServing(pool, lenBefore) {
+    for (let i = 0; i < 200; i++) {
+      const candidate = pool.list.slice(Math.max(0, lenBefore - POOL_CAP)).find(serving);
+      if (candidate) return candidate;
+      if (i < 20) await Promise.resolve();
+      else await flushImmediate();
+    }
+    throw new Error("no child took the fetch");
+  }
+
+  function respondOk(child, body) {
+    child.stdout.write(`${JSON.stringify({ status: 200, headers: [] })}\n${body}`);
+  }
+
+  function finishChild(child) {
+    child.stdout.end();
+    child.emit("exit", 0, null);
+  }
+
+  // One fetch, served and finished, followed by the background refill so
+  // the pool is warm (POOL_CAP idle children) when it returns.
+  async function fetchCycle(pool, body) {
+    const lenBefore = pool.list.length;
+    const pending = createClaudeCodeFetch()(POOL_URL, {}, POOL_TRANSPORT);
+    const child = await acquireServing(pool, lenBefore);
+    respondOk(child, body);
+    const response = await pending;
+    finishChild(child);
+    expect(await response.text()).toBe(body);
+    await flushImmediate();
+    await flushImmediate();
+    return child;
+  }
+
+  const warmPool = (pool) => pool.list.slice(-POOL_CAP);
+
+  it("serves a fetch from the warm pool with no new spawn, then refills one replacement", async () => {
+    const pool = installCountingSpawn();
+    await fetchCycle(pool, "warm");
+    const baseline = pool.list.length;
+    const pooled = warmPool(pool);
+
+    const pending = createClaudeCodeFetch()(POOL_URL, {}, POOL_TRANSPORT);
+    const child = await acquireServing(pool, baseline);
+    expect(pooled).toContain(child);
+    expect(pool.list.length).toBe(baseline);
+    respondOk(child, "reused");
+    const response = await pending;
+    finishChild(child);
+    expect(await response.text()).toBe("reused");
+
+    await flushImmediate();
+    expect(pool.list.length).toBe(baseline + 1);
+  });
+
+  it("bounds a burst to the pooled children plus one fresh spawn each, then refills to the cap once", async () => {
+    const pool = installCountingSpawn();
+    await fetchCycle(pool, "warm");
+    const baseline = pool.list.length;
+
+    const pending = Array.from({ length: POOL_CAP + 1 }, () => createClaudeCodeFetch()(POOL_URL, {}, POOL_TRANSPORT));
+    // Microtask-only wait: the scheduled refill stays pending so the count
+    // below is exact — cap children popped, exactly one spawned fresh.
+    for (let i = 0; i < 200 && pool.list.length < baseline + 1; i++) await Promise.resolve();
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(pool.list.length).toBe(baseline + 1);
+
+    const children = pool.list.slice(baseline - POOL_CAP);
+    expect(children.every(serving)).toBe(true);
+    children.forEach((child, index) => respondOk(child, `burst-${index}`));
+    const responses = await Promise.all(pending);
+    children.forEach(finishChild);
+    const texts = await Promise.all(responses.map((response) => response.text()));
+    expect([...texts].sort()).toEqual(["burst-0", "burst-1", "burst-2"]);
+
+    // Three fetches scheduled refills, but they coalesce into one top-up.
+    await flushImmediate();
+    await flushImmediate();
+    expect(pool.list.length).toBe(baseline + 1 + POOL_CAP);
+    expect(warmPool(pool).some(serving)).toBe(false);
+  });
+
+  it("unrefs idle children and their stdio, and refs them again when taken", async () => {
+    const pool = installCountingSpawn();
+    await fetchCycle(pool, "warm");
+    for (const child of warmPool(pool)) expect(child.refState()).toEqual([false, false, false, false]);
+
+    const pending = createClaudeCodeFetch()(POOL_URL, {}, POOL_TRANSPORT);
+    const child = await acquireServing(pool, pool.list.length);
+    expect(child.refState()).toEqual([true, true, true, true]);
+    respondOk(child, "ok");
+    finishChild(child);
+    await (await pending).text();
+  });
+
+  it("drops a pooled child that exits or errors while idle instead of handing it out", async () => {
+    const pool = installCountingSpawn();
+    await fetchCycle(pool, "warm");
+    const baseline = pool.list.length;
+    const [crashed, errored] = warmPool(pool);
+
+    crashed.exitCode = 1;
+    crashed.emit("exit", 1, null);
+    // No listener would make this an uncaught 'error' event.
+    expect(() => errored.emit("error", new Error("spawn EACCES"))).not.toThrow();
+
+    const pending = createClaudeCodeFetch()(POOL_URL, {}, POOL_TRANSPORT);
+    const child = await acquireServing(pool, baseline);
+    expect(child).not.toBe(crashed);
+    expect(child).not.toBe(errored);
+    expect(pool.list.length).toBe(baseline + 1);
+    expect(crashed.killed).toBe(false);
+    expect(errored.killed).toBe(false);
+    respondOk(child, "fresh");
+    finishChild(child);
+    expect(await (await pending).text()).toBe("fresh");
+  });
+
+  it("kills pooled idle children on drain and spawns fresh afterwards", async () => {
+    const pool = installCountingSpawn();
+    await fetchCycle(pool, "warm");
+    const pooled = warmPool(pool);
+    expect(pooled).toHaveLength(POOL_CAP);
+    expect(pooled.some((child) => child.killed)).toBe(false);
+
+    __drainClaudeCodeHelperPoolForTests();
+    for (const child of pooled) {
+      expect(child.killed).toBe(true);
+      expect(child.killSignal).toBe("SIGTERM");
+      expect(child.listenerCount("exit")).toBe(0);
+      expect(child.listenerCount("error")).toBe(0);
+    }
+
+    const countAfterDrain = pool.list.length;
+    await flushImmediate();
+    await flushImmediate();
+    expect(pool.list.length).toBe(countAfterDrain);
+
+    await fetchCycle(pool, "after-drain");
   });
 });

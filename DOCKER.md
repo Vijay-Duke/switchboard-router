@@ -8,8 +8,14 @@ Run Switchboard in a container. Build the image locally from this repo (multi-pl
 
 ## Quick start
 
+If you have used `docker compose up` from this repo, its `switchboard-net` network
+already owns `172.30.0.0/24`; run `docker compose down` first or the
+`docker network create` below fails with an address-pool overlap.
+
 ```bash
+docker network create --subnet 172.30.0.0/24 --gateway 172.30.0.1 switchboard 2>/dev/null || true
 docker run -d \
+  --network switchboard \
   -p 127.0.0.1:20128:20128 \
   -v "$HOME/.switchboard:/app/data" \
   -e DATA_DIR=/app/data \
@@ -30,10 +36,13 @@ Under Docker's default bridge network your browser does not appear as
 `172.17.0.1`). Without help the dashboard page loads and every one of its API
 calls returns `403 Local only`.
 
-The flags only work as a pair:
+The flags only work as a pair, on the dedicated network created above
+(`docker compose up` provides the same `172.30.0.0/24` subnet and gateway —
+plain `docker run` without `--network switchboard` lands on the default bridge,
+whose gateway is different, and every dashboard API call 403s):
 
-- `-e SWITCHBOARD_LOCAL_PEERS=172.30.0.1` trusts only the configured Compose bridge gateway,
-  applied only to the socket-derived peer address.
+- `-e SWITCHBOARD_LOCAL_PEERS=172.30.0.1` trusts only the gateway of that
+  dedicated bridge network, applied only to the socket-derived peer address.
 - `-p 127.0.0.1:20128:20128` publishes on the host's loopback interface only, so
   nothing off-machine can reach the container and benefit from that trust.
 
@@ -45,7 +54,7 @@ API key, and the credential routes stay closed.
 Confirm the gateway your network actually uses:
 
 ```bash
-docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'
+docker network inspect switchboard --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'
 ```
 
 ## Manage container
@@ -83,6 +92,7 @@ Container path: `/app/data/db/data.sqlite`
 
 ```bash
 docker run -d \
+  --network switchboard \
   -p 127.0.0.1:20128:20128 \
   -v "$HOME/.switchboard:/app/data" \
   -e DATA_DIR=/app/data \
@@ -157,7 +167,8 @@ docker rm -f switchboard
 ```bash
 cd app && docker build -t switchboard .
 
-docker run --rm -p 127.0.0.1:20128:20128 \
+# Reuses the `switchboard` bridge network from the quick start above.
+docker run --rm --network switchboard -p 127.0.0.1:20128:20128 \
   -v "$HOME/.switchboard:/app/data" \
   -e DATA_DIR=/app/data \
   -e SWITCHBOARD_LOCAL_PEERS=172.30.0.1 \

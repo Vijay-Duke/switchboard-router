@@ -59,11 +59,11 @@
   --color-border: #332c1e;
   --color-border-subtle: #2a2418;
 
-  /* Text — mock #ECE4D2 / #A99E86 / #6F6653 / #8A7F66 */
+  /* Text — mock #ECE4D2 / #A99E86 / #8F846B (AA on dark surfaces) */
   --color-text: #ece4d2;
   --color-text-main: #ece4d2;
   --color-text-muted: #a99e86;
-  --color-text-subtle: #6f6653;
+  --color-text-subtle: #8f846b;
 
   /* Status — mock online green #74C08A */
   --color-danger: #e07070;
@@ -115,7 +115,7 @@
   --color-text: #ece4d2;
   --color-text-main: #ece4d2;
   --color-text-muted: #a99e86;
-  --color-text-subtle: #6f6653;
+  --color-text-subtle: #8f846b;
 
   --color-danger: #e07070;
   --color-success: #74c08a;
@@ -270,6 +270,16 @@ input, textarea {
   flex: 0 0 auto;
 }
 
+/* Offline dot — shown by the shell status badges when /api/health fails */
+.console-offline-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-danger);
+  box-shadow: none;
+  flex: 0 0 auto;
+}
+
 /* Nav item styles matching mock */
 .console-nav-item {
   display: flex;
@@ -306,9 +316,9 @@ input, textarea {
 
 /* Section label in sidebar */
 .console-nav-section {
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 1.4px;
-  color: #6f6653;
+  color: var(--color-text-subtle);
   text-transform: uppercase;
   padding: 14px 10px 5px;
   font-weight: 600;
@@ -521,4 +531,15 @@ input, textarea {
   height: auto;
   border-radius: 8px;
   border: 1px solid var(--color-border-subtle);
+}
+
+/* Motion safety: with the OS reduce-motion setting on, skeletons stay as
+ * static blocks and spinners/transitions render frozen — no animation. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

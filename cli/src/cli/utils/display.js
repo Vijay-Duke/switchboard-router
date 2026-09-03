@@ -146,7 +146,27 @@ function showHeader(title, subtitle) {
   console.log(`${"=".repeat(60)}\n`);
 }
 
+let terminalOutputDetached = false;
+
+/**
+ * Make console output safe after the controlling terminal is gone. On macOS,
+ * "Hide to Tray" keeps the launcher in a process whose stdout is still the
+ * terminal pty; once that terminal closes, the next console write blocks
+ * forever (EIO with no error event). A no-op error listener turns the write
+ * into a survivable failure instead. Idempotent.
+ */
+function detachTerminalOutput() {
+  if (terminalOutputDetached) return;
+  terminalOutputDetached = true;
+  for (const stream of [process.stdout, process.stderr]) {
+    try {
+      stream.on("error", () => {});
+    } catch {}
+  }
+}
+
 module.exports = {
+  detachTerminalOutput,
   showBox,
   showMenu,
   showTable,

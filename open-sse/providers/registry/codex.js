@@ -79,12 +79,13 @@ const moduleDefault = {
       originator: "codex_cli_rs",
     },
     refreshLeadMs: 432000000,
-    refresh: {
-      encoding: "form",
-      scope: "openid profile email offline_access",
-    },
     maxRefreshAgeMs: 691200000,
     trackRefreshAt: true,
+    // The exchange route accepts a pasted ChatGPT access token (raw JWT) as
+    // a connection. Only providers setting this flag allow that path; tokens
+    // carrying an `iss` outside the allowlist are rejected.
+    acceptsRawAccessToken: true,
+    rawAccessTokenIssuers: ["https://auth.openai.com", "https://auth0.openai.com"],
   },
   features: {
     usage: true,

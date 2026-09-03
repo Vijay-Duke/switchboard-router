@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import PropTypes from "prop-types";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 
@@ -16,8 +17,10 @@ const STRATEGY_LABELS = {
  * Overview — live endpoint stats + honest combo strategy summary (not always Auto).
  */
 export default function OverviewClient({ initialData }) {
+  const router = useRouter();
   const [host, setHost] = useState(initialData?.endpointHost || "127.0.0.1:20128");
   const [stats, setStats] = useState(null);
+  const [statsError, setStatsError] = useState(false);
   const { copied, copy } = useCopyToClipboard();
 
   const providerCount = initialData?.providerCount ?? 0;
@@ -27,7 +30,7 @@ export default function OverviewClient({ initialData }) {
   const comboCount = initialData?.comboCount ?? 0;
   const defaultCombo = initialData?.defaultCombo || null;
   const learningSummary = initialData?.learningSummary || null;
-  const quotas = initialData?.quotas || [];
+  const loadError = initialData?.loadError || null;
   const isAuto = !!defaultCombo?.isAuto;
   const strategy = defaultCombo?.strategy || "fallback";
 
@@ -38,11 +41,16 @@ export default function OverviewClient({ initialData }) {
   useEffect(() => {
     let cancelled = false;
     fetch("/api/usage/stats?period=24h")
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`stats request failed: ${r.status}`);
+        return r.json();
+      })
       .then((data) => {
         if (!cancelled) setStats(data);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setStatsError(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -51,6 +59,14 @@ export default function OverviewClient({ initialData }) {
   const endpointUrl = `http://${host}/v1`;
 
   const homeStats = useMemo(() => {
+    if (statsError) {
+      return [
+        { label: "Requests · 24h", value: "—" },
+        { label: "Tokens in", value: "—" },
+        { label: "Tokens out", value: "—" },
+        { label: "Est. cost", value: "—" },
+      ];
+    }
     const req = stats?.totalRequests ?? stats?.requests ?? 0;
     const prompt = stats?.totalPromptTokens ?? 0;
     const completion = stats?.totalCompletionTokens ?? 0;
@@ -61,7 +77,7 @@ export default function OverviewClient({ initialData }) {
       { label: "Tokens out", value: formatNum(completion) },
       { label: "Est. cost", value: cost ? `$${Number(cost).toFixed(2)}` : "$0.00" },
     ];
-  }, [stats]);
+  }, [stats, statsError]);
 
   const routingRows = useMemo(() => {
     if (!defaultCombo) {
@@ -112,7 +128,7 @@ export default function OverviewClient({ initialData }) {
         <span
           style={{
             fontSize: 12,
-            color: "#6F6653",
+            color: "var(--color-text-subtle)",
             fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
           }}
         >
@@ -120,7 +136,60 @@ export default function OverviewClient({ initialData }) {
         </span>
       </div>
 
-      {providerCount === 0 && (
+      {loadError && (
+        <div
+          role="alert"
+          className="border-[#E5B454]"
+          style={{
+            background: "#1E1A13",
+            borderStyle: "solid",
+            borderWidth: 1,
+            borderRadius: 12,
+            padding: 18,
+          }}
+        >
+          <div
+            className="flex items-center"
+            style={{ gap: 8, marginBottom: 8 }}
+          >
+            <span
+              className="material-symbols-outlined"
+              aria-hidden="true"
+              style={{ fontSize: 18, color: "#E5B454" }}
+            >
+              warning
+            </span>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#E5B454" }}>
+              Couldn&apos;t read dashboard data: {loadError}
+            </div>
+          </div>
+          <div className="text-text-subtle" style={{ fontSize: 12, marginBottom: 12 }}>
+            The numbers below may be incomplete. Check the server logs and try
+            again.
+          </div>
+          <button
+            type="button"
+            onClick={() => router.refresh()}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "6px 14px",
+              borderRadius: 8,
+              background: "#E5B454",
+              color: "#1E1A13",
+              fontSize: 12,
+              fontWeight: 600,
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {providerCount === 0 && !loadError && (
         <div
           style={{
             background: "#1E1A13",
@@ -391,6 +460,18 @@ export default function OverviewClient({ initialData }) {
           </div>
         ))}
       </div>
+      {statsError && (
+        <div
+          role="status"
+          className="text-text-subtle"
+          style={{
+            fontSize: 11.5,
+            fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
+          }}
+        >
+          stats unavailable
+        </div>
+      )}
 
       {/* Active routing + Quota */}
       <div className="grid gap-4 items-start grid-cols-1 md:grid-cols-2">
@@ -490,67 +571,38 @@ export default function OverviewClient({ initialData }) {
           <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: "#ECE4D2" }}>Quota</span>
             <span
+              className="text-text-subtle"
               style={{
                 fontSize: 11,
-                color: "#6F6653",
                 fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
               }}
             >
-              {quotas.length || providerCount} accounts
+              {providerCount} connections
             </span>
-          </div>
-          <div className="flex flex-col" style={{ gap: 13 }}>
-            {(quotas.length
-              ? quotas
-              : [{ account: "No quota data yet", pct: 0 }]
-            )
-              .slice(0, 6)
-              .map((q) => {
-                const pct = Math.max(0, Math.min(100, Number(q.pct) || 0));
-                const color =
-                  pct >= 90 ? "#E07070" : pct >= 70 ? "#E5B454" : "#74C08A";
-                return (
-                  <div key={q.account} className="flex flex-col" style={{ gap: 5 }}>
-                    <div className="flex justify-between items-baseline gap-2">
-                      <span style={{ fontSize: 12, color: "#ECE4D2" }}>{q.account}</span>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          color,
-                          fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
-                        }}
-                      >
-                        {pct}%
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        height: 5,
-                        borderRadius: 3,
-                        background: "#241F16",
-                        overflow: "hidden",
-                      }}
-                    >
-                      <div
-                        style={{
-                          height: "100%",
-                          width: `${pct}%`,
-                          borderRadius: 3,
-                          background: color,
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
           </div>
           <Link
             href="/dashboard/quota"
-            className="inline-block mt-4"
-            style={{ fontSize: 11.5, color: "#A99E86" }}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 7,
+              background: "transparent",
+              border: "1px solid #3A3221",
+              borderRadius: 7,
+              padding: "7px 12px",
+              fontSize: 12,
+              color: "#A99E86",
+              textDecoration: "none",
+            }}
           >
-            Open quota tracker →
+            Open quota dashboard →
           </Link>
+          <div
+            className="text-text-subtle"
+            style={{ fontSize: 11.5, marginTop: 12 }}
+          >
+            Per-account limits and reset timers live on the Quota page.
+          </div>
         </div>
       </div>
     </div>

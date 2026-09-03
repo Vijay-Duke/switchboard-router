@@ -125,6 +125,8 @@ export const TABLES = {
       endpoint: "TEXT",
       promptTokens: "INTEGER DEFAULT 0",
       completionTokens: "INTEGER DEFAULT 0",
+      // P5: denormalized so the today/24h stats branch never parses the tokens JSON.
+      cachedTokens: "INTEGER DEFAULT 0",
       cost: "REAL DEFAULT 0",
       status: "TEXT",
       tokens: "TEXT",
@@ -139,6 +141,8 @@ export const TABLES = {
       "CREATE INDEX IF NOT EXISTS idx_uh_model ON usageHistory(model)",
       "CREATE INDEX IF NOT EXISTS idx_uh_conn ON usageHistory(connectionId)",
       "CREATE INDEX IF NOT EXISTS idx_uh_client_key ON usageHistory(clientKeyId)",
+      // P5: covers the lastUsed overlay's GROUP BY + MAX(timestamp) aggregation.
+      "CREATE INDEX IF NOT EXISTS idx_uh_lastused ON usageHistory(model, provider, connectionId, clientKeyId, endpoint, timestamp)",
       // Partial: many rows may have NULL requestId, but a present one is unique.
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_uh_request_id ON usageHistory(requestId) WHERE requestId IS NOT NULL",
     ],

@@ -50,7 +50,8 @@ export function createSSEStream(options = {}) {
     connectionId = null,
     body = null,
     onStreamComplete = null,
-    clientKeyId = null
+    clientKeyId = null,
+    terminateOnResponsesTerminal = true,
   } = options;
 
   let buffer = "";
@@ -426,20 +427,23 @@ export function createSSEStream(options = {}) {
           reqLogger?.appendConvertedChunk?.(doneOutput);
           controller.enqueue(sharedEncoder.encode(doneOutput));
           streamDoneSent = true;
-          // Terminate() closes the readable and errors the writable, so flush()
-          // never runs — do its bookkeeping here, then close the transport.
-          trackPendingRequest(model, provider, connectionId, false);
-          if (!hasValidUsage(state?.usage) && totalContentLength > 0) {
-            state.usage = estimateUsage(body, totalContentLength, sourceFormat);
+          if (terminateOnResponsesTerminal) {
+            // HTTP Responses streams may leave the connection open after the
+            // terminal event. Finish accounting and detach without waiting.
+            trackPendingRequest(model, provider, connectionId, false);
+            if (!hasValidUsage(state?.usage) && totalContentLength > 0) {
+              state.usage = estimateUsage(body, totalContentLength, sourceFormat);
+            }
+            if (hasValidUsage(state?.usage)) {
+              logUsage(state.provider || targetFormat, state.usage, model, connectionId, clientKeyId);
+            }
+            if (onStreamComplete) {
+              onStreamComplete({ content: accumulatedContent, thinking: accumulatedThinking }, state?.usage, ttftAt).catch(() => {});
+            }
+            reqLogger?.close?.();
+            controller.terminate();
+            return;
           }
-          if (hasValidUsage(state?.usage)) {
-            logUsage(state.provider || targetFormat, state.usage, model, connectionId, clientKeyId);
-          }
-          if (onStreamComplete) {
-            onStreamComplete({ content: accumulatedContent, thinking: accumulatedThinking }, state?.usage, ttftAt).catch(() => {});
-          }
-          controller.terminate();
-          return;
         }
       }
     },
@@ -483,6 +487,7 @@ export function createSSEStream(options = {}) {
               thinking: accumulatedThinking
             }, usage, ttftAt);
           }
+          reqLogger?.close?.();
           return;
         }
 
@@ -560,16 +565,23 @@ export function createSSEStream(options = {}) {
             thinking: accumulatedThinking
           }, state?.usage, ttftAt);
         }
+        reqLogger?.close?.();
       } catch (error) {
+        reqLogger?.close?.();
         // Lifecycle error: always shown, unified format (no session tag available here)
         const msg = error?.message || String(error);
         errorLine("", "✗", `FLUSH ERROR · ${provider || targetFormat}/${model} · ${msg}${error?.stack ? `\n    ${error.stack}` : ""}`);
       }
+    },
+
+    // Client abort / pipe error: flush never runs, so release chunk logs here.
+    cancel() {
+      reqLogger?.close?.();
     }
   });
 }
 
-export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, clientKeyId = null) {
+export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, clientKeyId = null, terminateOnResponsesTerminal = true) {
   return createSSEStream({
     mode: STREAM_MODE.TRANSLATE,
     targetFormat,
@@ -581,7 +593,8 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
     connectionId,
     body,
     onStreamComplete,
-    clientKeyId
+    clientKeyId,
+    terminateOnResponsesTerminal,
   });
 }
 

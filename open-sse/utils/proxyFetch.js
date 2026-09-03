@@ -159,7 +159,7 @@ async function resolveRealIP(hostname) {
 /**
  * Check if request should bypass MITM DNS redirect
  */
-function shouldBypassMitmDns(url) {
+export function shouldBypassMitmDns(url) {
   try {
     const hostname = new URL(url).hostname;
     return MITM_BYPASS_HOSTS.some(host => hostname.includes(host));
@@ -217,7 +217,7 @@ function normalizeProxyUrl(proxyUrl) {
   }
 }
 
-function resolveConnectionProxyUrl(targetUrl, proxyOptions) {
+export function resolveConnectionProxyUrl(targetUrl, proxyOptions) {
   const enabled = proxyOptions?.enabled === true || proxyOptions?.connectionProxyEnabled === true;
   if (!enabled) return null;
 
@@ -231,9 +231,18 @@ function resolveConnectionProxyUrl(targetUrl, proxyOptions) {
 }
 
 /**
+ * Egress proxy for a target: per-connection proxy wins, else env proxy.
+ * Shared by proxyAwareFetch and the Codex WebSocket hop so both egress alike.
+ */
+export function resolveProxyUrl(targetUrl, proxyOptions) {
+  const connectionProxyUrl = resolveConnectionProxyUrl(targetUrl, proxyOptions);
+  return connectionProxyUrl || normalizeProxyUrl(getEnvProxyUrl(targetUrl));
+}
+
+/**
  * Create proxy dispatcher lazily (undici-compatible)
  */
-async function getDispatcher(proxyUrl) {
+export async function getDispatcher(proxyUrl) {
   const normalized = normalizeProxyUrl(proxyUrl);
   if (!normalized) return null;
 
@@ -445,9 +454,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     });
   }
 
-  const connectionProxyUrl = resolveConnectionProxyUrl(targetUrl, proxyOptions);
-  const envProxyUrl = connectionProxyUrl ? null : normalizeProxyUrl(getEnvProxyUrl(targetUrl));
-  const proxyUrl = connectionProxyUrl || envProxyUrl;
+  const proxyUrl = resolveProxyUrl(targetUrl, proxyOptions);
 
   if (_identityTls !== "node") {
     try {

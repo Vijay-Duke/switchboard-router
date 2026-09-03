@@ -127,6 +127,22 @@ describe("calculateCostFromTokens (canonical inclusive convention)", () => {
   });
 });
 
+describe("Responses API terminal usage", () => {
+  const usage = { input_tokens: 120, output_tokens: 40, input_tokens_details: { cached_tokens: 100 }, output_tokens_details: { reasoning_tokens: 8 } };
+
+  it.each(["response.completed", "response.done", "response.incomplete"])("extractUsage reads final usage from %s", (type) => {
+    const u = extractUsage({ type, response: { usage } });
+    expect(u.prompt_tokens).toBe(120);
+    expect(u.completion_tokens).toBe(40);
+    expect(u.cached_tokens).toBe(100);
+    expect(u.reasoning_tokens).toBe(8);
+  });
+
+  it("ignores non-terminal Responses events", () => {
+    expect(extractUsage({ type: "response.in_progress", response: { usage } })).toBeNull();
+  });
+});
+
 describe("Anthropic streaming usage (message_start carries cache, message_delta output-only)", () => {
   it("extractUsage reads input + cache from message_start", () => {
     const u = extractUsage({

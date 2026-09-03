@@ -1,7 +1,11 @@
 /**
  * At-rest encryption for sensitive credential fields (H2).
- * AES-256-GCM with a machine-id-derived key (same pattern as MITM sudo password).
- * Format: enc:v1:<ivHex>:<tagHex>:<cipherHex>
+ * AES-256-GCM. Formats:
+ *   enc:v1:<ivHex>:<tagHex>:<cipherHex>  key = auth/data-key (legacy, read-only)
+ *   enc:v2:<ivHex>:<tagHex>:<cipherHex>  key = sha256(data-key || auth/cli-secret)
+ * v1 blobs stay readable so an upgrade never drops stored credentials; they
+ * move to v2 whenever the row is next written (encryptSecret always emits v2
+ * once the cli-secret exists).
  */
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -9,19 +13,47 @@ import path from "node:path";
 import { DATA_DIR } from "@/lib/dataDir";
 
 const ALGO = "aes-256-gcm";
-const PREFIX = "enc:v1:";
+const PREFIX_V1 = "enc:v1:";
+const PREFIX_V2 = "enc:v2:";
 const KEY_FILE = path.join(DATA_DIR, "auth", "data-key");
+const CLI_SECRET_FILE = path.join(DATA_DIR, "auth", "cli-secret");
 const FALLBACK_SALT = "switchboard-at-rest-v1";
 
-let cachedKey = null;
+let cachedBaseKey = null;
+let cachedCliSecret = null;
 
-function loadOrCreateKey() {
-  if (cachedKey) return cachedKey;
+// Same file and format as shared/utils/machineId.js loadCliSecret (not
+// exported there). Created here as well so runtimes that never see the CLI
+// (Docker, `npm run dev`) still get a v2 key; `wx` keeps a concurrent creator's
+// value instead of clobbering it. Returns null when the data dir is read-only.
+function loadOrCreateCliSecret() {
+  if (cachedCliSecret) return cachedCliSecret;
+  try {
+    cachedCliSecret = fs.readFileSync(CLI_SECRET_FILE, "utf8").trim() || null;
+    if (cachedCliSecret) return cachedCliSecret;
+  } catch { /* create */ }
+  const generated = crypto.randomBytes(32).toString("hex");
+  try {
+    fs.mkdirSync(path.dirname(CLI_SECRET_FILE), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(CLI_SECRET_FILE, generated, { mode: 0o600, flag: "wx" });
+    cachedCliSecret = generated;
+  } catch {
+    try {
+      cachedCliSecret = fs.readFileSync(CLI_SECRET_FILE, "utf8").trim() || null;
+    } catch {
+      cachedCliSecret = null;
+    }
+  }
+  return cachedCliSecret;
+}
+
+function loadOrCreateBaseKey() {
+  if (cachedBaseKey) return cachedBaseKey;
   try {
     const raw = fs.readFileSync(KEY_FILE);
     if (raw.length === 32) {
-      cachedKey = raw;
-      return cachedKey;
+      cachedBaseKey = raw;
+      return cachedBaseKey;
     }
   } catch { /* create */ }
   try {
@@ -32,41 +64,58 @@ function loadOrCreateKey() {
       seed = fs.readFileSync(midPath, "utf8").trim() + FALLBACK_SALT;
     } catch { /* random below if empty */ }
     if (seed === FALLBACK_SALT) {
-      cachedKey = crypto.randomBytes(32);
+      cachedBaseKey = crypto.randomBytes(32);
     } else {
-      cachedKey = crypto.createHash("sha256").update(seed).digest();
+      cachedBaseKey = crypto.createHash("sha256").update(seed).digest();
     }
   } catch {
-    cachedKey = crypto.randomBytes(32);
+    cachedBaseKey = crypto.randomBytes(32);
   }
   try {
     fs.mkdirSync(path.dirname(KEY_FILE), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(KEY_FILE, cachedKey, { mode: 0o600 });
+    fs.writeFileSync(KEY_FILE, cachedBaseKey, { mode: 0o600 });
   } catch { /* best-effort persist */ }
-  return cachedKey;
+  return cachedBaseKey;
+}
+
+// v2 key: data-key mixed with the random per-install cli-secret, so the key
+// is not derivable from public identifiers (machine-id) alone. Null when no
+// secret can be read or created (then encryption stays on v1).
+function loadV2Key() {
+  const cliSecret = loadOrCreateCliSecret();
+  if (!cliSecret) return null;
+  return crypto.createHash("sha256").update(loadOrCreateBaseKey()).update(cliSecret, "utf8").digest();
+}
+
+export function __resetSecretsKeyForTests() {
+  cachedBaseKey = null;
+  cachedCliSecret = null;
 }
 
 export function encryptSecret(plaintext) {
   if (plaintext == null || plaintext === "") return plaintext;
   if (typeof plaintext !== "string") return plaintext;
-  if (plaintext.startsWith(PREFIX)) return plaintext; // already encrypted
-  const key = loadOrCreateKey();
+  if (plaintext.startsWith(PREFIX_V1) || plaintext.startsWith(PREFIX_V2)) return plaintext; // already encrypted
+  const v2Key = loadV2Key();
+  const key = v2Key || loadOrCreateBaseKey();
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv(ALGO, key, iv);
   const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return `${PREFIX}${iv.toString("hex")}:${tag.toString("hex")}:${encrypted.toString("hex")}`;
+  return `${v2Key ? PREFIX_V2 : PREFIX_V1}${iv.toString("hex")}:${tag.toString("hex")}:${encrypted.toString("hex")}`;
 }
 
 export function decryptSecret(stored) {
   if (stored == null || stored === "") return stored;
   if (typeof stored !== "string") return stored;
-  if (!stored.startsWith(PREFIX)) return stored; // legacy plaintext
+  const isV2 = stored.startsWith(PREFIX_V2);
+  if (!isV2 && !stored.startsWith(PREFIX_V1)) return stored; // legacy plaintext
   try {
-    const rest = stored.slice(PREFIX.length);
+    const rest = stored.slice(PREFIX_V2.length); // both prefixes share a length
     const [ivHex, tagHex, dataHex] = rest.split(":");
     if (!ivHex || !tagHex || !dataHex) return null;
-    const key = loadOrCreateKey();
+    const key = isV2 ? loadV2Key() : loadOrCreateBaseKey();
+    if (!key) return null; // v2 blob but the cli-secret is gone → "not set"
     const decipher = crypto.createDecipheriv(ALGO, key, Buffer.from(ivHex, "hex"));
     decipher.setAuthTag(Buffer.from(tagHex, "hex"));
     return decipher.update(Buffer.from(dataHex, "hex"), undefined, "utf8") + decipher.final("utf8");

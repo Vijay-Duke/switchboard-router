@@ -17,8 +17,12 @@ let LOGS_DIR = null;
 async function ensureNodeModules() {
   if (!isNode || !LOGGING_ENABLED || fs) return;
   try {
-    fs = await import("fs");
-    path = await import("path");
+    // Use the default export (the shared CJS exports object) so tests can
+    // spy on fs methods; namespace named imports are snapshots and miss that.
+    const fsMod = await import("fs");
+    const pathMod = await import("path");
+    fs = fsMod.default || fsMod;
+    path = pathMod.default || pathMod;
     LOGS_DIR = path.join(typeof process !== "undefined" && process.cwd ? process.cwd() : ".", "logs");
   } catch {
     // Running in non-Node environment (Worker, Browser, etc.)
@@ -137,7 +141,8 @@ function createNoOpLogger() {
     appendOpenAIChunk() {},
     logConvertedResponse() {},
     appendConvertedChunk() {},
-    logError() {}
+    logError() {},
+    close() {}
   };
 }
 
@@ -156,7 +161,37 @@ export async function createRequestLogger(sourceFormat, targetFormat, model) {
   
   // Wait for session to be created before returning logger
   const sessionPath = await createLogSession(sourceFormat, targetFormat, model);
-  
+
+  // One append-mode WriteStream per chunk file, opened lazily. Previously each
+  // append did open+write+close via appendFileSync on the event loop, up to
+  // three times per streamed chunk. A WriteStream serializes writes (raw
+  // fs.write calls to one fd can complete out of order on the threadpool) and
+  // close() ends each stream, which releases the fd only after its queue
+  // drains (a closeSync with writes in flight risks EBADF / fd reuse).
+  let chunkStreams = {};
+  let chunksClosed = false;
+  function appendChunk(key, filename, chunk) {
+    if (!fs || !sessionPath || chunksClosed) return;
+    try {
+      let ws = chunkStreams[key];
+      if (!ws) {
+        ws = chunkStreams[key] = fs.createWriteStream(path.join(sessionPath, filename), { flags: "a" });
+        ws.on("error", () => { /* chunk debug logs must never break a stream */ });
+      }
+      ws.write(chunk);
+    } catch {
+      // Ignore write errors
+    }
+  }
+  function closeChunkFiles() {
+    chunksClosed = true;
+    const streams = Object.values(chunkStreams);
+    chunkStreams = {};
+    return Promise.all(streams.map((ws) => new Promise((resolve) => {
+      try { ws.end(resolve); } catch { resolve(); }
+    })));
+  }
+
   return {
     get sessionPath() { return sessionPath; },
     
@@ -213,24 +248,12 @@ export async function createRequestLogger(sourceFormat, targetFormat, model) {
     
     // 5. Append streaming chunk to provider response
     appendProviderChunk(chunk) {
-      if (!fs || !sessionPath) return;
-      try {
-        const filePath = path.join(sessionPath, "5_res_provider.txt");
-        fs.appendFileSync(filePath, chunk);
-      } catch (err) {
-        // Ignore append errors
-      }
+      appendChunk("provider", "5_res_provider.txt", chunk);
     },
-    
+
     // 6. Append OpenAI intermediate chunks (target → openai)
     appendOpenAIChunk(chunk) {
-      if (!fs || !sessionPath) return;
-      try {
-        const filePath = path.join(sessionPath, "6_res_openai.txt");
-        fs.appendFileSync(filePath, chunk);
-      } catch (err) {
-        // Ignore append errors
-      }
+      appendChunk("openai", "6_res_openai.txt", chunk);
     },
     
     // 7. Log converted response to client (for non-streaming)
@@ -243,15 +266,9 @@ export async function createRequestLogger(sourceFormat, targetFormat, model) {
     
     // 7. Append streaming chunk to converted response
     appendConvertedChunk(chunk) {
-      if (!fs || !sessionPath) return;
-      try {
-        const filePath = path.join(sessionPath, "7_res_client.txt");
-        fs.appendFileSync(filePath, chunk);
-      } catch (err) {
-        // Ignore append errors
-      }
+      appendChunk("converted", "7_res_client.txt", chunk);
     },
-    
+
     // 6. Log error
     logError(error, requestBody = null) {
       writeJsonFile(sessionPath, "6_error.json", {
@@ -259,6 +276,12 @@ export async function createRequestLogger(sourceFormat, targetFormat, model) {
         error: error?.message || String(error),
         requestBody
       });
+    },
+
+    // Release chunk-log files; called on stream flush/cancel and error paths.
+    // Idempotent. Resolves once queued writes have drained (callers may ignore).
+    close() {
+      return closeChunkFiles();
     }
   };
 }

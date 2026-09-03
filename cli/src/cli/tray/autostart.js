@@ -169,11 +169,27 @@ function enableMacOS(cliPath, launchOptions) {
   // some setups don't put node on PATH from a non-interactive login shell).
   // EnvironmentVariables.PATH explicitly includes node's bin dir so child
   // processes spawned by cli.js (npm install at runtime, etc.) resolve.
-  const launchPath = `${path.dirname(nodePath)}:/usr/local/bin:/usr/bin:/bin`;
+  // /usr/sbin holds lsof (port ownership checks) and ioreg (machine id);
+  // launchd starts with a bare PATH, so both must be listed explicitly.
+  const launchPath = `${path.dirname(nodePath)}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`;
   const launchArgs = getLaunchArgs(launchOptions);
   const plistArgs = [nodePath, routerScript, ...launchArgs]
     .map((arg) => `        <string>${xmlEscape(arg)}</string>`)
     .join("\n");
+
+  // Keep launcher output out of the world-writable /tmp tree: every restart
+  // appends to these paths, and a fixed /tmp path is a symlink target for
+  // other local accounts. The data dir already owns a logs/ convention.
+  const { getDataDir } = require("../../shared/dataDir");
+  const logsDir = path.join(getDataDir(), "logs");
+  try {
+    fs.mkdirSync(logsDir, { recursive: true, mode: 0o700 });
+  } catch {}
+  const stdoutPath = path.join(logsDir, "launcher.log");
+  const stderrPath = path.join(logsDir, "launcher.error.log");
+  const dataDirEnv = process.env.DATA_DIR
+    ? `        <key>DATA_DIR</key>\n        <string>${xmlEscape(process.env.DATA_DIR)}</string>\n`
+    : "";
 
   const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -189,15 +205,15 @@ ${plistArgs}
     <dict>
         <key>PATH</key>
         <string>${launchPath}</string>
-    </dict>
+${dataDirEnv}    </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <false/>
     <key>StandardOutPath</key>
-    <string>/tmp/switchboard.log</string>
+    <string>${xmlEscape(stdoutPath)}</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/switchboard.error.log</string>
+    <string>${xmlEscape(stderrPath)}</string>
 </dict>
 </plist>`;
 

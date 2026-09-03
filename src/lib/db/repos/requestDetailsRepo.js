@@ -1,5 +1,6 @@
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { noteBodyLength } from "../../../../open-sse/utils/usageTracking.js";
 
 const DEFAULT_MAX_RECORDS = 200;
 const DEFAULT_BATCH_SIZE = 20;
@@ -77,23 +78,54 @@ function generateDetailId(model) {
 }
 
 /**
+ * Memoize truncateField by object identity: streaming requests save the same
+ * `request`/`providerRequest` references twice (start + finish), so the
+ * second pass reuses the first pass's result instead of re-serializing a
+ * large agent context. Objects passed here are not mutated after dispatch
+ * (RTK/headroom mutate before executor.execute), so identity memo is safe.
+ */
+const truncMemo = new WeakMap();
+
+function memoizeTruncation(obj, maxSize, result) {
+  if (obj && (typeof obj === "object" || typeof obj === "function")) {
+    try {
+      truncMemo.set(obj, { maxSize, result });
+    } catch {
+      /* ignore non-keyable values */
+    }
+  }
+  return result;
+}
+
+/**
  * Truncate a field if its JSON serialization exceeds maxSize.
  * Returns a small preview object instead of the full payload.
  * Safe for circular structures / non-JSON values (falls back to preview of String()).
  */
 function truncateField(obj, maxSize) {
   if (obj == null) return {};
+  if ((typeof obj === "object" || typeof obj === "function")) {
+    try {
+      const hit = truncMemo.get(obj);
+      if (hit && hit.maxSize === maxSize) return hit.result;
+    } catch {
+      /* ignore memo lookup failures */
+    }
+  }
   let str;
   try {
     str = JSON.stringify(obj);
   } catch {
     const preview = String(obj).substring(0, 200);
-    return { _truncated: true, _originalSize: preview.length, _preview: preview, _error: "stringify_failed" };
+    return memoizeTruncation(obj, maxSize, { _truncated: true, _originalSize: preview.length, _preview: preview, _error: "stringify_failed" });
   }
+  // Share the measured length with the usage estimator so a later
+  // estimateInputTokens on the same body skips its own stringify.
+  noteBodyLength(obj, str.length);
   if (str.length > maxSize) {
-    return { _truncated: true, _originalSize: str.length, _preview: str.substring(0, 200) };
+    return memoizeTruncation(obj, maxSize, { _truncated: true, _originalSize: str.length, _preview: str.substring(0, 200) });
   }
-  return obj;
+  return memoizeTruncation(obj, maxSize, obj);
 }
 
 /**
@@ -159,19 +191,17 @@ async function flushToDatabase() {
           );
         }
 
-        // H8: prune via ordered delete without a full COUNT when under soft cap.
-        // Run retention every flush; use LIMIT-based delete of oldest excess if any.
-        // Cheap path: attempt delete of (batch-sized) oldest rows beyond max via
-        // subquery that only materializes when over the cap.
-        db.run(
-          `DELETE FROM requestDetails WHERE id IN (
-             SELECT id FROM requestDetails
-             WHERE id NOT IN (
-               SELECT id FROM requestDetails ORDER BY timestamp DESC LIMIT ?
-             )
-           )`,
-          [config.maxRecords]
+        // Retention via a single index-seek cutoff + range delete (both use
+        // idx_rd_ts), so an under-cap flush pays one seek instead of a
+        // full-table pass. The cutoff is the oldest row to keep; rows sharing
+        // its exact timestamp survive, which is acceptable.
+        const cut = db.get(
+          `SELECT timestamp FROM requestDetails ORDER BY timestamp DESC LIMIT 1 OFFSET ?`,
+          [Math.max(0, config.maxRecords - 1)]
         );
+        if (cut) {
+          db.run(`DELETE FROM requestDetails WHERE timestamp < ?`, [cut.timestamp]);
+        }
       });
     }
   } catch (e) {

@@ -1,6 +1,6 @@
 # Environment variables
 
-_Last verified against runtime reads: 2026-07-11_
+_Last verified against runtime reads: 2026-09-03_
 
 Switchboard stores normal product configuration in SQLite. Environment
 variables are for process startup, operator-enforced security, deployment
@@ -25,12 +25,14 @@ plumbing, diagnostics, and a small number of provider fallbacks.
 | Variable | Default | Purpose |
 |---|---:|---|
 | `DATA_DIR` | platform data directory | Root for SQLite, backups, runtime metadata, generated secrets and MITM state. |
+| `SWITCHBOARD_DATA_DIR` | unset (retired) | Former data-directory override; no longer read by any runtime path. Use `DATA_DIR` instead. |
 | `PORT` | `20128` in launcher scripts | HTTP listen port. |
 | `HOSTNAME` | `127.0.0.1` in supported launchers | Bind address. Use `0.0.0.0` only with `start:standalone` and an intentional network policy. |
 | `NODE_ENV` | set by the launcher | Next.js runtime mode. |
 | `REQUIRE_API_KEY` | persisted setting, then `true` | Operator override for the non-loopback `/v1` API-key gate. Accepts `true/false`, `1/0`, or `yes/no`. |
 | `API_KEY_SECRET` | generated per installation | HMAC secret for Switchboard API-key structure. Existing installations should keep it stable. |
 | `MACHINE_ID_SALT` | generated per installation | Salt for the stable, privacy-preserving machine identifier. |
+| `MANAGEMENT_TOKEN` | unset | Optional shared secret that extends `/api/mgmt/*` only; clients present it as a `Bearer` token, and the route fails closed (loopback or CLI token still required) when unset. |
 | `SHUTDOWN_SECRET` | unset | Development-only bearer secret for `/api/shutdown`; the route is disabled in production. |
 | `KEEP_ALIVE_TIMEOUT` | Next standalone default | HTTP keep-alive timeout used by the generated standalone server. |
 
@@ -64,7 +66,8 @@ All values are positive integer milliseconds unless stated otherwise.
 | `FETCH_CONNECT_TIMEOUT_MS` | `60000` | General upstream wait for response headers. |
 | `GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS` | `45000` | Gemini native TTS response-header timeout. |
 | `USAGE_HISTORY_MAX` | `50000` | Maximum retained usage-history rows during cleanup. |
-| `CODEX_WS_TRANSPORT` | unset (`off`) | Set to exactly `on` to opt into Codex Responses WebSocket transport. HTTP SSE remains default because failed WebSocket handshakes retain native memory under sustained fallback load. |
+| `CODEX_WS_TRANSPORT` | unset (`on`) | Codex Responses WebSocket transport. Set to exactly `off` to force legacy HTTP SSE; handshake failures fall back to HTTP before response bytes; a first-frame error (e.g. quota) also falls back so account rotation works; after 3 handshake failures for the same proxy (or direct) the WS path is bypassed for 5 minutes. The hop honours per-connection proxies, `HTTPS_PROXY`, and the Vercel relay. |
+| `SWITCHBOARD_CLAUDE_TLS_POOL_CAP` | `2` | Idle pre-spawned Claude TLS helper processes kept warm for 60 s after a Claude-family request (hides fork/exec latency). `0` disables the pool. |
 
 The MITM bypass transport also has a fixed ten-second connection timeout so a
 broken local interception path cannot hang indefinitely.
@@ -128,9 +131,11 @@ developing or packaging the CLI.
 | `UPDATER_PKG_NAME` | `switchboard-router` | Package installed by the detached updater. |
 | `UPDATER_PORT` | `20129` | Updater status port. |
 | `UPDATER_APP_PORT` | `20128` | Application port checked during restart. |
+| `HOST` | `127.0.0.1` | Bind address read by the updater relaunch before `HOSTNAME`. |
 | `UPDATER_TAIL_LINES` | `8` | Installer-output lines included in status. |
 | `UPDATER_RETRIES` | `3` | Relaunch health-check attempts. |
 | `UPDATER_RETRY_DELAY_MS` | `5000` | Delay between relaunch attempts. |
+| `UPDATER_STARTUP_TIMEOUT_MS` | `2000` | Time the detached updater waits for its status server to bind before reporting failure. |
 | `UPDATER_LINGER_MS` | `30000` | Time updater status remains available after completion. |
 | `UPDATER_WAIT_MIN_MS` | `3000` | Minimum wait for the parent process to stop. |
 | `UPDATER_WAIT_MAX_MS` | `15000` | Maximum wait for the parent process to stop. |

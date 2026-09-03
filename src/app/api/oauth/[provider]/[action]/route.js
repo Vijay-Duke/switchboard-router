@@ -19,7 +19,46 @@ import {
   registerXaiSession,
   getXaiSessionStatus,
   clearXaiSession,
+  getOAuthState,
+  clearOAuthState,
 } from "@/lib/oauth/utils/server";
+import { PROVIDER_OAUTH } from "open-sse/providers/index.js";
+
+/**
+ * Decode the payload segment of a JWT without verifying (signature is
+ * validated implicitly by later upstream use; here we only gate which
+ * tokens may become connections).
+ */
+function decodeRawTokenPayload(token) {
+  try {
+    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "=".repeat((4 - b64.length % 4) % 4);
+    const payload = JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+    return payload && typeof payload === "object" ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Compare a token `iss` against an allowlist of issuer URLs by hostname, so
+ * trailing-slash variants ("https://host" vs "https://host/") still match.
+ */
+function issuerAllowlisted(iss, allowlist) {
+  let host;
+  try {
+    host = new URL(String(iss)).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return allowlist.some((allowed) => {
+    try {
+      return new URL(allowed).hostname.toLowerCase() === host;
+    } catch {
+      return allowed === iss;
+    }
+  });
+}
 
 async function completeXaiManualCode(code, state) {
   const session = state ? getXaiSessionStatus(state) : null;
@@ -183,19 +222,68 @@ export async function POST(request, { params }) {
     if (action === "exchange") {
       const { code, redirectUri, codeVerifier, state, meta } = body;
 
-      // Detect if "code" is actually a raw JWT access token (starts with eyJ)
-      if (code && code.startsWith("eyJ") && code.includes(".")) {
+      // Cline and ClinePass use authorization_code without PKCE. Kimchi returns a browser token.
+      // None of them carry our `state` through the upstream, so there is no
+      // server-issued state to bind for them.
+      const noPkceExchangeProviders = ["cline", "clinepass", "kimchi"];
+      const oauthCfg = PROVIDER_OAUTH[provider];
+      const looksLikeJwt = Boolean(code && code.startsWith("eyJ") && code.includes("."));
+
+      // Detect if "code" is actually a raw JWT access token (starts with eyJ).
+      // Only providers whose registry sets oauth.acceptsRawAccessToken take
+      // this path, and the token must look issued for them (registry
+      // iss/aud allowlists + ChatGPT identity claims) — otherwise a pasted
+      // token for the wrong service becomes a connection that 401s forever.
+      // Browser-token providers (kimchi) fall through to their own
+      // exchangeToken, which validates the token upstream.
+      if (looksLikeJwt && !oauthCfg?.acceptsRawAccessToken && !noPkceExchangeProviders.includes(provider)) {
+        return NextResponse.json(
+          { error: `Provider "${provider}" does not accept raw access tokens. Complete the OAuth flow instead.` },
+          { status: 400 }
+        );
+      }
+      if (looksLikeJwt && oauthCfg?.acceptsRawAccessToken) {
         const { extractCodexAccountInfo } = await import("@/lib/oauth/providers");
         const info = extractCodexAccountInfo(code);
 
         // Also decode JWT directly for ChatGPT website tokens which use
         // top-level account_id/plan_type instead of nested openai auth claims
-        let directPayload = {};
-        try {
-          const b64 = code.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-          const padded = b64 + "=".repeat((4 - b64.length % 4) % 4);
-          directPayload = JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
-        } catch {}
+        const directPayload = decodeRawTokenPayload(code);
+        if (!directPayload) {
+          return NextResponse.json(
+            { error: "Access token could not be decoded. Paste the full JWT access token." },
+            { status: 400 }
+          );
+        }
+
+        const issuers = Array.isArray(oauthCfg.rawAccessTokenIssuers) ? oauthCfg.rawAccessTokenIssuers : [];
+        if (directPayload.iss && issuers.length > 0 && !issuerAllowlisted(directPayload.iss, issuers)) {
+          return NextResponse.json(
+            { error: "Token issuer is not recognized for this provider." },
+            { status: 400 }
+          );
+        }
+        const audiences = Array.isArray(oauthCfg.rawAccessTokenAudiences) ? oauthCfg.rawAccessTokenAudiences : [];
+        if (directPayload.aud !== undefined && audiences.length > 0) {
+          const tokenAud = Array.isArray(directPayload.aud) ? directPayload.aud : [directPayload.aud];
+          if (!tokenAud.some((a) => audiences.includes(a))) {
+            return NextResponse.json(
+              { error: "Token audience is not recognized for this provider." },
+              { status: 400 }
+            );
+          }
+        }
+        // Both known ChatGPT shapes carry account evidence (the namespaced
+        // auth claim, or top-level account_id/plan_type). A JWT without any
+        // of them belongs to another service.
+        if (directPayload["https://api.openai.com/auth"] == null
+          && directPayload.account_id == null
+          && directPayload.plan_type == null) {
+          return NextResponse.json(
+            { error: "Token is not a recognized ChatGPT access token for this provider." },
+            { status: 400 }
+          );
+        }
 
         const accountId = info.chatgptAccountId || directPayload.account_id;
         const planType = info.chatgptPlanType || directPayload.plan_type;
@@ -225,14 +313,31 @@ export async function POST(request, { params }) {
         });
       }
 
-      // Cline and ClinePass use authorization_code without PKCE. Kimchi returns a browser token.
-      const noPkceExchangeProviders = ["cline", "clinepass", "kimchi"];
-      if (!code || !redirectUri || (!codeVerifier && !noPkceExchangeProviders.includes(provider))) {
+      // The state must have been issued by this server's authorize step for
+      // this provider; the stored verifier/redirect win over client copies.
+      // Every client (dashboard modal, callback page, CLI) round-trips the
+      // `state` echoed on the callback URL, so a missing state means the
+      // flow did not start here (or the modal was reopened with a new one).
+      let effectiveVerifier = codeVerifier;
+      let effectiveRedirectUri = redirectUri;
+      if (!noPkceExchangeProviders.includes(provider)) {
+        const stored = state ? getOAuthState(state, provider) : null;
+        if (!stored) {
+          return NextResponse.json(
+            { error: "Invalid, missing, or expired OAuth state. Restart the login flow and try again." },
+            { status: 400 }
+          );
+        }
+        effectiveVerifier = stored.codeVerifier;
+        effectiveRedirectUri = stored.redirectUri || redirectUri;
+      }
+
+      if (!code || !effectiveRedirectUri || (!effectiveVerifier && !noPkceExchangeProviders.includes(provider))) {
         return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
       }
 
       // Exchange code for tokens (meta carries provider-specific params, e.g. gitlab clientId/baseUrl)
-      const tokenData = await exchangeTokens(provider, code, redirectUri, codeVerifier, state, meta);
+      const tokenData = await exchangeTokens(provider, code, effectiveRedirectUri, effectiveVerifier, state, meta);
 
       // Save to database
       const connection = await createProviderConnection({
@@ -244,6 +349,9 @@ export async function POST(request, { params }) {
           : null,
         testStatus: "active",
       });
+
+      // A completed flow must not be replayable with the same state.
+      if (state) clearOAuthState(state);
 
       return NextResponse.json({ 
         success: true, 

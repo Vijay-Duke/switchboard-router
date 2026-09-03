@@ -419,7 +419,15 @@ export class QoderExecutor extends BaseExecutor {
     try {
       response = await proxyAwareFetch(
         url,
-        { method: "POST", headers, body: encodedBodyBuf, signal: mergedSignal },
+        {
+          method: "POST",
+          headers,
+          body: encodedBodyBuf,
+          signal: mergedSignal,
+          identity: this.resolveIdentity(credentials),
+          provider: this.provider,
+          format: this.config?.format,
+        },
         proxyOptions,
       );
     } finally {

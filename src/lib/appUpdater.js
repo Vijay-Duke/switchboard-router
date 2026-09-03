@@ -1,10 +1,14 @@
 import { spawn, execSync, execFileSync } from "child_process";
 import path from "path";
 import fs from "fs";
-import os from "os";
 import crypto from "crypto";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
+import { getDataDir } from "@/lib/dataDir";
 import { matchesRecordedProcess } from "@/lib/processIdentity";
+
+// Re-exported so the data-dir contract test can pin the resolution this
+// module uses for its state files (owned-processes.json, ready tokens).
+export { getDataDir };
 
 const PROCESS_WAIT_MS = 2000;
 
@@ -115,13 +119,7 @@ function collectAppPids() {
 }
 
 // Copy updater.js into DATA_DIR so npm -g can overwrite node_modules safely
-function getDataDir() {
-  if (process.env.DATA_DIR) return process.env.DATA_DIR;
-  if (process.platform === "win32") {
-    return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "switchboard");
-  }
-  return path.join(os.homedir(), ".switchboard");
-}
+// (data-dir resolution, including legacy-dir adoption, lives in @/lib/dataDir)
 
 function resolveBundledUpdaterPath() {
   if (process.env.UPDATER_SCRIPT_PATH && fs.existsSync(process.env.UPDATER_SCRIPT_PATH)) {
@@ -161,12 +159,25 @@ export async function killAppProcesses() {
   await Promise.all([...new Set(pids)].map(terminateOwnedPid));
 }
 
-// Resolve npx/switchboard binary to relaunch after update (cross-platform)
+// Resolve the command that relaunches the CLI after `npm i -g` (cross-platform)
 function resolveRelaunchCommand() {
   const isWin = process.platform === "win32";
-  // Prefer `npx <published-cli>` — works regardless of global bin path after npm i -g
+  // Prefer the global install the updater refreshes in place:
+  // <npm root -g>/<pkg>/cli.js under the current runtime. Independent of the
+  // global bin dir being on PATH, and no shell, so paths with spaces are safe.
+  try {
+    const root = execFileSync(isWin ? "npm.cmd" : "npm", ["root", "-g"], {
+      encoding: "utf8", shell: isWin, windowsHide: true, timeout: 10000, stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const cli = path.join(root, UPDATER_CONFIG.npmPackageName, "cli.js");
+    if (root && fs.existsSync(cli)) return { cmd: process.execPath, args: [cli] };
+  } catch { /* npm unavailable — fall back to npx */ }
+  // Fallback: npx with an explicit bin. The package ships two bins (switchboard,
+  // claude-switchboard), neither matching the package name, so a bare
+  // `npx switchboard-router` throws "could not determine executable to run".
+  // `--package` never runs the global install; npx fetches latest to its cache.
   const npx = isWin ? "npx.cmd" : "npx";
-  return { cmd: npx, args: [UPDATER_CONFIG.npmPackageName] };
+  return { cmd: npx, args: ["--yes", "--package", UPDATER_CONFIG.npmPackageName, "switchboard"] };
 }
 
 // Loopback port the dashboard chrome shows before client hydration can read
@@ -223,6 +234,9 @@ export async function spawnUpdaterAndExit(packageName = UPDATER_CONFIG.npmPackag
       windowsHide: true,
       env: {
         ...process.env,
+        // Pin the resolved dir (including any legacy-dir adoption) for the
+        // standalone updater, which cannot import @/lib/dataDir.
+        UPDATER_DATA_DIR: getDataDir(),
         UPDATER_PKG_NAME: packageName,
         UPDATER_PORT: String(UPDATER_CONFIG.statusPort),
         UPDATER_TAIL_LINES: String(UPDATER_CONFIG.statusLogTailLines),

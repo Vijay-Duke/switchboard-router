@@ -8,7 +8,7 @@ import {
   extractApiKey,
 } from "../services/auth.js";
 import { resolveAffinitySessionId } from "open-sse/utils/sessionManager.js";
-import { getSettings, getUsageStats } from "@/lib/db/index.js";
+import { getSettings, getProviderRequestCounts } from "@/lib/db/index.js";
 import { getProviderQuotaHeadroom } from "@/lib/db/repos/connectionsRepo.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
@@ -107,13 +107,12 @@ async function loadProviderLatency(days) {
 }
 
 async function loadProviderUsage() {
+  // P4: uncached getUsageStats("7d") ran on every Auto/provider-preference
+  // request (decrypt all connections, parse daily blobs, scan 7d of history).
+  // The callers keep only per-provider request counts, so serve the daily-blob
+  // aggregate behind the same 15s hot-path cache as provider latency.
   try {
-    const usage = await getUsageStats("7d");
-    const providerUsage = {};
-    for (const [provider, stats] of Object.entries(usage?.byProvider || {})) {
-      providerUsage[provider] = Number.isFinite(stats?.requests) ? stats.requests : 0;
-    }
-    return providerUsage;
+    return await cached("provusage:7d", () => getProviderRequestCounts(7), 15000);
   } catch {
     return {};
   }

@@ -4,7 +4,7 @@ import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 import { FORMATS } from "../../translator/formats.js";
 import { PROVIDERS } from "../../config/providers.js";
 import { projectCompletionToClientFormat } from "../../translator/response/completionProjector.js";
-import { buildRequestDetail, extractRequestConfig, saveUsageStats } from "./requestDetail.js";
+import { buildRequestDetail, extractRequestConfig, settleUsageStats } from "./requestDetail.js";
 
 // Responses-API providers (e.g. codex) may emit SSE without content-type + use Responses output shape
 const isResponsesProvider = (p) => PROVIDERS[p]?.format === FORMATS.OPENAI_RESPONSES;
@@ -57,7 +57,7 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel) {
  * Handle case: provider forced streaming but client wants JSON.
  * Supports both Codex/Responses API SSE and standard Chat Completions SSE.
  */
-export async function handleForcedSSEToJson({ providerResponse, sourceFormat, provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, requestId, clientRawRequest, onRequestSuccess, trackDone, appendLog }) {
+export async function handleForcedSSEToJson({ providerResponse, sourceFormat, provider, model, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, requestId, clientRawRequest, onRequestSuccess, trackDone, appendLog }) {
   const contentType = providerResponse.headers.get("content-type") || "";
   const isSSE = contentType.includes("text/event-stream") || (contentType === "" && isResponsesProvider(provider));
   if (!isSSE) return null; // not handled here
@@ -66,7 +66,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
 
   const ctx = {
     provider, model, connectionId,
-    request: extractRequestConfig(body, stream),
+    request: requestConfig ?? extractRequestConfig(body, stream),
     providerRequest: finalBody || translatedBody || null
   };
 
@@ -81,7 +81,8 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
 
       const usage = jsonResponse.usage || {};
       appendLog({ tokens: usage, status: "200 OK" });
-      await saveUsageStats({ provider, model, tokens: usage, connectionId, clientKeyId, requestId, endpoint: clientRawRequest?.endpoint });
+      // Awaited only for client-keyed requests (spend limits); see settleUsageStats.
+      await settleUsageStats({ provider, model, tokens: usage, connectionId, clientKeyId, requestId, endpoint: clientRawRequest?.endpoint });
 
       const { msgItem, textContent } = pickAssistantMessageForChatCompletion(jsonResponse.output);
       const totalLatency = Date.now() - requestStartTime;
@@ -149,7 +150,8 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
 
     const usage = parsed.usage || {};
     appendLog({ tokens: usage, status: "200 OK" });
-    await saveUsageStats({ provider, model, tokens: usage, connectionId, clientKeyId, requestId, endpoint: clientRawRequest?.endpoint });
+    // Awaited only for client-keyed requests (spend limits); see settleUsageStats.
+    await settleUsageStats({ provider, model, tokens: usage, connectionId, clientKeyId, requestId, endpoint: clientRawRequest?.endpoint });
 
     const totalLatency = Date.now() - requestStartTime;
     saveRequestDetail(buildRequestDetail({

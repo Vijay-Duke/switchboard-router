@@ -111,6 +111,13 @@ export function formatRetryAfter(rateLimitedUntil) {
   return `reset after ${parts.join(" ")}`;
 }
 
+/**
+ * Connection testStatus marking a revoked/expired OAuth refresh token.
+ * Connections in this state are skipped by filterAvailableAccounts until the
+ * user re-authenticates (which resets testStatus to "active").
+ */
+export const REAUTH_REQUIRED_STATUS = "reauth_required";
+
 /** Prefix for model lock flat fields on connection record */
 export const MODEL_LOCK_PREFIX = "modelLock_";
 
@@ -178,6 +185,8 @@ export function filterAvailableAccounts(accounts, excludeId = null) {
   const now = Date.now();
   return accounts.filter(acc => {
     if (excludeId && acc.id === excludeId) return false;
+    // Revoked refresh token: never route here until the user re-authenticates
+    if (acc.testStatus === REAUTH_REQUIRED_STATUS) return false;
     if (acc.rateLimitedUntil) {
       const until = new Date(acc.rateLimitedUntil).getTime();
       if (until > now) return false;

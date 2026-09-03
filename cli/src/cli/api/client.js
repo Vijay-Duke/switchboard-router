@@ -50,10 +50,14 @@ function loadCliSecret() {
 }
 
 function getCliToken() {
-  if (cachedCliToken !== null) return cachedCliToken;
+  if (cachedCliToken) return cachedCliToken;
+  // Never cache an empty token: the long-lived launcher probes before the
+  // server has written machine-id, and machineIdSync can fail (e.g. no
+  // /usr/sbin on PATH under launchd). Retry until the file exists.
   const raw = loadRawMachineId();
+  if (!raw) return "";
   const secret = loadCliSecret();
-  cachedCliToken = raw ? crypto.createHash("sha256").update(raw + CLI_TOKEN_SALT + secret).digest("hex").substring(0, 16) : "";
+  cachedCliToken = crypto.createHash("sha256").update(raw + CLI_TOKEN_SALT + secret).digest("hex").substring(0, 16);
   return cachedCliToken;
 }
 
@@ -481,7 +485,9 @@ async function disableTunnel() {
 
 module.exports = {
   configure,
-  
+  getCliToken,
+  CLI_TOKEN_HEADER,
+
   // Providers
   getProviders,
   getProviderById,

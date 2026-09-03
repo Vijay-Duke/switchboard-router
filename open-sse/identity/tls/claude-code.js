@@ -28,7 +28,103 @@ function helperTimeout(init, transport) {
 let resolvedBinary;
 let spawnChild = spawn;
 
+// Stage 1 pre-spawn pool: hides the fork/exec cost of the one-shot TLS
+// helper. Holds spawned-but-unused children: the helper blocks on its first
+// stdin frame with no timeout, does no work before it, and takes proxyUrl
+// from the frame, so any idle child can serve any request. Used children
+// are never returned: the helper exits after one request. Idle children
+// die after 60 s, or on stdin EOF when this process exits.
+// SWITCHBOARD_CLAUDE_TLS_POOL_CAP: idle children kept warm (default 2,
+// 0 disables the pool).
+const CLAUDE_CODE_HELPER_POOL_CAP = poolCap(process.env.SWITCHBOARD_CLAUDE_TLS_POOL_CAP);
+const CLAUDE_CODE_HELPER_IDLE_TTL_MS = 60_000;
+const idle = new Map(); // child -> release()
+let poolRefillHandle = null;
+
+function poolCap(value) {
+  if (value == null || value === "") return 2;
+  const cap = Number(value);
+  return Number.isInteger(cap) && cap >= 0 ? cap : 2;
+}
+
+function spawnHelperChild(binary) {
+  return spawnChild(binary, [], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+}
+
+// ChildProcess.unref() alone does not release the event loop: the piped
+// stdio sockets hold it too, so idle children unref all four handles.
+function setHelperRef(child, ref) {
+  for (const handle of [child, child.stdin, child.stdout, child.stderr]) {
+    handle?.[ref ? "ref" : "unref"]?.();
+  }
+}
+
+function isHelperAlive(child) {
+  return child.exitCode == null && child.signalCode == null;
+}
+
+function poolHelperChild(child) {
+  const release = () => {
+    clearTimeout(timer);
+    child.off("exit", release);
+    child.off("error", release);
+    idle.delete(child);
+  };
+  const timer = setTimeout(() => {
+    release();
+    try { child.kill("SIGTERM"); } catch {}
+  }, CLAUDE_CODE_HELPER_IDLE_TTL_MS);
+  timer.unref?.();
+  // A child that exits or errors (e.g. exec failure) while idle leaves the
+  // pool immediately; the listener also keeps 'error' from going uncaught.
+  child.once("exit", release);
+  child.once("error", release);
+  setHelperRef(child, false);
+  idle.set(child, release);
+}
+
+function takePooledHelper() {
+  for (const [child, release] of idle) {
+    release();
+    if (!isHelperAlive(child)) continue;
+    setHelperRef(child, true);
+    return child;
+  }
+  return null;
+}
+
+function refillHelperPool(binary) {
+  while (idle.size < CLAUDE_CODE_HELPER_POOL_CAP) {
+    let child;
+    try { child = spawnHelperChild(binary); } catch { return; }
+    poolHelperChild(child);
+  }
+}
+
+// One coalesced refill per loop turn: a burst of N fetches spawns N serving
+// children plus at most `cap` idle ones, never N replacements.
+function schedulePoolRefill(binary) {
+  if (poolRefillHandle || idle.size >= CLAUDE_CODE_HELPER_POOL_CAP) return;
+  poolRefillHandle = setImmediate(() => {
+    poolRefillHandle = null;
+    refillHelperPool(binary);
+  });
+  poolRefillHandle.unref?.();
+}
+
+export function __drainClaudeCodeHelperPoolForTests() {
+  if (poolRefillHandle) {
+    clearImmediate(poolRefillHandle);
+    poolRefillHandle = null;
+  }
+  for (const [child, release] of idle) {
+    release();
+    try { child.kill("SIGTERM"); } catch {}
+  }
+}
+
 export function __setClaudeCodeSpawnForTest(replacement) {
+  __drainClaudeCodeHelperPoolForTests();
   spawnChild = replacement || spawn;
 }
 
@@ -185,7 +281,8 @@ export function createClaudeCodeFetch() {
     }
     if (init.signal?.aborted) throw abortError();
     const binary = await resolveBinary();
-    const child = spawnChild(binary, [], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    const child = takePooledHelper() ?? spawnHelperChild(binary);
+    schedulePoolRefill(binary);
 
     const body = bodyToInput(init.body);
     const request = {

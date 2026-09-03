@@ -96,6 +96,52 @@ const CODEX_PORT = CODEX_CONFIG.fixedPort;
 // Pending exchange sessions keyed by state — used by server-side exchange mode
 const pendingExchanges = new Map();
 
+// Generic OAuth state binding: state values issued by generateAuthData,
+// keyed by state so the exchange step can prove the flow started here and
+// reuse the original PKCE verifier instead of trusting the client's copy.
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const oauthStates = new Map();
+
+/**
+ * Record a state issued for a provider's authorize step.
+ */
+export function registerOAuthState({ state, provider, codeVerifier, redirectUri }) {
+  if (!state || !provider || !codeVerifier) return false;
+  sweepStaleSessions(oauthStates, OAUTH_STATE_TTL_MS);
+  oauthStates.set(state, {
+    provider,
+    codeVerifier,
+    redirectUri: redirectUri || null,
+    createdAt: Date.now(),
+  });
+  return true;
+}
+
+/**
+ * Look up an issued state. Returns the entry, or null when unknown, expired,
+ * or issued for a different provider. Expired entries are swept on read.
+ * @param {number} [now] - Override for Date.now (tests).
+ */
+export function getOAuthState(state, provider, now = Date.now()) {
+  if (!state) return null;
+  const entry = oauthStates.get(state);
+  if (!entry) return null;
+  if (now - entry.createdAt > OAUTH_STATE_TTL_MS) {
+    oauthStates.delete(state);
+    return null;
+  }
+  if (provider && entry.provider !== provider) return null;
+  return entry;
+}
+
+/**
+ * Forget an issued state (called after a successful exchange so a completed
+ * flow cannot be replayed).
+ */
+export function clearOAuthState(state) {
+  oauthStates.delete(state);
+}
+
 /** True while any registered session is still waiting for its callback. */
 function hasPendingSession(sessions) {
   for (const session of sessions.values()) {

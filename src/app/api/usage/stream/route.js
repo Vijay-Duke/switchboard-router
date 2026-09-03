@@ -1,28 +1,23 @@
 // @ts-check
-import { getUsageStats, statsEmitter, getActiveRequests } from "@/lib/db/index.js";
+import { statsEmitter, getActiveRequests } from "@/lib/db/index.js";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   const encoder = new TextEncoder();
-  const state = { closed: false, keepalive: null, send: null, sendPending: null, cachedStats: null };
+  const state = { closed: false, keepalive: null, send: null, sendPending: null };
 
   const stream = new ReadableStream({
     async start(controller) {
-      // Full stats refresh (heavy) + immediate lightweight push
-      state.send = async () => {
+      // P1: lightweight push only — the client merges just activeRequests,
+      // recentRequests, errorProvider and pending, so the full getUsageStats()
+      // report (all-time daily blobs + whole history table + decrypted
+      // connections) is never computed here. Both events share one function.
+      const send = async () => {
         if (state.closed) return;
         try {
-          // Push lightweight update immediately so UI reflects changes fast
-          if (state.cachedStats) {
-            const { activeRequests, recentRequests, errorProvider } = await getActiveRequests();
-            const quickStats = { ...state.cachedStats, activeRequests, recentRequests, errorProvider };
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(quickStats)}\n\n`));
-          }
-          // Then do full recalc and update cache
-          const stats = await getUsageStats();
-          state.cachedStats = stats;
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(stats)}\n\n`));
+          const { activeRequests, recentRequests, errorProvider, pending } = await getActiveRequests();
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ activeRequests, recentRequests, errorProvider, pending })}\n\n`));
         } catch {
           state.closed = true;
           statsEmitter.off("update", state.send);
@@ -30,21 +25,8 @@ export async function GET() {
           clearInterval(state.keepalive);
         }
       };
-
-      // Lightweight push: only refresh activeRequests + recentRequests on pending changes
-      state.sendPending = async () => {
-        if (state.closed || !state.cachedStats) return;
-        try {
-          const { activeRequests, recentRequests, errorProvider } = await getActiveRequests();
-          const stats = { ...state.cachedStats, activeRequests, recentRequests, errorProvider };
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(stats)}\n\n`));
-        } catch {
-          state.closed = true;
-          statsEmitter.off("update", state.send);
-          statsEmitter.off("pending", state.sendPending);
-          clearInterval(state.keepalive);
-        }
-      };
+      state.send = send;
+      state.sendPending = send;
 
       await state.send();
 

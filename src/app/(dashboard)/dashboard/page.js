@@ -14,16 +14,35 @@ export default async function DashboardPage() {
   let comboCount = 0;
   /** @type {any} */
   let defaultCombo = null;
-  /** @type {Array<{account: string, pct: number}>} */
-  let quotas = [];
   /** @type {any} */
   let learningSummary = null;
+  /** @type {string|null} */
+  let loadError = null;
+  /** @param {unknown} e */
+  const recordLoadError = (e) => {
+    if (!loadError) {
+      const message =
+        e && typeof e === "object" && "message" in e
+          ? String(/** @type {{ message: unknown }} */ (e).message)
+          : "";
+      loadError = message || "Failed to read dashboard data";
+    }
+  };
 
   try {
     const [providersData, keys, combosData] = await Promise.all([
-      loadProvidersPage().catch(() => ({ connections: [], nodes: [] })),
-      getApiKeys().catch(() => []),
-      loadCombosPage().catch(() => ({ combos: [], settings: {} })),
+      loadProvidersPage().catch((e) => {
+        recordLoadError(e);
+        return { connections: [], nodes: [] };
+      }),
+      getApiKeys().catch((e) => {
+        recordLoadError(e);
+        return [];
+      }),
+      loadCombosPage().catch((e) => {
+        recordLoadError(e);
+        return { combos: [], settings: {} };
+      }),
     ]);
 
     const connections = providersData?.connections || [];
@@ -37,16 +56,6 @@ export default async function DashboardPage() {
         .map((c) => c.provider || c.providerId)
         .filter(Boolean)
     ).size;
-
-    for (const c of connections) {
-      const used = c.quotaUsed ?? c.usagePercent ?? c.quotaPercent ?? null;
-      if (used != null && !Number.isNaN(Number(used))) {
-        quotas.push({
-          account: c.name || c.email || c.connectionName || c.provider || "account",
-          pct: Number(used),
-        });
-      }
-    }
 
     keyCount = Array.isArray(keys) ? keys.length : 0;
     const comboList = combosData?.combos || [];
@@ -98,8 +107,10 @@ export default async function DashboardPage() {
         }
       }
     }
-  } catch {
-    /* overview still renders shell */
+  } catch (e) {
+    /* overview still renders shell, but flags the failure instead of
+       looking like an empty account */
+    recordLoadError(e);
   }
 
   return (
@@ -110,8 +121,8 @@ export default async function DashboardPage() {
         keyCount,
         comboCount,
         defaultCombo,
-        quotas,
         learningSummary,
+        loadError,
         endpointHost: `127.0.0.1:${getLocalEndpointPort()}`,
       }}
     />

@@ -8,6 +8,7 @@ import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { getProviderAlias } from "@/shared/constants/providers";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { reportClientError } from "@/shared/utils/clientFeedback";
+import { fetchJson } from "@/shared/query/fetchJson";
 
 // ── ModelRow ───────────────────────────────────────────────────
 export function ModelRow({ model, fullModel, copied, onCopy, testStatus, isCustom, isFree, onDeleteAlias, onTest, isTesting }) {
@@ -144,44 +145,40 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
   const handleSetAlias = async (modelId, alias) => {
     const fullModel = `${providerAlias}/${modelId}`;
     try {
-      const res = await fetch("/api/models/alias", {
+      await fetchJson("/api/models/alias", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: fullModel, alias }),
       });
-      if (res.ok) await fetchData();
+      await fetchData();
     } catch (e) { reportClientError("set alias error:", e); }
   };
 
   const handleDeleteAlias = async (alias) => {
     try {
-      const res = await fetch(`/api/models/alias?alias=${encodeURIComponent(alias)}`, { method: "DELETE" });
-      if (res.ok) await fetchData();
+      await fetchJson(`/api/models/alias?alias=${encodeURIComponent(alias)}`, { method: "DELETE" });
+      await fetchData();
     } catch (e) { reportClientError("delete alias error:", e); }
   };
 
   const handleAddCustomModel = async (modelId) => {
     try {
-      const res = await fetch("/api/models/custom", {
+      await fetchJson("/api/models/custom", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ providerAlias, id: modelId, type: effectiveType }),
       });
-      if (res.ok) {
-        await fetchData();
-        window.dispatchEvent(new CustomEvent("customModelChanged"));
-      }
+      await fetchData();
+      window.dispatchEvent(new CustomEvent("customModelChanged"));
     } catch (e) { reportClientError("add custom model error:", e); }
   };
 
   const handleDeleteCustomModel = async (modelId) => {
     try {
       const params = new URLSearchParams({ providerAlias, id: modelId, type: effectiveType });
-      const res = await fetch(`/api/models/custom?${params}`, { method: "DELETE" });
-      if (res.ok) {
-        await fetchData();
-        window.dispatchEvent(new CustomEvent("customModelChanged"));
-      }
+      await fetchJson(`/api/models/custom?${params}`, { method: "DELETE" });
+      await fetchData();
+      window.dispatchEvent(new CustomEvent("customModelChanged"));
     } catch (e) { reportClientError("delete custom model error:", e); }
   };
 

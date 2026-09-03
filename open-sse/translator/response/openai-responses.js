@@ -369,6 +369,16 @@ function computeFinishReason(state) {
     : OPENAI_FINISH.STOP;
 }
 
+// response.incomplete carries incomplete_details.reason ("max_output_tokens" |
+// "content_filter"). Map it to a Chat Completions finish_reason; a pending
+// tool call still finalizes as tool_calls.
+function incompleteFinishReason(state, data) {
+  if (state.toolCallIndex > 0 || state.currentToolCallId) return OPENAI_FINISH.TOOL_CALLS;
+  return data?.response?.incomplete_details?.reason === "content_filter"
+    ? OPENAI_FINISH.CONTENT_FILTER
+    : OPENAI_FINISH.LENGTH;
+}
+
 /**
  * Translate OpenAI Responses API chunk to OpenAI Chat Completions format
  * This is for when Codex returns data and we need to send it to an OpenAI-compatible client
@@ -460,8 +470,8 @@ export function openaiResponsesToOpenAIResponse(chunk, state) {
     return null;
   }
 
-  // Response completed
-  if (eventType === "response.completed" || eventType === "response.done") {
+  // Response completed (or incomplete: truncated turn, e.g. max_output_tokens)
+  if (eventType === "response.completed" || eventType === "response.done" || eventType === "response.incomplete") {
     // Extract usage from response.completed event
     const responseUsage = data.response?.usage;
     if (responseUsage && typeof responseUsage === "object") {
@@ -475,7 +485,9 @@ export function openaiResponsesToOpenAIResponse(chunk, state) {
     }
     
     if (!state.finishReasonSent) {
-      const finishReason = computeFinishReason(state);
+      const finishReason = eventType === "response.incomplete"
+        ? incompleteFinishReason(state, data)
+        : computeFinishReason(state);
 
       state.finishReasonSent = true;
       state.finishReason = finishReason; // Mark for usage injection in stream.js

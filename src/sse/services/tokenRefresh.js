@@ -32,6 +32,7 @@ import {
   refreshProviderCredentials as _refreshProviderCredentials,
   shouldRefreshCredentials as _shouldRefreshCredentials,
 } from "open-sse/services/oauthCredentialManager.js";
+import { REAUTH_REQUIRED_STATUS } from "open-sse/services/accountFallback.js";
 
 export const TOKEN_EXPIRY_BUFFER_MS = BUFFER_MS;
 
@@ -252,6 +253,15 @@ export async function updateProviderCredentials(connectionId, newCredentials) {
       };
     }
     if (newCredentials.projectId)            updates.projectId = newCredentials.projectId;
+
+    // Connection health written by the refresh path. Only these three status
+    // fields pass; everything else stays behind the credential allowlist above.
+    for (const field of ["testStatus", "lastError", "lastErrorAt"]) {
+      if (field in newCredentials) updates[field] = newCredentials[field];
+    }
+    // Revoked refresh token wins over the `testStatus: "active"` that handler
+    // hooks spread onto every refresh payload.
+    if (newCredentials.reauthRequired) updates.testStatus = REAUTH_REQUIRED_STATUS;
 
     const result = await updateProviderConnection(connectionId, updates);
     log.info("TOKEN_REFRESH", "Credentials updated in localDb", {

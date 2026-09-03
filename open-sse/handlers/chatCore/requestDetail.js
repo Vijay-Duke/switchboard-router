@@ -106,3 +106,18 @@ export function saveUsageStats({ provider, model, tokens, connectionId, clientKe
     requestId: requestId || null
   });
 }
+
+/**
+ * Dispatch a usage save with the right completion semantics.
+ * Client-keyed requests await it: spend/concurrency limits are enforced
+ * against persisted usage at the next authorization, so the row must land
+ * before this response completes (a back-to-back request from the same key
+ * would otherwise slip past its spend cap). Everything else is fire-and-forget:
+ * the save is idempotent by requestId and nothing reads it synchronously, so
+ * the client's body/stream close does not wait on the SQLite write.
+ */
+export function settleUsageStats(args) {
+  const pending = saveUsageStats(args);
+  if (args.clientKeyId) return pending;
+  pending?.catch?.((err) => console.error("[USAGE] save failed:", err?.message || err));
+}

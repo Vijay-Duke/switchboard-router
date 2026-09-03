@@ -363,6 +363,67 @@ describe("dashboard guard local-only access", () => {
     expect(response).toBe(mocks.nextResponse);
   });
 
+  it("rejects /dashboard/* from a LAN peer on a wildcard bind (C1)", async () => {
+    process.env.HOSTNAME = "0.0.0.0";
+    process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
+    const response = await proxy(request("/dashboard/profile", {
+      host: "192.168.1.10:20128",
+      "x-switchboard-real-ip": "192.168.1.10",
+    }));
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe("Local only");
+  });
+
+  it("rejects /dashboard/* on a hostile Host from a loopback peer (C1 DNS rebinding)", async () => {
+    const response = await proxy(request("/dashboard/profile", {
+      host: "evil.example",
+    }));
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe("Local only");
+  });
+
+  it("allows /dashboard/* on loopback with a loopback Host (C1)", async () => {
+    const response = await proxy(request("/dashboard/profile", {
+      host: "localhost:20128",
+      origin: "http://localhost:20128",
+    }));
+
+    expect(response).toBe(mocks.nextResponse);
+  });
+
+  it("gates the exact /dashboard path as well (C1)", async () => {
+    process.env.HOSTNAME = "0.0.0.0";
+    process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
+    const denied = await proxy(request("/dashboard", {
+      host: "192.168.1.10:20128",
+      "x-switchboard-real-ip": "192.168.1.10",
+    }));
+    expect(denied.status).toBe(403);
+
+    const allowed = await proxy(request("/dashboard", {
+      host: "localhost:20128",
+      origin: "http://localhost:20128",
+      "x-switchboard-real-ip": "127.0.0.1",
+    }));
+    expect(allowed).toBe(mocks.nextResponse);
+  });
+
+  it("allows /dashboard/* from an allowlisted Docker bridge peer with a loopback Host (C1)", async () => {
+    // README Docker recipe: -p 127.0.0.1:20128:20128 + SWITCHBOARD_LOCAL_PEERS=<bridge gateway>.
+    process.env.HOSTNAME = "0.0.0.0";
+    process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
+    process.env.SWITCHBOARD_LOCAL_PEERS = "172.30.0.1";
+    const response = await proxy(request("/dashboard/profile", {
+      host: "127.0.0.1:20128",
+      origin: "http://127.0.0.1:20128",
+      "x-switchboard-real-ip": "172.30.0.1",
+    }));
+
+    expect(response).toBe(mocks.nextResponse);
+  });
+
   it("extracts a dedicated Switchboard key before a native bearer token", () => {
     const req = request("/v1/x", {
       authorization: "Bearer first",

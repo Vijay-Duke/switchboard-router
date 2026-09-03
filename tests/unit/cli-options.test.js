@@ -63,6 +63,9 @@ describe("CLI option contract", () => {
     ]) {
       expect(help).toContain(text);
     }
+
+    expect(help).toContain("Exit codes: 0 running, 1 port conflict, 3 not running");
+    expect(help.split('switchboard xai video --prompt "a neon city" --output video.mp4').length - 1).toBe(1);
   });
 
   it("keeps help and version side-effect-free before runtime initialization", () => {
@@ -182,6 +185,54 @@ describe("CLI option contract", () => {
     }
   });
 
+  it("authenticates health probes with the CLI token for non-loopback binds", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-cli-token-"));
+    const prevDataDir = process.env.DATA_DIR;
+    const clientPath = require.resolve("../../cli/src/cli/api/client.js");
+    const statusPath = require.resolve("../../cli/src/cli/serverStatus.js");
+    const savedClient = require.cache[clientPath];
+    const savedStatus = require.cache[statusPath];
+    try {
+      fs.writeFileSync(path.join(dataDir, "machine-id"), "test-machine-id");
+      fs.mkdirSync(path.join(dataDir, "auth"), { recursive: true });
+      fs.writeFileSync(path.join(dataDir, "auth", "cli-secret"), "test-cli-secret");
+      process.env.DATA_DIR = dataDir;
+      delete require.cache[clientPath];
+      delete require.cache[statusPath];
+      const freshClient = require("../../cli/src/cli/api/client.js");
+      const freshStatus = require("../../cli/src/cli/serverStatus.js");
+      const expectedToken = freshClient.getCliToken();
+      expect(expectedToken).not.toBe("");
+
+      const seenTokens = [];
+      const server = http.createServer((req, res) => {
+        seenTokens.push(req.headers["x-switchboard-cli-token"]);
+        if (req.headers["x-switchboard-cli-token"] === expectedToken) {
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({ ok: true }));
+        } else {
+          res.statusCode = 403;
+          res.end("{}");
+        }
+      });
+      await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+      try {
+        await expect(freshStatus.probeHealth(server.address().port, 1000)).resolves.toBe(true);
+        expect(seenTokens).toEqual([expectedToken]);
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+    } finally {
+      if (prevDataDir === undefined) delete process.env.DATA_DIR;
+      else process.env.DATA_DIR = prevDataDir;
+      delete require.cache[clientPath];
+      delete require.cache[statusPath];
+      if (savedClient) require.cache[clientPath] = savedClient;
+      if (savedStatus) require.cache[statusPath] = savedStatus;
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
   it("recovers after each run of three failed health probes", async () => {
     vi.useFakeTimers();
     const probe = vi.fn().mockResolvedValue(null);
@@ -200,6 +251,26 @@ describe("CLI option contract", () => {
       await vi.advanceTimersByTimeAsync(55);
       expect(probe).toHaveBeenCalledTimes(6);
       expect(onUnhealthy).toHaveBeenCalledTimes(2);
+    } finally {
+      stop();
+      vi.useRealTimers();
+    }
+  });
+
+  it("reconciles runtime ownership after each healthy probe", async () => {
+    vi.useFakeTimers();
+    const onHealthy = vi.fn();
+    const stop = startHealthWatchdog({
+      port: 20128,
+      graceMs: 0,
+      intervalMs: 10,
+      probe: vi.fn().mockResolvedValue(true),
+      onHealthy,
+    });
+
+    try {
+      await vi.advanceTimersByTimeAsync(25);
+      expect(onHealthy).toHaveBeenCalledTimes(3);
     } finally {
       stop();
       vi.useRealTimers();

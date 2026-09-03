@@ -169,3 +169,23 @@ describe("standalone start contract", () => {
     expect(src).toContain('require("./server.js")');
   });
 });
+
+describe("docker run doc contract", () => {
+  // 172.30.0.1 is only the gateway of the dedicated `switchboard` bridge
+  // network (or Compose's equivalent subnet). A `docker run` snippet that
+  // trusts it without joining that network 403s every dashboard API call.
+  it.each(["README.md", "DOCKER.md"])(
+    "%s: every docker run block trusting 172.30.0.1 joins the dedicated network",
+    (file) => {
+      const src = fs.readFileSync(path.join(repoRoot, file), "utf8");
+      const blocks = [...src.matchAll(/```bash\n([\s\S]*?)```/g)].map((match) => match[1]);
+      const trusting = blocks.filter(
+        (block) => block.includes("docker run") && block.includes("SWITCHBOARD_LOCAL_PEERS=172.30.0.1")
+      );
+      expect(trusting.length).toBeGreaterThan(0);
+      for (const block of trusting) {
+        expect(block).toContain("--network");
+      }
+    }
+  );
+});

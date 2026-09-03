@@ -52,10 +52,13 @@ function getHeader(port, networkExposed) {
 /**
  * Start Terminal UI
  * @param {number} port - Server port number
+ * @param {Object} [options] - UI options
+ * @param {boolean} [options.networkExposed] - Whether the bind is reachable from the LAN
+ * @param {string} [options.host] - Probe/bind host so API requests reach a specific-IP bind
  */
-async function startTerminalUI(port, { networkExposed = false } = {}) {
+async function startTerminalUI(port, { networkExposed = false, host } = {}) {
   // Configure API client
-  api.configure({ port });
+  api.configure(host ? { port, host } : { port });
 
   const basePath = ["Switchboard"];
 

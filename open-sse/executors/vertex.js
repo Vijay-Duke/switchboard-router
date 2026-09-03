@@ -194,6 +194,9 @@ export class VertexExecutor extends BaseExecutor {
       headers,
       body: JSON.stringify(transformedBody),
       signal,
+      identity: this.resolveIdentity(credentials),
+      provider: this.provider,
+      format: this.config?.format,
     }, proxyOptions);
 
     return { response, url, headers, transformedBody };

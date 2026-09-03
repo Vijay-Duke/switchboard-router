@@ -30,4 +30,23 @@ describe("mitm/manager.js shell quoting", () => {
     expect(source).toContain("if (sudoPassword) serverProcess.stdin.write(");
     expect(source).not.toMatch(/^\s*serverProcess\.stdin\.write\(`\$\{sudoPassword\}/m);
   });
+
+  it("does not inline the gateway key or router base into the sudo sh -c string (C5)", () => {
+    expect(source).not.toContain("ROUTER_API_KEY=");
+    expect(source).not.toContain("MITM_ROUTER_BASE=");
+    // HOME stays inline (sudo resets it); secrets travel via spawn env.
+    expect(source).toMatch(/HOME=\$\{shellQuoteSingle\(os\.homedir\(\)\)\}/);
+  });
+
+  it("passes the gateway key via spawn env under sudo -E (C5)", () => {
+    expect(source).toMatch(/env:\s*\{\s*\.\.\.process\.env,\s*ROUTER_API_KEY:\s*apiKey,\s*MITM_ROUTER_BASE:\s*mitmRouterBase\s*\}/);
+  });
+
+  it("mixes the per-install cli-secret into the sudo-password key and keeps pre-secret ciphertext readable (C5)", () => {
+    expect(source).toContain("cli-secret");
+    expect(source).toMatch(/function deriveKey\(cliSecret = loadCliSecretComponent\(\)\)/);
+    // Decrypt falls back to the legacy key and the loader re-seals under the current one.
+    expect(source).toMatch(/decryptPasswordWithKey\(stored, deriveKey\(""\)\)/);
+    expect(source).toMatch(/result\.legacy && _updateSettings/);
+  });
 });

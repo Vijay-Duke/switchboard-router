@@ -3,6 +3,11 @@ const net = require("net");
 const MAX_RESPONSE_BYTES = 64 * 1024;
 
 function requestJson({ hostname = "127.0.0.1", port, path, timeoutMs = 1000 }) {
+  // Lazily required so the data-dir resolution (and its tests) can point
+  // DATA_DIR at a temp dir before this module is first used. The CLI token
+  // lets probes authenticate against local-only routes from any peer, which
+  // keeps health and version probes working on explicit LAN binds.
+  const { CLI_TOKEN_HEADER, getCliToken } = require("./api/client");
   return new Promise((resolve) => {
     let settled = false;
     const finish = (value) => {
@@ -15,7 +20,7 @@ function requestJson({ hostname = "127.0.0.1", port, path, timeoutMs = 1000 }) {
       port,
       path,
       method: "GET",
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", [CLI_TOKEN_HEADER]: getCliToken() },
     }, (res) => {
       let body = "";
       res.setEncoding("utf8");
@@ -100,6 +105,7 @@ function startHealthWatchdog({
   maxFailures = 3,
   probe = probeHealth,
   onUnhealthy,
+  onHealthy,
 } = {}) {
   let stopped = false;
   let timer = null;
@@ -107,16 +113,33 @@ function startHealthWatchdog({
 
   const tick = async () => {
     if (stopped) return;
-    const status = await probe(port, timeoutMs, hostname).catch(() => null);
-    if (status) failures = 0;
-    else failures++;
+    try {
+      const status = await probe(port, timeoutMs, hostname).catch(() => null);
+      if (status) {
+        failures = 0;
+        try {
+          await onHealthy?.();
+        } catch (error) {
+          console.error("[watchdog] onHealthy failed:", error?.message || error);
+        }
+      } else failures++;
 
-    if (failures >= maxFailures) {
-      failures = 0;
-      await onUnhealthy?.();
-      if (stopped) return;
+      if (failures >= maxFailures) {
+        failures = 0;
+        try {
+          await onUnhealthy?.();
+        } catch (error) {
+          console.error("[watchdog] onUnhealthy failed:", error?.message || error);
+        }
+        if (stopped) return;
+      }
+    } catch (error) {
+      // A probe that throws synchronously must not become an unhandled
+      // rejection (the launcher would treat it as fatal).
+      console.error("[watchdog] probe failed:", error?.message || error);
+    } finally {
+      if (!stopped) timer = setTimeout(tick, intervalMs);
     }
-    timer = setTimeout(tick, intervalMs);
   };
 
   timer = setTimeout(tick, graceMs);

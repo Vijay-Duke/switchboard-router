@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, Button, Badge } from "@/shared/components";
 import { requestConfirmation } from "@/store/confirmationStore";
+import { useNotificationStore } from "@/store/notificationStore";
 
 /**
  * Agent Library — single dashboard control plane for skills + MCP
@@ -13,7 +14,7 @@ export default function AgentLibraryPage() {
   const [data, setData] = useState(/** @type {any} */ (null));
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
-  const [message, setMessage] = useState(/** @type {null|{type:string,text:string}} */ (null));
+  const notify = useNotificationStore();
   const [doctor, setDoctor] = useState(/** @type {any} */ (null));
   const [syncResult, setSyncResult] = useState(/** @type {any} */ (null));
   const [tab, setTab] = useState(/** @type {"overview"|"skills"|"mcp"|"catalog"|"advanced"} */ ("overview"));
@@ -71,10 +72,13 @@ export default function AgentLibraryPage() {
       if (!r.ok) throw new Error(j.error || "Load failed");
       setData(j);
     } catch (e) {
-      setMessage({ type: "error", text: e.message });
+      notify.error(e.message);
     } finally {
       setLoading(false);
     }
+    // notify actions are stable store closures; depending on the whole-store snapshot
+    // would re-run the boot effect on every toast.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const checkUpdates = useCallback(async () => {
@@ -108,7 +112,6 @@ export default function AgentLibraryPage() {
 
   async function patchSettings(patch) {
     setBusy("settings");
-    setMessage(null);
     try {
       const r = await fetch("/api/agent-library", {
         method: "PATCH",
@@ -117,10 +120,10 @@ export default function AgentLibraryPage() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Save failed");
-      setMessage({ type: "success", text: "Settings saved" });
+      notify.success("Settings saved");
       await load();
     } catch (e) {
-      setMessage({ type: "error", text: e.message });
+      notify.error(e.message);
     } finally {
       setBusy("");
     }
@@ -128,7 +131,6 @@ export default function AgentLibraryPage() {
 
   async function runSync(action) {
     setBusy(action);
-    setMessage(null);
     setSyncResult(null);
     try {
       const r = await fetch("/api/agent-library/sync", {
@@ -142,18 +144,17 @@ export default function AgentLibraryPage() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || j.message || "Sync failed");
       setSyncResult(j);
-      setMessage({
-        type: j.conflictCount ? "warn" : "success",
-        text:
-          action === "dry-run"
-            ? `Dry-run: ${j.summary?.skillsSynced ?? 0} skill ops, ${j.summary?.mcpOk ?? 0} MCP ok, ${j.conflictCount || 0} conflicts`
-            : action === "clean"
-              ? "Removed Switchboard-managed projections only"
-              : `Applied: ${j.summary?.skillsSynced ?? 0} skills synced, ${j.conflictCount || 0} conflicts protected`,
-      });
+      const syncText =
+        action === "dry-run"
+          ? `Dry-run: ${j.summary?.skillsSynced ?? 0} skill ops, ${j.summary?.mcpOk ?? 0} MCP ok, ${j.conflictCount || 0} conflicts`
+          : action === "clean"
+            ? "Removed Switchboard-managed projections only"
+            : `Applied: ${j.summary?.skillsSynced ?? 0} skills synced, ${j.conflictCount || 0} conflicts protected`;
+      if (j.conflictCount) notify.warning(syncText);
+      else notify.success(syncText);
       await load();
     } catch (e) {
-      setMessage({ type: "error", text: e.message });
+      notify.error(e.message);
     } finally {
       setBusy("");
     }
@@ -166,14 +167,10 @@ export default function AgentLibraryPage() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "Doctor failed");
       setDoctor(j);
-      setMessage({
-        type: j.ok ? "success" : "warn",
-        text: j.ok
-          ? "Doctor: no blocking errors"
-          : `Doctor: ${j.issues?.filter((i) => i.severity === "error").length || 0} errors`,
-      });
+      if (j.ok) notify.success("Doctor: no blocking errors");
+      else notify.warning(`Doctor: ${j.issues?.filter((i) => i.severity === "error").length || 0} errors`);
     } catch (e) {
-      setMessage({ type: "error", text: e.message });
+      notify.error(e.message);
     } finally {
       setBusy("");
     }
@@ -202,9 +199,9 @@ export default function AgentLibraryPage() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "MCP save failed");
       if (j.warnings?.length) {
-        setMessage({ type: "warn", text: j.warnings.join(" · ") });
+        notify.warning(j.warnings.join(" · "));
       } else {
-        setMessage({ type: "success", text: `MCP ${j.server?.id} saved (Apply to project)` });
+        notify.success(`MCP ${j.server?.id} saved (Apply to project)`);
       }
       setMcpForm({
         id: "",
@@ -217,7 +214,7 @@ export default function AgentLibraryPage() {
       });
       await load();
     } catch (err) {
-      setMessage({ type: "error", text: err.message });
+      notify.error(err.message);
     } finally {
       setBusy("");
     }
@@ -225,7 +222,6 @@ export default function AgentLibraryPage() {
 
   async function installMcpPreset(preset) {
     setBusy(`mcp-preset-${preset.id}`);
-    setMessage(null);
     try {
       const r = await fetch("/api/agent-library/mcp", {
         method: "POST",
@@ -243,13 +239,10 @@ export default function AgentLibraryPage() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "MCP preset save failed");
-      setMessage({
-        type: "success",
-        text: `MCP ${j.server?.id || preset.id} saved to library. Click Apply sync to project to agents.`,
-      });
+      notify.success(`MCP ${j.server?.id || preset.id} saved to library. Click Apply sync to project to agents.`);
       await load();
     } catch (err) {
-      setMessage({ type: "error", text: err.message });
+      notify.error(err.message);
     } finally {
       setBusy("");
     }
@@ -265,10 +258,7 @@ export default function AgentLibraryPage() {
       url: preset.url || "",
       notes: preset.notes || "",
     });
-    setMessage({
-      type: "success",
-      text: `Loaded ${preset.name} into form below. Edit parameters as needed and click Save.`,
-    });
+    notify.success(`Loaded ${preset.name} into form below. Edit parameters as needed and click Save.`);
   }
 
   async function deleteMcp(id) {
@@ -280,10 +270,10 @@ export default function AgentLibraryPage() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error);
-      setMessage({ type: "success", text: "MCP removed from library" });
+      notify.success("MCP removed from library");
       await load();
     } catch (e) {
-      setMessage({ type: "error", text: e.message });
+      notify.error(e.message);
     } finally {
       setBusy("");
     }
@@ -298,11 +288,11 @@ export default function AgentLibraryPage() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error);
-      setMessage({ type: "success", text: "Skill removed from library" });
+      notify.success("Skill removed from library");
       await load();
       await checkUpdates();
     } catch (e) {
-      setMessage({ type: "error", text: e.message });
+      notify.error(e.message);
     } finally {
       setBusy("");
     }
@@ -318,12 +308,12 @@ export default function AgentLibraryPage() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error);
-      setMessage({ type: "success", text: `Skill ${j.id} installed in library` });
+      notify.success(`Skill ${j.id} installed in library`);
       setManualId("");
       setManualMd("");
       await load();
     } catch (e) {
-      setMessage({ type: "error", text: e.message });
+      notify.error(e.message);
     } finally {
       setBusy("");
     }
@@ -342,7 +332,7 @@ export default function AgentLibraryPage() {
       if (!r.ok || !j.ok) throw new Error(j.message || j.error || "Preview failed");
       setUpdPreview({ id, markdown: j.markdown, contentHash: j.contentHash });
     } catch (e) {
-      setMessage({ type: "error", text: e.message });
+      notify.error(e.message);
     } finally {
       setBusy("");
     }
@@ -364,13 +354,13 @@ export default function AgentLibraryPage() {
       });
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j.message || j.error || "Update failed");
-      setMessage({ type: "success", text: j.warning || `Updated ${j.id}` });
+      notify.success(j.warning || `Updated ${j.id}`);
       setUpdPreview(null);
       setUpdConfirm(false);
       await load();
       await checkUpdates();
     } catch (e) {
-      setMessage({ type: "error", text: e.message });
+      notify.error(e.message);
     } finally {
       setBusy("");
     }
@@ -380,7 +370,6 @@ export default function AgentLibraryPage() {
     e?.preventDefault?.();
     if (!smartInput.trim()) return;
     setBusy("resolve");
-    setMessage(null);
     setJustInstalledSkillId("");
     try {
       const r = await fetch("/api/agent-library/catalog", {
@@ -399,19 +388,16 @@ export default function AgentLibraryPage() {
         setCatalogUrl(skills[0].rawUrl);
         setCatalogPreview(skills[0].preview || "");
         setCatalogConfirm(false);
-        setMessage({ type: "success", text: `Resolved skill: ${skills[0].skillId}` });
+        notify.success(`Resolved skill: ${skills[0].skillId}`);
       } else if (skills.length > 1) {
         setCatalogSkillId("");
         setCatalogUrl("");
         setCatalogPreview("");
         setCatalogConfirm(false);
-        setMessage({
-          type: "success",
-          text: `Found ${skills.length} skills in ${j.repo || "repository"}. Select one below.`,
-        });
+        notify.success(`Found ${skills.length} skills in ${j.repo || "repository"}. Select one below.`);
       }
     } catch (err) {
-      setMessage({ type: "error", text: err.message });
+      notify.error(err.message);
     } finally {
       setBusy("");
     }
@@ -439,9 +425,9 @@ export default function AgentLibraryPage() {
       const j = await r.json();
       if (!r.ok || !j.ok) throw new Error(j.error || "Preview failed");
       setCatalogPreview(j.preview || "");
-      setMessage({ type: "success", text: `Preview loaded (${j.bytes} bytes)` });
+      notify.success(`Preview loaded (${j.bytes} bytes)`);
     } catch (e) {
-      setMessage({ type: "error", text: e.message });
+      notify.error(e.message);
     } finally {
       setBusy("");
     }
@@ -463,12 +449,12 @@ export default function AgentLibraryPage() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.message || j.error || "Install failed");
       setJustInstalledSkillId(j.id || catalogSkillId);
-      setMessage({ type: "success", text: j.warning || `Installed ${j.id}` });
+      notify.success(j.warning || `Installed ${j.id}`);
       setCatalogConfirm(false);
       await load();
       await checkUpdates();
     } catch (e) {
-      setMessage({ type: "error", text: e.message });
+      notify.error(e.message);
     } finally {
       setBusy("");
     }
@@ -484,9 +470,9 @@ export default function AgentLibraryPage() {
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.message || j.error || "Export failed");
-      setMessage({ type: "success", text: `Exported AgentSync layout to ${j.path}` });
+      notify.success(`Exported AgentSync layout to ${j.path}`);
     } catch (e) {
-      setMessage({ type: "error", text: e.message });
+      notify.error(e.message);
     } finally {
       setBusy("");
     }
@@ -512,20 +498,6 @@ export default function AgentLibraryPage() {
           existing skills or MCP keys.
         </p>
       </div>
-
-      {message && (
-        <div
-          className={`text-xs px-3 py-2 rounded-lg border ${
-            message.type === "success"
-              ? "bg-green-500/10 border-green-500/30 text-green-600 dark:text-green-400"
-              : message.type === "warn"
-                ? "bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400"
-                : "bg-red-500/10 border-red-500/30 text-red-500"
-          }`}
-        >
-          {message.text}
-        </div>
-      )}
 
       {/* Master switch + actions */}
       <Card padding="md">
@@ -583,7 +555,14 @@ export default function AgentLibraryPage() {
           <button
             key={t.id}
             type="button"
-            onClick={() => setTab(/** @type {any} */ (t.id))}
+            onClick={() => {
+              setTab(/** @type {any} */ (t.id));
+              try {
+                window.history.replaceState(null, "", `?tab=${t.id}`);
+              } catch {
+                /* URL sync is best-effort */
+              }
+            }}
             className={`px-3 py-2 text-xs font-medium rounded-t-md transition-colors ${
               tab === t.id
                 ? "bg-surface border border-border border-b-surface text-primary -mb-px"
@@ -869,7 +848,7 @@ export default function AgentLibraryPage() {
                   setBusy("upd-check");
                   try {
                     await checkUpdates();
-                    setMessage({ type: "success", text: "Update check complete" });
+                    notify.success("Update check complete");
                   } finally {
                     setBusy("");
                   }
@@ -890,7 +869,7 @@ export default function AgentLibraryPage() {
                       body: JSON.stringify({ action: "ensure_product" }),
                     });
                     await load();
-                    setMessage({ type: "success", text: "Product skills ensured" });
+                    notify.success("Product skills ensured");
                   } finally {
                     setBusy("");
                   }
@@ -953,6 +932,46 @@ export default function AgentLibraryPage() {
               ))}
               {!data?.skills?.length && (
                 <p className="text-xs text-text-muted">No skills yet. Enable product skills or add manually.</p>
+              )}
+            </div>
+          </Card>
+
+          <Card padding="md">
+            <div className="flex items-center justify-between mb-1">
+              <h2 className="text-sm font-semibold text-text-main">
+                Detected on this machine
+              </h2>
+              <Badge size="sm" variant="default">read-only</Badge>
+            </div>
+            <p className="text-[11px] text-text-muted mb-3 leading-relaxed">
+              Skills already present in agent tool dirs (e.g. <code className="font-mono">~/.claude/skills</code>,{" "}
+              <code className="font-mono">~/.agents/skills</code>), installed by other tooling.
+              Switchboard does not manage them — import via the Catalog tab to manage them here.
+            </p>
+            <div className="space-y-2 max-h-72 overflow-auto">
+              {(data?.detectedSkills || []).map((s) => (
+                <div
+                  key={s.id}
+                  className="flex items-start justify-between gap-2 p-3 rounded-lg border border-border-subtle bg-surface-2/50"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium text-text-main">{s.title || s.id}</span>
+                      {s.managedBySwitchboard && (
+                        <Badge size="sm" variant="primary">sb-managed</Badge>
+                      )}
+                      {(s.agents || []).map((a) => (
+                        <Badge key={a} size="sm" variant="default">{a}</Badge>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-text-muted mt-0.5 line-clamp-2">
+                      {s.description || "—"}
+                    </p>
+                  </div>
+                </div>
+              ))}
+              {!data?.detectedSkills?.length && (
+                <p className="text-xs text-text-muted">No skills found in agent tool directories.</p>
               )}
             </div>
           </Card>
@@ -1325,7 +1344,6 @@ export default function AgentLibraryPage() {
                       setJustInstalledSkillId("");
                       // Trigger resolution directly
                       setBusy("resolve");
-                      setMessage(null);
                       fetch("/api/agent-library/catalog", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
@@ -1341,19 +1359,16 @@ export default function AgentLibraryPage() {
                             setCatalogUrl(skills[0].rawUrl);
                             setCatalogPreview(skills[0].preview || "");
                             setCatalogConfirm(false);
-                            setMessage({ type: "success", text: `Resolved skill: ${skills[0].skillId}` });
+                            notify.success(`Resolved skill: ${skills[0].skillId}`);
                           } else if (skills.length > 1) {
                             setCatalogSkillId("");
                             setCatalogUrl("");
                             setCatalogPreview("");
                             setCatalogConfirm(false);
-                            setMessage({
-                              type: "success",
-                              text: `Found ${skills.length} skills in ${j.repo || "repository"}. Select one below.`,
-                            });
+                            notify.success(`Found ${skills.length} skills in ${j.repo || "repository"}. Select one below.`);
                           }
                         })
-                        .catch((err) => setMessage({ type: "error", text: err.message }))
+                        .catch((err) => notify.error(err.message))
                         .finally(() => setBusy(""));
                     }}
                   >

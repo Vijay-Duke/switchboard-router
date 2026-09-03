@@ -7,7 +7,9 @@ import { normalizeApiKeyRecordLookup, packApiKeyRecord, unpackApiKeyRecord } fro
 // Settings
 export {
   getSettings, updateSettings, isCloudEnabled, getCloudUrl, exportSettings,
+  __resetSettingsCacheForTests,
 } from "./repos/settingsRepo.js";
+import { __resetSettingsCacheForTests as resetSettingsCache } from "./repos/settingsRepo.js";
 
 // Provider connections
 export {
@@ -69,7 +71,7 @@ export {
 // Usage
 export {
   statsEmitter, trackPendingRequest, getConnectionInFlightCount, getActiveRequests,
-  saveRequestUsage, getUsageHistory, getUsageStats, getChartData,
+  saveRequestUsage, getUsageHistory, getUsageStats, getProviderRequestCounts, getChartData,
   appendRequestLog, getRecentLogs,
 } from "./repos/usageRepo.js";
 
@@ -220,6 +222,9 @@ export async function importDb(payload) {
       db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('pricing', ?, ?)`, [provider, stringifyJson(models || {})]);
     }
   });
+
+  // P9: importDb writes the settings row directly — drop the settings memo.
+  resetSettingsCache();
 
   return await exportDb();
 }

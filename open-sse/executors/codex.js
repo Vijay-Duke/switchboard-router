@@ -12,6 +12,30 @@ import { dbg } from "../utils/debugLog.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { executeWithPreOutputSseRetry } from "../utils/sseTransientRetry.js";
 import { streamResponsesOverWebSocket, toWsUrl } from "./codexWsTransport.js";
+import { wrapHeaders } from "../identity/wrap.js";
+import { getDispatcher, resolveProxyUrl, shouldBypassMitmDns } from "../utils/proxyFetch.js";
+
+// Circuit breaker for failed WebSocket handshakes: without it every request
+// behind a WS-blocking proxy pays a full handshake attempt before falling
+// back, doubling latency and retaining native memory under sustained load.
+// Keyed by egress (proxy URL or "direct") so one blocked proxy does not pause
+// WebSocket for every other account.
+const wsBreakers = new Map();
+const WS_BREAKER_MAX_FAILURES = 3;
+const WS_BREAKER_OPEN_MS = 5 * 60_000;
+
+function wsBreakerFor(key) {
+  let breaker = wsBreakers.get(key);
+  if (!breaker) {
+    breaker = { failures: 0, openUntil: 0 };
+    wsBreakers.set(key, breaker);
+  }
+  return breaker;
+}
+
+export function __resetCodexWsBreakerForTests() {
+  wsBreakers.clear();
+}
 
 // Server-generated item id prefixes that Codex /responses cannot resolve when store=false
 const SERVER_ID_PATTERN = /^(rs|fc|resp|msg)_/;
@@ -188,7 +212,7 @@ export class CodexExecutor extends BaseExecutor {
       await this.prefetchImages(args.body);
     }
 
-    const ws = process.env.CODEX_WS_TRANSPORT === "on"
+    const ws = process.env.CODEX_WS_TRANSPORT !== "off"
       ? await this._executeOverWebSocket(args)
       : null;
     if (ws) return ws;
@@ -203,31 +227,85 @@ export class CodexExecutor extends BaseExecutor {
   }
 
 
-  // Native/Undici WebSocket clients retain substantial RSS across failed
-  // handshakes under sustained routing load. Keep stable HTTP SSE as the
-  // default; operators can explicitly enable the WebSocket transport.
+  // WebSocket avoids OpenAI's 30-second legacy HTTP SSE cap. Operators may
+  // force HTTP with CODEX_WS_TRANSPORT=off; handshake failure also falls back.
   async _executeOverWebSocket(args) {
-    if (process.env.CODEX_WS_TRANSPORT !== "on" || process.env.VITEST) return null;
-    if (this._isCompact || args.stream === false) return null;
+    if (process.env.CODEX_WS_TRANSPORT === "off" || process.env.VITEST) return null;
+    // Read the request, not instance state: _isCompact is only assigned inside
+    // transformRequest, so it still holds the previous request's value here.
+    if (args.body?._compact || args.stream === false) return null;
+    // The Vercel relay is an HTTP-only hop; only proxyAwareFetch knows it.
+    if (args.proxyOptions?.vercelRelayUrl) return null;
+    if (args.signal?.aborted) return null;
 
+    // Clone: transformRequest deletes body._compact, and the HTTP fallback
+    // re-runs it on args.body — without the clone a compaction call would
+    // silently fall back to /responses instead of /responses/compact.
+    let body;
+    try { body = structuredClone(args.body); } catch { return null; }
+
+    let breaker = null;
     try {
-      const transformedBody = this.transformRequest(args.model, args.body, args.stream, args.credentials);
+      const transformedBody = this.transformRequest(args.model, body, args.stream, args.credentials);
       const url = this.buildUrl(args.model, args.stream, 0, args.credentials);
+      // The HTTP path owns the MITM DNS bypass; don't upgrade those hosts.
+      if (shouldBypassMitmDns(url)) return null;
+
+      // Same egress as the HTTP hop: per-connection proxy, else env proxy.
+      const proxyUrl = resolveProxyUrl(url, args.proxyOptions);
+      breaker = wsBreakerFor(proxyUrl || "direct");
+      if (Date.now() < breaker.openUntil) return null;
+
       const headers = { ...this.buildHeaders(args.credentials, args.stream, url, args.model) };
-      delete headers["Content-Type"];
-      delete headers["Accept"];
+      const { headers: wsHeaders } = wrapHeaders(headers, {
+        identity: this.resolveIdentity(args.credentials),
+        provider: "codex",
+        format: args.credentials?.runtimeTransport?.format || this.config.format,
+        credentialId: args.credentials?.connectionId || args.credentials?.apiKey || args.credentials?.accessToken,
+        stream: true,
+      });
+      delete wsHeaders["Content-Type"];
+      delete wsHeaders["Accept"];
+
+      let dispatcher;
+      if (proxyUrl) {
+        try {
+          dispatcher = await getDispatcher(proxyUrl);
+        } catch (error) {
+          // strictProxy forbids going direct; HTTP then enforces the semantics.
+          if (args.proxyOptions?.strictProxy === true) return null;
+          args.log?.warn?.("CODEX-WS", `proxy dispatcher unavailable, connecting direct: ${error.message}`);
+        }
+      }
 
       const result = streamResponsesOverWebSocket({
         wsUrl: toWsUrl(url),
-        headers,
+        headers: wsHeaders,
         request: transformedBody,
         signal: args.signal,
+        ...(dispatcher ? { dispatcher } : {}),
       });
+      // `ready` settles on the first frame, so an early error frame rejects
+      // here and the catch returns null: the HTTP path then yields the real
+      // status, driving parseError, cooldown, fallback and the pre-output retry.
       await result.ready;
+      breaker.failures = 0;
       dbg("CODEX-WS", `transport=responses_websocket | ${url}`);
-      return { response: result.response, url, headers, transformedBody };
+      return { response: result.response, url, headers: wsHeaders, transformedBody };
     } catch (error) {
-      args.log?.warn?.("CODEX-WS", `websocket transport failed, falling back to HTTP: ${error.message}`);
+      // Client abort is not a transport failure and must not re-send over HTTP.
+      if (error?.name === "AbortError") throw error;
+      // An error frame proves the WebSocket hop works (the server answered
+      // in-protocol), so only transport failures count toward the breaker.
+      const countsForBreaker = breaker && error?.code !== "codex_ws_error_frame";
+      if (countsForBreaker) breaker.failures += 1;
+      if (countsForBreaker && breaker.failures >= WS_BREAKER_MAX_FAILURES) {
+        breaker.openUntil = Date.now() + WS_BREAKER_OPEN_MS;
+        breaker.failures = 0;
+        args.log?.warn?.("CODEX-WS", `websocket transport failing repeatedly, pausing attempts for 5 minutes: ${error.message}`);
+      } else {
+        args.log?.warn?.("CODEX-WS", `websocket transport failed, falling back to HTTP: ${error.message}`);
+      }
       dbg("CODEX-WS", `handshake failed: ${error.message}`);
       return null;
     }

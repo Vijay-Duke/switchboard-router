@@ -247,7 +247,10 @@ export async function getActiveRequests() {
     .slice(0, 20);
 
   const errorProvider = (Date.now() - lastErrorProvider.ts < 10000) ? lastErrorProvider.provider : "";
-  return { activeRequests, recentRequests, errorProvider };
+  // P1: the usage SSE stream serves only { activeRequests, recentRequests,
+  // errorProvider, pending } — expose the in-memory pending map here so the
+  // stream never needs the full getUsageStats() report.
+  return { activeRequests, recentRequests, errorProvider, pending: pendingRequests };
 }
 
 export function getActiveRequestMetricSnapshot() {
@@ -300,11 +303,11 @@ export async function saveRequestUsage(entry) {
       }
 
       db.run(
-        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, clientKeyId, endpoint, promptTokens, completionTokens, cost, status, tokens, meta, requestId) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, clientKeyId, endpoint, promptTokens, completionTokens, cachedTokens, cost, status, tokens, meta, requestId) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           entry.timestamp, entry.provider || null, entry.model || null,
           entry.connectionId || null, entry.clientKeyId || null, entry.endpoint || null,
-          promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
+          promptTokens, completionTokens, cachedTokens, entry.cost || 0, entry.status || "ok",
           stringifyJson(tokens), stringifyJson({}), requestId,
         ]
       );
@@ -315,15 +318,24 @@ export async function saveRequestUsage(entry) {
         );
       }
 
-      // H8: maintain row count in _meta — avoid full-table COUNT(*) on every insert.
+      // H8/P7: maintain row count in _meta. Steady state is one PK point-lookup
+      // (feeds the trim decision) plus one atomic relative increment — no
+      // absolute value written back from JS, so concurrent writers can't lose
+      // updates. A pre-counter DB bootstraps once from an exact COUNT(*) (the
+      // row just inserted included) so the trim below keeps legacy tables
+      // bounded immediately, not only after maxHist further writes.
       const maxHist = parseInt(process.env.USAGE_HISTORY_MAX || "50000", 10);
       let histCount;
       const histMeta = db.get(`SELECT value FROM _meta WHERE key = 'usageHistoryCount'`);
       if (histMeta?.value != null) {
         histCount = parseInt(histMeta.value, 10) + 1;
+        db.run(`UPDATE _meta SET value = CAST(value AS INTEGER) + 1 WHERE key = 'usageHistoryCount'`);
       } else {
-        // One-time bootstrap scan
-        histCount = (db.get(`SELECT COUNT(*) as c FROM usageHistory`)?.c || 0);
+        histCount = db.get(`SELECT COUNT(*) AS c FROM usageHistory`)?.c || 0;
+        db.run(
+          `INSERT INTO _meta(key, value) VALUES('usageHistoryCount', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          [String(histCount)]
+        );
       }
       if (Number.isFinite(maxHist) && maxHist > 0 && histCount > maxHist) {
         const excess = histCount - maxHist;
@@ -331,12 +343,11 @@ export async function saveRequestUsage(entry) {
           `DELETE FROM usageHistory WHERE id IN (SELECT id FROM usageHistory ORDER BY id ASC LIMIT ?)`,
           [excess]
         );
-        histCount = maxHist;
+        db.run(
+          `INSERT INTO _meta(key, value) VALUES('usageHistoryCount', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          [String(maxHist)]
+        );
       }
-      db.run(
-        `INSERT INTO _meta(key, value) VALUES('usageHistoryCount', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-        [String(histCount)]
-      );
 
       const dateKey = getLocalDateKey(entry.timestamp);
       const row = db.get(`SELECT data FROM usageDaily WHERE dateKey = ?`, [dateKey]);
@@ -378,10 +389,9 @@ export async function saveRequestUsage(entry) {
         );
       });
 
-      // Atomic counter increment in same transaction
-      const cur = db.get(`SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'`);
-      const next = (cur ? parseInt(cur.value, 10) : 0) + 1;
-      db.run(`INSERT INTO _meta(key, value) VALUES('totalRequestsLifetime', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [String(next)]);
+      // P7: atomic counter increment in same transaction — single upsert, no
+      // SELECT + read-modify-write pair.
+      db.run(`INSERT INTO _meta(key, value) VALUES('totalRequestsLifetime', '1') ON CONFLICT(key) DO UPDATE SET value = CAST(_meta.value AS INTEGER) + 1`);
       inserted = true;
     });
 
@@ -430,6 +440,25 @@ function loadDaysInRange(adapter, maxDays) {
   const cutoff = new Date(today.getFullYear(), today.getMonth(), today.getDate() - maxDays + 1);
   const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
   return adapter.all(`SELECT dateKey, data FROM usageDaily WHERE dateKey >= ?`, [cutoffKey]);
+}
+
+// P4: hot-path aggregate for Auto routing / provider-preference combos. The
+// callers keep only per-provider request counts, which are derivable from the
+// pre-aggregated usageDaily blobs alone — no connections/API-key decryption
+// and no usageHistory scan (unlike getUsageStats("7d")). Null-prototype map,
+// same shape convention as stats.byProvider.
+export async function getProviderRequestCounts(days = 7) {
+  const db = await getAdapter();
+  const n = Math.min(90, Math.max(1, Number(days) || 7));
+  const counts = Object.create(null);
+  for (const row of loadDaysInRange(db, n)) {
+    const day = parseJson(row.data, {});
+    for (const [provider, p] of Object.entries(day.byProvider || {})) {
+      const c = Number(p?.requests);
+      counts[provider] = (counts[provider] || 0) + (Number.isFinite(c) ? c : 0);
+    }
+  }
+  return counts;
 }
 
 export async function getUsageMetricTotals() {
@@ -662,31 +691,35 @@ export async function getUsageStats(period = "all") {
       }
     }
 
-    // Overlay precise lastUsed timestamps from history
+    // Overlay precise lastUsed timestamps: one aggregated query (MAX per
+    // group computed in SQL) instead of pulling every history row into JS.
+    // ISO-8601 timestamps sort lexically, so plain string comparison
+    // replaces the per-row new Date() parses.
     const overlayCutoff = maxDays ? Date.now() - maxDays * 86400000 : 0;
-    const histRows = db.all(
-      `SELECT timestamp, provider, model, connectionId, clientKeyId, endpoint FROM usageHistory WHERE timestamp >= ?`,
+    const lastUsedRows = db.all(
+      `SELECT model, provider, connectionId, clientKeyId, endpoint, MAX(timestamp) AS lastUsed FROM usageHistory WHERE timestamp >= ? GROUP BY model, provider, connectionId, clientKeyId, endpoint`,
       [new Date(overlayCutoff).toISOString()]
     );
-    for (const e of histRows) {
-      const ts = e.timestamp;
+    for (const e of lastUsedRows) {
+      const ts = e.lastUsed;
+      if (typeof ts !== "string" || !ts) continue;
       const modelKey = e.provider ? `${e.model} (${e.provider})` : e.model;
-      if (stats.byModel[modelKey] && new Date(ts) > new Date(stats.byModel[modelKey].lastUsed)) stats.byModel[modelKey].lastUsed = ts;
+      if (stats.byModel[modelKey] && ts > (stats.byModel[modelKey].lastUsed || "")) stats.byModel[modelKey].lastUsed = ts;
 
       if (e.connectionId) {
         const accountName = connectionMap[e.connectionId] || `Account ${e.connectionId.slice(0, 8)}...`;
         const accountKey = `${e.model} (${e.provider} - ${accountName})`;
-        if (stats.byAccount[accountKey] && new Date(ts) > new Date(stats.byAccount[accountKey].lastUsed)) stats.byAccount[accountKey].lastUsed = ts;
+        if (stats.byAccount[accountKey] && ts > (stats.byAccount[accountKey].lastUsed || "")) stats.byAccount[accountKey].lastUsed = ts;
       }
 
       const clientKeyCounter = `${e.clientKeyId || "local-no-key"}|${e.model}|${e.provider || "unknown"}`;
-      if (stats.byApiKey[clientKeyCounter] && new Date(ts) > new Date(stats.byApiKey[clientKeyCounter].lastUsed)) {
+      if (stats.byApiKey[clientKeyCounter] && ts > (stats.byApiKey[clientKeyCounter].lastUsed || "")) {
         stats.byApiKey[clientKeyCounter].lastUsed = ts;
       }
 
       const endpoint = e.endpoint || "Unknown";
       const endpointKey = `${endpoint}|${e.model}|${e.provider || "unknown"}`;
-      if (stats.byEndpoint[endpointKey] && new Date(ts) > new Date(stats.byEndpoint[endpointKey].lastUsed)) stats.byEndpoint[endpointKey].lastUsed = ts;
+      if (stats.byEndpoint[endpointKey] && ts > (stats.byEndpoint[endpointKey].lastUsed || "")) stats.byEndpoint[endpointKey].lastUsed = ts;
     }
   } else {
     // 24h / today: live history
@@ -699,16 +732,17 @@ export async function getUsageStats(period = "all") {
       cutoff = new Date(Date.now() - PERIOD_MS["24h"]).toISOString();
     }
     const filtered = db.all(
-      `SELECT timestamp, provider, model, connectionId, clientKeyId, endpoint, promptTokens, completionTokens, cost, tokens FROM usageHistory WHERE timestamp >= ?`,
+      `SELECT timestamp, provider, model, connectionId, clientKeyId, endpoint, promptTokens, completionTokens, cachedTokens, cost FROM usageHistory WHERE timestamp >= ?`,
       [cutoff]
     );
 
     for (const r of filtered) {
-      const tokens = parseJson(r.tokens, {}) || {};
-      // Prefer denormalized columns, then OpenAI-shaped, then Claude-shaped (wave14).
-      const promptTokens = r.promptTokens || tokens.prompt_tokens || tokens.input_tokens || 0;
-      const completionTokens = r.completionTokens || tokens.completion_tokens || tokens.output_tokens || 0;
-      const cachedTokens = tokens.cached_tokens || tokens.cache_read_input_tokens || 0;
+      // All token counts come from denormalized columns (written by
+      // saveRequestUsage; pre-migration rows backfill cachedTokens as 0) —
+      // no per-row JSON parse of the tokens blob.
+      const promptTokens = r.promptTokens || 0;
+      const completionTokens = r.completionTokens || 0;
+      const cachedTokens = r.cachedTokens || 0;
       const entryCost = r.cost || 0;
       const providerDisplayName = providerNodeNameMap[r.provider] || r.provider;
 
@@ -733,7 +767,7 @@ export async function getUsageStats(period = "all") {
       stats.byModel[modelKey].completionTokens += completionTokens;
       stats.byModel[modelKey].cachedTokens += cachedTokens;
       stats.byModel[modelKey].cost += entryCost;
-      if (new Date(r.timestamp) > new Date(stats.byModel[modelKey].lastUsed)) stats.byModel[modelKey].lastUsed = r.timestamp;
+      if ((r.timestamp || "") > (stats.byModel[modelKey].lastUsed || "")) stats.byModel[modelKey].lastUsed = r.timestamp;
 
       if (r.connectionId) {
         const accountName = connectionMap[r.connectionId] || `Account ${r.connectionId.slice(0, 8)}...`;
@@ -746,7 +780,7 @@ export async function getUsageStats(period = "all") {
         stats.byAccount[accountKey].completionTokens += completionTokens;
         stats.byAccount[accountKey].cachedTokens += cachedTokens;
         stats.byAccount[accountKey].cost += entryCost;
-        if (new Date(r.timestamp) > new Date(stats.byAccount[accountKey].lastUsed)) stats.byAccount[accountKey].lastUsed = r.timestamp;
+        if ((r.timestamp || "") > (stats.byAccount[accountKey].lastUsed || "")) stats.byAccount[accountKey].lastUsed = r.timestamp;
       }
 
       const clientKeyId = r.clientKeyId || null;
@@ -767,7 +801,7 @@ export async function getUsageStats(period = "all") {
       keyUsage.completionTokens += completionTokens;
       keyUsage.cachedTokens += cachedTokens;
       keyUsage.cost += entryCost;
-      if (new Date(r.timestamp) > new Date(keyUsage.lastUsed)) keyUsage.lastUsed = r.timestamp;
+      if ((r.timestamp || "") > (keyUsage.lastUsed || "")) keyUsage.lastUsed = r.timestamp;
 
       const endpoint = r.endpoint || "Unknown";
       const epKey = `${endpoint}|${r.model}|${r.provider || "unknown"}`;
@@ -776,7 +810,7 @@ export async function getUsageStats(period = "all") {
       }
       const epe = stats.byEndpoint[epKey];
       epe.requests++; epe.promptTokens += promptTokens; epe.completionTokens += completionTokens; epe.cachedTokens += cachedTokens; epe.cost += entryCost;
-      if (new Date(r.timestamp) > new Date(epe.lastUsed)) epe.lastUsed = r.timestamp;
+      if ((r.timestamp || "") > (epe.lastUsed || "")) epe.lastUsed = r.timestamp;
     }
   }
 

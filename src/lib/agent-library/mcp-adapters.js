@@ -24,29 +24,134 @@ function toOpenCodeEnvRefs(value) {
   );
 }
 
+/**
+ * Cursor interpolates secrets as ${env:NAME}, not ${NAME}.
+ * Already-qualified ${env:NAME} refs pass through untouched.
+ * @param {unknown} value
+ */
+function toCursorEnvRefs(value) {
+  return String(value).replace(
+    /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g,
+    (_, name) => `\${env:${name}}`
+  );
+}
+
+const ENV_REF_RE = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
+const BEARER_ENV_REF_RE = /^Bearer \$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
+
+/**
+ * Classify a library secret placeholder for agents without ${VAR} expansion.
+ * Returns { name, prefix } when the whole value is `${NAME}` (prefix "")
+ * or `Bearer ${NAME}` (prefix "Bearer "), else null.
+ * @param {unknown} value
+ */
+function parseEnvRef(value) {
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+  let m = ENV_REF_RE.exec(v);
+  if (m) return { name: m[1], prefix: "" };
+  m = BEARER_ENV_REF_RE.exec(v);
+  if (m) return { name: m[1], prefix: "Bearer " };
+  return null;
+}
+
 function isPlainObject(v) {
   return v != null && typeof v === "object" && !Array.isArray(v);
 }
 
+// Deliberate projection map: every JSON kind selects an explicit
+// toAgentMcpEntry branch (claude-* fall through to "claude").
+const KIND_TO_AGENT = {
+  cursor: "cursor",
+  gemini: "gemini",
+  opencode: "opencode",
+  omp: "omp",
+  codex: "codex",
+};
+
 /**
  * @param {import("./mcp-store.js").McpServerDef} server
- * @param {"claude"|"cursor"|"gemini"|"opencode"|"codex"} agent
+ * @param {"claude"|"cursor"|"gemini"|"opencode"|"codex"|"omp"} agent
  */
 function toAgentMcpEntry(server, agent) {
   const transport = server.transport || (server.url ? "http" : "stdio");
 
   if (agent === "codex") {
+    // Codex has no ${VAR} expansion: pure refs become env_vars (stdio) or
+    // env_http_headers / bearer_token_env_var (http); anything else stays
+    // literal. startup/tool timeouts are per-server keys, valid on both
+    // transports.
+    const timeouts = {};
+    if (typeof server.startupTimeoutSec === "number") {
+      timeouts.startup_timeout_sec = server.startupTimeoutSec;
+    }
+    if (typeof server.toolTimeoutSec === "number") {
+      timeouts.tool_timeout_sec = server.toolTimeoutSec;
+    }
+    const tools =
+      server.tools && Object.keys(server.tools).length ? server.tools : undefined;
     if (transport === "stdio") {
-      return {
+      const env = {};
+      const envVars = [];
+      for (const [k, v] of Object.entries(server.env || {})) {
+        const ref = parseEnvRef(v);
+        if (ref && !ref.prefix && ref.name === k) envVars.push(k);
+        else env[k] = v;
+      }
+      const entry = {
         command: server.command,
         args: server.args || [],
-        env: server.env || {},
+        ...timeouts,
       };
+      if (Object.keys(env).length) entry.env = env;
+      if (envVars.length) entry.env_vars = envVars;
+      if (tools) entry.tools = tools;
+      return entry;
     }
-    return {
+    const httpHeaders = {};
+    const envHttpHeaders = {};
+    let bearerTokenEnvVar;
+    for (const [k, v] of Object.entries(server.headers || {})) {
+      const ref = parseEnvRef(v);
+      if (ref && !ref.prefix) envHttpHeaders[k] = ref.name;
+      else if (ref && ref.prefix === "Bearer " && k.toLowerCase() === "authorization") {
+        bearerTokenEnvVar = ref.name;
+      } else httpHeaders[k] = v;
+    }
+    const entry = { url: server.url, ...timeouts };
+    if (Object.keys(httpHeaders).length) entry.http_headers = httpHeaders;
+    if (Object.keys(envHttpHeaders).length) entry.env_http_headers = envHttpHeaders;
+    if (bearerTokenEnvVar) entry.bearer_token_env_var = bearerTokenEnvVar;
+    if (tools) entry.tools = tools;
+    return entry;
+  }
+
+  if (agent === "cursor") {
+    // Cursor interpolates ${env:NAME}, not ${NAME} — rewrite every
+    // user-facing string field. `type` is required by Cursor's schema.
+    if (transport === "stdio") {
+      const entry = {
+        type: "stdio",
+        command: toCursorEnvRefs(server.command || ""),
+        args: (server.args || []).map(toCursorEnvRefs),
+      };
+      if (server.env && Object.keys(server.env).length) {
+        entry.env = Object.fromEntries(
+          Object.entries(server.env).map(([k, v]) => [k, toCursorEnvRefs(v)])
+        );
+      }
+      return entry;
+    }
+    const entry = {
       url: server.url,
-      http_headers: server.headers || {},
+      type: transport === "sse" ? "sse" : "http",
     };
+    if (server.headers && Object.keys(server.headers).length) {
+      entry.headers = Object.fromEntries(
+        Object.entries(server.headers).map(([k, v]) => [k, toCursorEnvRefs(v)])
+      );
+    }
+    return entry;
   }
 
   if (agent === "opencode") {
@@ -85,6 +190,26 @@ function toAgentMcpEntry(server, agent) {
     };
   }
 
+  // omp (pi-mcp-adapter, https://github.com/ofriw/pi-mcp-adapter) is an
+  // explicit branch even though it matches the Claude shape today:
+  // mcpServers.<name> takes { command, args, env } (stdio) or
+  // { url, headers } (remote, ${VAR}-interpolated). Re-verify here if
+  // pi-mcp-adapter changes its accepted keys.
+  if (agent === "omp") {
+    return toClaudeShapedEntry(server, transport);
+  }
+
+  return toClaudeShapedEntry(server, transport);
+}
+
+/**
+ * Claude Code JSON shape: { command, args, env } stdio,
+ * { url, type, headers } remote. Both Claude Code and Gemini CLI expand
+ * ${VAR}, so placeholders pass through verbatim.
+ * @param {import("./mcp-store.js").McpServerDef} server
+ * @param {string} transport
+ */
+function toClaudeShapedEntry(server, transport) {
   if (transport === "stdio") {
     const entry = {
       command: server.command,
@@ -123,97 +248,151 @@ function toAgentMcpEntry(server, agent) {
 export async function mergeJsonMcpConfig(filePath, servers, opts) {
   const kind = opts.kind;
   const previouslyManaged = new Set(opts.previouslyManaged || []);
-  let existing = {};
-  if (existsSync(filePath)) {
-    try {
-      existing = JSON.parse(await fs.readFile(filePath, "utf-8"));
-    } catch {
-      if (opts.neverOverwriteUser) {
-        return {
-          ok: false,
-          error: "mcp_parse_failed",
-          message: `Cannot parse ${filePath}; refusing to overwrite`,
-          path: filePath,
-        };
-      }
-      existing = {};
-    }
-  }
-
   let mapKey = "mcpServers";
   if (kind === "opencode") mapKey = "mcp";
 
-  if (Object.prototype.hasOwnProperty.call(existing, mapKey) && !isPlainObject(existing[mapKey])) {
-    if (opts.neverOverwriteUser) {
-      return {
-        ok: false,
-        error: "mcp_shape_conflict",
-        message: `${filePath}: "${mapKey}" exists but is not a plain object; refusing to overwrite`,
-        path: filePath,
-      };
-    }
-  }
-
-  const currentMap = isPlainObject(existing[mapKey]) ? { ...existing[mapKey] } : {};
-
-  const enabled = servers.filter((s) => s.enabled !== false);
-  const desiredKeys = new Set(enabled.map((s) => s.id));
-
-  const removed = [];
-  // Only remove keys we previously managed that are no longer desired
-  for (const key of Object.keys(currentMap)) {
-    if (previouslyManaged.has(key) && isManagedMcpKey(key) && !desiredKeys.has(key)) {
-      delete currentMap[key];
-      removed.push(key);
-    }
-  }
-
-  const written = [];
-  const skipped = [];
-  for (const server of enabled) {
-    const key = server.id;
-    if (!isManagedMcpKey(key)) {
-      skipped.push({ key, reason: "not_namespaced" });
-      continue;
-    }
-
-    const agent =
-      kind === "cursor"
-        ? "cursor"
-        : kind === "gemini"
-          ? "gemini"
-          : kind === "opencode"
-            ? "opencode"
-            : "claude";
-    const entry = toAgentMcpEntry(server, agent);
-
-    const exists = Object.prototype.hasOwnProperty.call(currentMap, key);
-    const weOwn = previouslyManaged.has(key);
-
-    if (exists && !weOwn && opts.neverOverwriteUser) {
-      skipped.push({ key, reason: "user_owned_or_unknown_sb_key" });
-      continue;
+  // Bounded read→merge→write retry: ~/.claude.json is Claude Code's live
+  // state file and a running session may rewrite it between our read and
+  // our write. If the mtime/size moved, re-read and re-apply instead of
+  // clobbering the external update (last writer still wins on the final
+  // attempt, but only after re-merging onto the freshest content).
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    let existing = {};
+    let indent = 2;
+    let snap = null;
+    if (existsSync(filePath)) {
+      try {
+        const st = await fs.stat(filePath);
+        snap = { mtimeMs: st.mtimeMs, size: st.size };
+      } catch {
+        snap = null;
+      }
+      let raw;
+      try {
+        raw = await fs.readFile(filePath, "utf-8");
+      } catch (e) {
+        if (e?.code === "ENOENT") raw = null;
+        else throw e;
+      }
+      if (raw != null) {
+        indent = detectJsonIndent(raw);
+        try {
+          existing = JSON.parse(raw);
+        } catch {
+          if (opts.neverOverwriteUser) {
+            return {
+              ok: false,
+              error: "mcp_parse_failed",
+              message: `Cannot parse ${filePath}; refusing to overwrite`,
+              path: filePath,
+            };
+          }
+          existing = {};
+        }
+      }
     }
 
-    currentMap[key] = entry;
-    written.push(key);
+    if (Object.prototype.hasOwnProperty.call(existing, mapKey) && !isPlainObject(existing[mapKey])) {
+      if (opts.neverOverwriteUser) {
+        return {
+          ok: false,
+          error: "mcp_shape_conflict",
+          message: `${filePath}: "${mapKey}" exists but is not a plain object; refusing to overwrite`,
+          path: filePath,
+        };
+      }
+    }
+
+    const currentMap = isPlainObject(existing[mapKey]) ? { ...existing[mapKey] } : {};
+
+    const enabled = servers.filter((s) => s.enabled !== false);
+    const desiredKeys = new Set(enabled.map((s) => s.id));
+
+    const removed = [];
+    // Only remove keys we previously managed that are no longer desired
+    for (const key of Object.keys(currentMap)) {
+      if (previouslyManaged.has(key) && isManagedMcpKey(key) && !desiredKeys.has(key)) {
+        delete currentMap[key];
+        removed.push(key);
+      }
+    }
+
+    const written = [];
+    const skipped = [];
+    for (const server of enabled) {
+      const key = server.id;
+      if (!isManagedMcpKey(key)) {
+        skipped.push({ key, reason: "not_namespaced" });
+        continue;
+      }
+
+      const agent = KIND_TO_AGENT[kind] || "claude";
+      const entry = toAgentMcpEntry(server, agent);
+
+      const exists = Object.prototype.hasOwnProperty.call(currentMap, key);
+      const weOwn = previouslyManaged.has(key);
+
+      if (exists && !weOwn && opts.neverOverwriteUser) {
+        skipped.push({ key, reason: "user_owned_or_unknown_sb_key" });
+        continue;
+      }
+
+      currentMap[key] = entry;
+      written.push(key);
+    }
+
+    const next = { ...existing, [mapKey]: currentMap };
+
+    let warning;
+    if (!opts.dryRun) {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      if (snap && (await configChangedSince(filePath, snap))) {
+        if (attempt + 1 < MAX_ATTEMPTS) continue; // re-read and re-apply
+        warning = "external_write_race"; // final attempt: write anyway, flag it
+      }
+      await atomicWriteFile(filePath, JSON.stringify(next, null, indent));
+    }
+
+    return {
+      ok: true,
+      path: filePath,
+      written,
+      removed,
+      skipped,
+      dryRun: !!opts.dryRun,
+      ...(warning ? { warning } : {}),
+    };
   }
+  // Unreachable: the loop always returns on the final attempt.
+  throw new Error("mergeJsonMcpConfig: retry loop exhausted");
+}
 
-  const next = { ...existing, [mapKey]: currentMap };
-
-  if (!opts.dryRun) {
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await atomicWriteFile(filePath, JSON.stringify(next, null, 2));
+/**
+ * Snapshot-compare a config file against a pre-read stat.
+ * @param {string} filePath
+ * @param {{ mtimeMs: number, size: number }|null} snap
+ */
+async function configChangedSince(filePath, snap) {
+  if (!snap) return existsSync(filePath);
+  try {
+    const st = await fs.stat(filePath);
+    return st.mtimeMs !== snap.mtimeMs || st.size !== snap.size;
+  } catch {
+    return true;
   }
+}
 
-  return {
-    ok: true,
-    path: filePath,
-    written,
-    removed,
-    skipped,
-    dryRun: !!opts.dryRun,
-  };
+/**
+ * Preserve the file's existing indentation (tab vs N-space) so merges
+ * into user-tracked files like ~/.claude.json don't re-indent everything.
+ * @param {string} raw
+ */
+function detectJsonIndent(raw) {
+  const m = /^([ \t]+)"[^"\n]*":/m.exec(raw);
+  if (!m) return 2;
+  if (m[1].startsWith("\t")) return "\t";
+  return m[1].length || 2;
 }
 
 /**
@@ -286,6 +465,7 @@ export async function mergeCodexMcpConfig(filePath, servers, opts) {
 
   for (const server of toWrite) {
     const entry = toAgentMcpEntry(server, "codex");
+    skipped.push(...collectCodexSkipped(server));
     // Quote dotted ids: [mcp_servers."sb-foo.bar"] so TOML is one key, not nested tables
     const table = tomlTableName(server.id);
     lines.push(`[mcp_servers.${table}]`);
@@ -294,18 +474,58 @@ export async function mergeCodexMcpConfig(filePath, servers, opts) {
       if (entry.args?.length) {
         lines.push(`args = ${tomlArray(entry.args)}`);
       }
+      if (typeof entry.startup_timeout_sec === "number") {
+        lines.push(`startup_timeout_sec = ${entry.startup_timeout_sec}`);
+      }
+      if (typeof entry.tool_timeout_sec === "number") {
+        lines.push(`tool_timeout_sec = ${entry.tool_timeout_sec}`);
+      }
+      // Bare keys must precede the [..env] sub-table or TOML nests them in it.
+      if (entry.env_vars?.length) {
+        lines.push(`env_vars = ${tomlArray(entry.env_vars)}`);
+      }
       if (entry.env && Object.keys(entry.env).length) {
         lines.push(`[mcp_servers.${table}.env]`);
         for (const [k, v] of Object.entries(entry.env)) {
-          lines.push(`${k} = ${tomlString(preserveEnvRefs(v))}`);
+          lines.push(`${tomlKey(k)} = ${tomlString(preserveEnvRefs(v))}`);
         }
       }
     } else if (entry.url) {
       lines.push(`url = ${tomlString(entry.url)}`);
+      if (typeof entry.startup_timeout_sec === "number") {
+        lines.push(`startup_timeout_sec = ${entry.startup_timeout_sec}`);
+      }
+      if (typeof entry.tool_timeout_sec === "number") {
+        lines.push(`tool_timeout_sec = ${entry.tool_timeout_sec}`);
+      }
+      if (entry.bearer_token_env_var) {
+        lines.push(`bearer_token_env_var = ${tomlString(entry.bearer_token_env_var)}`);
+      }
+      if (entry.env_http_headers && Object.keys(entry.env_http_headers).length) {
+        lines.push(`[mcp_servers.${table}.env_http_headers]`);
+        for (const [k, v] of Object.entries(entry.env_http_headers)) {
+          lines.push(`${tomlKey(k)} = ${tomlString(v)}`);
+        }
+      }
       if (entry.http_headers && Object.keys(entry.http_headers).length) {
         lines.push(`[mcp_servers.${table}.http_headers]`);
         for (const [k, v] of Object.entries(entry.http_headers)) {
           lines.push(`${tomlKey(k)} = ${tomlString(preserveEnvRefs(v))}`);
+        }
+      }
+    }
+    if (entry.tools && Object.keys(entry.tools).length) {
+      for (const [toolName, toolCfg] of Object.entries(entry.tools)) {
+        const clean = {};
+        for (const [k, v] of Object.entries(toolCfg)) {
+          const checked = checkCodexToolValue(server.id, toolName, k, v);
+          if (checked.ok) clean[k] = checked.value;
+          else skipped.push(checked.skipped);
+        }
+        if (!Object.keys(clean).length) continue;
+        lines.push(`[mcp_servers.${table}.tools.${tomlTableName(toolName)}]`);
+        for (const [k, v] of Object.entries(clean)) {
+          lines.push(`${tomlKey(k)} = ${tomlValue(v)}`);
         }
       }
     }
@@ -334,16 +554,79 @@ function escapeRe(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Codex [mcp_servers.<id>.tools.<tool>] keys we know how to render.
+// approval_mode is a string enum; output_token_limit is an integer —
+// writing it quoted breaks Codex's strict config deserializer.
+const CODEX_APPROVAL_MODES = new Set(["auto", "prompt", "writes", "approve"]);
+
+/**
+ * Validate one per-tool value for the Codex TOML writer.
+ * Unknown keys and out-of-enum values are skipped (reported, not written)
+ * so one bad value can't brick the user's whole config.toml.
+ */
+function checkCodexToolValue(serverId, toolName, key, value) {
+  const skipped = (reason) => ({
+    ok: false,
+    skipped: { key: `${serverId}.tools.${toolName}.${key}`, reason },
+  });
+  if (key === "approval_mode") {
+    if (typeof value === "string" && CODEX_APPROVAL_MODES.has(value)) {
+      return { ok: true, value };
+    }
+    return skipped("codex_approval_mode_invalid");
+  }
+  if (key === "output_token_limit") {
+    // Legacy catalogs stringified numbers — recover when unambiguous.
+    const n = typeof value === "string" && /^\d+$/.test(value.trim()) ? Number(value) : value;
+    // Positive safe integer only: String(1e21) would render exponent form.
+    if (typeof n === "number" && Number.isSafeInteger(n) && n > 0) {
+      return { ok: true, value: n };
+    }
+    return skipped("codex_output_token_limit_invalid");
+  }
+  return skipped("codex_tool_key_unsupported");
+}
+
+/**
+ * Report stdio env refs Codex cannot consume: only a pure ${NAME} whose
+ * key equals the var name becomes env_vars; every other ref is written
+ * literally (secrets stay out of disk) and flagged so the UI can warn.
+ * @param {import("./mcp-store.js").McpServerDef} server
+ */
+function collectCodexSkipped(server) {
+  const out = [];
+  const transport = server.transport || (server.url ? "http" : "stdio");
+  if (transport === "stdio") {
+    for (const [k, v] of Object.entries(server.env || {})) {
+      const ref = parseEnvRef(v);
+      if (ref && (ref.prefix || ref.name !== k)) {
+        out.push({ key: `${server.id}.env.${k}`, reason: "codex_env_ref_unsupported" });
+      }
+    }
+  }
+  return out;
+}
+
 function tomlString(s) {
   return JSON.stringify(String(s));
+}
+
+/** Native TOML scalar: numbers/booleans unquoted, everything else a string. */
+function tomlValue(v) {
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return tomlString(v);
 }
 
 function tomlArray(arr) {
   return `[${arr.map((x) => tomlString(x)).join(", ")}]`;
 }
 
+
 function tomlKey(k) {
-  if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) return k;
+  // TOML bare keys allow A-Za-z0-9_- (so X-Api-Key stays unquoted);
+  // anything else (dots, spaces, leading digits) is quoted.
+  if (/^[A-Za-z_-][A-Za-z0-9_-]*$/.test(k)) return k;
   return tomlString(k);
 }
 

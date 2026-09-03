@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import {
@@ -6,6 +7,7 @@ import {
   matchesApiKeyRecord,
   matchesApiKeyRecordAsync,
   packApiKeyRecord,
+  timingSafeEqualStr,
   unpackApiKeyRecord,
 } from "@/lib/crypto/secrets.js";
 
@@ -140,6 +142,58 @@ export function normalizeClientKeyPatch(data) {
 
 const KEY_ROWS = `SELECT k.* FROM apiKeys k`;
 
+// Verified-key memo: skips the ~40-80ms scrypt KDF when the proxy layer and
+// the handler layer authenticate the same key twice per request (P3).
+// Keyed by lookupDigest; stores only sha256(raw), never raw. TTL 60s, cap 256
+// with LRU re-insert on hit. Policy fields are re-read by id on every hit so
+// they stay fresh.
+const VERIFY_MEMO_TTL_MS = 60_000;
+const VERIFY_MEMO_MAX = 256;
+/** @type {Map<string, { rawSha256: string, id: string, expiresAt: number }>} */
+const verifyMemo = new Map();
+
+function rawSha256(raw) {
+  return crypto.createHash("sha256").update(raw).digest("hex");
+}
+
+function getVerifyMemo(lookupDigest, rawSha) {
+  const entry = verifyMemo.get(lookupDigest);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    verifyMemo.delete(lookupDigest);
+    return null;
+  }
+  // Wrong key with the same keyId: no hit, entry kept, caller runs the KDF.
+  if (!timingSafeEqualStr(entry.rawSha256, rawSha)) return null;
+  // LRU: re-insert to mark recent.
+  verifyMemo.delete(lookupDigest);
+  verifyMemo.set(lookupDigest, entry);
+  return entry;
+}
+
+function setVerifyMemo(lookupDigest, rawSha, id) {
+  if (verifyMemo.has(lookupDigest)) verifyMemo.delete(lookupDigest);
+  else if (verifyMemo.size >= VERIFY_MEMO_MAX) {
+    const oldest = verifyMemo.keys().next().value;
+    if (oldest !== undefined) verifyMemo.delete(oldest);
+  }
+  verifyMemo.set(lookupDigest, { rawSha256: rawSha, id, expiresAt: Date.now() + VERIFY_MEMO_TTL_MS });
+}
+
+function invalidateVerifyMemoForId(id) {
+  for (const [digest, entry] of verifyMemo) {
+    if (entry.id === id) verifyMemo.delete(digest);
+  }
+}
+
+function invalidateVerifyMemoForDigest(lookupDigest) {
+  if (lookupDigest) verifyMemo.delete(lookupDigest);
+}
+
+export function __resetApiKeyVerifyMemoForTests() {
+  verifyMemo.clear();
+}
+
 export async function getClientKeySpend(id) {
   const db = await getAdapter();
   const row = db.get(`SELECT spentUsd FROM apiKeys WHERE id = ?`, [id]);
@@ -203,12 +257,15 @@ export async function updateApiKey(id, data) {
     );
     result = { ...merged };
   });
+  if (result) invalidateVerifyMemoForId(id);
   return result;
 }
 
 export async function deleteApiKey(id) {
   const db = await getAdapter();
-  return (db.run(`DELETE FROM apiKeys WHERE id = ?`, [id])?.changes ?? 0) > 0;
+  const ok = (db.run(`DELETE FROM apiKeys WHERE id = ?`, [id])?.changes ?? 0) > 0;
+  if (ok) invalidateVerifyMemoForId(id);
+  return ok;
 }
 
 export async function authenticateApiKey(raw) {
@@ -216,6 +273,18 @@ export async function authenticateApiKey(raw) {
   const db = await getAdapter();
   const lookupDigest = apiKeyLookupDigest(raw);
   const keyPrefix = apiKeyPrefix(raw);
+  const rawSha = lookupDigest ? rawSha256(raw) : null;
+  if (lookupDigest && rawSha) {
+    const hit = getVerifyMemo(lookupDigest, rawSha);
+    if (hit) {
+      const fresh = db.get(`${KEY_ROWS} WHERE k.id = ?`, [hit.id]);
+      if (fresh && (fresh.isActive === 1 || fresh.isActive === true)) {
+        fresh.spentUsd = await getClientKeySpend(fresh.id);
+        return rowToKey(fresh);
+      }
+      verifyMemo.delete(lookupDigest);
+    }
+  }
   const indexed = lookupDigest
     ? db.get(`${KEY_ROWS} WHERE k.isActive = 1 AND k.lookupDigest = ?`, [lookupDigest])
     : null;
@@ -225,6 +294,7 @@ export async function authenticateApiKey(raw) {
       ? await matchesApiKeyRecordAsync(indexed.key, raw)
       : matchesApiKeyRecord(indexed.key, raw);
     if (!matches) return null;
+    if (lookupDigest && rawSha) setVerifyMemo(lookupDigest, rawSha, indexed.id);
     indexed.spentUsd = await getClientKeySpend(indexed.id);
     return rowToKey(indexed);
   }
@@ -242,10 +312,13 @@ export async function authenticateApiKey(raw) {
         `UPDATE apiKeys SET key = ?, keyPrefix = ?, lookupDigest = ? WHERE id = ?`,
         [packed, apiKeyPrefix(raw), lookupDigest, row.id],
       );
+      // Drop any stale memo entry for this digest before re-populating below.
+      invalidateVerifyMemoForDigest(lookupDigest);
       row.key = packed;
       row.keyPrefix = apiKeyPrefix(raw);
       row.lookupDigest = lookupDigest;
     }
+    if (lookupDigest && rawSha) setVerifyMemo(lookupDigest, rawSha, row.id);
     row.spentUsd = await getClientKeySpend(row.id);
     return rowToKey(row);
   }
