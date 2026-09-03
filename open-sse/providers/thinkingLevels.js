@@ -34,6 +34,13 @@ const FORMAT_LEVELS = {
 // Model-name pattern overrides (glob, first match wins) — more precise than format default.
 const PATTERN_THINKING = [
   { pattern: "*codex*", levels: ["low", "medium", "high", "xhigh"] }, // codex cannot disable thinking
+  // codebuddy-cn per-model effort sets — read off the client picker (server-
+  // delivered supportedEfforts), 2026-08-30. Gateway uses thinkingFormat "openai"
+  // but rejects levels outside each model's set.
+  { provider: "codebuddy-cn", pattern: "glm-5.3*",     levels: ["low", "high", "max"] },
+  { provider: "codebuddy-cn", pattern: "deepseek-v4*", levels: ["low", "high", "xhigh"] },
+  { provider: "codebuddy-cn", pattern: "hy3*",         levels: ["low", "high"] },
+  { provider: "codebuddy-cn", pattern: "hy4*",         levels: ["high"] },
 ];
 
 /**
