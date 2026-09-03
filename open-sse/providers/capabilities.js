@@ -158,6 +158,37 @@ export const PROVIDER_CAPABILITIES = {
   "ollama": {
     "deepseek-v4.1-flash:cloud": { vision: true, reasoning: true, thinkingFormat: "deepseek", contextWindow: 1000000, maxOutput: 384000 },
   },
+  // Qoder — upstream exposes opaque internal ids (dfmodel, kmodel, …); the
+  // registry `name` is display-only and capability lookup matches on the raw
+  // id, so every qoder model would fall through to DEFAULT_CAPABILITIES
+  // (200K) without this map. contextWindow follows the real model family's
+  // spec: the /algo/api/v2/model/list max_input_tokens under-reports some
+  // windows (GLM-5.3 / Kimi-K3 / Qwen3.8-Max claim 180K but accept more).
+  // max_output_tokens arrives as 0 for every model, so outputs are
+  // best-guess from the real model family. Vision tags below follow the
+  // upstream is_vl flag; the executor passes images through as OpenAI-style
+  // image_url content parts. reasoning:true on all of them — every model can
+  // reason; the upstream is_reasoning flag only drives model_config selection.
+  // thinkingFormat keeps the true-model family for documentation/UI, but
+  // thinkingCanDisable:false everywhere: the executor only forwards
+  // messages/tools/max_tokens, and thinking is fixed upstream via
+  // modelConfig.is_reasoning — client thinking intent is dropped, so "none"
+  // must never be offered as an option.
+  "qoder": {
+    "ultimate":       { vision: true, reasoning: true, thinkingFormat: "claude-adaptive", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000 }, // Claude Opus 5
+    "performance":    { vision: true, reasoning: true, thinkingFormat: "claude-adaptive", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000 }, // Claude Sonnet 5
+    "dmodel":         { reasoning: true, thinkingFormat: "deepseek", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 65536 },  // DeepSeek-V4-Pro
+    "dfmodel":        { reasoning: true, thinkingFormat: "deepseek", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 65536 },  // DeepSeek-V4-Flash
+    "gmodel":         { reasoning: true, thinkingFormat: "zai", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000 },      // GLM-5.3
+    "gfmodel":        { vision: true, reasoning: true, thinkingFormat: "zai", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000 }, // GLM-5.3-Flash
+    "kmodel_latest":  { vision: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 65536 },      // Kimi-K3
+    "kmodel":         { vision: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 256000, maxOutput: 65536 },  // Kimi-K2.7-Code
+    "mmodel":         { reasoning: true, thinkingFormat: "minimax", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 512000 }, // MiniMax-M3
+    "qmodel_latest":  { vision: true, reasoning: true, thinkingFormat: "qwen", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 65536 },  // Qwen3.7-Max
+    "qmodel":         { vision: true, reasoning: true, thinkingFormat: "qwen", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 65536 },  // Qwen3.7-Plus
+    "qfmodel":        { vision: true, reasoning: true, thinkingFormat: "qwen", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 65536 },  // Qwen3.8-Flash
+    "qmodel_38max":   { vision: true, reasoning: true, thinkingFormat: "qwen", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 65536 },      // Qwen3.8-Max
+  },
 };
 
 /**
