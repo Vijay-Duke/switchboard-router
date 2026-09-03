@@ -177,7 +177,7 @@ describe("docker run doc contract", () => {
   it.each(["README.md", "DOCKER.md"])(
     "%s: every docker run block trusting 172.30.0.1 joins the dedicated network",
     (file) => {
-      const src = fs.readFileSync(path.join(repoRoot, file), "utf8");
+      const src = fs.readFileSync(path.join(repoRoot, file), "utf8").replace(/\r\n/g, "\n");
       const blocks = [...src.matchAll(/```bash\n([\s\S]*?)```/g)].map((match) => match[1]);
       const trusting = blocks.filter(
         (block) => block.includes("docker run") && block.includes("SWITCHBOARD_LOCAL_PEERS=172.30.0.1")
