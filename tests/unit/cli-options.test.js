@@ -101,7 +101,8 @@ describe("CLI option contract", () => {
     } finally {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
-  });
+  // Two cold CLI spawns; Windows runners need well over 5 s for them.
+  }, 60000);
 
   it("preserves host and port through autostart relaunch arguments", () => {
     expect(getLaunchArgs({ port: 24567, host: "0.0.0.0" })).toEqual([
