@@ -8,14 +8,14 @@ import path from "path";
 import fs from "fs/promises";
 import { fileURLToPath } from "node:url";
 
-const homes = vi.hoisted(() => ({ dir: "/tmp/r2-routes-home" }));
+const homes = vi.hoisted(() => ({ dir: "/tmp/r2-routes-home", platform: "darwin" }));
 const proxyFetchMock = vi.hoisted(() => vi.fn());
 vi.mock("os", async (importOriginal) => {
   const actual = await importOriginal();
   const homedir = () => homes.dir;
-  // The cowork test asserts the macOS config path; pin the platform so the
-  // route resolves the same directory on Linux/Windows CI.
-  const platform = () => "darwin";
+  // Platform is switchable per test so the cowork route's darwin/win32/linux
+  // config-dir resolution is exercised on every CI runner.
+  const platform = () => homes.platform;
   return { ...actual, default: { ...actual.default, homedir, platform }, homedir, platform };
 });
 
@@ -164,12 +164,27 @@ describe("cowork-settings POST baseUrl (T122)", () => {
     body: JSON.stringify({ baseUrl, apiKey: "sk_x", models: ["m1"] }),
   }));
 
-  it("appends /v1 when missing and stores the normalized URL", async () => {
+  const coworkLibDir = (platform) => {
+    if (platform === "darwin") {
+      return path.join(homes.dir, "Library", "Application Support", "Claude-3p", "configLibrary");
+    }
+    if (platform === "win32") {
+      return path.join(process.env.LOCALAPPDATA, "Claude-3p", "configLibrary");
+    }
+    return path.join(homes.dir, ".config", "Claude-3p", "configLibrary");
+  };
+
+  it.each(["darwin", "linux", "win32"])("appends /v1 when missing and stores the normalized URL (%s)", async (platform) => {
     await freshHome();
+    const prevPlatform = homes.platform;
+    const prevLocalApp = process.env.LOCALAPPDATA;
+    homes.platform = platform;
+    if (platform === "win32") process.env.LOCALAPPDATA = path.join(homes.dir, "AppData", "Local");
+    try {
     const res = await post("http://x");
     expect(res.status).toBe(200);
 
-    const libDir = path.join(homes.dir, "Library", "Application Support", "Claude-3p", "configLibrary");
+    const libDir = coworkLibDir(platform);
     const files = await fs.readdir(libDir);
     const meta = JSON.parse(await fs.readFile(path.join(libDir, "_meta.json"), "utf-8"));
     expect(files).toContain(`${meta.appliedId}.json`);
@@ -177,6 +192,11 @@ describe("cowork-settings POST baseUrl (T122)", () => {
     expect(cfg.inferenceGatewayBaseUrl).toBe("http://x/v1");
     // Default plugins must still be persisted as managedMcpServers (GET reads them back).
     expect(Array.isArray(cfg.managedMcpServers) && cfg.managedMcpServers.length > 0).toBe(true);
+    } finally {
+      homes.platform = prevPlatform;
+      if (prevLocalApp === undefined) delete process.env.LOCALAPPDATA;
+      else process.env.LOCALAPPDATA = prevLocalApp;
+    }
   });
 
   it("rejects empty and malformed baseUrls with 400", async () => {

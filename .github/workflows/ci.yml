@@ -12,8 +12,12 @@ concurrency:
 
 jobs:
   unit-tests:
-    name: Unit tests
-    runs-on: ubuntu-latest
+    name: Unit tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v7
 
@@ -33,18 +37,23 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Audit production dependencies
+        if: runner.os == 'Linux'
         run: npm audit --omit=dev --audit-level=high
 
       - name: Lint
+        if: runner.os == 'Linux'
         run: npm run lint
 
       - name: Check advertised locale parity
+        if: runner.os == 'Linux'
         run: npm run check:i18n
 
       - name: Check generated provider registry
+        if: runner.os == 'Linux'
         run: npm run check:providers
 
       - name: Check package version parity
+        if: runner.os == 'Linux'
         run: npm run check:versions
 
       - name: Run full test suite
