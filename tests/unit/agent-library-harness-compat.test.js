@@ -35,7 +35,7 @@ describe("agent-library harness compatibility", () => {
     expect(getAgentSkillsRoot("codex", {
       scope: "project",
       projectPath: "/tmp/example-project",
-    })).toBe("/tmp/example-project/.agents/skills");
+    })).toBe(path.join(path.resolve("/tmp/example-project"), ".agents", "skills"));
   });
 
   it("renders OpenCode MCP transports and environment references in its native shape", async () => {
@@ -149,7 +149,7 @@ describe("agent-library harness compatibility", () => {
       kind: "omp",
     });
     expect(getAgentMcpConfig("omp", { scope: "project", projectPath: "/tmp/p" })).toEqual({
-      path: "/tmp/p/.pi/mcp.json",
+      path: path.join(path.resolve("/tmp/p"), ".pi", "mcp.json"),
       format: "json",
       kind: "omp",
     });

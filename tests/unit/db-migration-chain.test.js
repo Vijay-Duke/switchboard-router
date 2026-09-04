@@ -152,7 +152,7 @@ describe("Schema migrations", () => {
 
     for (const file of [path.join(tempDir, "db.json"), path.join(tempDir, "usage.json")]) {
       expect(fs.readFileSync(file, "utf8")).not.toContain("\"abc\"");
-      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(0o600); // no POSIX modes on Windows
     }
     const backupRoot = path.join(tempDir, "db", "backups");
     const backupBytes = fs.readdirSync(backupRoot)

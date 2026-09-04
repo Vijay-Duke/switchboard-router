@@ -28,6 +28,9 @@ if (!registry.listener) {
     runClosersSync();
   };
   process.on("beforeExit", registry.listener);
+  // process.exit() skips beforeExit (initializeApp's forced-exit timer, crash
+  // handlers). Closers are sync and idempotent, so run them on 'exit' too.
+  process.on("exit", registry.listener);
 
   // Node never fires beforeExit on SIGTERM/SIGINT/process.exit(), so a
   // beforeExit-only flush loses sql.js's debounced persist and buffered
@@ -36,11 +39,15 @@ if (!registry.listener) {
   // (Next.js cleanup, initializeApp's shutdown handler) it owns the exit;
   // otherwise re-raise so the process still dies by signal with the default
   // disposition.
+  // Windows has no SIGTERM delivery (process.kill / taskkill are hard kills);
+  // the console paths it does provide are SIGINT (Ctrl+C) and SIGBREAK.
+  const signals = ["SIGTERM", "SIGINT", ...(process.platform === "win32" ? ["SIGBREAK"] : [])];
   const onSignal = (sig) => {
     runClosersSync();
     if (registry.signalHandlers) {
-      process.removeListener("SIGTERM", registry.signalHandlers.onSigterm);
-      process.removeListener("SIGINT", registry.signalHandlers.onSigint);
+      for (const [name, handler] of Object.entries(registry.signalHandlers)) {
+        process.removeListener(name, handler);
+      }
       registry.signalHandlers = null;
     }
     if (process.listenerCount(sig) > 0) return;
@@ -50,11 +57,8 @@ if (!registry.listener) {
       process.exit(sig === "SIGINT" ? 130 : 143);
     }
   };
-  const onSigterm = () => onSignal("SIGTERM");
-  const onSigint = () => onSignal("SIGINT");
-  registry.signalHandlers = { onSigterm, onSigint };
-  process.on("SIGTERM", onSigterm);
-  process.on("SIGINT", onSigint);
+  registry.signalHandlers = Object.fromEntries(signals.map((sig) => [sig, () => onSignal(sig)]));
+  for (const [name, handler] of Object.entries(registry.signalHandlers)) process.on(name, handler);
 }
 
 /**

@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "fs/promises";
 import path from "path";
+import { fileURLToPath } from "url";
 
 const homes = vi.hoisted(() => ({ dir: "/tmp/r2-codex-home" }));
 
@@ -29,7 +30,7 @@ import { GET, POST, DELETE } from "../../src/app/api/cli-tools/codex-settings/ro
 const tmps = [];
 
 beforeEach(async () => {
-  const dir = await fs.mkdtemp(path.join(path.dirname(new URL(import.meta.url).pathname), ".tmp-r2codex-"));
+  const dir = await fs.mkdtemp(path.join(path.dirname(fileURLToPath(import.meta.url)), ".tmp-r2codex-"));
   tmps.push(dir);
   homes.dir = dir;
 });

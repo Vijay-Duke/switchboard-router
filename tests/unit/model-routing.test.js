@@ -21,6 +21,10 @@ async function setupDb() {
     getComboModels,
     getModelInfo,
     cleanup() {
+      // Windows cannot unlink an open sqlite file; also drop the singleton so the
+      // next test's resetModules() opens a fresh adapter in its own tempDir.
+      try { global._dbAdapter?.instance?.close?.(); } catch {}
+      delete global._dbAdapter;
       fs.rmSync(tempDir, { recursive: true, force: true });
     },
   };

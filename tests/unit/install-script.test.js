@@ -91,7 +91,8 @@ exit 64
   };
 }
 
-describe("install.sh", () => {
+// install.sh is the macOS/Linux installer: bash shims and a ':'-joined PATH.
+describe.skipIf(process.platform === "win32")("install.sh", () => {
   it("upgrades an existing install to the exact latest npm version", () => {
     const { packageJson, result } = runInstaller();
 

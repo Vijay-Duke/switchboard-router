@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 function source(relativePath) {
-  return fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
+  // Windows checkouts may be CRLF; assertions use LF.
+  return fs.readFileSync(path.join(repoRoot, relativePath), "utf8").replace(/\r\n/g, "\n");
 }
 
 const CLIENT = "src/app/(dashboard)/dashboard/basic-chat/BasicChatPageClient.js";

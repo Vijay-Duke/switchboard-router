@@ -59,8 +59,12 @@ function waitForReady(child) {
   });
 }
 
+// Windows never delivers SIGTERM: child.kill("SIGTERM") is TerminateProcess, so no
+// handler can run. The process.exit path below is the Windows-applicable check.
+const signalIt = it.skipIf(process.platform === "win32");
+
 describe("adapterShutdownRegistry SIGTERM/SIGINT (L10)", () => {
-  it("runs closers synchronously on SIGTERM and still exits by signal", async () => {
+  signalIt("runs closers synchronously on SIGTERM and still exits by signal", async () => {
     const marker = path.join(tmpDir, "flushed");
     const childPath = path.join(tmpDir, "child-registry.mjs");
     fs.writeFileSync(
@@ -88,7 +92,7 @@ await new Promise(() => {});`
 });
 
 describe("sql.js adapter SIGTERM persist (L10)", () => {
-  it("persists unflushed rows written just before SIGTERM", async () => {
+  signalIt("persists unflushed rows written just before SIGTERM", async () => {
     const dbFile = path.join(tmpDir, "shutdown.sqlite");
     const childPath = path.join(tmpDir, "child-sqljs.mjs");
     fs.writeFileSync(
@@ -111,6 +115,30 @@ await new Promise(() => {});`
     try {
       const row = reopened.get("SELECT v FROM t WHERE id = ?", ["row1"]);
       expect(row?.v).toBe("hello");
+    } finally {
+      reopened.close();
+    }
+  }, 30000);
+
+  it("persists unflushed rows when the process calls process.exit()", async () => {
+    const dbFile = path.join(tmpDir, "exit.sqlite");
+    const childPath = path.join(tmpDir, "child-exit.mjs");
+    fs.writeFileSync(
+      childPath,
+      `import { createSqlJsAdapter } from ${JSON.stringify(SQLJS_URL)};
+const adapter = await createSqlJsAdapter(${JSON.stringify(dbFile)});
+adapter.exec("CREATE TABLE IF NOT EXISTS t (id TEXT PRIMARY KEY, v TEXT)");
+adapter.run("INSERT INTO t (id, v) VALUES (?, ?)", ["row1", "hello"]);
+process.exit(0);`
+    );
+    const child = spawn(process.execPath, [childPath], { stdio: ["ignore", "pipe", "pipe"] });
+    const { code } = await waitForExit(child, 20000);
+    expect(code).toBe(0);
+
+    const { createSqlJsAdapter } = await import("../../src/lib/db/adapters/sqljsAdapter.js");
+    const reopened = await createSqlJsAdapter(dbFile);
+    try {
+      expect(reopened.get("SELECT v FROM t WHERE id = ?", ["row1"])?.v).toBe("hello");
     } finally {
       reopened.close();
     }

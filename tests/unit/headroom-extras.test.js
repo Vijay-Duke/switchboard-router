@@ -100,23 +100,27 @@ describe("headroom extras detection", () => {
 
 describe("findPython310 interpreter preference", () => {
   it("prefers the interpreter beside the headroom binary that sees headroom-ai", () => {
+    // detect.js shells out to `where` and probes python.exe on Windows.
+    const IS_WIN = process.platform === "win32";
+    const binDir = path.join("/opt", "headroom", "bin");
+    const besideBinary = path.join(binDir, IS_WIN ? "python.exe" : "python3");
     mocks.execSync.mockImplementation((cmd) => {
-      if (cmd === "which headroom") return "/opt/headroom/bin/headroom";
-      if (cmd.startsWith("/opt/headroom/bin/")) return "Python 3.11.9";
+      if (cmd === `${IS_WIN ? "where" : "which"} headroom`) return path.join(binDir, "headroom");
+      if (cmd.startsWith(binDir + path.sep)) return "Python 3.11.9";
       throw new Error("not found");
     });
     // Only the binary-dir interpreter answers `pip show headroom-ai`.
     mocks.execFileSync.mockImplementation((py, args) => {
-      if (py === "/opt/headroom/bin/python3") return "Name: headroom-ai";
+      if (py === besideBinary) return "Name: headroom-ai";
       throw new Error("not found");
     });
 
-    expect(findPython310()).toBe("/opt/headroom/bin/python3");
+    expect(findPython310()).toBe(besideBinary);
   });
 
   it("falls back to the first version-eligible interpreter when headroom-ai is nowhere", () => {
     mocks.execSync.mockImplementation((cmd) => {
-      if (cmd === "which headroom") throw new Error("not found");
+      if (/^(which|where) headroom$/.test(cmd)) throw new Error("not found");
       if (cmd === "python3 --version") return "Python 3.13.1";
       if (cmd === "python --version") return "Python 3.9.7";
       throw new Error("not found");

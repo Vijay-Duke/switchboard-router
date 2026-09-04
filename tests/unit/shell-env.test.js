@@ -12,11 +12,15 @@ afterEach(async () => {
 });
 
 describe("shell env encoding", () => {
-  it("round-trips quotes and shell metacharacters without executing them", async () => {
-    const value = "key'\"$(printf PWNED); `uname`; $HOME";
-    const encoded = quoteShellValue(value);
-    expect(parseQuotedShellValue(encoded)).toBe(value);
+  const value = "key'\"$(printf PWNED); `uname`; $HOME";
 
+  it("round-trips quotes and shell metacharacters through the parser", () => {
+    expect(parseQuotedShellValue(quoteShellValue(value))).toBe(value);
+  });
+
+  // switchboard.env is only ever sourced by a POSIX shell; Windows has no /bin/sh.
+  it.skipIf(process.platform === "win32")("sources the encoded value without executing it", async () => {
+    const encoded = quoteShellValue(value);
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "switchboard-shell-env-"));
     tempDirs.push(dir);
     const envPath = path.join(dir, "switchboard.env");

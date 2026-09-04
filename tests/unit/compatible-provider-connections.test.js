@@ -21,6 +21,7 @@ async function setupTestContext(nodeData) {
   }));
 
   const { POST } = await import("@/app/api/providers/route.js");
+  const { closeAdapter } = await import("@/lib/db/driver.js");
   const {
     createProviderNode,
     getProviderConnections,
@@ -32,8 +33,10 @@ async function setupTestContext(nodeData) {
     node,
     POST,
     getProviderConnections,
-    cleanup() {
-      fs.rmSync(tempDir, { recursive: true, force: true });
+    async cleanup() {
+      // Windows cannot unlink an open SQLite file (EBUSY): close before rm.
+      await closeAdapter();
+      fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 5 });
     },
   };
 }
@@ -73,11 +76,11 @@ describe("compatible provider connections API", () => {
     vi.clearAllMocks();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.doUnmock("next/server");
     vi.resetModules();
     vi.clearAllMocks();
-    cleanup();
+    await cleanup();
     cleanup = () => {};
     if (originalDataDir === undefined) delete process.env.DATA_DIR;
     else process.env.DATA_DIR = originalDataDir;
@@ -113,7 +116,8 @@ describe("compatible provider connections API", () => {
         nodeName: ctx.node.name,
       },
     });
-  });
+  // Module graph import of the providers route takes several seconds under load.
+  }, 30000);
 
   it("creates one API-key connection for an Anthropic-compatible node", async () => {
     const ctx = await setupTestContext({

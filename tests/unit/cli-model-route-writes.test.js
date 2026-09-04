@@ -7,6 +7,9 @@ import { parse as parseYaml } from "yaml";
 import { parseTOML } from "confbox";
 
 const originalHome = process.env.HOME;
+// Windows: os.homedir() reads USERPROFILE (never HOME); Kilo reads APPDATA.
+const originalUserProfile = process.env.USERPROFILE;
+const originalAppData = process.env.APPDATA;
 const originalXdg = process.env.XDG_CONFIG_HOME;
 const originalDataDir = process.env.DATA_DIR;
 let home;
@@ -35,7 +38,9 @@ const post = (body = payload) => new Request("http://localhost", {
 beforeAll(async () => {
   home = await fs.mkdtemp(path.join(os.tmpdir(), "switchboard-cli-models-"));
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   process.env.XDG_CONFIG_HOME = path.join(home, ".config");
+  process.env.APPDATA = path.join(home, ".config");
   process.env.DATA_DIR = path.join(home, ".switchboard");
   ({ GET: fullCatalogGet, POST: fullCatalogPost, DELETE: fullCatalogDelete } = await import("../../src/app/api/cli-tools/claude-full-catalog/route.js"));
   ({
@@ -47,13 +52,20 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Windows cannot unlink an open SQLite file (EBUSY): close before rm.
+  const { closeAdapter } = await import("../../src/lib/db/driver.js");
+  await closeAdapter();
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
+  if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = originalUserProfile;
+  if (originalAppData === undefined) delete process.env.APPDATA;
+  else process.env.APPDATA = originalAppData;
   if (originalXdg === undefined) delete process.env.XDG_CONFIG_HOME;
   else process.env.XDG_CONFIG_HOME = originalXdg;
   if (originalDataDir === undefined) delete process.env.DATA_DIR;
   else process.env.DATA_DIR = originalDataDir;
-  await fs.rm(home, { recursive: true, force: true });
+  await fs.rm(home, { recursive: true, force: true, maxRetries: 5 });
 });
 
 describe("CLI catalog routes write native client schemas", () => {
@@ -694,21 +706,24 @@ describe("CLI catalog routes write native client schemas", () => {
     };
 
     expect((await POST(post(hostile))).status).toBe(200);
-    const sourced = execFileSync(
-      "/bin/sh",
-      [
-        "-c",
-        '. "$1"; printf "%s\\n%s\\n%s" "$GROK_API_KEY" "$GROK_BASE_URL" "$GROK_MODEL"',
-        "sh",
-        envPath,
-      ],
-      { encoding: "utf8" },
-    );
-    expect(sourced.split("\n")).toEqual([
-      hostile.apiKey,
-      `${hostile.baseUrl}/v1`,
-      hostile.model,
-    ]);
+    if (process.platform !== "win32") {
+      // The env file is POSIX-shell syntax; only a real sh can prove it sources safely.
+      const sourced = execFileSync(
+        "/bin/sh",
+        [
+          "-c",
+          '. "$1"; printf "%s\\n%s\\n%s" "$GROK_API_KEY" "$GROK_BASE_URL" "$GROK_MODEL"',
+          "sh",
+          envPath,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(sourced.split("\n")).toEqual([
+        hostile.apiKey,
+        `${hostile.baseUrl}/v1`,
+        hostile.model,
+      ]);
+    }
     expect((await POST(post({ ...hostile, apiKey: "bad\ncommand" }))).status).toBe(400);
 
     expect((await DELETE()).status).toBe(200);

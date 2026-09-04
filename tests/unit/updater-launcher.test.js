@@ -148,7 +148,9 @@ describe("detached updater lifecycle", () => {
       expect(result.code).toBe(1);
       expect(status.attempt).toBe(2);
       expect(status.done).toBe(true);
-      expect(status.error).toContain("ENOENT");
+      // Windows runs npm via cmd.exe (shell: true), so the spawn itself succeeds
+      // and the missing binary surfaces as a non-zero exit instead of ENOENT.
+      expect(status.error).toContain(process.platform === "win32" ? "Install failed after 2 attempts" : "ENOENT");
     } finally {
       fs.rmSync(dataDir, { recursive: true, force: true });
     }

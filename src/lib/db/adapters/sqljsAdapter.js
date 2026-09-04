@@ -26,9 +26,10 @@ export async function createSqlJsAdapter(filePath) {
   function persist() {
     const data = db.export();
     const tmp = filePath + ".tmp";
-    fs.writeFileSync(tmp, Buffer.from(data));
-    const fileFd = fs.openSync(tmp, "r");
+    // One writable fd for write + fsync: Windows rejects fsync on a read-only handle.
+    const fileFd = fs.openSync(tmp, "w");
     try {
+      fs.writeFileSync(fileFd, Buffer.from(data));
       fs.fsyncSync(fileFd);
     } finally {
       fs.closeSync(fileFd);

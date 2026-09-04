@@ -95,7 +95,9 @@ console.log(JSON.stringify({ snapshot: getConsistentSnapshot("claude-cli"), bina
   return JSON.parse(result.stdout);
 }
 
-describe("Claude TLS helper target builds", () => {
+// The fake `go` on PATH is a shebang script; Windows CreateProcess only resolves
+// .exe/.com, so the real Go toolchain would run instead of the shim.
+describe.skipIf(process.platform === "win32")("Claude TLS helper target builds", () => {
   it("builds every explicitly requested target with static Go binaries", () => {
     const requested = ["darwin/x64", "linux/arm64", "win32/x64"];
     const { result, calls } = runHelperBuild(requested);

@@ -59,6 +59,8 @@ export function registerShutdownHandlers() {
 
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
+  // Windows never delivers SIGTERM; Ctrl+Break is the graceful console path there.
+  if (process.platform === "win32") process.on("SIGBREAK", cleanup);
   process.on("exit", () => { try { removeAllDNSEntriesSync(); } catch { /* ignore */ } });
   g.signalHandlersRegistered = true;
 }

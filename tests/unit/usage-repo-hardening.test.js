@@ -126,6 +126,7 @@ describe("usage hot-path against a real database", () => {
     adapter?.all?.mockRestore?.();
     adapter?.get?.mockRestore?.();
     adapter?.run?.mockRestore?.();
+    try { global._dbAdapter?.instance?.close?.(); } catch {} // Windows: release the sqlite handle before rm
     if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
     if (prevDataDir === undefined) delete process.env.DATA_DIR;
     else process.env.DATA_DIR = prevDataDir;

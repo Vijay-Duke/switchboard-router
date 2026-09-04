@@ -67,7 +67,7 @@ describe("connection secret redaction", () => {
       expect(sealed).toMatch(/^enc:v2:/);
       const secretFile = path.join(dir, "auth", "cli-secret");
       expect(fs.readFileSync(secretFile, "utf8")).toMatch(/^[a-f0-9]{64}$/);
-      expect(fs.statSync(secretFile).mode & 0o777).toBe(0o600);
+      if (process.platform !== "win32") expect(fs.statSync(secretFile).mode & 0o777).toBe(0o600); // no POSIX modes on Windows
       expect(secrets.decryptSecret(sealed)).toBe("fresh-install");
       // A fresh module instance (e.g. next server start) reads the same secret back.
       vi.resetModules();
