@@ -13,7 +13,10 @@ const proxyFetchMock = vi.hoisted(() => vi.fn());
 vi.mock("os", async (importOriginal) => {
   const actual = await importOriginal();
   const homedir = () => homes.dir;
-  return { ...actual, default: { ...actual.default, homedir }, homedir };
+  // The cowork test asserts the macOS config path; pin the platform so the
+  // route resolves the same directory on Linux/Windows CI.
+  const platform = () => "darwin";
+  return { ...actual, default: { ...actual.default, homedir, platform }, homedir, platform };
 });
 
 // "which <tool>" always finds the tool so installed-checks pass without exec.
