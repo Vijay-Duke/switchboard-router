@@ -1,6 +1,7 @@
 // @ts-check
 import { NextResponse } from "next/server";
 import { getProviderConnections } from "@/lib/db/index.js";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 
 const langNames = new Intl.DisplayNames(["en"], { type: "language" });
 
@@ -17,7 +18,7 @@ export async function GET(request) {
     const apiKey = connections[0]?.apiKey;
     if (!apiKey) return NextResponse.json({ error: "No Inworld connection found" }, { status: 400 });
 
-    const res = await fetch("https://api.inworld.ai/tts/v1/voices", {
+    const res = await proxyAwareFetch("https://api.inworld.ai/tts/v1/voices", {
       headers: { "Authorization": `Basic ${apiKey}` },
     });
     if (!res.ok) {

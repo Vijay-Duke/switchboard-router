@@ -8,12 +8,14 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { parseTOML, stringifyTOML } from "confbox";
+import { replaceCliFiles, snapshotObjectKeys, restoreObjectKeys, writeCliFile } from "@/lib/cli/fileIo.js";
 
 const execAsync = promisify(exec);
 
 const getCodexDir = () => path.join(os.homedir(), ".codex");
 const getCodexConfigPath = () => path.join(getCodexDir(), "config.toml");
 const getCodexAuthPath = () => path.join(getCodexDir(), "auth.json");
+const getBackupPath = () => path.join(getCodexDir(), "switchboard-backup.json");
 
 // Flatten confbox-parsed TOML into a writable object, preserving nested tables
 const parsedToWritable = (obj) => obj ?? {};
@@ -116,14 +118,17 @@ export async function POST(request) {
     } catch {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
-    const { baseUrl, apiKey, model, subagentModel } = body || {};
-    
-    if (!baseUrl || !apiKey || !model) {
-      return NextResponse.json({ error: "baseUrl, apiKey and model are required" }, { status: 400 });
+    const { baseUrl, apiKey: rawApiKey, model, subagentModel } = body || {};
+    // Local Apply may omit the key (T39): default like the DeepSeek/Gemini/Pi routes.
+    const apiKey = rawApiKey || "sk_switchboard";
+
+    if (!baseUrl || !model) {
+      return NextResponse.json({ error: "baseUrl and model are required" }, { status: 400 });
     }
 
     const codexDir = getCodexDir();
     const configPath = getCodexConfigPath();
+    const authPath = getCodexAuthPath();
 
     // Ensure directory exists
     await fs.mkdir(codexDir, { recursive: true });
@@ -134,6 +139,31 @@ export async function POST(request) {
       const existingConfig = await fs.readFile(configPath, "utf-8");
       parsed = parsedToWritable(parseTOML(existingConfig));
     } catch { /* No existing config */ }
+
+    // Read existing auth
+    let authData = {};
+    try {
+      const existingAuth = await fs.readFile(authPath, "utf-8");
+      authData = JSON.parse(existingAuth);
+    } catch { /* No existing auth */ }
+
+    // Snapshot the pre-Apply values once so Disconnect can restore them (T121).
+    let backup = {};
+    try {
+      backup = JSON.parse(await fs.readFile(getBackupPath(), "utf-8"));
+    } catch { /* No backup yet */ }
+    if (backup?.version !== 1) {
+      backup = {
+        version: 1,
+        root: snapshotObjectKeys(parsed, ["model", "model_provider"]),
+        subagent: {
+          exists: parsed.agents?.subagent !== undefined,
+          value: parsed.agents?.subagent,
+        },
+        auth: snapshotObjectKeys(authData, ["OPENAI_API_KEY", "auth_mode"]),
+      };
+      await writeCliFile(getBackupPath(), JSON.stringify(backup, null, 2), { secret: true });
+    }
 
     // Update only Switchboard related fields (api_key goes to auth.json, not config.toml)
     parsed.model = model;
@@ -154,22 +184,15 @@ export async function POST(request) {
       model: effectiveSubagentModel,
     });
 
-    // Write merged config
-    const configContent = stringifyTOML(parsed);
-    await fs.writeFile(configPath, configContent);
-
-    // Update auth.json with OPENAI_API_KEY (Codex reads this first)
-    const authPath = getCodexAuthPath();
-    let authData = {};
-    try {
-      const existingAuth = await fs.readFile(authPath, "utf-8");
-      authData = JSON.parse(existingAuth);
-    } catch { /* No existing auth */ }
-    
     // Force apikey mode (keep existing tokens untouched for ChatGPT login reuse)
     authData.OPENAI_API_KEY = apiKey;
     authData.auth_mode = "apikey";
-    await fs.writeFile(authPath, JSON.stringify(authData, null, 2));
+
+    // Write both files atomically: a later failure restores earlier files (T121).
+    await replaceCliFiles([
+      { filePath: configPath, content: stringifyTOML(parsed) },
+      { filePath: authPath, content: JSON.stringify(authData, null, 2), secret: true },
+    ]);
 
     return NextResponse.json({
       success: true,
@@ -203,7 +226,8 @@ export async function DELETE() {
     }
 
     // Remove Switchboard related root fields only if they point to switchboard
-    if (parsed.model_provider === "switchboard") {
+    const wasSwitchboard = parsed.model_provider === "switchboard";
+    if (wasSwitchboard) {
       delete parsed.model;
       delete parsed.model_provider;
     }
@@ -214,25 +238,42 @@ export async function DELETE() {
     // Remove subagent configuration
     deleteNestedSection(parsed, "agents.subagent");
 
+    // Restore the pre-Apply values captured by POST, if any (T121).
+    let backup = {};
+    try {
+      backup = JSON.parse(await fs.readFile(getBackupPath(), "utf-8"));
+    } catch { /* No backup */ }
+    if (backup?.version === 1 && wasSwitchboard) {
+      restoreObjectKeys(parsed, backup.root);
+      if (backup.subagent?.exists) {
+        if (parsed.agents == null || typeof parsed.agents !== "object") parsed.agents = {};
+        parsed.agents.subagent = backup.subagent.value;
+      }
+    }
+
     // Write updated config
     const configContent = stringifyTOML(parsed);
-    await fs.writeFile(configPath, configContent);
+    await writeCliFile(configPath, configContent);
 
-    // Remove OPENAI_API_KEY from auth.json
+    // Remove OPENAI_API_KEY from auth.json (restoring any pre-existing key)
     const authPath = getCodexAuthPath();
     try {
       const existingAuth = await fs.readFile(authPath, "utf-8");
       const authData = JSON.parse(existingAuth);
       delete authData.OPENAI_API_KEY;
       delete authData.auth_mode;
+      if (backup?.version === 1 && wasSwitchboard) restoreObjectKeys(authData, backup.auth);
 
       // Write back or delete if empty
       if (Object.keys(authData).length === 0) {
         await fs.unlink(authPath);
       } else {
-        await fs.writeFile(authPath, JSON.stringify(authData, null, 2));
+        await writeCliFile(authPath, JSON.stringify(authData, null, 2), { secret: true });
       }
     } catch { /* No auth file */ }
+
+    // Backup consumed: the next Apply must snapshot the current state afresh.
+    try { await fs.unlink(getBackupPath()); } catch { /* optional */ }
 
     return NextResponse.json({
       success: true,

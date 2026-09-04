@@ -24,6 +24,19 @@ const STREAM_MODE = {
   PASSTHROUGH: "passthrough" // No translation, normalize output, extract usage
 };
 
+// True when a `data:` line is itself one complete JSON object (an event of
+// its own), as opposed to a fragment of a spec-legal multi-line payload.
+function isStandaloneJsonDataLine(line) {
+  const payload = line.trim().slice(5).trim();
+  if (!payload.startsWith("{") || !payload.endsWith("}")) return false;
+  try {
+    JSON.parse(payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Create unified SSE transform stream
  * @param {object} options
@@ -75,10 +88,19 @@ export function createSSEStream(options = {}) {
   let openAIResponsesTerminalSeen = false;
   let openAIResponsesDoneSent = false;
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
+  // Passthrough-mode Responses framing (codex→codex-cli/droid): event lines
+  // are forwarded verbatim, so track them here for flush finalization.
+  let passthroughResponsesFramingSeen = false;
+  let passthroughResponsesTerminalSeen = false;
 
   // State for extracting <think>...</think> to reasoning_content across SSE chunks
   // (MiniMax M3 and similar OpenAI-format tiers). See PR#2463.
   const extractThink = createThinkExtractor();
+
+  // Consecutive unparsable data events in passthrough mode. An upstream that
+  // degrades to plain text mid-stream would otherwise hang the client forever.
+  let consecutiveUnparsable = 0;
+  const MAX_CONSECUTIVE_UNPARSABLE = 5;
 
   function trackSSELineStats(trimmed) {
     if (isDebugEnabled && trimmed) {
@@ -104,6 +126,16 @@ export function createSSEStream(options = {}) {
 
     const lines = eventText.split(/\r?\n/);
     for (const line of lines) trackSSELineStats(line.trim());
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("event:")) {
+        const name = trimmed.slice(6).trim();
+        if (name.startsWith("response.")) passthroughResponsesFramingSeen = true;
+        if (name === "response.completed" || name === "response.done" || name === "response.failed" || name === "response.incomplete") {
+          passthroughResponsesTerminalSeen = true;
+        }
+      }
+    }
 
     const dataLines = lines.filter(line => line.startsWith("data:"));
     const dataText = dataLines.map(line => line.slice(5).replace(/^ /, "")).join("\n");
@@ -118,6 +150,7 @@ export function createSSEStream(options = {}) {
       } else {
         try {
           const parsed = JSON.parse(dataText.trim());
+          consecutiveUnparsable = 0;
 
           const idFixed = fixInvalidId(parsed);
 
@@ -169,7 +202,14 @@ export function createSSEStream(options = {}) {
             }
           }
 
-          if (!hasValuableContent(parsed, FORMATS.OPENAI)) {
+          // Harvest usage BEFORE the content gate: a final usage frame with an
+          // empty delta would otherwise be dropped and usage re-estimated.
+          const preExtracted = extractUsage(parsed);
+          if (preExtracted) {
+            usage = mergeUsage(usage, preExtracted);
+          }
+
+          if (!hasValuableContent(parsed, FORMATS.OPENAI) && !parsed.usage) {
             return;
           }
 
@@ -229,6 +269,12 @@ export function createSSEStream(options = {}) {
           // Skip non-JSON data events silently — don't forward garbage to clients.
           // Upstream providers sometimes return plain-text errors (HTML, rate-limit
           // messages) in the SSE stream that would break downstream JSON decoders.
+          // After too many in a row the upstream has degraded to plain text:
+          // fail the stream instead of hanging the client forever.
+          consecutiveUnparsable++;
+          if (consecutiveUnparsable >= MAX_CONSECUTIVE_UNPARSABLE) {
+            throw new Error(`upstream sent ${consecutiveUnparsable} consecutive non-JSON data events`);
+          }
           return;
         }
       }
@@ -264,8 +310,27 @@ export function createSSEStream(options = {}) {
         return;
       }
 
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      // Reassemble spec-legal multi-line `data:` events: complete `\n\n`-framed
+      // events have their data lines joined into one payload before parsing,
+      // so the second data line is not parsed standalone (and dropped with a
+      // WARN). The unframed tail keeps today's per-line handling for NDJSON.
+      const segments = buffer.split(/\r?\n\r?\n/);
+      buffer = segments.pop() || "";
+      const lines = [];
+      for (const segment of segments) {
+        const dataLines = [];
+        for (const segmentLine of segment.split("\n")) {
+          if (segmentLine.trim().startsWith("data:")) dataLines.push(segmentLine);
+          else lines.push(segmentLine);
+        }
+        // Join only when the lines are fragments of one payload; a segment of
+        // self-contained JSON data lines (single-newline framed events) keeps
+        // per-line parsing so no pre-H13 stream regresses into a parse failure.
+        if (dataLines.length > 1 && dataLines.every(isStandaloneJsonDataLine)) lines.push(...dataLines);
+        else if (dataLines.length > 0) lines.push(dataLines.join("\n"));
+      }
+      lines.push(...buffer.split("\n").slice(0, -1));
+      buffer = buffer.split("\n").pop() || "";
 
       for (const line of lines) {
         const trimmed = line.trim();
@@ -474,7 +539,17 @@ export function createSSEStream(options = {}) {
           //   data: [DONE]\n\n
           // Without it they can hang until timeout and trigger failover.
           // Gemini-family clients (Antigravity, Vertex, Gemini) reject this sentinel with 400 syntax errors.
-          const isGeminiFamily = provider === "antigravity" || provider === "gemini" || provider === "vertex";
+          const isGeminiFamily = provider === "antigravity" || provider === "gemini" || provider === "gemini-cli"
+            || provider === "vertex" || provider === "vertex-partner" || provider?.endsWith?.("-vertex");
+          // A Responses-framed passthrough that never reached a terminal event
+          // was truncated: synthesize response.failed so the client closes the
+          // turn instead of hanging (TRANSLATE flush does the same).
+          if (passthroughResponsesFramingSeen && !passthroughResponsesTerminalSeen) {
+            const failedOutput = formatIncompleteOpenAIResponsesStreamFailure();
+            reqLogger?.appendConvertedChunk?.(failedOutput);
+            controller.enqueue(sharedEncoder.encode(failedOutput));
+            passthroughResponsesTerminalSeen = true;
+          }
           if (!streamDoneSent && !isGeminiFamily) {
             const doneOutput = "data: [DONE]\n\n";
             reqLogger?.appendConvertedChunk?.(doneOutput);

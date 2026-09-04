@@ -26,6 +26,25 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
   const [autoDetected, setAutoDetected] = useState(false);
   const [idcCredentials, setIdcCredentials] = useState(null);
 
+  // Reset all auth state when the modal closes so reopening starts fresh
+  // at method selection (the modal stays mounted while closed).
+  useEffect(() => {
+    if (isOpen) return;
+    setSelectedMethod(null);
+    setIdcStartUrl("");
+    setIdcRegion("us-east-1");
+    setIdcProfileArn("");
+    setRefreshToken("");
+    setCliProxyJson("");
+    setApiKey("");
+    setApiKeyRegion("us-east-1");
+    setError(null);
+    setImporting(false);
+    setAutoDetecting(false);
+    setAutoDetected(false);
+    setIdcCredentials(null);
+  }, [isOpen]);
+
   // Auto-detect token when import method is selected
   useEffect(() => {
     if (selectedMethod !== "import" || !isOpen) return;

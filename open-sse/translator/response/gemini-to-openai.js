@@ -19,8 +19,13 @@ function emitFunctionCall(functionCall, state) {
   const fcName = state.toolNameMap?.get(rawName) || rawName;
   const fcArgs = functionCall.args || {};
   const toolCallIndex = state.functionIndex++;
+  // Sanitize the name fragment: Gemini allows characters (dots/spaces) that
+  // downstream id charsets (Anthropic ^[a-zA-Z0-9_-]+$) reject. Decimal clock
+  // with dash separators keeps the golden-snapshot volatile strip
+  // (-<10+digits>-<digits>) matching verbatim so snapshots stay deterministic.
+  const safeName = String(fcName).replace(/[^a-zA-Z0-9_-]/g, "");
   const toolCall = {
-    id: `${fcName}-${Date.now()}-${toolCallIndex}`,
+    id: `call_${safeName}-${Date.now()}-${toolCallIndex}`,
     index: toolCallIndex,
     type: OPENAI_BLOCK.FUNCTION,
     function: { name: fcName, arguments: JSON.stringify(fcArgs) },
@@ -32,13 +37,56 @@ function emitFunctionCall(functionCall, state) {
   return buildChunk(chunkMeta(state), { tool_calls: [toolCall] }, null);
 }
 
+// Emit one image as an OpenRouter-style `delta.images` entry. delta.content
+// stays a string: OpenAI clients concatenate it verbatim, so an array there
+// renders as "[object Object]" or fails their chunk schema. Pivot consumers
+// (openai-to-claude / openai-to-antigravity) read delta.images.
+function emitImageDelta(url, state) {
+  return buildChunk(
+    chunkMeta(state),
+    { images: [{ type: OPENAI_BLOCK.IMAGE_URL, image_url: { url } }] },
+    null
+  );
+}
+
 // Convert Gemini response chunk to OpenAI format
 export function geminiToOpenAIResponse(chunk, state) {
-  if (!chunk) return null;
-  
+  // EOF flush: a truncated stream (no finishReason) still terminates exactly
+  // once; virgin or already-finished streams stay silent.
+  if (!chunk) {
+    if (state.finishReason || !state.messageId) return null;
+    let finishReason = OPENAI_FINISH.STOP;
+    if ((state.geminiToolCallCount || 0) > 0) finishReason = OPENAI_FINISH.TOOL_CALLS;
+    state.finishReason = finishReason;
+    const finalChunk = buildChunk(chunkMeta(state), {}, finishReason);
+    if (state.usage) finalChunk.usage = state.usage;
+    return [finalChunk];
+  }
+
   // Handle Antigravity wrapper
   const response = chunk.response || chunk;
-  if (!response || !response.candidates?.[0]) return null;
+  if (!response || !response.candidates?.[0]) {
+    // Prompt-level safety block (no candidates): surface as a content_filter
+    // terminal with usage instead of an empty hang.
+    if (response?.promptFeedback?.blockReason) {
+      const fresh = !state.messageId;
+      if (fresh) {
+        state.messageId = response.responseId || `msg_${Date.now()}`;
+        state.model = response.modelVersion || "gemini";
+        state.functionIndex = 0;
+        state.geminiToolCallCount = 0;
+      }
+      state.usage = toOpenAIUsage(response.usageMetadata || chunk.usageMetadata, "gemini") || state.usage;
+      const finishReason = toOpenAIFinish(response.promptFeedback.blockReason, "gemini");
+      const out = [];
+      if (fresh) out.push(buildChunk(chunkMeta(state), { role: ROLE.ASSISTANT }, null));
+      const finalChunk = buildChunk(chunkMeta(state), {}, finishReason);
+      if (state.usage) finalChunk.usage = state.usage;
+      out.push(finalChunk);
+      return out;
+    }
+    return null;
+  }
 
   const results = [];
   const candidate = response.candidates[0];
@@ -58,12 +106,32 @@ export function geminiToOpenAIResponse(chunk, state) {
     for (const part of content.parts) {
       const hasThoughtSig = part.thoughtSignature || part.thought_signature;
       const isThought = part.thought === true;
-      
+
+      // Media parts ride on any part (including signature-carrying ones), so
+      // extract them before the thought-signature branch below continues.
+      const inlineData = part.inlineData || part.inline_data;
+      if (inlineData?.data) {
+        const mimeType = inlineData.mimeType || inlineData.mime_type || DEFAULT_IMAGE_MIME;
+        results.push(emitImageDelta(encodeDataUri(mimeType, inlineData.data), state));
+      }
+
+      // GCS/URI-referenced media: surface as an image_url entry (image mimes)
+      // so the reference is never silently dropped.
+      const fileUri = part.fileData?.fileUri || part.fileData?.file_uri;
+      if (fileUri && !inlineData?.data) {
+        const fileMime = part.fileData?.mimeType || part.fileData?.mime_type || "";
+        if (typeof fileUri === "string" && (fileMime.startsWith("image/") || fileMime === "")) {
+          results.push(emitImageDelta(fileUri, state));
+        } else if (typeof fileUri === "string") {
+          results.push(buildChunk(chunkMeta(state), { content: `[File: ${fileUri}]` }, null));
+        }
+      }
+
       // Handle thought signature (thinking mode)
       if (hasThoughtSig) {
         const hasTextContent = part.text !== undefined && part.text !== "";
         const hasFunctionCall = !!part.functionCall;
-        
+
         if (hasTextContent) {
           results.push(buildChunk(
             chunkMeta(state),
@@ -71,7 +139,7 @@ export function geminiToOpenAIResponse(chunk, state) {
             null
           ));
         }
-        
+
         if (hasFunctionCall) {
           results.push(emitFunctionCall(part.functionCall, state));
         }
@@ -93,22 +161,6 @@ export function geminiToOpenAIResponse(chunk, state) {
       // Function call
       if (part.functionCall) {
         results.push(emitFunctionCall(part.functionCall, state));
-      }
-
-      // Inline data (images)
-      const inlineData = part.inlineData || part.inline_data;
-      if (inlineData?.data) {
-        const mimeType = inlineData.mimeType || inlineData.mime_type || DEFAULT_IMAGE_MIME;
-        results.push(buildChunk(
-          chunkMeta(state),
-          {
-            images: [{
-              type: OPENAI_BLOCK.IMAGE_URL,
-              image_url: { url: encodeDataUri(mimeType, inlineData.data) }
-            }]
-          },
-          null
-        ));
       }
     }
   }

@@ -17,6 +17,23 @@ const authMethodOptions = Object.values(AUTH_METHODS).map((m) => ({
   label: m.name,
 }));
 
+/**
+ * Pure client-side validation for the new-provider form, exported for tests.
+ * The cookie method binds the same `apiKey` field as apikey, so both methods
+ * require a non-blank credential.
+ */
+export function validateProviderForm(formData) {
+  const newErrors = {};
+  if (!formData.provider) newErrors.provider = "Please select a provider";
+  if (
+    (formData.authMethod === "apikey" || formData.authMethod === "cookie") &&
+    !formData.apiKey.trim()
+  ) {
+    newErrors.apiKey = "API Key is required";
+  }
+  return newErrors;
+}
+
 export default function NewProviderPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -37,11 +54,7 @@ export default function NewProviderPage() {
   };
 
   const validate = () => {
-    const newErrors = {};
-    if (!formData.provider) newErrors.provider = "Please select a provider";
-    if (formData.authMethod === "apikey" && !formData.apiKey.trim()) {
-      newErrors.apiKey = "API Key is required";
-    }
+    const newErrors = validateProviderForm(formData);
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };

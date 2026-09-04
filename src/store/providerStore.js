@@ -3,6 +3,9 @@
 import { create } from "zustand";
 import { CLIENT_STORE_TTL_MS } from "@/shared/constants/config";
 
+// Shared across fetchProviders calls so concurrent mounts issue one GET.
+let fetchProvidersInflight = null;
+
 const useProviderStore = create((set, get) => ({
   providers: [],
   loading: false,
@@ -33,21 +36,28 @@ const useProviderStore = create((set, get) => ({
   setError: (error) => set({ error }),
 
   // Skips network when cache is fresh (< CLIENT_STORE_TTL_MS). Pass {force:true} to override.
+  // Concurrent calls share one in-flight GET.
   fetchProviders: async ({ force = false } = {}) => {
     const { lastFetched, providers } = get();
     if (!force && providers.length > 0 && Date.now() - lastFetched < CLIENT_STORE_TTL_MS) return;
+    if (fetchProvidersInflight) return fetchProvidersInflight;
     set({ loading: true, error: null });
-    try {
-      const response = await fetch("/api/providers");
-      const data = await response.json();
-      if (response.ok) {
-        set({ providers: data.connections || data.providers || [], loading: false, lastFetched: Date.now() });
-      } else {
-        set({ error: data.error, loading: false });
+    fetchProvidersInflight = (async () => {
+      try {
+        const response = await fetch("/api/providers");
+        const data = await response.json();
+        if (response.ok) {
+          set({ providers: data.connections || data.providers || [], loading: false, lastFetched: Date.now() });
+        } else {
+          set({ error: data.error, loading: false });
+        }
+      } catch (error) {
+        set({ error: "Failed to fetch providers", loading: false });
+      } finally {
+        fetchProvidersInflight = null;
       }
-    } catch (error) {
-      set({ error: "Failed to fetch providers", loading: false });
-    }
+    })();
+    return fetchProvidersInflight;
   },
 }));
 

@@ -77,6 +77,7 @@ export default function ModelCatalogInput({
         <div className="flex min-w-0 flex-col gap-1.5 sm:flex-row">
           <input
             type="text"
+            aria-label={label === "Models" ? "Add a model" : `Add a model (${label})`}
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
             onKeyDown={(event) => {

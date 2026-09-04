@@ -35,9 +35,11 @@ export class AzureExecutor extends DefaultExecutor {
       ...this.config.headers
     };
 
+    // Never fall back to another provider's key: an OpenAI key is not valid
+    // for Azure and only masks a missing Azure credential as an upstream 401.
     const apiKey = credentials?.apiKey
       || credentials?.accessToken
-      || process.env.OPENAI_API_KEY;
+      || process.env.AZURE_API_KEY;
 
     if (apiKey) {
       headers["api-key"] = apiKey;

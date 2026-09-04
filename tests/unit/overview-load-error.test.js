@@ -103,6 +103,37 @@ describe("overview load errors (U2)", () => {
     expect(status.textContent).toContain("stats unavailable");
   });
 
+  it("renders em-dash tiles (never 0) while the 24h stats fetch is pending", async () => {
+    let resolveFetch;
+    const statsPayload = {
+      totalRequests: 42,
+      totalPromptTokens: 1000,
+      totalCompletionTokens: 50,
+      totalCost: 1.5,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveFetch = () => resolve(okStatsResponse(statsPayload));
+          })
+      )
+    );
+    await mount({ providerCount: 2, readyProviderCount: 1 });
+
+    expect(container.textContent).toContain("—");
+    expect(container.textContent).not.toContain("$0.00");
+    // No error caption while merely pending.
+    expect(container.querySelector('[role="status"]')).toBeNull();
+
+    await act(async () => {
+      resolveFetch();
+    });
+    expect(container.textContent).toContain("42");
+    expect(container.textContent).toContain("$1.50");
+  });
+
   it("renders live stat values with no status caption when the stats fetch succeeds", async () => {
     vi.stubGlobal(
       "fetch",

@@ -1,6 +1,7 @@
 import { createErrorResult } from "../../utils/error.js";
 import { PROVIDER_MEDIA } from "../../providers/index.js";
 import { authenticatedMediaFetch, responseToBase64, throwUpstreamError } from "./_base.js";
+import { proxyOptionsFromCredentials } from "../../utils/proxyFetch.js";
 
 const TTS_CONFIG = PROVIDER_MEDIA["selfhosted-tts"]?.ttsConfig || {};
 
@@ -9,7 +10,12 @@ const moduleDefault = {
     const raw = credentials?.providerSpecificData?.baseUrl?.trim();
     if (!raw) return createErrorResult(400, "Self-hosted TTS requires a connection base URL");
 
-    const parsed = new URL(raw);
+    let parsed;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      return createErrorResult(400, "Self-hosted TTS base URL is invalid");
+    }
     if (!["http:", "https:"].includes(parsed.protocol)) {
       return createErrorResult(400, "Self-hosted TTS base URL must use http or https");
     }
@@ -33,6 +39,7 @@ const moduleDefault = {
         response_format: audioFormat,
       }),
       signal: options.signal,
+      proxyOptions: proxyOptionsFromCredentials(credentials),
     });
     if (!res.ok) await throwUpstreamError(res);
     return responseToBase64(res, audioFormat);

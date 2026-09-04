@@ -478,3 +478,30 @@ describe("combo 404 fallback", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("fusion panel isolation (E9)", () => {
+  it("gives each panel its own body copy so in-place mutations do not leak across panels", async () => {
+    const entryLengths = [];
+    const bodies = [];
+    const handleSingleModel = vi.fn(async (body, model) => {
+      entryLengths.push(body.messages.length);
+      bodies.push(body);
+      body.messages.push({ role: "user", content: `tag-${model}` });
+      return okResponse(`ans-${model}`);
+    });
+
+    await handleFusionChat({
+      body: { messages: [{ role: "user", content: "Q" }] },
+      models: ["p/a", "p/b"],
+      handleSingleModel,
+      log,
+      judgeModel: "p/judge",
+      tuning: { minPanel: 2, stragglerGraceMs: 10, panelHardTimeoutMs: 1000 },
+    });
+
+    // Panel fan-out runs before the judge call.
+    expect(entryLengths.slice(0, 2)).toEqual([1, 1]);
+    expect(bodies[0]).not.toBe(bodies[1]);
+    expect(bodies[0].messages).not.toBe(bodies[1].messages);
+  });
+});

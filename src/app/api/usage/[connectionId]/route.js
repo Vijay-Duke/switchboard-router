@@ -124,6 +124,9 @@ export async function GET(request, { params }) {
   let connection;
   try {
     const { connectionId } = await params;
+    if (!connectionId || typeof connectionId !== "string" || connectionId.length > 200) {
+      return Response.json({ error: "Invalid connection id" }, { status: 400 });
+    }
     // ?force=1 bypasses the client-side Claude quota cache (manual refresh button)
     const force = new URL(request.url).searchParams.get("force") === "1";
     // Get connection from database
@@ -142,7 +145,7 @@ export async function GET(request, { params }) {
       isApikeyAuth && USAGE_APIKEY_PROVIDERS.includes(connection.provider);
 
     if (!isOAuth && !isApikeyEligible) {
-      return Response.json({ message: "Usage not available for this connection" });
+      return Response.json({ error: "Usage not available for this connection" }, { status: 400 });
     }
 
     // Resolve connection proxy config; force strictProxy=false so quota/refresh fall back to direct on failure
@@ -163,7 +166,7 @@ export async function GET(request, { params }) {
       } catch (refreshError) {
         console.error("[Usage API] Credential refresh failed:", refreshError);
         return Response.json({
-          error: `Credential refresh failed: ${refreshError.message}`
+          error: "Credential refresh failed. Please re-authorize the connection."
         }, { status: 401 });
       }
     }
@@ -187,6 +190,6 @@ export async function GET(request, { params }) {
   } catch (error) {
     const provider = connection?.provider ?? "unknown";
     console.warn(`[Usage] ${provider}: ${error.message}`);
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ error: "Failed to fetch usage" }, { status: 500 });
   }
 }

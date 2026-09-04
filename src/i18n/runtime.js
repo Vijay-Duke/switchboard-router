@@ -25,16 +25,23 @@ function getLocaleFromCookie() {
   return normalizeLocale(value);
 }
 
+// O18: locale JSON is immutable per deploy — fetch once per locale, then
+// serve route changes from cache (reloadTranslations still re-processes DOM).
+let loadedLocale = null;
+
 // Load translation map
 async function loadTranslations(locale) {
+  if (locale === loadedLocale) return;
   if (locale === "en") {
     translationMap = {};
+    loadedLocale = locale;
     return;
   }
-  
+
   try {
     const response = await fetch(`/i18n/literals/${locale}.json`);
     translationMap = await response.json();
+    loadedLocale = locale;
   } catch (err) {
     reportClientError("Failed to load translations:", err);
     translationMap = {};
@@ -47,7 +54,14 @@ export function translate(text) {
   const trimmed = text.trim();
   if (!trimmed) return text;
   if (currentLocale === "en") return text;
-  return translationMap[trimmed] || text;
+  const mapped = translationMap[trimmed];
+  if (!mapped) return text;
+  // O17: preserve the source node's surrounding whitespace — assigning the
+  // trimmed translation back collapses spacing around inline elements
+  // (e.g. `Hello <b>World</b>` spacer nodes glue words together in zh-CN).
+  const leading = text.match(/^\s*/)[0];
+  const trailing = text.match(/\s*$/)[0];
+  return leading + String(mapped).trim() + trailing;
 }
 
 // Get current locale - exported for use in components

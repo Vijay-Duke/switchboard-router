@@ -172,7 +172,14 @@ export function buildCatalog(entries, knownIds, providers, fetchedAt = null) {
   // Two passes: exact canonical keys (litellm key === our id) beat
   // provider-prefixed variants (e.g. "azure/gpt-5") regardless of sort order;
   // within each pass, the first sorted key wins for determinism.
+  // Case-variant ids for one model (e.g. "MiniMax-M2.7" vs "minimax-m2.7",
+  // two registries serving the same model) collapse onto the first-seen
+  // casing: the catalog is keyed per model, not per provider, and the loader
+  // resolves lookups case-insensitively. Conflicts are the norm (each serving
+  // provider prices differently), so this never throws — the same precedence
+  // (exact pass, then sorted key) decides which record wins.
   const sortedKeys = Object.keys(entries).sort();
+  const canonicalByLower = new Map();
   for (const exactPass of [true, false]) {
     for (const modelId of sortedKeys) {
       const entry = entries[modelId];
@@ -184,8 +191,11 @@ export function buildCatalog(entries, knownIds, providers, fetchedAt = null) {
       const mapped = mapCatalogEntry(modelId, entry, knownIds);
       if (!mapped) continue;
       if (exactPass !== (mapped.id === modelId)) continue;
-      if (mapped.pricing && !pricing[mapped.id]) pricing[mapped.id] = mapped.pricing;
-      if (mapped.capabilities && !capabilities[mapped.id]) capabilities[mapped.id] = mapped.capabilities;
+      const lower = mapped.id.toLowerCase();
+      if (!canonicalByLower.has(lower)) canonicalByLower.set(lower, mapped.id);
+      const id = canonicalByLower.get(lower);
+      if (mapped.pricing && !pricing[id]) pricing[id] = mapped.pricing;
+      if (mapped.capabilities && !capabilities[id]) capabilities[id] = mapped.capabilities;
     }
   }
 
@@ -255,6 +265,19 @@ function parseArgs(argv) {
   return options;
 }
 
+// Same-directory tmp + rename so a crash mid-write never leaves a truncated
+// catalog.json behind; the tmp file is removed when the write fails.
+export async function writeFileAtomic(out, data) {
+  const tmp = `${out}.tmp`;
+  try {
+    await fs.writeFile(tmp, data, "utf8");
+    await fs.rename(tmp, out);
+  } catch (error) {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const response = await fetch(options.url);
@@ -282,7 +305,7 @@ async function main() {
   const catalog = buildCatalog(entries, knownIds, options.providers, new Date().toISOString());
   const output = `${stableStringify(catalog)}\n`;
   if (options.dryRun) process.stdout.write(output);
-  else await fs.writeFile(options.out, output, "utf8");
+  else await writeFileAtomic(options.out, output);
 
   const filters = options.providers.size ? [...options.providers].sort().join(",") : "all";
   console.error(`catalog: ${Object.keys(catalog.pricing).length} pricing, ${Object.keys(catalog.capabilities).length} capabilities; providers=${filters}; ${options.dryRun ? "dry-run" : options.out}`);

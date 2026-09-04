@@ -24,7 +24,8 @@
  */
 import { register } from "../registry.js";
 import { FORMATS } from "../formats.js";
-import { v4 as uuidv4 } from "uuid";
+import { resolveSessionId } from "../../utils/sessionManager.js";
+import { clampSampling } from "../concerns/params.js";
 import {
   resolveKiroModel,
   resolveKiroThinkingBudget,
@@ -83,6 +84,8 @@ function flattenClaudeToolInteractions(messages) {
           parts.push(block.text);
         } else if (block.type === CLAUDE_BLOCK.TOOL_USE) {
           parts.push(toolUseToText(block.name, block.input));
+        } else if (block.type === CLAUDE_BLOCK.THINKING && block.thinking) {
+          parts.push(block.thinking);
         }
       }
       out.push({ ...msg, content: parts.join("\n") });
@@ -119,6 +122,9 @@ function convertClaudeMessagesToKiro(messages, tools, model) {
   let pendingImages = [];
   let currentRole = null;
   let toolsInjected = false;
+  // Specs injected into whichever user turn came first (assistant-led opens
+  // make history[0] an assistant turn — never read them back off history[0]).
+  let injectedToolSpecs = null;
 
   const clientProvidedTools = Array.isArray(tools) && tools.length > 0;
 
@@ -158,7 +164,8 @@ function convertClaudeMessagesToKiro(messages, tools, model) {
         if (!userMsg.userInputMessage.userInputMessageContext) {
           userMsg.userInputMessage.userInputMessageContext = {};
         }
-        userMsg.userInputMessage.userInputMessageContext.tools = buildToolSpecs();
+        injectedToolSpecs = buildToolSpecs();
+        userMsg.userInputMessage.userInputMessageContext.tools = injectedToolSpecs;
         toolsInjected = true;
       }
 
@@ -252,9 +259,11 @@ function convertClaudeMessagesToKiro(messages, tools, model) {
     }
   }
 
-  // Grab tools from the first history user turn before cleanup strips them.
-  const firstHistoryTools =
-    history[0]?.userInputMessage?.userInputMessageContext?.tools;
+  // Tools live on whichever user turn came first (captured at injection);
+  // history[0] is an assistant turn when the conversation opens with one.
+  const firstHistoryTools = injectedToolSpecs
+    ?? history.find((h) => h.userInputMessage?.userInputMessageContext?.tools)
+      ?.userInputMessage?.userInputMessageContext?.tools;
 
   history.forEach((item) => {
     if (item.userInputMessage?.userInputMessageContext?.tools) {
@@ -404,10 +413,8 @@ export function claudeToKiroRequest(model, body, stream, credentials) {
 
   let finalContent = currentMessage?.userInputMessage?.content || "";
 
-  // System prompt: pass via native systemInstruction field (Kiro/Q API supports it)
-  // and also prepend as <instructions> in user content as fallback for upstreams
-  // that don't support the native field.
-  let systemInstruction = undefined;
+  // System prompt travels as <instructions> text (same representation as the
+  // OpenAI path, which sets no native field — one shape for both translators).
   if (body.system) {
     let systemText = "";
     if (typeof body.system === "string") {
@@ -416,7 +423,6 @@ export function claudeToKiroRequest(model, body, stream, credentials) {
       systemText = body.system.map((s) => s.text || "").join("\n");
     }
     if (systemText) {
-      systemInstruction = systemText;
       finalContent = `<instructions>\n${systemText}\n</instructions>\n\n${finalContent}`;
     }
   }
@@ -442,14 +448,12 @@ export function claudeToKiroRequest(model, body, stream, credentials) {
     }),
   };
 
-  if (systemInstruction) {
-    userInputMessage.systemInstruction = systemInstruction;
-  }
-
   const payload = {
     conversationState: {
       chatTriggerType: "MANUAL",
-      conversationId: uuidv4(),
+      // Stable per client session/connection like the OpenAI path (uuidv4 per
+      // request resets any upstream server-side state keyed by conversation).
+      conversationId: resolveSessionId({ headers: credentials?.rawHeaders, body, connectionId: credentials?.connectionId, scope: "kiro" }),
       currentMessage: {
         userInputMessage,
       },
@@ -464,6 +468,7 @@ export function claudeToKiroRequest(model, body, stream, credentials) {
     if (maxTokens) payload.inferenceConfig.maxTokens = maxTokens;
     if (temperature !== undefined) payload.inferenceConfig.temperature = temperature;
     if (topP !== undefined) payload.inferenceConfig.topP = topP;
+    clampSampling(payload.inferenceConfig, { maxTemperature: 1 }); // Claude-backed: 0–1
   }
 
   // Non-enumerable hint so the executor can route the upstream model id.

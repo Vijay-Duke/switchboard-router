@@ -26,6 +26,75 @@ function clearDumpDir() {
 
 const EMPTY_BODY_RE = /^\s*(\{\s*\}|\[\s*\]|null)?\s*$/;
 
+// Header names whose values must never land on disk (case-insensitive).
+const SENSITIVE_HEADERS = new Set([
+  "authorization", "proxy-authorization", "cookie", "set-cookie",
+  "x-api-key", "api-key", "x-auth-token",
+]);
+
+// Body keys whose values must never land on disk (case-insensitive). Plain
+// "key" is deliberately absent: it is a common data field in tool arguments.
+const SENSITIVE_KEYS = new Set([
+  "api-key", "apikey", "api_key", "token", "access-token",
+  "access_token", "accesstoken", "refresh-token", "refresh_token",
+  "refreshtoken", "secret", "password", "auth",
+]);
+// Query params: same set plus "?key=" (Gemini-style API keys in the URL).
+const SENSITIVE_QUERY_KEYS = new Set([...SENSITIVE_KEYS, "key"]);
+
+const REDACTED = "[REDACTED]";
+
+function redactHeaders(headers) {
+  const out = {};
+  for (const [name, value] of Object.entries(headers || {})) {
+    out[name] = SENSITIVE_HEADERS.has(String(name).toLowerCase()) ? REDACTED : value;
+  }
+  return out;
+}
+
+function redactUrl(url) {
+  if (!url || !url.includes("?")) return url;
+  const q = url.indexOf("?");
+  const base = url.slice(0, q);
+  const redacted = url.slice(q + 1).split("&").map((pair) => {
+    const eq = pair.indexOf("=");
+    const name = eq === -1 ? pair : pair.slice(0, eq);
+    try {
+      if (SENSITIVE_QUERY_KEYS.has(decodeURIComponent(name).toLowerCase())) {
+        return `${name}=${REDACTED}`;
+      }
+    } catch { /* malformed encoding — leave untouched */ }
+    return pair;
+  });
+  return `${base}?${redacted.join("&")}`;
+}
+
+function redactValue(value) {
+  if (Array.isArray(value)) return value.map(redactValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [
+        k,
+        SENSITIVE_KEYS.has(String(k).toLowerCase()) ? REDACTED : redactValue(v),
+      ])
+    );
+  }
+  if (typeof value === "string") {
+    return value
+      .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{4,}/gi, `Bearer ${REDACTED}`);
+  }
+  return value;
+}
+
+function redactBodyText(text) {
+  try {
+    const parsed = JSON.parse(text);
+    return JSON.stringify(redactValue(parsed));
+  } catch {
+    return redactValue(text);
+  }
+}
+
 function slugify(s, max = 80) {
   return String(s).replace(/[^a-zA-Z0-9]/g, "_").substring(0, max);
 }
@@ -47,7 +116,7 @@ function decodeBody(buf, encoding) {
   return buf;
 }
 
-// Save raw request: method + url + headers + body
+// Save redacted request: method + url + headers + body (secrets stripped)
 function dumpRequest(req, bodyBuffer, tag = "raw") {
   if (isBlacklisted(req.url)) return null;
   try {
@@ -58,10 +127,10 @@ function dumpRequest(req, bodyBuffer, tag = "raw") {
     try { parsed = JSON.parse(bodyBuffer.toString()); } catch { /* not JSON */ }
     fs.writeFileSync(file, JSON.stringify({
       method: req.method,
-      url: req.url,
+      url: redactUrl(req.url),
       host: req.headers.host,
-      headers: req.headers,
-      body: parsed ?? bodyBuffer.toString("utf8")
+      headers: redactHeaders(req.headers),
+      body: parsed ? redactValue(parsed) : redactValue(bodyBuffer.toString("utf8"))
     }, null, 2));
     return file;
   } catch { return null; }
@@ -92,10 +161,10 @@ function createResponseDumper(req, tag = "raw") {
         // Skip empty / trivially-empty bodies
         if (EMPTY_BODY_RE.test(text)) return;
         // Strip content-encoding since body is now decoded
-        const cleanHeaders = { ...headers };
+        const cleanHeaders = redactHeaders({ ...headers });
         delete cleanHeaders["content-encoding"];
         delete cleanHeaders["Content-Encoding"];
-        const out = `STATUS: ${status}\nHEADERS: ${JSON.stringify(cleanHeaders, null, 2)}\n---BODY---\n${text}`;
+        const out = `STATUS: ${status}\nHEADERS: ${JSON.stringify(cleanHeaders, null, 2)}\n---BODY---\n${redactBodyText(text)}`;
         fs.writeFileSync(file, out);
       } catch { /* ignore */ }
     },

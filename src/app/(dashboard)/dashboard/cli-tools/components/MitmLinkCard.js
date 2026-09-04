@@ -15,15 +15,21 @@ export default function MitmLinkCard({ tool }) {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="size-8 flex items-center justify-center shrink-0">
-              <Image
-                src={tool.image}
-                alt={tool.name}
-                width={32}
-                height={32}
-                className="size-8 object-contain rounded-lg"
-                sizes="32px"
-                onError={(e) => { e.target.style.display = "none"; }}
-              />
+              {tool.image ? (
+                <Image
+                  src={tool.image}
+                  alt={tool.name}
+                  width={32}
+                  height={32}
+                  className="size-8 object-contain rounded-lg"
+                  sizes="32px"
+                  onError={(e) => { e.target.style.display = "none"; }}
+                />
+              ) : (
+                <span className="flex size-8 items-center justify-center rounded-lg bg-purple-500/10 text-sm font-semibold text-purple-600 dark:text-purple-400">
+                  {tool.name?.charAt(0)?.toUpperCase() || "?"}
+                </span>
+              )}
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">

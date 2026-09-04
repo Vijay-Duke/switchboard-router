@@ -14,6 +14,7 @@ import {
   resolveDefaultProfileArn
 } from "../../config/kiroConstants.js";
 import { parseDataUri } from "../concerns/image.js";
+import { clampSampling } from "../concerns/params.js";
 import { DEFAULT_IMAGE_MIME } from "../schema/index.js";
 import { ROLE, OPENAI_BLOCK, CLAUDE_BLOCK } from "../schema/index.js";
 
@@ -66,10 +67,15 @@ function flattenToolInteractions(messages) {
 
     if (msg.role === ROLE.ASSISTANT) {
       const parts = [];
+      if (msg.reasoning_content) {
+        parts.push(msg.reasoning_content);
+      }
       if (Array.isArray(msg.content)) {
         for (const c of msg.content) {
           if (c.type === CLAUDE_BLOCK.TOOL_USE) {
             parts.push(toolCallToText(c.name, c.input));
+          } else if (c.type === CLAUDE_BLOCK.THINKING && c.thinking) {
+            parts.push(c.thinking);
           } else if (c.type === OPENAI_BLOCK.TEXT || c.text) {
             parts.push(c.text || "");
           }
@@ -193,6 +199,9 @@ function convertMessages(messages, tools, model) {
   let pendingImages = [];
   let currentRole = null;
   let toolsInjectedToFirstUserMsg = false;
+  // Specs injected into whichever user turn came first (assistant-led opens
+  // make history[0] an assistant turn — never read them back off history[0]).
+  let injectedToolSpecs = null;
 
   const flushPending = () => {
     if (currentRole === "user") {
@@ -223,7 +232,7 @@ function convertMessages(messages, tools, model) {
         if (!userMsg.userInputMessage.userInputMessageContext) {
           userMsg.userInputMessage.userInputMessageContext = {};
         }
-        userMsg.userInputMessage.userInputMessageContext.tools = tools.map(t => {
+        injectedToolSpecs = tools.map(t => {
           const name = t.function?.name || t.name;
           let description = t.function?.description || t.description || "";
 
@@ -245,6 +254,7 @@ function convertMessages(messages, tools, model) {
             }
           };
         });
+        userMsg.userInputMessage.userInputMessageContext.tools = injectedToolSpecs;
         toolsInjectedToFirstUserMsg = true;
       }
 
@@ -308,6 +318,9 @@ function convertMessages(messages, tools, model) {
               const mediaType = c.source.media_type || DEFAULT_IMAGE_MIME;
               const format = mediaType.split("/")[1] || mediaType;
               pendingImages.push({ format, source: { bytes: c.source.data } });
+            } else if (c.source?.type === "url" && c.source.url) {
+              // Kiro only accepts base64 — fall back to URL text like the OpenAI branch.
+              textParts.push(`[Image: ${c.source.url}]`);
             }
           }
         }
@@ -333,10 +346,12 @@ function convertMessages(messages, tools, model) {
       // Handle tool role (from normalized)
       if (msg.role === ROLE.TOOL) {
         const toolContent = typeof msg.content === "string" ? msg.content : "";
+        // Empty stub content (from fixMissingToolResponses) would 400 on Kiro
+        // where OpenAI tolerates it — substitute a placeholder.
         pendingToolResults.push({
           toolUseId: msg.tool_call_id,
           status: "success",
-          content: [{ text: toolContent }]
+          content: [{ text: toolContent || "[No response received]" }]
         });
       } else if (content) {
         // <instructions> tags: Claude models treat these as authoritative directives.
@@ -409,8 +424,11 @@ function convertMessages(messages, tools, model) {
     }
   }
 
-  // Grab tools from first history item BEFORE cleanup removes them
-  const firstHistoryTools = history[0]?.userInputMessage?.userInputMessageContext?.tools;
+  // Tools live on whichever user turn came first (captured at injection);
+  // history[0] is an assistant turn when the conversation opens with one.
+  const firstHistoryTools = injectedToolSpecs
+    ?? history.find((h) => h.userInputMessage?.userInputMessageContext?.tools)
+      ?.userInputMessage?.userInputMessageContext?.tools;
 
   // Clean up history for Kiro API compatibility
   history.forEach(item => {
@@ -550,6 +568,26 @@ export function openaiToKiroRequest(model, body, stream, credentials) {
 
   let finalContent = currentMessage?.userInputMessage?.content || "";
 
+  // Kiro has no native stop/JSON-mode fields — fold them into <instructions>
+  // text. (parallel_tool_calls has no Kiro equivalent and is dropped.)
+  const extraInstructions = [];
+  if (body.response_format?.type === "json_object" || body.response_format?.type === "json_schema") {
+    let jsonNote = "You must respond with valid JSON. Respond ONLY with a JSON object, no other text.";
+    if (body.response_format?.type === "json_schema" && body.response_format.json_schema?.schema) {
+      jsonNote = `You must respond with valid JSON that strictly follows this JSON schema:\n${JSON.stringify(body.response_format.json_schema.schema)}\nRespond ONLY with the JSON object, no other text.`;
+    }
+    extraInstructions.push(jsonNote);
+  }
+  if (body.stop !== undefined) {
+    const stops = (Array.isArray(body.stop) ? body.stop : [body.stop]).filter((s) => typeof s === "string" && s);
+    if (stops.length > 0) {
+      extraInstructions.push(`Stop generating when you reach any of these sequences: ${stops.map((s) => JSON.stringify(s)).join(", ")}.`);
+    }
+  }
+  if (extraInstructions.length > 0) {
+    finalContent = `<instructions>\n${extraInstructions.join("\n")}\n</instructions>\n\n${finalContent}`;
+  }
+
   const timestamp = new Date().toISOString();
 
   // Build the system-prompt prefix that goes ABOVE the user message body.
@@ -595,6 +633,7 @@ export function openaiToKiroRequest(model, body, stream, credentials) {
     if (maxTokens) payload.inferenceConfig.maxTokens = maxTokens;
     if (temperature !== undefined) payload.inferenceConfig.temperature = temperature;
     if (topP !== undefined) payload.inferenceConfig.topP = topP;
+    clampSampling(payload.inferenceConfig, { maxTemperature: 1 }); // Claude-backed: 0–1
   }
 
   // Tag payload so the executor can route the upstream model id correctly.

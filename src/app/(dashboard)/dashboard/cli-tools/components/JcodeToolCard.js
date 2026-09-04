@@ -5,6 +5,7 @@ import { useState, useEffect, useRef } from "react";
 import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
+import { cardHeaderToggleProps } from "./cardHeaderToggle";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import ModelCatalogInput from "./ModelCatalogInput";
@@ -91,13 +92,19 @@ export default function JcodeToolCard({
         if (provider.default_model) {
           setSelectedModel(provider.default_model);
         }
-        // Try to match API key from env file
-        const envApiKey = jcodeStatus.envApiKey;
-        if (envApiKey && apiKeys?.some(k => k.keySecret === envApiKey)) {
-          setSelectedApiKey(envApiKey);
-        }
       }
     }
+  }, [jcodeStatus]);
+
+  // Prefer the key already named in jcode's env file. Separate effect so it runs
+  // once both status and apiKeys are available, whichever resolves later (T62).
+  const envKeySyncedRef = useRef(false);
+  useEffect(() => {
+    if (envKeySyncedRef.current) return;
+    const envApiKey = jcodeStatus?.envApiKey;
+    if (!envApiKey || !apiKeys?.some((k) => k.keySecret === envApiKey)) return;
+    envKeySyncedRef.current = true;
+    setSelectedApiKey(envApiKey);
   }, [jcodeStatus, apiKeys]);
 
   const checkJcodeStatus = async () => {
@@ -141,11 +148,9 @@ export default function JcodeToolCard({
   };
 
   const removeModel = (model) => {
-    setSelectedModels((current) => {
-      const next = current.filter((entry) => entry !== model);
-      if (selectedModel === model) setSelectedModel(next[0] || "");
-      return next;
-    });
+    const next = selectedModels.filter((entry) => entry !== model);
+    if (selectedModel === model) setSelectedModel(next[0] || "");
+    setSelectedModels(next);
   };
 
   const handleApplySettings = async () => {
@@ -211,7 +216,7 @@ export default function JcodeToolCard({
       ? selectedApiKey
       : (!cloudEnabled ? "sk_switchboard" : "<API_KEY_FROM_DASHBOARD>");
 
-    const models = selectedModels.length ? selectedModels : ["cc/claude-opus-4-7"];
+    const models = selectedModels.length ? selectedModels : ["provider/model-id"];
     const activeModel = selectedModel || models[0];
     const modelBlocks = models.map((model) => `[[providers.switchboard.models]]\nid = "${model}"`).join("\n\n");
     const configToml = `[providers.switchboard]
@@ -242,7 +247,7 @@ ${modelBlocks}`;
 
   return (
     <Card padding="xs" className="overflow-hidden">
-      <div className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center" onClick={onToggle}>
+      <div {...cardHeaderToggleProps(onToggle, isExpanded, tool.name)} className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-lg">
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
             <Image src={tool.image || "/providers/jcode.png"} alt={tool.name} width={32} height={32} className="size-8 object-contain rounded-lg" sizes="32px" onError={(e) => { e.target.style.display = "none"; }} />
@@ -321,6 +326,7 @@ ${modelBlocks}`;
                   <BaseUrlSelect
                     value={customBaseUrl || getDisplayUrl()}
                     onChange={setCustomBaseUrl}
+                    initialUrl={jcodeStatus?.config?.providers?.switchboard?.base_url || ""}
                     requiresExternalUrl={tool.requiresExternalUrl}
                     tunnelEnabled={tunnelEnabled}
                     tunnelPublicUrl={tunnelPublicUrl}
@@ -363,7 +369,7 @@ ${modelBlocks}`;
                 <div className="flex flex-col gap-1 p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg">
                   <p className="text-xs font-medium text-blue-600 dark:text-blue-400">Usage:</p>
                   <code className="text-xs font-mono text-text-muted">jcode --provider-profile switchboard</code>
-                  <code className="text-xs font-mono text-text-muted">jcode --provider-profile switchboard --model {selectedModel || "cc/claude-opus-4-7"}</code>
+                  <code className="text-xs font-mono text-text-muted">jcode --provider-profile switchboard --model {selectedModel || "provider/model-id"}</code>
                 </div>
               </div>
 

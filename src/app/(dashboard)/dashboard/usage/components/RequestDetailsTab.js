@@ -1,7 +1,7 @@
 "use client";
 // @ts-check
 
-import { useState, useEffect, useCallback, useId } from "react";
+import { useState, useEffect, useCallback, useId, useRef } from "react";
 import Card from "@/shared/components/Card";
 import Button from "@/shared/components/Button";
 import Drawer from "@/shared/components/Drawer";
@@ -127,6 +127,11 @@ export default function RequestDetailsTab() {
   const [error, setError] = useState(null);
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailNotice, setDetailNotice] = useState(null);
+  // O31: sequence guard — a slow earlier list fetch must not overwrite newer rows.
+  const requestIdRef = useRef(0);
+  const detailSeqRef = useRef(0);
   const [providers, setProviders] = useState([]);
   const [providerNameCache, setProviderNameCache] = useState(null);
   const [filters, setFilters] = useState({
@@ -151,6 +156,8 @@ export default function RequestDetailsTab() {
   const fetchDetails = useCallback(async () => {
     // QA-019: never request an inverted date range.
     if (isDateRangeInverted(filters)) return;
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     setLoading(true);
     setError(null);
     try {
@@ -163,18 +170,22 @@ export default function RequestDetailsTab() {
       if (filters.endDate) params.append("endDate", filters.endDate);
 
       const res = await fetch(`/api/usage/request-details?${params}`);
+      // O31: ignore stale responses — only the latest filter/page wins.
+      if (requestId !== requestIdRef.current) return;
       if (!res.ok) {
         throw new Error(`Request failed with status ${res.status}`);
       }
       const data = await res.json();
+      if (requestId !== requestIdRef.current) return;
 
       setDetails(data.details || []);
       setPagination(prev => ({ ...prev, ...data.pagination }));
     } catch (err) {
+      if (requestId !== requestIdRef.current) return;
       reportClientError("Failed to fetch request details:", err);
       setError(err?.message || "Network request failed");
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
   }, [pagination.page, pagination.pageSize, filters]);
 
@@ -186,9 +197,32 @@ export default function RequestDetailsTab() {
     fetchDetails();
   }, [fetchDetails]);
 
-  const handleViewDetail = (detail) => {
-    setSelectedDetail(detail);
+  // O1: the list rows carry redacted payloads — fetch the full row by id
+  // when the drawer opens, falling back to the redacted row on error.
+  const handleViewDetail = async (detail) => {
+    // A slow fetch for a previously opened row must not land in a newer drawer.
+    const seq = detailSeqRef.current + 1;
+    detailSeqRef.current = seq;
+    setSelectedDetail({ ...detail, _loading: true });
+    setDetailNotice(null);
+    setDetailLoading(true);
     setIsDrawerOpen(true);
+    try {
+      const res = await fetch(`/api/usage/request-details/${encodeURIComponent(detail.id)}`);
+      if (!res.ok) {
+        throw new Error(`Request failed with status ${res.status}`);
+      }
+      const data = await res.json();
+      if (seq !== detailSeqRef.current) return;
+      setSelectedDetail(data.detail || detail);
+    } catch (err) {
+      if (seq !== detailSeqRef.current) return;
+      reportClientError("Failed to fetch full request payload:", err);
+      setSelectedDetail(detail);
+      setDetailNotice("Full payload unavailable — showing list metadata.");
+    } finally {
+      if (seq === detailSeqRef.current) setDetailLoading(false);
+    }
   };
 
   const handlePageChange = (newPage) => {
@@ -201,8 +235,15 @@ export default function RequestDetailsTab() {
 
   const dateRangeInvalid = isDateRangeInverted(filters);
 
+  // O3: every filter change restarts at page 1 — the new result set may be shorter.
+  const updateFilters = (patch) => {
+    setFilters((prev) => ({ ...prev, ...patch }));
+    setPagination((prev) => ({ ...prev, page: 1 }));
+  };
+
   const handleClearFilters = () => {
     setFilters({ provider: "", startDate: "", endDate: "" });
+    setPagination((prev) => ({ ...prev, page: 1 }));
   };
 
   return (
@@ -214,7 +255,7 @@ export default function RequestDetailsTab() {
             <select
               id="provider-filter"
               value={filters.provider}
-              onChange={(e) => setFilters({ ...filters, provider: e.target.value })}
+              onChange={(e) => updateFilters({ provider: e.target.value })}
               className={cn(
                 "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
                 "text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20",
@@ -239,7 +280,7 @@ export default function RequestDetailsTab() {
               value={filters.startDate}
               aria-invalid={dateRangeInvalid || undefined}
               aria-describedby={dateRangeInvalid ? "usage-date-range-error" : undefined}
-              onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
+              onChange={(e) => updateFilters({ startDate: e.target.value })}
               className={cn(
                 "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
                 "w-full min-w-0 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -255,7 +296,7 @@ export default function RequestDetailsTab() {
               value={filters.endDate}
               aria-invalid={dateRangeInvalid || undefined}
               aria-describedby={dateRangeInvalid ? "usage-date-range-error" : undefined}
-              onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
+              onChange={(e) => updateFilters({ endDate: e.target.value })}
               className={cn(
                 "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
                 "w-full min-w-0 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -394,12 +435,26 @@ export default function RequestDetailsTab() {
 
       <Drawer
         isOpen={isDrawerOpen}
-        onClose={() => setIsDrawerOpen(false)}
+        onClose={() => {
+          setIsDrawerOpen(false);
+          setDetailNotice(null);
+        }}
         title="Request Details"
         width="lg"
       >
         {selectedDetail && (
           <div className="space-y-6">
+            {detailLoading && (
+              <div className="flex items-center gap-2 text-sm text-text-muted" role="status">
+                <span className="material-symbols-outlined animate-spin text-[20px]" aria-hidden="true">progress_activity</span>
+                Loading full payload…
+              </div>
+            )}
+            {detailNotice && (
+              <div role="alert" className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-300">
+                {detailNotice}
+              </div>
+            )}
             <div className="grid min-w-0 grid-cols-1 gap-4 text-sm sm:grid-cols-2">
               <div>
                 <span className="text-text-muted">ID:</span>{" "}

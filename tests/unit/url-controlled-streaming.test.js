@@ -37,7 +37,7 @@ vi.mock("../../open-sse/services/tokenRefresh.js", () => ({
   refreshVertexToken: vi.fn(),
   refreshGoogleToken: vi.fn(),
 }));
-vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ default: vi.fn(), proxyAwareFetch: vi.fn() }));
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ default: vi.fn(), proxyAwareFetch: vi.fn(), proxyOptionsFromCredentials: vi.fn(() => ({})) }));
 vi.mock("../../open-sse/translator/formats/claude.js", () => ({ normalizeClaudePassthrough: vi.fn() }));
 vi.mock("../../open-sse/utils/toolDeduper.js", () => ({ dedupeTools: vi.fn((tools) => ({ tools, stripped: [] })) }));
 vi.mock("../../open-sse/rtk/caveman.js", () => ({ injectCaveman: vi.fn() }));

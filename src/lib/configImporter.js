@@ -1,6 +1,7 @@
 // @ts-check
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { parseYAML, parseJSON } from "confbox";
 import {
   createProviderConnection,
@@ -145,15 +146,69 @@ export async function importConfig(configOrContent) {
     }
   }
 
-  // 5. Settings
+  // 5. Settings — allowlisted to keys the settings store already knows.
+  // Unknown keys (typos, stale or attacker-planted entries) are ignored, so a
+  // dropped config file cannot overwrite arbitrary settings.
   const settings = config.settings || {};
   if (settings && typeof settings === "object" && Object.keys(settings).length > 0) {
     const current = await getSettings();
-    await updateSettings({ ...current, ...settings });
-    stats.settings = true;
+    const allowed = new Set(Object.keys(current));
+    const filtered = {};
+    for (const [key, value] of Object.entries(settings)) {
+      if (allowed.has(key)) {
+        filtered[key] = value;
+      } else {
+        log.warn("CONFIG_IMPORT", `Ignoring unknown settings key: ${key}`);
+      }
+    }
+    if (Object.keys(filtered).length > 0) {
+      await updateSettings({ ...current, ...filtered });
+      stats.settings = true;
+    }
   }
 
   return stats;
+}
+
+const IMPORT_STATE_FILE = "config-import-state.json";
+
+function getImportStatePath() {
+  return path.join(getDataDir(), IMPORT_STATE_FILE);
+}
+
+function readImportState() {
+  try {
+    if (!fs.existsSync(getImportStatePath())) return {};
+    return JSON.parse(fs.readFileSync(getImportStatePath(), "utf-8")) || {};
+  } catch {
+    return {};
+  }
+}
+
+function hashContent(content) {
+  return crypto.createHash("sha256").update(content, "utf-8").digest("hex");
+}
+
+function markImported(filePath, hash) {
+  try {
+    const state = readImportState();
+    state[path.resolve(filePath)] = { hash, at: new Date().toISOString() };
+    fs.writeFileSync(getImportStatePath(), JSON.stringify(state, null, 2));
+  } catch (err) {
+    log.warn("CONFIG_IMPORT", "Failed to record config import state", { error: err?.message });
+  }
+}
+
+/**
+ * Whether this exact file content was already auto-imported. Auto-import is
+ * checksum-gated so a stale config file is not re-applied on every boot
+ * (which would clobber settings the user changed via the dashboard). Editing
+ * the file changes the hash and re-arms the import.
+ */
+export function wasAlreadyImported(filePath, content) {
+  const state = readImportState();
+  const entry = state[path.resolve(filePath)];
+  return !!entry && entry.hash === hashContent(content);
 }
 
 /**
@@ -173,9 +228,14 @@ export async function autoImportConfigFile() {
   for (const filePath of candidatePaths) {
     try {
       if (fs.existsSync(filePath)) {
-        log.info("CONFIG_IMPORT", `Auto-importing configuration from ${filePath}`);
         const content = fs.readFileSync(filePath, "utf-8");
+        if (wasAlreadyImported(filePath, content)) {
+          log.info("CONFIG_IMPORT", `Skipping already-imported configuration at ${filePath}`);
+          return null;
+        }
+        log.info("CONFIG_IMPORT", `Auto-importing configuration from ${filePath}`);
         const stats = await importConfig(content);
+        markImported(filePath, hashContent(content));
         log.info("CONFIG_IMPORT", "Configuration imported successfully", stats);
         return stats;
       }

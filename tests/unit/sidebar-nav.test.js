@@ -13,7 +13,9 @@ globalThis.__testPathname = "/dashboard/combos";
 
 vi.mock("next/link", () => ({
   default: (props) => {
-    const { href, children, ...rest } = props;
+    const { href, children, prefetch, ...rest } = props;
+    globalThis.__linkProps = globalThis.__linkProps || [];
+    globalThis.__linkProps.push({ href, prefetch });
     return globalThis.__React.createElement("a", { href, ...rest }, children);
   },
   useLinkStatus: () => ({ pending: false }),
@@ -33,6 +35,7 @@ let root = null;
 let container = null;
 
 beforeEach(() => {
+  globalThis.__linkProps = [];
   globalThis.fetch = vi.fn(async (url) => {
     if (String(url).includes("/api/health")) return { ok: true, json: async () => ({ ok: true }) };
     return { ok: true, json: async () => ({}) };
@@ -78,5 +81,16 @@ describe("Sidebar navigation IA (U11)", () => {
     const chat = container.querySelector('a[href="/dashboard/basic-chat"]');
     expect(chat).not.toBeNull();
     expect(chat.textContent).toContain("Chat");
+  });
+
+  it("disables viewport prefetch on every nav and diagnostics link (W2)", async () => {
+    await renderSidebar();
+    const dashboardLinks = globalThis.__linkProps.filter(
+      ({ href }) => typeof href === "string" && href.startsWith("/dashboard")
+    );
+    expect(dashboardLinks.length).toBeGreaterThan(10);
+    for (const { href, prefetch } of dashboardLinks) {
+      expect(prefetch, href).toBe(false);
+    }
   });
 });

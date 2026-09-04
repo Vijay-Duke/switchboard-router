@@ -5,10 +5,12 @@ import { useState, useEffect, useRef } from "react";
 import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
+import { cardHeaderToggleProps } from "./cardHeaderToggle";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import ModelCatalogInput from "./ModelCatalogInput";
 import { reportClientError } from "@/shared/utils/clientFeedback";
+import { quoteShellValue } from "@/lib/cli/shellEnv";
 
 const ENDPOINT = "/api/cli-tools/hermes-settings";
 
@@ -126,11 +128,9 @@ export default function HermesToolCard({
   };
 
   const removeModel = (model) => {
-    setSelectedModels((current) => {
-      const next = current.filter((entry) => entry !== model);
-      if (selectedModel === model) setSelectedModel(next[0] || "");
-      return next;
-    });
+    const next = selectedModels.filter((entry) => entry !== model);
+    if (selectedModel === model) setSelectedModel(next[0] || "");
+    setSelectedModels(next);
   };
 
   const handleApply = async () => {
@@ -210,7 +210,7 @@ model:
   default: "${activeModel}"
   provider: "custom:switchboard"
 `;
-    const envContent = `SWITCHBOARD_API_KEY=${keyToUse}\n`;
+    const envContent = `SWITCHBOARD_API_KEY=${quoteShellValue(keyToUse)}\n`;
 
     return [
       { filename: "~/.hermes/config.yaml", content: yamlContent },
@@ -220,7 +220,7 @@ model:
 
   return (
     <Card padding="xs" className="overflow-hidden">
-      <div className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center" onClick={onToggle}>
+      <div {...cardHeaderToggleProps(onToggle, isExpanded, tool.name)} className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-lg">
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
             <Image src="/providers/hermes.png" alt={tool.name} width={32} height={32} className="size-8 object-contain rounded-lg" sizes="32px" onError={(e) => { e.target.style.display = "none"; }} />
@@ -276,6 +276,7 @@ model:
                   <BaseUrlSelect
                     value={customBaseUrl || getEffectiveBaseUrl()}
                     onChange={setCustomBaseUrl}
+                    initialUrl={hermesStatus?.settings?.model?.base_url || ""}
                     requiresExternalUrl={tool.requiresExternalUrl}
                     tunnelEnabled={tunnelEnabled}
                     tunnelPublicUrl={tunnelPublicUrl}

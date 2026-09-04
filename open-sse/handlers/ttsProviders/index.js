@@ -9,6 +9,7 @@ import gemini, { fetchGeminiVoices } from "./gemini.js";
 import selfhostedTts from "./selfhostedTts.js";
 import { FORMAT_HANDLERS } from "./genericFormats.js";
 import { parseModelVoice } from "./_base.js";
+import { proxyOptionsFromCredentials } from "../../utils/proxyFetch.js";
 import { PROVIDER_MEDIA, PROVIDER_MODELS } from "../../providers/index.js";
 
 // Special providers with custom synthesize() logic
@@ -38,7 +39,7 @@ export async function synthesizeViaConfig(provider, text, model, credentials, op
   const ttsModels = (PROVIDER_MODELS[provider] || []).filter(m => (m.kind || m.type) === "tts");
   const defaultModel = ttsModels[0]?.id || "";
   const { modelId, voiceId } = parseModelVoice(model, defaultModel, "", ttsModels);
-  return handler({ provider, baseUrl: cfg.baseUrl, apiKey, text, modelId, voiceId, ...options });
+  return handler({ provider, baseUrl: cfg.baseUrl, apiKey, text, modelId, voiceId, ...options, proxyOptions: proxyOptionsFromCredentials(credentials) });
 }
 
 // Voice fetchers (used by /api/media-providers/tts/voices route)

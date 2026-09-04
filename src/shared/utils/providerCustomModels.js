@@ -17,6 +17,37 @@ export function isCanonicalModelDisabled(disabledIds, modelId, providerAlias = "
   return disabledIds.has(canonicalModelId(modelId, providerAlias));
 }
 
+/**
+ * Filter provider-grouped picker models by a free-text query.
+ * When the provider NAME matches, every model in that group is kept;
+ * otherwise a model matches by its display name, id, or full
+ * `provider/model` value (so an `alias/` prefix query works).
+ *
+ * @param {Record<string, { name?: string, models?: Array<{ name?: string, id?: string, value?: string }> }>} groupedModels
+ * @param {string} searchQuery
+ * @returns {Record<string, any>} filtered groups (groups with zero models omitted)
+ */
+export function filterModelGroupsByQuery(groupedModels, searchQuery) {
+  const query = String(searchQuery || "").trim().toLowerCase();
+  if (!query) return groupedModels || {};
+  const filtered = {};
+  for (const [providerId, group] of Object.entries(groupedModels || {})) {
+    const models = Array.isArray(group?.models) ? group.models : [];
+    if (group?.name && String(group.name).toLowerCase().includes(query)) {
+      filtered[providerId] = { ...group, models: [...models] };
+      continue;
+    }
+    const kept = models.filter((m) =>
+      String(m?.name || "").toLowerCase().includes(query) ||
+      String(m?.id || "").toLowerCase().includes(query) ||
+      String(m?.value || "").toLowerCase().includes(query),
+    );
+    if (kept.length === 0) continue;
+    filtered[providerId] = { ...group, models: kept };
+  }
+  return filtered;
+}
+
 export function getProviderCustomModelRows({
   customModels = [],
   modelAliases = {},
@@ -133,7 +164,9 @@ export function getSelectableProviderModelRows({
       value: model.id,
       kind: model.kind || metadata?.kind,
       capabilities: model.capabilities || metadata?.capabilities,
-      isCustom: metadata?.isCustom || !metadata,
+      // Live-discovered models are not custom — only rows the user added
+      // via the custom-models list carry isCustom.
+      isCustom: metadata?.isCustom === true,
     });
   }
 
@@ -195,7 +228,9 @@ export function getCompatibleProviderModelRows({
       value: model.id,
       kind: model.kind || metadata?.kind,
       capabilities: model.capabilities || metadata?.capabilities,
-      isCustom: metadata?.isCustom || !metadata,
+      // Live-discovered models are not custom — only rows the user added
+      // via the custom-models list carry isCustom.
+      isCustom: metadata?.isCustom === true,
     });
   }
   return rows.length > 0 ? rows : fallbackRows;

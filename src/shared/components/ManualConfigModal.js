@@ -1,19 +1,21 @@
 "use client";
 
-import { useState } from "react";
 import Modal from "./Modal";
 import Button from "./Button";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 
 export default function ManualConfigModal({ isOpen, onClose, title = "Manual Configuration", configs = [] }) {
-  const { copy } = useCopyToClipboard();
-  const [copiedIndex, setCopiedIndex] = useState(null);
+  // The hook's `copied` id drives the "Copied!" UI (and resets itself), so a
+  // failed copy can never show a false "Copied!".
+  const { copied, copy } = useCopyToClipboard();
 
-  const copyConfig = (text, index) => {
-    copy(text, `manualconfig-${index}`);
-    setCopiedIndex(index);
-    setTimeout(() => setCopiedIndex(null), 2000);
+  const copyConfig = async (text, index) => {
+    const ok = await copy(text, `manualconfig-${index}`);
+    if (!ok) reportClientError("Failed to copy to clipboard");
   };
+
+  const isCopied = (index) => copied === `manualconfig-${index}`;
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={title} size="xl">
@@ -28,9 +30,9 @@ export default function ManualConfigModal({ isOpen, onClose, title = "Manual Con
                 onClick={() => copyConfig(config.content, index)}
               >
                 <span className="material-symbols-outlined text-[14px] mr-1">
-                  {copiedIndex === index ? "check" : "content_copy"}
+                  {isCopied(index) ? "check" : "content_copy"}
                 </span>
-                {copiedIndex === index ? "Copied!" : "Copy"}
+                {isCopied(index) ? "Copied!" : "Copy"}
               </Button>
             </div>
             <pre className="px-3 py-2 bg-black/5 dark:bg-white/5 rounded font-mono text-xs overflow-x-auto whitespace-pre-wrap break-all max-h-60 overflow-y-auto border border-border">

@@ -16,6 +16,7 @@ const proxyAwareFetch = vi.hoisted(() => vi.fn());
 
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch,
+  proxyOptionsFromCredentials: () => null,
 }));
 
 const refreshWithRetry = vi.hoisted(() => vi.fn());
@@ -100,7 +101,8 @@ describe("handleImageGenerationCore", () => {
         identity: "openai-node",
         provider: "openai",
         format: "openai",
-      })
+      }),
+      null,
     );
 
     const responseBody = await result.response.json();
@@ -140,7 +142,8 @@ describe("handleImageGenerationCore", () => {
       expect.objectContaining({
         method: "POST",
         body: expect.stringContaining('"responseModalities":["TEXT","IMAGE"]'),
-      })
+      }),
+      null,
     );
 
     const responseBody = await result.response.json();
@@ -174,7 +177,8 @@ describe("handleImageGenerationCore", () => {
         headers: expect.objectContaining({
           Authorization: "Bearer test-key",
         }),
-      })
+      }),
+      null,
     );
   });
 
@@ -222,7 +226,8 @@ describe("handleImageGenerationCore", () => {
         identity: "openai-node",
         provider: "nanobanana",
         format: "openai",
-      })
+      }),
+      null,
     );
 
     const responseBody = await result.response.json();
@@ -289,7 +294,8 @@ describe("handleImageGenerationCore", () => {
         identity: "openai-node",
         provider: "openrouter",
         format: "openai",
-      })
+      }),
+      null,
     );
   });
 
@@ -321,7 +327,8 @@ describe("handleImageGenerationCore", () => {
           Authorization: "Bearer vag-test-key",
         }),
         body: expect.stringContaining('"model":"openai/gpt-image-1"'),
-      })
+      }),
+      null,
     );
   });
 
@@ -388,7 +395,8 @@ describe("handleImageGenerationCore", () => {
         identity: "codex-cli",
         provider: "codex",
         format: "openai-responses",
-      })
+      }),
+      null,
     );
 
     const fetchCall = proxyAwareFetch.mock.calls[0];
@@ -434,7 +442,8 @@ describe("handleImageGenerationCore", () => {
           "Content-Type": "application/json",
           Authorization: "Bearer cf-token",
         }),
-      })
+      }),
+      null,
     );
 
     const fetchCall = proxyAwareFetch.mock.calls[0];

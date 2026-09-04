@@ -123,7 +123,7 @@
     "event": "response.output_item.added",
     "data": {
       "type": "response.output_item.added",
-      "output_index": 0,
+      "output_index": 1,
       "item": {
         "id": "fc_call_abc",
         "type": "function_call",
@@ -139,7 +139,7 @@
     "data": {
       "type": "response.function_call_arguments.delta",
       "item_id": "fc_call_abc",
-      "output_index": 0,
+      "output_index": 1,
       "delta": "{\"city\":\"NYC\"}",
       "sequence_number": 10
     }
@@ -149,7 +149,7 @@
     "data": {
       "type": "response.function_call_arguments.done",
       "item_id": "fc_call_abc",
-      "output_index": 0,
+      "output_index": 1,
       "arguments": "{\"city\":\"NYC\"}",
       "sequence_number": 11
     }
@@ -158,7 +158,7 @@
     "event": "response.output_item.done",
     "data": {
       "type": "response.output_item.done",
-      "output_index": 0,
+      "output_index": 1,
       "item": {
         "id": "fc_call_abc",
         "type": "function_call",
@@ -179,7 +179,15 @@
         "created_at": 0,
         "status": "completed",
         "background": false,
-        "error": null
+        "error": null,
+        "usage": {
+          "input_tokens": 120,
+          "output_tokens": 18,
+          "total_tokens": 138,
+          "input_tokens_details": {
+            "cached_tokens": 10
+          }
+        }
       },
       "sequence_number": 13
     }

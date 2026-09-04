@@ -158,6 +158,11 @@ export function translateResponse(targetFormat, sourceFormat, chunk, state) {
       if (converted) {
         results = Array.isArray(converted) ? converted : [converted];
         openaiResults = results; // Store OpenAI intermediate
+      } else if (chunk === null) {
+        // Every first leg returns null on flush — without a seed the Step 2
+        // flush synthesis below maps over nothing and truncated double-hop
+        // streams never terminate. Seed one null so the second leg runs.
+        results = [null];
       }
     }
   }
@@ -196,10 +201,14 @@ export function initState(sourceFormat) {
   const base = {
     messageId: null,
     model: null,
+    created: null,
     textBlockStarted: false,
     thinkingBlockStarted: false,
     inThinkingBlock: false,
     currentBlockIndex: null,
+    // Sentinel for the claude server-tool skip guard: fresh state must NOT
+    // match an indexless delta (undefined === undefined).
+    serverToolBlockIndex: -1,
     toolCalls: new Map(),
     finishReason: null,
     finishReasonSent: false,
@@ -230,6 +239,12 @@ export function initState(sourceFormat) {
       funcCallIds: {},
       funcArgsDone: {},
       funcItemDone: {},
+      // Distinct output_index per Responses item (text/tools share no counter).
+      nextOutputIndex: 0,
+      // Responses tool-call item index by call_id (parallel calls need stable
+      // per-call indices across added/delta/done events).
+      respCallIndex: {},
+      roleSent: false,
       completedSent: false
     };
   }

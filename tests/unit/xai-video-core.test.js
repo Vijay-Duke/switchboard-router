@@ -18,6 +18,7 @@ const proxyAwareFetch = vi.hoisted(() => vi.fn());
 
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch,
+  proxyOptionsFromCredentials: () => null,
 }));
 
 const refreshTokenByProvider = vi.hoisted(() => vi.fn());
@@ -104,7 +105,8 @@ describe("handleVideoProxyCore", () => {
     // Outbound identity wrap: every xAI hop carries the grok-cli profile.
     expect(proxyAwareFetch).toHaveBeenCalledWith(
       "https://api.x.ai/v1/videos/generations",
-      expect.objectContaining({ identity: "grok-cli", provider: "xai" })
+      expect.objectContaining({ identity: "grok-cli", provider: "xai" }),
+      null,
     );
 
     expect(await result.response.json()).toEqual({ request_id: "req-123" });

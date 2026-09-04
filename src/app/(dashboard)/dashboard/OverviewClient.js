@@ -24,6 +24,7 @@ export default function OverviewClient({ initialData }) {
   const { copied, copy } = useCopyToClipboard();
 
   const providerCount = initialData?.providerCount ?? 0;
+  const connectionCount = initialData?.connectionCount ?? providerCount;
   const readyProviderCount = initialData?.readyProviderCount ?? 0;
   const endpointReady = readyProviderCount > 0;
   const keyCount = initialData?.keyCount ?? 0;
@@ -59,7 +60,9 @@ export default function OverviewClient({ initialData }) {
   const endpointUrl = `http://${host}/v1`;
 
   const homeStats = useMemo(() => {
-    if (statsError) {
+    // Error or still loading: never render a confident "0" — the 24h stats
+    // fetch can queue behind navigation work, so dash until data arrives.
+    if (statsError || !stats) {
       return [
         { label: "Requests · 24h", value: "—" },
         { label: "Tokens in", value: "—" },
@@ -295,8 +298,8 @@ export default function OverviewClient({ initialData }) {
               marginTop: 14,
             }}
           >
-            {keyCount} API key{keyCount === 1 ? "" : "s"} · {providerCount} provider
-            {providerCount === 1 ? "" : "s"} connected
+            {keyCount} API key{keyCount === 1 ? "" : "s"} · {connectionCount} provider
+            {connectionCount === 1 ? "" : "s"} connected
           </div>
         </div>
 
@@ -577,7 +580,7 @@ export default function OverviewClient({ initialData }) {
                 fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
               }}
             >
-              {providerCount} connections
+              {connectionCount} connections
             </span>
           </div>
           <Link
@@ -609,10 +612,11 @@ export default function OverviewClient({ initialData }) {
   );
 }
 
-function formatNum(n) {
+export function formatNum(n) {
   const v = Number(n) || 0;
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}k`;
+  // Branch on the rounded value so 999950+ renders "1.0M", never "1000.0k".
+  if (v >= 999_950) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 999.95) return `${(v / 1_000).toFixed(1)}k`;
   return String(Math.round(v));
 }
 

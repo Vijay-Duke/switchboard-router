@@ -1,7 +1,7 @@
 "use client";
 // @ts-check
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card, Button } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import dynamic from "next/dynamic";
@@ -75,8 +75,15 @@ export default function TranslatorPage() {
     setLoad(`load-${stepId}`, false);
   };
 
+  // O5: debounced + staleness-guarded meta detection — per-keystroke POSTs
+  // hammer the API, and a slow earlier response must not overwrite a newer one
+  // (stale meta can route the live step-4 send to the wrong provider).
+  const metaSeqRef = useRef(0);
+  const metaTimerRef = useRef(null);
   // Step 1: detect provider/format from model field
   const detectMeta = async (rawContent) => {
+    const seq = metaSeqRef.current + 1;
+    metaSeqRef.current = seq;
     try {
       const body = typeof rawContent === "string" ? JSON.parse(rawContent) : rawContent;
       const res = await fetch("/api/translator/translate", {
@@ -85,9 +92,15 @@ export default function TranslatorPage() {
         body: JSON.stringify({ step: 1, body })
       });
       const data = await res.json();
+      if (seq !== metaSeqRef.current) return;
       if (data.success) setMeta(data.result);
     } catch { /* ignore */ }
   };
+  const detectMetaDebounced = (rawContent) => {
+    if (metaTimerRef.current) clearTimeout(metaTimerRef.current);
+    metaTimerRef.current = setTimeout(() => detectMeta(rawContent), 400);
+  };
+  useEffect(() => () => clearTimeout(metaTimerRef.current), []);
 
   const save = (file, content) => fetch("/api/translator/save", {
     method: "POST",
@@ -298,7 +311,7 @@ export default function TranslatorPage() {
                       onChange={(v) => {
                         setContentValue(step.id, v || "");
                         clearStepError(step.id);
-                        if (step.id === 1) detectMeta(v || "");
+                        if (step.id === 1) detectMetaDebounced(v || "");
                       }}
                       theme="vs-dark"
                       options={EDITOR_OPTIONS}

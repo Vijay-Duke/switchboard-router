@@ -1,6 +1,6 @@
 import { register } from "../registry.js";
 import { FORMATS } from "../formats.js";
-import { openaiToGeminiRequest } from "./openai-to-gemini.js";
+import { openaiToGeminiBase } from "./openai-to-gemini.js";
 import { DEFAULT_THINKING_VERTEX_SIGNATURE } from "../../config/defaultThinkingSignature.js";
 
 /**
@@ -8,6 +8,11 @@ import { DEFAULT_THINKING_VERTEX_SIGNATURE } from "../../config/defaultThinkingS
  *
  * 1. Replace all synthetic thoughtSignatures with Vertex-native signature.
  * 2. Strip `id` from functionCall and functionResponse (Vertex rejects these).
+ *
+ * Known limitation (order-pairing): stripping ids means parallel same-name
+ * calls can only be re-paired with their results by position. Turn order is
+ * preserved end-to-end by this translator, so pairing holds as long as neither
+ * side reorders, retries partially, or drops a result on the Vertex leg.
  */
 function postProcessForVertex(body) {
   if (!body?.contents) return body;
@@ -34,8 +39,11 @@ function postProcessForVertex(body) {
   return body;
 }
 
-export function openaiToVertexRequest(model, body, stream, credentials) {
-  const gemini = openaiToGeminiRequest(model, body, stream, credentials);
+export function openaiToVertexRequest(model, body, stream) {
+  // NOTE: the 4th arg of openaiToGeminiBase is `signature` (a string) — never
+  // pass the credentials object here (auth-material-shaped values would sit in
+  // thoughtSignature until postProcessForVertex overwrites them).
+  const gemini = openaiToGeminiBase(model, body, stream, DEFAULT_THINKING_VERTEX_SIGNATURE);
   return postProcessForVertex(gemini);
 }
 

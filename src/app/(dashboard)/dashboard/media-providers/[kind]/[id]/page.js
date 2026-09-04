@@ -28,7 +28,7 @@ export default function MediaProviderDetailPage() {
   const handleDeleteCustom = async () => {
     if (!await requestConfirmation({ message: "Delete this Custom Embedding node?", confirmText: "Continue" })) return;
     try {
-      await fetchJson(`/api/provider-nodes/${id}`, { method: "DELETE" });
+      await fetchJson(`/api/provider-nodes/${encodeURIComponent(id)}`, { method: "DELETE" });
       router.push(`/dashboard/media-providers/${kind}`);
     } catch (error) {
       reportClientError("Error deleting custom embedding node:", error);
@@ -37,20 +37,31 @@ export default function MediaProviderDetailPage() {
 
   const [customNode, setCustomNode] = useState(null);
   const [customLoading, setCustomLoading] = useState(isCustom);
+  const [customError, setCustomError] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
 
   // Fetch custom node info from API for custom embedding nodes
   useEffect(() => {
     if (!isCustom) return;
     let cancelled = false;
+    // id changed (navigation reuses this component): drop the previous node
+    // immediately instead of flashing it while the new one loads
+    setCustomNode(null);
+    setCustomLoading(true);
+    setCustomError(false);
     fetch("/api/provider-nodes", { cache: "no-store" })
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then((d) => {
         if (cancelled) return;
         setCustomNode((d.nodes || []).find((n) => n.id === id) || null);
         setCustomLoading(false);
       })
-      .catch(() => { if (!cancelled) setCustomLoading(false); });
+      .catch(() => {
+        if (!cancelled) { setCustomLoading(false); setCustomError(true); }
+      });
     return () => { cancelled = true; };
   }, [id, isCustom]);
 
@@ -64,6 +75,14 @@ export default function MediaProviderDetailPage() {
     : builtInProvider;
 
   if (!isCustom && !builtInProvider) return notFound();
+  // Server errors must not masquerade as "not found" — the node may exist
+  if (isCustom && customError) {
+    return (
+      <div role="alert" className="text-text-muted text-sm py-12 text-center">
+        Couldn&apos;t load this provider node. Check the server and retry.
+      </div>
+    );
+  }
   if (isCustom && !customLoading && !customNode) return notFound();
   if (isCustom && customLoading) {
     return <div className="text-text-muted text-sm py-12 text-center">Loading...</div>;

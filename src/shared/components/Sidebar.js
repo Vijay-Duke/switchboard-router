@@ -19,6 +19,20 @@ function NavPending() {
   return <span aria-hidden="true" className={cn("console-nav-dot", pending && "animate-pulse")} />;
 }
 
+// Module-level shared /api/version request: the Sidebar can mount twice
+// (desktop + mobile drawer) and StrictMode double-invokes effects, but the
+// npm-backed lookup must run once per page load. Hover prefetch is untouched
+// (Link prefetch={false} below only disables viewport prefetch).
+let versionRequest = null;
+function fetchVersionOnce() {
+  if (!versionRequest) {
+    versionRequest = fetch("/api/version")
+      .then((res) => res.json())
+      .catch(() => null);
+  }
+  return versionRequest;
+}
+
 /**
  * Nav structure matches Switchboard Console standalone mock:
  * Operate → Connect → Tools, plus Diagnostics footer box + endpoint pill.
@@ -95,8 +109,7 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
   }, []);
 
   useEffect(() => {
-    fetch("/api/version")
-      .then((res) => res.json())
+    fetchVersionOnce()
       .then((data) => {
         // Strict gate: only show when API asserts a newer version than current
         if (
@@ -178,7 +191,7 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
             borderBottom: "1px solid #2A2418",
           }}
         >
-          <Link href="/dashboard" onClick={onClose} className="flex items-center gap-[11px] min-w-0">
+          <Link href="/dashboard" onClick={onClose} prefetch={false} className="flex items-center gap-[11px] min-w-0">
             <div
               className="flex items-center justify-center shrink-0"
               style={{
@@ -251,6 +264,7 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
                     key={item.href}
                     href={item.href}
                     onClick={onClose}
+                    prefetch={false}
                     className="console-nav-item"
                     data-active={active ? "true" : "false"}
                     aria-current={active ? "page" : undefined}
@@ -292,15 +306,15 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
                 lineHeight: 1.7,
               }}
             >
-              <Link href="/dashboard/console-log" onClick={onClose} className="hover:text-[#E5B454]">
+              <Link href="/dashboard/console-log" onClick={onClose} prefetch={false} className="hover:text-[#E5B454]">
                 console
               </Link>
               {" · "}
-              <Link href="/dashboard/translator" onClick={onClose} className="hover:text-[#E5B454]">
+              <Link href="/dashboard/translator" onClick={onClose} prefetch={false} className="hover:text-[#E5B454]">
                 translator
               </Link>
               {" · "}
-              <Link href="/dashboard/mitm" onClick={onClose} className="hover:text-[#E5B454]">
+              <Link href="/dashboard/mitm" onClick={onClose} prefetch={false} className="hover:text-[#E5B454]">
                 mitm
               </Link>
             </div>

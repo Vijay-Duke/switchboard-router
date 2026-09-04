@@ -1,20 +1,32 @@
 import { stripLeaks } from "./leaks.js";
 import { applyIdentity, resolveProfileId, getProfile, orderHeaders, CLAUDE_COUNT_TOKENS_HEADER_ORDER } from "./catalog.js";
 import { claudeSnapshotVersions, getConsistentSnapshot, getDeviceProfile } from "./snapshot.js";
+import { hostArch, hostPlatform } from "./os.js";
 
-const AUTH_FALLBACK_UA = {
-  "claude-cli": "claude-cli/2.1.258 (external, cli)",
-  "codex-cli": "codex_cli_rs/0.149.0",
-  "gemini-cli": "GeminiCLI/0.56.0/unknown (linux; x64; terminal)",
-  cline: "Cline/3.0.0",
-  "openai-node": "OpenAI/NodeJS/22",
-  chrome: "Mozilla/5.0",
-  antigravity: "antigravity/1.107.0 linux/x64",
-  copilot: "GitHubCopilotChat/0.38.0",
-  qwen: "QwenCode/0.12.3 (linux; x64)",
-  "grok-cli": "grok-cli/1.0.0",
-  "grok-build": "grok-shell/0.2.99",
-};
+function nodeVersion() {
+  return typeof process !== "undefined" && process.version ? process.version.replace(/^v/, "") : "unknown";
+}
+
+// Last-resort UAs when no snapshot exists. Versions prefer the live snapshot;
+// platform/arch always reflect this host, never a frozen Mac/ARM default.
+function fallbackUserAgent(profileId, snapshot) {
+  const version = snapshot?.version;
+  const plat = hostPlatform() || "linux";
+  const arch = hostArch() === "ia32" ? "x86" : hostArch() || "x64";
+  switch (profileId) {
+    case "claude-cli": return `claude-cli/${version || "2.1.258"} (external, cli)`;
+    case "codex-cli": return `codex_cli_rs/${version || "0.149.0"}`;
+    case "gemini-cli": return `GeminiCLI/${version || "0.56.0"}/unknown (${plat}; ${arch}; terminal)`;
+    case "cline": return `Cline/${version || "3.0.0"}`;
+    case "antigravity": return `antigravity/${version || "1.107.0"} ${plat}/${arch}`;
+    case "copilot": return `GitHubCopilotChat/${version || "0.38.0"}`;
+    case "qwen": return `QwenCode/${version || "0.12.3"} (${plat}; ${arch})`;
+    case "grok-cli": return `grok-cli/${version || "1.0.0"}`;
+    case "grok-build": return `grok-shell/${version || "0.2.99"} (${plat}; ${arch})`;
+    case "chrome": return "Mozilla/5.0";
+    default: return `OpenAI/NodeJS/${nodeVersion()}`;
+  }
+}
 
 function findUserAgentKey(headers) {
   return Object.keys(headers).find((k) => k.toLowerCase() === "user-agent");
@@ -50,6 +62,9 @@ export function wrapHeaders(headers, opts = {}) {
     overlay: opts.overlay,
     stream: opts.stream,
     retryCount: opts.retryCount,
+    // No explicit identity → the profile was defaulted (openai-node etc.), so
+    // a UA the caller set deliberately (Chrome for edge/google TTS) wins.
+    preserveUserAgent: !opts.identity,
   });
   const profile = getProfile(profileId);
   let cleaned = stripLeaks(merged);
@@ -59,8 +74,11 @@ export function wrapHeaders(headers, opts = {}) {
     }
     cleaned = orderHeaders(cleaned, CLAUDE_COUNT_TOKENS_HEADER_ORDER);
   }
-  if (!findUserAgentKey(cleaned) && profileId !== "cursor") {
-    const ua = snapshot?.userAgent || AUTH_FALLBACK_UA[profileId] || AUTH_FALLBACK_UA["openai-node"];
+  if (!findUserAgentKey(cleaned)) {
+    // Every hop egresses with an official-client UA — including cursor, which
+    // previously went out fingerprint-less. A caller-set UA is preserved by
+    // applyIdentity above, so this only fills a genuinely missing one.
+    const ua = snapshot?.userAgent || fallbackUserAgent(profileId, snapshot);
     cleaned["User-Agent"] = ua;
   }
   if (profileId === "claude-cli") validateClaudeIdentity(cleaned, snapshot);

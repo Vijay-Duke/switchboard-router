@@ -15,13 +15,12 @@ const moduleDefault = {
     contents: [{ parts: [{ text: body.prompt }] }],
     generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
   }),
-  normalize: (responseBody, prompt) => {
+  normalize: (responseBody) => {
     const parts = responseBody.candidates?.[0]?.content?.parts || [];
     const images = parts.filter((p) => p.inlineData?.data).map((p) => ({ b64_json: p.inlineData.data }));
-    return {
-      created: nowSec(),
-      data: images.length > 0 ? images : [{ b64_json: "", revised_prompt: prompt }],
-    };
+    // No images: return an empty set so clients handle "no images" instead of
+    // decoding a broken empty placeholder.
+    return { created: nowSec(), data: images };
   },
 };
 

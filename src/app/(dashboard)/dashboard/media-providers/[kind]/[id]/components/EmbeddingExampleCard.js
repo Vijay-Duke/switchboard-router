@@ -86,7 +86,7 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
     const clone = JSON.parse(JSON.stringify(data));
     (clone.data || []).forEach((item) => {
       if (Array.isArray(item.embedding) && item.embedding.length > 4) {
-        item.embedding = [...item.embedding.slice(0, 4).map((v) => parseFloat(v.toFixed(6))), `... (${item.embedding.length} dims)`];
+        item.embedding = [...item.embedding.slice(0, 4).map((v) => (typeof v === "number" && Number.isFinite(v) ? parseFloat(v.toFixed(6)) : v)), `... (${item.embedding.length} dims)`];
       }
     });
     return JSON.stringify(clone, null, 2);
@@ -131,7 +131,7 @@ export function EmbeddingExampleCard({ providerId, customAlias }) {
               value={endpoint}
               onChange={(e) => setLocalEndpoint(e.target.value)}
               className="w-full min-w-0 flex-1 px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary font-mono"
-              placeholder="http://localhost:3000"
+              placeholder="http://127.0.0.1:20128"
             />
           </div>
         </Row>

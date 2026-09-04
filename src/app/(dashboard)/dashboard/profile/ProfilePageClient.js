@@ -4,8 +4,6 @@ import { useState, useEffect, useRef } from "react";
 import { Card, Button, Toggle, Input } from "@/shared/components";
 import Modal, { ConfirmModal } from "@/shared/components/Modal";
 import LanguageSwitcher from "@/shared/components/LanguageSwitcher";
-import { useTheme } from "@/shared/hooks/useTheme";
-import { cn } from "@/shared/utils/cn";
 import { APP_CONFIG } from "@/shared/constants/config";
 import { LOCALE_COOKIE, normalizeLocale } from "@/i18n/config";
 import { LOCALE_FLAGS } from "@/shared/constants/locales";
@@ -24,7 +22,6 @@ function getLocaleFromCookie() {
  * @param {{ initialData?: { settings?: any, machineId?: string } }} props
  */
 export default function ProfilePageClient({ initialData }) {
-  const { theme, setTheme, isDark } = useTheme();
   const notify = useNotificationStore((s) => s.error);
   const [locale, setLocale] = useState("en");
   const [langOpen, setLangOpen] = useState(false);
@@ -43,19 +40,33 @@ export default function ProfilePageClient({ initialData }) {
   const [proxyStatus, setProxyStatus] = useState({ type: "", message: "" });
   const [proxyLoading, setProxyLoading] = useState(false);
   const [proxyTestLoading, setProxyTestLoading] = useState(false);
+  // O20: sticky limits are draft-local; settings PATCH only on blur/Enter.
+  const [stickyDraft, setStickyDraft] = useState(String(initialData?.settings?.stickyRoundRobinLimit ?? 3));
+  const [comboStickyDraft, setComboStickyDraft] = useState(String(initialData?.settings?.comboStickyRoundRobinLimit ?? 1));
+  useEffect(() => {
+    setStickyDraft(String(settings.stickyRoundRobinLimit ?? 3));
+  }, [settings.stickyRoundRobinLimit]);
+  useEffect(() => {
+    setComboStickyDraft(String(settings.comboStickyRoundRobinLimit ?? 1));
+  }, [settings.comboStickyRoundRobinLimit]);
 
   useEffect(() => {
     setLocale(getLocaleFromCookie());
   }, [langOpen]);
 
-  // Hydrate proxy form from server-provided settings (no mount refetch).
-  useEffect(() => {
-    const data = initialData?.settings || settings;
+  // O19: seed helper shared by mount hydrate and post-import reload so the
+  // Network card never disagrees with the actual settings.
+  const seedProxyForm = (data) => {
     setProxyForm({
       outboundProxyEnabled: data?.outboundProxyEnabled === true,
       outboundProxyUrl: data?.outboundProxyUrl || "",
       outboundNoProxy: data?.outboundNoProxy || "",
     });
+  };
+
+  // Hydrate proxy form from server-provided settings (no mount refetch).
+  useEffect(() => {
+    seedProxyForm(initialData?.settings || settings);
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialData]);
@@ -188,18 +199,23 @@ export default function ProfilePageClient({ initialData }) {
     }
   };
 
+  // O20: client-side clamp (sticky 1..32, combo-sticky 1..100); the settings
+  // PATCH route enforces the same bounds server-side.
   const updateStickyLimit = async (limit) => {
     const numLimit = parseInt(limit);
-    if (isNaN(numLimit) || numLimit < 1) return;
+    if (isNaN(numLimit)) return;
+    const clamped = Math.min(32, Math.max(1, numLimit));
+    setStickyDraft(String(clamped));
+    if (clamped === (settings.stickyRoundRobinLimit ?? 3)) return;
 
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stickyRoundRobinLimit: numLimit }),
+        body: JSON.stringify({ stickyRoundRobinLimit: clamped }),
       });
       if (res.ok) {
-        setSettings(prev => ({ ...prev, stickyRoundRobinLimit: numLimit }));
+        setSettings(prev => ({ ...prev, stickyRoundRobinLimit: clamped }));
       } else throw new Error(`HTTP ${res.status}`);
     } catch (err) {
       notify("Failed to update sticky limit");
@@ -208,16 +224,19 @@ export default function ProfilePageClient({ initialData }) {
 
   const updateComboStickyLimit = async (limit) => {
     const numLimit = parseInt(limit);
-    if (isNaN(numLimit) || numLimit < 1) return;
+    if (isNaN(numLimit)) return;
+    const clamped = Math.min(100, Math.max(1, numLimit));
+    setComboStickyDraft(String(clamped));
+    if (clamped === (settings.comboStickyRoundRobinLimit ?? 1)) return;
 
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ comboStickyRoundRobinLimit: numLimit }),
+        body: JSON.stringify({ comboStickyRoundRobinLimit: clamped }),
       });
       if (res.ok) {
-        setSettings(prev => ({ ...prev, comboStickyRoundRobinLimit: numLimit }));
+        setSettings(prev => ({ ...prev, comboStickyRoundRobinLimit: clamped }));
       } else throw new Error(`HTTP ${res.status}`);
     } catch (err) {
       notify("Failed to update combo sticky limit");
@@ -249,6 +268,7 @@ export default function ProfilePageClient({ initialData }) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setSettings(data);
+      seedProxyForm(data);
     } catch (err) {
       notify("Failed to reload settings");
     }
@@ -333,35 +353,13 @@ export default function ProfilePageClient({ initialData }) {
       <div className="flex flex-col gap-6">
         {/* Local Mode Info */}
         <Card>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
-            <div className="flex items-center gap-3 sm:gap-4">
-              <div className="size-10 sm:size-12 rounded-lg bg-green-500/10 text-green-500 flex items-center justify-center shrink-0">
-                <span className="material-symbols-outlined text-xl sm:text-2xl">computer</span>
-              </div>
-              <div>
-                <h2 className="text-lg sm:text-xl font-semibold">Local Mode</h2>
-                <p className="text-sm text-text-muted">Running on your machine</p>
-              </div>
+          <div className="flex items-center gap-3 sm:gap-4 mb-4">
+            <div className="size-10 sm:size-12 rounded-lg bg-green-500/10 text-green-500 flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-xl sm:text-2xl">computer</span>
             </div>
-            <div className="inline-flex p-1 rounded-lg bg-black/5 dark:bg-white/5 w-full sm:w-auto">
-              {["light", "dark", "system"].map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => setTheme(option)}
-                  className={cn(
-                    "flex items-center justify-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1.5 rounded-md font-medium transition-all flex-1 sm:flex-initial",
-                    theme === option
-                      ? "bg-white dark:bg-white/10 text-text-main shadow-sm"
-                      : "text-text-muted hover:text-text-main"
-                  )}
-                >
-                  <span className="material-symbols-outlined text-[18px]">
-                    {option === "light" ? "light_mode" : option === "dark" ? "dark_mode" : "contrast"}
-                  </span>
-                  <span className="capitalize text-xs sm:text-sm">{option}</span>
-                </button>
-              ))}
+            <div>
+              <h2 className="text-lg sm:text-xl font-semibold">Local Mode</h2>
+              <p className="text-sm text-text-muted">Running on your machine</p>
             </div>
           </div>
           <div className="flex flex-col gap-3 pt-4 border-t border-border">
@@ -461,9 +459,11 @@ export default function ProfilePageClient({ initialData }) {
                   type="number"
                   aria-label="Sticky Limit"
                   min="1"
-                  max="10"
-                  value={settings.stickyRoundRobinLimit || 3}
-                  onChange={(e) => updateStickyLimit(e.target.value)}
+                  max="32"
+                  value={stickyDraft}
+                  onChange={(e) => setStickyDraft(e.target.value)}
+                  onBlur={(e) => updateStickyLimit(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") updateStickyLimit(e.currentTarget.value); }}
                   disabled={loading}
                   className="w-16 sm:w-20 text-center shrink-0"
                 />
@@ -500,8 +500,10 @@ export default function ProfilePageClient({ initialData }) {
                   aria-label="Combo Sticky Limit"
                   min="1"
                   max="100"
-                  value={settings.comboStickyRoundRobinLimit || 1}
-                  onChange={(e) => updateComboStickyLimit(e.target.value)}
+                  value={comboStickyDraft}
+                  onChange={(e) => setComboStickyDraft(e.target.value)}
+                  onBlur={(e) => updateComboStickyLimit(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") updateComboStickyLimit(e.currentTarget.value); }}
                   disabled={loading}
                   className="w-20 text-center"
                 />

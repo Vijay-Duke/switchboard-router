@@ -73,7 +73,9 @@ export function createResponsesApiTransformStream(logger = null) {
     funcArgsDone: {},
     funcItemDone: {},
     buffer: "",
-    completedSent: false
+    completedSent: false,
+    sawFinishReason: false,
+    decoder: new TextDecoder()
   };
 
   const encoder = new TextEncoder();
@@ -239,35 +241,50 @@ export function createResponsesApiTransformStream(logger = null) {
     }
   };
 
-  return new TransformStream({
-    transform(chunk, controller) {
-      const text = new TextDecoder().decode(chunk);
-      logger?.logInput(text.trim());
-      state.buffer += text;
-
-      const messages = state.buffer.split("\n\n");
-      state.buffer = messages.pop() || "";
-
-      for (const msg of messages) {
-        if (!msg.trim()) continue;
-
-        const dataMatch = msg.match(/^data:\s*(.+)$/m);
-        if (!dataMatch) continue;
-
-        const dataStr = dataMatch[1].trim();
-        if (dataStr === "[DONE]") continue;
-
-        let parsed;
-        try {
-          parsed = JSON.parse(dataStr);
-        } catch {
-          continue;
+  const sendIncomplete = (controller) => {
+    if (!state.completedSent) {
+      state.completedSent = true;
+      emit(controller, "response.incomplete", {
+        type: "response.incomplete",
+        response: {
+          id: state.responseId,
+          object: "response",
+          created_at: state.created,
+          status: "incomplete",
+          background: false,
+          error: null
         }
+      });
+    }
+  };
 
-        if (!parsed.choices?.length) continue;
-        
-        const choice = parsed.choices[0];
-        const idx = choice.index || 0;
+  // One chat-completions SSE event → Responses events. Shared by transform
+  // (framed events) and flush (unframed tail) so the tail is parsed, not dropped.
+  const processMessage = (controller, msg) => {
+    if (!msg.trim()) return;
+
+    const dataLines = [];
+    for (const rawLine of msg.split(/\r?\n/)) {
+      const trimmedLine = rawLine.trim();
+      if (trimmedLine.startsWith("data:")) dataLines.push(trimmedLine.slice(5).replace(/^ /, ""));
+    }
+    if (dataLines.length === 0) return;
+
+    const dataStr = dataLines.join("\n").trim();
+    if (dataStr === "[DONE]") return;
+
+    let parsed;
+    try {
+      parsed = JSON.parse(dataStr);
+    } catch {
+      return;
+    }
+
+    if (!parsed.choices?.length) return;
+
+    const choice = parsed.choices[0];
+
+    const idx = choice.index || 0;
         const delta = choice.delta || {};
 
         // Emit initial events
@@ -328,7 +345,7 @@ export function createResponsesApiTransformStream(logger = null) {
 
           if (state.inThinking && content) {
             emitReasoningDelta(controller, content);
-            continue;
+            return;
           }
 
           // Regular text content
@@ -416,19 +433,40 @@ export function createResponsesApiTransformStream(logger = null) {
 
         // Handle finish_reason
         if (choice.finish_reason) {
+          state.sawFinishReason = true;
           for (const i in state.msgItemAdded) closeMessage(controller, i);
           closeReasoning(controller);
           for (const i in state.funcCallIds) closeToolCall(controller, i);
           sendCompleted(controller);
         }
+  };
+
+  return new TransformStream({
+    transform(chunk, controller) {
+      const text = state.decoder.decode(chunk, { stream: true });
+      logger?.logInput(text.trim());
+      state.buffer += text;
+
+      const messages = state.buffer.split(/\r?\n\r?\n/);
+      state.buffer = messages.pop() || "";
+
+      for (const msg of messages) {
+        processMessage(controller, msg);
       }
     },
 
     flush(controller) {
+      const tail = state.decoder.decode();
+      if (tail) state.buffer += tail;
+      if (state.buffer.trim()) {
+        processMessage(controller, state.buffer);
+        state.buffer = "";
+      }
       for (const i in state.msgItemAdded) closeMessage(controller, i);
       closeReasoning(controller);
       for (const i in state.funcCallIds) closeToolCall(controller, i);
-      sendCompleted(controller);
+      if (state.sawFinishReason) sendCompleted(controller);
+      else sendIncomplete(controller);
 
       logger?.logOutput("data: [DONE]");
       controller.enqueue(encoder.encode("data: [DONE]\n\n"));

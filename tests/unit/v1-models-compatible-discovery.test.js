@@ -71,12 +71,14 @@ describe("/v1/models compatible-provider discovery", () => {
       {
         id: "claude-switchboard-gpt",
         object: "model",
+        created: 0,
         owned_by: "switchboard-alias",
         display_name: "Switchboard · claude-switchboard-gpt",
       },
       {
         id: "anthropic-switchboard-gemini",
         object: "model",
+        created: 0,
         owned_by: "switchboard-alias",
         display_name: "Switchboard · anthropic-switchboard-gemini",
       },

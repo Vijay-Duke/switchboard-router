@@ -8,6 +8,25 @@ export function fallbackToolCallId(index) {
   return index === undefined ? `call_${Date.now()}` : `call_${index}_${Date.now()}`;
 }
 
+// Map a Gemini functionCallingConfig back to an OpenAI tool_choice
+// (reverse of mapOpenAIToolChoiceToGemini). Reads `body.toolConfig` or
+// `body.request.toolConfig` (enveloped Gemini-CLI / Antigravity shapes).
+export function mapGeminiToolConfigToOpenAI(body) {
+  const req = body?.request || body || {};
+  const mode = req.toolConfig?.functionCallingConfig?.mode;
+  if (!mode) return undefined;
+  const names = req.toolConfig.functionCallingConfig.allowedFunctionNames;
+  if (mode === "NONE") return "none";
+  if (mode === "ANY") {
+    if (Array.isArray(names) && names.length === 1) {
+      return { type: "function", function: { name: names[0] } };
+    }
+    return "required";
+  }
+  if (mode === "AUTO" || mode === "VALIDATED") return "auto";
+  return undefined;
+}
+
 // Generate deterministic tool call ID from position + tool name (cache-friendly)
 export function generateToolCallId(msgIndex = 0, tcIndex = 0, toolName = "") {
   const name = toolName ? `_${toolName.replace(/[^a-zA-Z0-9_-]/g, "")}` : "";

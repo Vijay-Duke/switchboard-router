@@ -32,17 +32,27 @@ const useSettingsStore = create((set, get) => ({
 
   // PATCH server + merge into local cache (no extra fetch needed)
   patchSettings: async (patch) => {
+    set({ loading: true, error: null });
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
       });
-      if (!res.ok) return null;
-      const updated = await res.json();
-      set({ settings: updated, lastFetched: Date.now() });
-      return updated;
-    } catch {
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
+      if (!res.ok) {
+        set({ error: data?.error || `Failed to save settings (${res.status})`, loading: false });
+        return null;
+      }
+      set({ settings: data, lastFetched: Date.now(), loading: false });
+      return data;
+    } catch (e) {
+      set({ error: "Failed to save settings", loading: false });
       return null;
     }
   },

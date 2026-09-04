@@ -261,7 +261,7 @@ exports[`GOLDEN response stream: Gemini → OpenAI > text + thought(no-sig) + fu
                 "arguments": "{"q":"x"}",
                 "name": "search",
               },
-              "id": "search-<TS>-0",
+              "id": "call_search-<TS>-0",
               "index": 0,
               "type": "function",
             },
@@ -473,6 +473,7 @@ exports[`GOLDEN response stream: OpenAI-Responses (codex) → OpenAI > text + re
       {
         "delta": {
           "content": "Hello",
+          "role": "assistant",
         },
         "finish_reason": null,
         "index": 0,

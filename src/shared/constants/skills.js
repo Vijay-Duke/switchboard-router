@@ -25,10 +25,10 @@ export const SKILLS = [
 
 /** Fetchable raw markdown path for agents (relative to origin). */
 export function getSkillRawUrl(id) {
-  return `/api/skills/${id}`;
+  return `/api/skills/${encodeURIComponent(id)}`;
 }
 
 /** In-app viewer path (human-readable). */
 export function getSkillBlobUrl(id) {
-  return `/dashboard/skills/${id}`;
+  return `/dashboard/skills/${encodeURIComponent(id)}`;
 }

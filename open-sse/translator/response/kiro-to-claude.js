@@ -15,6 +15,7 @@
  */
 import { register } from "../registry.js";
 import { FORMATS } from "../formats.js";
+import { extractReasoningText } from "../concerns/reasoning.js";
 
 function stopThinkingBlock(state, results) {
   if (!state.thinkingBlockStarted) return;
@@ -54,6 +55,10 @@ export function kiroToClaudeResponse(chunk, state) {
   // message_stop are not lost at EOF.
   if (chunk === null && !state.claudeFinishHandled) {
     state.claudeFinishHandled = true;
+    // A stream that died before message_start is an upstream failure, not an
+    // empty answer: emit nothing so the client SDK surfaces the incomplete
+    // stream (Claude Code retries) instead of a silent empty end_turn. The
+    // executor-level empty-stream guards have already had their retries.
     if (!state.messageStartSent) return null;
     stopThinkingBlock(state, results);
     stopTextBlock(state, results);
@@ -101,7 +106,8 @@ export function kiroToClaudeResponse(chunk, state) {
   const choice = data.choices[0];
   const delta = choice.delta || {};
 
-  // Track usage if present on the chunk.
+  // Track usage if present on the chunk (fold cache details like
+  // openai-to-claude: input_tokens excludes cache, details re-attached).
   if (data.usage && typeof data.usage === "object") {
     const promptTokens =
       typeof data.usage.prompt_tokens === "number" ? data.usage.prompt_tokens : 0;
@@ -109,14 +115,24 @@ export function kiroToClaudeResponse(chunk, state) {
       typeof data.usage.completion_tokens === "number"
         ? data.usage.completion_tokens
         : 0;
-    state.usage = { input_tokens: promptTokens, output_tokens: outputTokens };
+    const cacheDetails = data.usage.prompt_tokens_details || {};
+    const cacheReadTokens =
+      typeof cacheDetails.cached_tokens === "number" ? cacheDetails.cached_tokens : 0;
+    const cacheCreateTokens =
+      typeof cacheDetails.cache_creation_tokens === "number" ? cacheDetails.cache_creation_tokens : 0;
+    state.usage = {
+      input_tokens: Math.max(0, promptTokens - cacheReadTokens - cacheCreateTokens),
+      output_tokens: outputTokens,
+    };
+    if (cacheReadTokens > 0) state.usage.cache_read_input_tokens = cacheReadTokens;
+    if (cacheCreateTokens > 0) state.usage.cache_creation_input_tokens = cacheCreateTokens;
   }
 
   // First chunk → emit message_start.
   if (!state.messageStartSent) {
     state.messageStartSent = true;
     state.messageId =
-      (typeof data.id === "string" && data.id.replace("chatcmpl-", "")) ||
+      (typeof data.id === "string" && data.id.replace(/^chatcmpl-/, "")) ||
       `msg_${Date.now()}`;
     state.model = data.model || "kiro";
     state.nextBlockIndex = 0;
@@ -135,8 +151,10 @@ export function kiroToClaudeResponse(chunk, state) {
     });
   }
 
-  // Reasoning / thinking content (Kiro reasoningContentEvent → reasoning_content).
-  const reasoningContent = delta.reasoning_content || delta.reasoning;
+  // Reasoning / thinking content across vendor shapes (reasoning_content /
+  // reasoning / reasoning_details[] — Kiro reasoningContentEvent feeds
+  // reasoning_content; MiniMax-shaped deltas feed reasoning_details[]).
+  const reasoningContent = extractReasoningText(delta);
   if (reasoningContent) {
     stopTextBlock(state, results);
     if (!state.thinkingBlockStarted) {
@@ -206,13 +224,15 @@ export function kiroToClaudeResponse(chunk, state) {
         const existing = state.toolCalls.get(idx);
         if (existing && String(existing.id).startsWith("toolu_")) existing.id = tc.id;
       }
-      if (tc.function?.arguments) {
+      if (tc.function?.arguments !== undefined && tc.function?.arguments !== "") {
         const toolInfo = state.toolCalls.get(idx);
         if (toolInfo) {
-          state.toolArgBuffers.set(
-            idx,
-            (state.toolArgBuffers.get(idx) || "") + tc.function.arguments
-          );
+          // Object-form arguments must stringify — raw concatenation yields
+          // "[object Object]".
+          const frag = typeof tc.function.arguments === "string"
+            ? tc.function.arguments
+            : (tc.function.arguments == null ? "" : JSON.stringify(tc.function.arguments));
+          state.toolArgBuffers.set(idx, (state.toolArgBuffers.get(idx) || "") + frag);
         }
       }
     }
@@ -261,6 +281,10 @@ export function kiroToClaudeNonStreaming(data) {
   const choice = data?.choices?.[0];
   const message = choice?.message || {};
 
+  const nonStreamReasoning = message.reasoning_content || message.reasoning || "";
+  if (nonStreamReasoning) {
+    content.push({ type: "thinking", thinking: nonStreamReasoning });
+  }
   if (message.content) {
     content.push({ type: "text", text: message.content });
   }
@@ -285,6 +309,18 @@ export function kiroToClaudeNonStreaming(data) {
   }
 
   const usage = data?.usage || {};
+  const promptTokens = usage.prompt_tokens || usage.input_tokens || 0;
+  const cacheDetails = usage.prompt_tokens_details || {};
+  const cacheReadTokens =
+    typeof cacheDetails.cached_tokens === "number" ? cacheDetails.cached_tokens : 0;
+  const cacheCreateTokens =
+    typeof cacheDetails.cache_creation_tokens === "number" ? cacheDetails.cache_creation_tokens : 0;
+  const claudeUsage = {
+    input_tokens: Math.max(0, promptTokens - cacheReadTokens - cacheCreateTokens),
+    output_tokens: usage.completion_tokens || usage.output_tokens || 0,
+  };
+  if (cacheReadTokens > 0) claudeUsage.cache_read_input_tokens = cacheReadTokens;
+  if (cacheCreateTokens > 0) claudeUsage.cache_creation_input_tokens = cacheCreateTokens;
   return {
     id: `msg_${Date.now()}`,
     type: "message",
@@ -292,10 +328,7 @@ export function kiroToClaudeNonStreaming(data) {
     content,
     model: data?.model || "kiro",
     stop_reason: convertFinishReason(choice?.finish_reason || "stop"),
-    usage: {
-      input_tokens: usage.prompt_tokens || 0,
-      output_tokens: usage.completion_tokens || 0,
-    },
+    usage: claudeUsage,
   };
 }
 

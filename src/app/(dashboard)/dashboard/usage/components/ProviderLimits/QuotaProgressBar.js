@@ -73,7 +73,10 @@ export default function QuotaProgressBar({
   resetTime = null,
   recurring = true,
 }) {
-  const colors = getColorClasses(percentage);
+  // O29: percentage is already the remaining percentage; clamp it to 0-100 so
+  // width, label and color never see negative or >100 values.
+  const remaining = Math.min(100, Math.max(0, Math.round(Number(percentage) || 0)));
+  const colors = getColorClasses(remaining);
   const countdown = formatResetTime(resetTime);
   const resetDisplay = formatResetTimeDisplay(resetTime);
 
@@ -81,8 +84,6 @@ export default function QuotaProgressBar({
   // set recurring:false: resetTime is a hard expiry, so word it as "expires".
   const resetWord = recurring ? "Reset" : "Expires";
 
-  // percentage is already remaining percentage (from ProviderLimitCard)
-  const remaining = percentage;
   
   return (
     <div className="space-y-2">
@@ -104,7 +105,7 @@ export default function QuotaProgressBar({
         <div className={cn("h-2 rounded-full overflow-hidden", colors.bgLight)}>
           <div
             className={cn("h-full transition-all duration-300", colors.bg)}
-            style={{ width: `${Math.min(remaining, 100)}%` }}
+            style={{ width: `${remaining}%` }}
           />
         </div>
       )}

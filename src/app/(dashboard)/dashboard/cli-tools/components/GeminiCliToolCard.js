@@ -12,7 +12,7 @@ export default function GeminiCliToolCard(props) {
       multipleModels
       installHint={`npm install -g @google/gemini-cli
 # binary: gemini`}
-      runHint="After Apply: source ~/.gemini/switchboard.env && gemini"
+      runHint="After Apply: source ~/.gemini/.env && gemini"
       buildManualConfigs={({ baseUrl, apiKey, model, models }) => [
         {
           filename: "~/.gemini/.env",
@@ -23,7 +23,9 @@ export GOOGLE_GEMINI_BASE_URL="${baseUrl.replace(/\/v1$/, "")}"
 `,
         },
         {
-          filename: "~/.gemini/settings.json",
+          // Apply merges these keys into the existing file; tell manual
+          // followers to do the same instead of replacing the whole file (T56).
+          filename: "~/.gemini/settings.json (merge these keys — keep your other settings)",
           content: JSON.stringify({
             model: { name: model },
             experimental: { dynamicModelConfiguration: true },

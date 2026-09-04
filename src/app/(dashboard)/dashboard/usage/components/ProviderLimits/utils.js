@@ -57,9 +57,12 @@ export function sortVisibleConnections(
   quotaSortMode,
 ) {
   if (providerFilter === "codex" && quotaSortMode !== "default") {
+    // O10: quota-less cards report +Infinity; Infinity - Infinity is NaN,
+    // which would skip the name tiebreak — normalize to a finite sentinel.
+    const norm = (v) => (Number.isFinite(v) ? v : Number.MAX_SAFE_INTEGER);
     return [...connections].sort((a, b) => {
-      const remainingA = getConnectionQuotaRemaining(a, quotaData);
-      const remainingB = getConnectionQuotaRemaining(b, quotaData);
+      const remainingA = norm(getConnectionQuotaRemaining(a, quotaData));
+      const remainingB = norm(getConnectionQuotaRemaining(b, quotaData));
       const remainingDiff =
         quotaSortMode === "remaining-asc"
           ? remainingA - remainingB
@@ -86,8 +89,10 @@ export function sortVisibleConnections(
       : Number.POSITIVE_INFINITY;
   };
 
+  // Same O10 root cause: two reset-less accounts both yield +Infinity.
+  const normTime = (v) => (Number.isFinite(v) ? v : Number.MAX_SAFE_INTEGER);
   return [...connections].sort((a, b) => {
-    const expiryDiff = getEarliestResetTime(a) - getEarliestResetTime(b);
+    const expiryDiff = normTime(getEarliestResetTime(a)) - normTime(getEarliestResetTime(b));
     if (expiryDiff !== 0) return expiryDiff;
     return (
       (a.provider || "").localeCompare(b.provider || "") ||

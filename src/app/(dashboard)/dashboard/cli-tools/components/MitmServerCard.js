@@ -4,7 +4,26 @@
 import { useState, useEffect, useCallback } from "react";
 import { Card, Button, Badge, Input, Modal } from "@/shared/components";
 
-const DEFAULT_MITM_ROUTER_BASE = "http://localhost:20128";
+const DEFAULT_MITM_ROUTER_BASE = "http://127.0.0.1:20128";
+
+/**
+ * Default Switchboard base URL derived from the page origin so it matches
+ * the rest of the app (127.0.0.1, not localhost — the local-only guard
+ * treats them differently for IPv6). Falls back to the 127.0.0.1 default
+ * during SSR or when the origin is unparseable.
+ */
+function defaultMitmRouterBase() {
+  if (typeof window !== "undefined" && window.location?.origin) {
+    try {
+      const url = new URL(window.location.origin);
+      if (url.hostname === "localhost") url.hostname = "127.0.0.1";
+      return url.origin;
+    } catch {
+      /* fall through to default */
+    }
+  }
+  return DEFAULT_MITM_ROUTER_BASE;
+}
 
 /**
  * Shared MITM infrastructure card — manages SSL cert + server start/stop.
@@ -19,14 +38,13 @@ export default function MitmServerCard({ apiKeys, cloudEnabled, onStatusChange }
   const [pendingAction, setPendingAction] = useState(null);
   const [modalError, setModalError] = useState(null);
   const [actionError, setActionError] = useState(null);
-  const [mitmRouterBaseUrl, setMitmRouterBaseUrl] = useState(DEFAULT_MITM_ROUTER_BASE);
+  const [mitmRouterBaseUrl, setMitmRouterBaseUrl] = useState(defaultMitmRouterBase);
   const [port443Conflict, setPort443Conflict] = useState(null);
+  const [apiKeyPristine, setApiKeyPristine] = useState(true);
 
   const serverIsWindows = status?.isWin === true;
   const canRunWithoutPassword = serverIsWindows || status?.hasCachedPassword || status?.needsSudoPassword === false;
   const isAdmin = status?.isAdmin !== false;
-  // No privilege: not admin/root AND (Win OR no cached sudo password)
-  const noPrivilege = !isAdmin && (serverIsWindows || (!status?.hasCachedPassword && status?.needsSudoPassword !== false));
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -49,6 +67,13 @@ export default function MitmServerCard({ apiKeys, cloudEnabled, onStatusChange }
       fetchStatus();
     });
   }, [fetchStatus]);
+
+  // Fill the API-key field when keys resolve after mount; stop once edited (T69).
+  useEffect(() => {
+    if (apiKeyPristine && !selectedApiKey && apiKeys?.length > 0) {
+      setSelectedApiKey(apiKeys[0].keySecret || "");
+    }
+  }, [apiKeys, apiKeyPristine, selectedApiKey]);
 
   const handleAction = (action) => {
     setActionError(null);
@@ -200,10 +225,10 @@ export default function MitmServerCard({ apiKeys, cloudEnabled, onStatusChange }
                 <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline" aria-hidden="true">arrow_forward</span>
                 <input
                   id="mitm-api-key"
-                  type="text"
+                  type="password"
                   list="mitm-api-keys"
                   value={selectedApiKey}
-                  onChange={(e) => setSelectedApiKey(e.target.value)}
+                  onChange={(e) => { setApiKeyPristine(false); setSelectedApiKey(e.target.value); }}
                   placeholder={cloudEnabled ? "Enter or pick API key" : "sk_switchboard (default)"}
                   className="flex-1 min-w-0 px-2 py-1.5 bg-surface rounded border border-border text-xs text-text-main focus:outline-none focus:ring-1 focus:ring-primary/50"
                 />

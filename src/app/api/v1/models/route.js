@@ -591,6 +591,9 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
   for (const model of models) {
     if (!model?.id || seenModelIds.has(model.id)) continue;
     seenModelIds.add(model.id);
+    // OpenAI list entries carry `created` (unix seconds); default to 0 so
+    // strict clients never see a missing field.
+    if (typeof model.created !== "number") model.created = 0;
     dedupedModels.push(model);
   }
 
@@ -623,6 +626,7 @@ export function buildClaudeFullCatalogDiscoveryModels(selectedModelIds, pickerLa
   return selectedModelIds.map((modelId) => ({
     id: encodeClaudeCatalogModelId(modelId),
     object: "model",
+    created: 0,
     owned_by: "switchboard-catalog",
     display_name: customLabels[modelId]
       || formatClaudeCatalogDisplayName(modelId, displayNames),
@@ -655,7 +659,7 @@ export async function GET(request) {
   } catch (error) {
     console.log("Error fetching models:", error);
     return Response.json(
-      { error: { message: error.message, type: "server_error" } },
+      { error: { message: "Failed to fetch models", type: "server_error" } },
       { status: 500 }
     );
   }

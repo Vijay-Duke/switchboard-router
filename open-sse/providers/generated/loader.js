@@ -102,6 +102,24 @@ export function __resetCatalogCache() {
   _cache = undefined;
 }
 
+// Lowercase index per catalog object so "MiniMax-M2.7" and "minimax-m2.7"
+// resolve identically even when the generated file holds duplicate casings.
+// First sorted key wins, matching the generator's deterministic order.
+const lowerIndexCache = new WeakMap();
+
+function lowerIndex(map) {
+  let index = lowerIndexCache.get(map);
+  if (!index) {
+    index = new Map();
+    for (const key of Object.keys(map).sort()) {
+      const lower = key.toLowerCase();
+      if (!index.has(lower)) index.set(lower, map[key]);
+    }
+    lowerIndexCache.set(map, index);
+  }
+  return index;
+}
+
 function getGeneratedValue(map, model) {
   if (!model) return null;
 
@@ -109,7 +127,10 @@ function getGeneratedValue(map, model) {
   const base = model.includes("/") ? model.split("/").pop() : model;
   assert(typeof base === "string", "model base must be a string");
 
-  return map[base] || map[model] || null;
+  return map[base] || map[model]
+    || lowerIndex(map).get(base.toLowerCase())
+    || lowerIndex(map).get(model.toLowerCase())
+    || null;
 }
 
 export function getGeneratedPricing(model) {

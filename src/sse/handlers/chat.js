@@ -603,6 +603,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           tuning: comboStrategies[modelStr]?.fusionTuning,
           abortSignal: request?.signal || callOpts?.signal || null,
           childComboDepth: comboDepth + 1,
+          autoDepth,
         });
       }
 
@@ -689,6 +690,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           applyJudgeScore: (requestId, judgeScore) =>
             applyJudgeScoreByRequestId(requestId, judgeScore),
           autoDepth,
+          comboDepth,
           clientAbortSignal: request?.signal || null,
           feedbackCtx,
           workerCaps,
@@ -718,6 +720,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         ...(providerPreference || {}),
         abortSignal: request?.signal || callOpts?.signal || null,
         childComboDepth: comboDepth + 1,
+        autoDepth,
       });
     }
     log.warn("CHAT", "Invalid model format", { model: modelStr });

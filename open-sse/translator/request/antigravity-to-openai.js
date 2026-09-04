@@ -5,6 +5,8 @@ import { encodeDataUri } from "../concerns/image.js";
 import { ROLE, GEMINI_ROLE, OPENAI_BLOCK } from "../schema/index.js";
 import { budgetToEffort } from "../concerns/thinking.js";
 import { collapseTextParts } from "../concerns/message.js";
+import { mapGeminiToolConfigToOpenAI } from "../concerns/toolCall.js";
+import { assignStableFunctionIds } from "./gemini-to-openai.js";
 
 // Convert Antigravity request to OpenAI format
 // Antigravity body: { project, model, userAgent, requestType, requestId, request: { contents, systemInstruction, tools, toolConfig, generationConfig, sessionId } }
@@ -33,11 +35,25 @@ export function antigravityToOpenAIRequest(model, body, stream) {
       result.top_k = config.topK;
     }
 
-    // Thinking config → reasoning_effort
+    // Thinking config → reasoning_effort. Gemini 3 sends thinkingLevel
+    // (minimal|low|medium|high), not thinkingBudget — map it directly.
     if (config.thinkingConfig) {
-      const effort = budgetToEffort(config.thinkingConfig.thinkingBudget || 0);
-      if (effort) result.reasoning_effort = effort;
+      const tc = config.thinkingConfig;
+      if (typeof tc.thinkingLevel === "string") {
+        const level = tc.thinkingLevel.toLowerCase();
+        const levelEffort = { minimal: "low", low: "low", medium: "medium", high: "high" }[level];
+        if (levelEffort) result.reasoning_effort = levelEffort;
+      } else {
+        const effort = budgetToEffort(tc.thinkingBudget || 0);
+        if (effort) result.reasoning_effort = effort;
+      }
     }
+  }
+
+  // Tool config (functionCallingConfig) → tool_choice, so NONE/ANY survive the pivot.
+  const toolChoice = mapGeminiToolConfigToOpenAI(req);
+  if (toolChoice !== undefined) {
+    result.tool_choice = toolChoice;
   }
 
   // System instruction
@@ -50,6 +66,7 @@ export function antigravityToOpenAIRequest(model, body, stream) {
 
   // Convert contents to messages
   if (req.contents && Array.isArray(req.contents)) {
+    assignStableFunctionIds(req.contents);
     for (const content of req.contents) {
       const converted = convertContent(content);
       if (converted) {
@@ -159,6 +176,20 @@ function convertContent(content) {
       });
     }
 
+    // File URIs (e.g. GCS/HTTP URIs Gemini itself returned) — same as X14.
+    if (part.fileData) {
+      const uri = part.fileData.fileUri || "";
+      const mime = part.fileData.mimeType || "";
+      if (mime.startsWith("image/")) {
+        textParts.push({
+          type: OPENAI_BLOCK.IMAGE_URL,
+          image_url: { url: uri }
+        });
+      } else if (uri) {
+        textParts.push({ type: OPENAI_BLOCK.TEXT, text: `[File: ${uri}]` });
+      }
+    }
+
     // Function call
     if (part.functionCall) {
       toolCalls.push({
@@ -174,11 +205,17 @@ function convertContent(content) {
 
     // Function response → collect all, each becomes a separate tool message
     if (part.functionResponse) {
-      toolResults.push({
+      const fr = part.functionResponse;
+      const toolMsg = {
         role: ROLE.TOOL,
-        tool_call_id: part.functionResponse.id || `call_${part.functionResponse.name}`,
-        content: JSON.stringify(part.functionResponse.response?.result || part.functionResponse.response || {})
-      });
+        tool_call_id: fr.id || `call_${fr.name}`,
+        content: JSON.stringify(fr.response?.result ?? fr.response ?? {})
+      };
+      // Failed tool executions must not look successful downstream.
+      if (fr.status === "ERROR" || fr.isError === true || fr.is_error === true) {
+        toolMsg.is_error = true;
+      }
+      toolResults.push(toolMsg);
     }
   }
 
@@ -196,7 +233,8 @@ function convertContent(content) {
       if (toolCalls.length > 0) {
         assistantMsg.tool_calls = toolCalls;
       }
-      return [...toolResults, assistantMsg];
+      // OpenAI requires calls before results.
+      return [assistantMsg, ...toolResults];
     }
     return toolResults;
   }
@@ -233,7 +271,7 @@ function convertContent(content) {
 function extractText(instruction) {
   if (typeof instruction === "string") return instruction;
   if (instruction.parts && Array.isArray(instruction.parts)) {
-    return instruction.parts.map(p => p.text || "").join("");
+    return instruction.parts.map(p => p.text || "").filter(Boolean).join("\n");
   }
   return "";
 }

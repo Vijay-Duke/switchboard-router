@@ -49,8 +49,9 @@ describe("toOpenAIFinish - commandcode", () => {
   it("tool-calls -> tool_calls", () => {
     expect(toOpenAIFinish("tool-calls", "commandcode")).toBe("tool_calls");
   });
-  it("unknown passthrough", () => {
-    expect(toOpenAIFinish("xyz", "commandcode")).toBe("xyz");
+  it("unknown collapses to stop (never echo invalid hub reasons)", () => {
+    expect(toOpenAIFinish("xyz", "commandcode")).toBe("stop");
+    expect(toOpenAIFinish("other", "commandcode")).toBe("stop");
   });
 });
 

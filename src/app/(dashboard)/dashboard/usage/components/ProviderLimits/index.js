@@ -37,7 +37,7 @@ import {
   QUOTA_SORT_OPTIONS,
 } from "./utils";
 import Card from "@/shared/components/Card";
-import { ConfirmModal, EditConnectionModal } from "@/shared/components";
+import { ConfirmModal, EditConnectionModal, Modal } from "@/shared/components";
 import { USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { reportClientError } from "@/shared/utils/clientFeedback";
@@ -350,40 +350,42 @@ export default function ProviderLimits() {
       setDeletingId(id);
       try {
         const res = await fetch(`/api/providers/${id}`, { method: "DELETE" });
-        if (res.ok) {
-          setQuotaData((prev) => {
-            const next = { ...prev };
-            delete next[id];
-            return next;
-          });
-          setLoading((prev) => {
-            const next = { ...prev };
-            delete next[id];
-            return next;
-          });
-          setErrors((prev) => {
-            const next = { ...prev };
-            delete next[id];
-            return next;
-          });
-
-          if (typeof window !== "undefined") {
-            try {
-              const cache = getQuotaCache();
-              if (cache[id]) {
-                delete cache[id];
-                window.localStorage.setItem(
-                  QUOTA_CACHE_KEY,
-                  JSON.stringify(cache),
-                );
-              }
-            } catch (e) {
-              reportClientError("Error deleting cache entry:", e);
-            }
-          }
-
-          await reconcileConnectionsPage(fetchConnections, page);
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `Failed to delete connection (HTTP ${res.status})`);
         }
+        setQuotaData((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        setLoading((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        setErrors((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+
+        if (typeof window !== "undefined") {
+          try {
+            const cache = getQuotaCache();
+            if (cache[id]) {
+              delete cache[id];
+              window.localStorage.setItem(
+                QUOTA_CACHE_KEY,
+                JSON.stringify(cache),
+              );
+            }
+          } catch (e) {
+            reportClientError("Error deleting cache entry:", e);
+          }
+        }
+
+        await reconcileConnectionsPage(fetchConnections, page);
       } catch (error) {
         reportClientError("Error deleting connection:", error);
       } finally {
@@ -402,13 +404,15 @@ export default function ProviderLimits() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ isActive }),
         });
-        if (res.ok) {
-          setQuotaData((prev) => {
-            const next = { ...prev };
-            return next;
-          });
-          await reconcileConnectionsPage(fetchConnections, page);
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `Failed to update connection (HTTP ${res.status})`);
         }
+        setQuotaData((prev) => {
+          const next = { ...prev };
+          return next;
+        });
+        await reconcileConnectionsPage(fetchConnections, page);
       } catch (error) {
         reportClientError("Error updating connection status:", error);
       } finally {
@@ -429,13 +433,15 @@ export default function ProviderLimits() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(formData),
         });
-        if (res.ok) {
-          await fetchConnections();
-          setShowEditModal(false);
-          setSelectedConnection(null);
-          if (USAGE_SUPPORTED_PROVIDERS.includes(provider)) {
-            await fetchQuota(connectionId, provider);
-          }
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `Failed to save connection (HTTP ${res.status})`);
+        }
+        await fetchConnections();
+        setShowEditModal(false);
+        setSelectedConnection(null);
+        if (USAGE_SUPPORTED_PROVIDERS.includes(provider)) {
+          await fetchQuota(connectionId, provider);
         }
       } catch (error) {
         reportClientError("Error saving connection:", error);
@@ -541,13 +547,18 @@ export default function ProviderLimits() {
       const r = await fetch("/api/settings", { cache: "no-store" });
       const s = r.ok ? await r.json() : {};
       const cfg = { ...(s[settingsKey] || {}), connections: nextProviderMap };
-      await fetch("/api/settings", {
+      const patchRes = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [settingsKey]: cfg }),
       });
-    } catch {
+      if (!patchRes.ok) {
+        const body = await patchRes.json().catch(() => ({}));
+        throw new Error(body.error || `Failed to save auto-ping (HTTP ${patchRes.status})`);
+      }
+    } catch (error) {
       setAutoPingMaps(previous);
+      reportClientError("Error updating auto-ping:", error);
     }
   }, [autoPingMaps]);
 
@@ -638,15 +649,31 @@ export default function ProviderLimits() {
       if (!targetIds.length || bulkToggling) return;
       setBulkToggling(true);
       try {
-        await Promise.all(
-          targetIds.map((id) =>
-            fetch(`/api/providers/${id}`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ isActive }),
-            }),
-          ),
+        const results = await Promise.all(
+          targetIds.map(async (id) => {
+            try {
+              const res = await fetch(`/api/providers/${id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ isActive }),
+              });
+              if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.error || `HTTP ${res.status}`);
+              }
+              return { id, ok: true };
+            } catch (error) {
+              return { id, ok: false, error };
+            }
+          }),
         );
+        const failed = results.filter((r) => !r.ok);
+        if (failed.length > 0) {
+          reportClientError(
+            `Bulk toggle: ${results.length - failed.length} of ${results.length} updated:`,
+            failed[0].error
+          );
+        }
         await reconcileConnectionsPage(fetchConnections, page);
       } catch (error) {
         reportClientError("Error bulk toggling connections:", error);
@@ -1336,78 +1363,67 @@ export default function ProviderLimits() {
         loading={Boolean(resettingLimitId)}
       />
 
-      {resetCreditsState && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-black/15 bg-white shadow-2xl ring-1 ring-black/10 dark:border-white/15 dark:bg-neutral-950 dark:ring-white/10">
-            <div className="flex items-start justify-between gap-3 border-b border-black/10 bg-black/[0.03] px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]">
-              <div className="min-w-0">
-                <h3 className="text-base font-semibold text-text-primary">Codex Reset Credit Expiry</h3>
-                <p className="mt-0.5 truncate text-xs text-text-muted">
-                  {getConnectionLabel(resetCreditsState.connection) || "Codex account"}
-                </p>
+      <Modal
+        isOpen={Boolean(resetCreditsState)}
+        onClose={() => setResetCreditsState(null)}
+        title="Codex Reset Credit Expiry"
+        size="full"
+      >
+        {resetCreditsState && (
+          <div className="space-y-3">
+            <p className="truncate text-xs text-text-muted">
+              {getConnectionLabel(resetCreditsState.connection) || "Codex account"}
+            </p>
+            {resetCreditsState.loading ? (
+              <div className="flex items-center justify-center gap-2 py-10 text-sm text-text-muted">
+                <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
+                Loading reset credits...
               </div>
-              <button
-                type="button"
-                onClick={() => setResetCreditsState(null)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-black/5 hover:text-text-primary dark:hover:bg-white/5"
-                aria-label="Close reset credit expiry modal"
-              >
-                <span className="material-symbols-outlined text-[18px]">close</span>
-              </button>
-            </div>
-
-            <div className="max-h-[70vh] overflow-auto bg-white p-4 dark:bg-neutral-950">
-              {resetCreditsState.loading ? (
-                <div className="flex items-center justify-center gap-2 py-10 text-sm text-text-muted">
-                  <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
-                  Loading reset credits...
+            ) : resetCreditsState.error ? (
+              <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-300">
+                {resetCreditsState.error}
+              </div>
+            ) : resetCreditsState.data?.credits?.length ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2 text-xs text-text-muted dark:border-white/10 dark:bg-white/[0.03]">
+                  <span>{resetCreditsState.data.credits.length} reset credit{resetCreditsState.data.credits.length === 1 ? "" : "s"}</span>
+                  <span>{resetCreditsState.data.availableCount ?? 0} available</span>
                 </div>
-              ) : resetCreditsState.error ? (
-                <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-300">
-                  {resetCreditsState.error}
-                </div>
-              ) : resetCreditsState.data?.credits?.length ? (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between rounded-xl border border-black/10 bg-black/[0.02] px-3 py-2 text-xs text-text-muted dark:border-white/10 dark:bg-white/[0.03]">
-                    <span>{resetCreditsState.data.credits.length} reset credit{resetCreditsState.data.credits.length === 1 ? "" : "s"}</span>
-                    <span>{resetCreditsState.data.availableCount ?? 0} available</span>
-                  </div>
-                  <div className="overflow-x-auto rounded-xl border border-black/10 dark:border-white/10">
-                    <table className="w-full min-w-[560px] text-left text-sm">
-                      <thead className="bg-black/[0.03] text-xs uppercase tracking-wide text-text-muted dark:bg-white/[0.04]">
-                        <tr>
-                          <th className="px-3 py-2 font-medium">Status</th>
-                          <th className="px-3 py-2 font-medium">Granted At</th>
-                          <th className="px-3 py-2 font-medium">Expires At</th>
-                          <th className="px-3 py-2 font-medium">Remaining</th>
+                <div className="overflow-x-auto rounded-xl border border-black/10 dark:border-white/10">
+                  <table className="w-full min-w-[560px] text-left text-sm">
+                    <thead className="bg-black/[0.03] text-xs uppercase tracking-wide text-text-muted dark:bg-white/[0.04]">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Status</th>
+                        <th className="px-3 py-2 font-medium">Granted At</th>
+                        <th className="px-3 py-2 font-medium">Expires At</th>
+                        <th className="px-3 py-2 font-medium">Remaining</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {resetCreditsState.data.credits.map((credit, index) => (
+                        <tr key={`${credit.status}-${credit.expiresAt || index}`} className="border-t border-black/5 dark:border-white/5">
+                          <td className="px-3 py-2">
+                            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                              {credit.status || "unknown"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-text-muted">{formatCreditDate(credit.grantedAt)}</td>
+                          <td className="px-3 py-2 text-text-primary">{formatCreditDate(credit.expiresAt)}</td>
+                          <td className="px-3 py-2 font-medium text-text-primary">{formatTimeRemaining(credit.expiresAt)}</td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {resetCreditsState.data.credits.map((credit, index) => (
-                          <tr key={`${credit.status}-${credit.expiresAt || index}`} className="border-t border-black/5 dark:border-white/5">
-                            <td className="px-3 py-2">
-                              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                                {credit.status || "unknown"}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2 text-text-muted">{formatCreditDate(credit.grantedAt)}</td>
-                            <td className="px-3 py-2 text-text-primary">{formatCreditDate(credit.expiresAt)}</td>
-                            <td className="px-3 py-2 font-medium text-text-primary">{formatTimeRemaining(credit.expiresAt)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-              ) : (
-                <div className="rounded-xl border border-black/10 bg-black/[0.02] px-3 py-8 text-center text-sm text-text-muted dark:border-white/10 dark:bg-white/[0.03]">
-                  No reset credit details returned for this account.
-                </div>
-              )}
-            </div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-black/10 bg-black/[0.02] px-3 py-8 text-center text-sm text-text-muted dark:border-white/10 dark:bg-white/[0.03]">
+                No reset credit details returned for this account.
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
       <EditConnectionModal
         isOpen={showEditModal}

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const proxyAwareFetch = vi.hoisted(() => vi.fn());
 
 vi.mock("open-sse/utils/ssrfGuard.js", () => ({ assertPublicUrlResolved: vi.fn() }));
-vi.mock("open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch }));
+vi.mock("open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch, proxyOptionsFromCredentials: () => null }));
 
 const { handleEmbeddingsCore } = await import("open-sse/handlers/embeddingsCore.js");
 const { runWithClientKeyLease } = await import("@/sse/services/clientKeyPolicy.js");

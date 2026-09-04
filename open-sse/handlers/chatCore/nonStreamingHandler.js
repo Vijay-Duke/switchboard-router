@@ -4,11 +4,42 @@ import { projectCompletionToClientFormat, responsesApiToOpenAICompletion } from 
 import { addBufferToUsage, filterUsageForFormat } from "../../utils/usageTracking.js";
 import { createErrorResult } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
-import { convertChatCompletionsStreamToJson } from "../../transformer/streamToJsonConverter.js";
+import { convertChatCompletionsStreamToJson, streamToJsonMaxBytes, assertWithinMaxBytes } from "../../transformer/streamToJsonConverter.js";
 import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, settleUsageStats } from "./requestDetail.js";
 import { appendRequestLog, saveRequestDetail } from "../../runtimeDeps.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
 import { extractThinkTags } from "../../utils/thinkExtractor.js";
+
+// Read a JSON body without ever holding more than `limit` bytes: the byte
+// count is checked per chunk, so an oversized (chunked, no content-length)
+// upstream body throws before it is fully buffered instead of OOMing.
+async function readBoundedText(providerResponse, limit) {
+  if (!providerResponse.body || typeof providerResponse.body.getReader !== "function") {
+    const text = await providerResponse.text();
+    assertWithinMaxBytes(new TextEncoder().encode(text).byteLength, limit);
+    return text;
+  }
+  const reader = providerResponse.body.getReader();
+  const decoder = new TextDecoder();
+  let bytesRead = 0;
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytesRead += value?.byteLength || 0;
+      assertWithinMaxBytes(bytesRead, limit);
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+  } catch (err) {
+    reader.cancel().catch(() => {});
+    throw err;
+  } finally {
+    try { reader.releaseLock(); } catch { /* already released */ }
+  }
+  return text;
+}
 
 /**
  * Normalize non-streaming provider response body → OpenAI chat.completion shape.
@@ -49,7 +80,7 @@ export function translateNonStreamingResponse(responseBody, targetFormat) {
         else if (part.text !== undefined) textContent += part.text;
         if (part.functionCall) {
           toolCalls.push({
-            id: `call_${part.functionCall.name}_${Date.now()}_${toolCalls.length}`,
+            id: `call_${part.functionCall.name}_${toolCalls.length}`,
             type: "function",
             function: { name: part.functionCall.name, arguments: JSON.stringify(part.functionCall.args || {}) }
           });
@@ -69,7 +100,12 @@ export function translateNonStreamingResponse(responseBody, targetFormat) {
     if (toolCalls.length > 0) message.tool_calls = toolCalls;
     if (!message.content && !message.tool_calls) message.content = "";
 
-    let finishReason = (candidate.finishReason || "stop").toLowerCase();
+    // Map Gemini finish reasons to the OpenAI enum; unknown reasons degrade to
+    // stop instead of leaking raw provider strings to OpenAI clients.
+    const rawFinish = String(candidate.finishReason || "STOP").toUpperCase();
+    let finishReason = "stop";
+    if (rawFinish === "MAX_TOKENS") finishReason = "length";
+    else if (rawFinish === "SAFETY" || rawFinish === "RECITATION" || rawFinish === "BLOCKLIST" || rawFinish === "PROHIBITED_CONTENT") finishReason = "content_filter";
     if (finishReason === "stop" && toolCalls.length > 0) finishReason = "tool_calls";
 
     // L2: unparseable createTime → NaN → JSON null; OpenAI schema wants integer
@@ -114,10 +150,21 @@ export function translateNonStreamingResponse(responseBody, targetFormat) {
 
     for (const block of (responseBody.content || [])) {
       if (block.type === "text") {
-        // Strip markdown code block markers (e.g. kimi wraps JSON in ```json...```)
+        // Strip markdown code fences only when the block is wrapped JSON
+        // (e.g. kimi wraps JSON in ```json...```) — legitimate code samples
+        // that start with ```json keep their fences.
         const raw = block.text ?? "";
-        const text = raw.replace(/^\s*```\s*json\s*\n?/i, "").replace(/\n?\s*```\s*$/i, "");
-        textContent += text;
+        const stripped = raw.replace(/^\s*```\s*json\s*\n?/i, "").replace(/\n?\s*```\s*$/i, "");
+        if (stripped !== raw) {
+          try {
+            JSON.parse(stripped);
+            textContent += stripped;
+          } catch {
+            textContent += raw;
+          }
+        } else {
+          textContent += raw;
+        }
       } else if (block.type === "thinking") thinkingContent += block.thinking || "";
       else if (block.type === "tool_use") {
         toolCalls.push({ id: block.id, type: "function", function: { name: block.name, arguments: JSON.stringify(block.input || {}) } });
@@ -163,7 +210,7 @@ export function translateNonStreamingResponse(responseBody, targetFormat) {
 /**
  * Handle non-streaming response from provider.
  */
-export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, requestId, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, trackDone, appendLog, pxpipe }) {
+export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, requestId, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, trackDone, appendLog, pxpipe, streamSignal }) {
   trackDone();
   const contentType = providerResponse.headers.get("content-type") || "";
   let responseBody;
@@ -171,7 +218,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   if (contentType.includes("text/event-stream")) {
     let parsed;
     try {
-      parsed = await convertChatCompletionsStreamToJson(providerResponse.body, model);
+      parsed = await convertChatCompletionsStreamToJson(providerResponse.body, model, { signal: streamSignal });
     } catch (err) {
       appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
       console.error(`[ChatCore] Failed to convert SSE response from ${provider}:`, err.message);
@@ -184,7 +231,14 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     responseBody = parsed;
   } else {
     try {
-      responseBody = await providerResponse.json();
+      // Bound assembly like the SSE→JSON converters (STREAM_TO_JSON_MAX_BYTES):
+      // a huge non-stream body must fail fast, not OOM the worker.
+      const limit = streamToJsonMaxBytes();
+      const declaredLength = Number(providerResponse.headers.get("content-length"));
+      if (Number.isFinite(declaredLength) && declaredLength > limit) {
+        throw new Error(`Upstream JSON body (${declaredLength} bytes) exceeds limit (${limit} bytes)`);
+      }
+      responseBody = JSON.parse(await readBoundedText(providerResponse, limit));
     } catch (err) {
       appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
       console.error(`[ChatCore] Failed to parse JSON from ${provider}:`, err.message);

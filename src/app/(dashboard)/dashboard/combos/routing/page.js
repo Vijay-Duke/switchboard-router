@@ -47,13 +47,32 @@ function buildWorkerColors(workers) {
   return map;
 }
 
+/**
+ * O27: unscored workers (avgScore null) render "—", never a misleading 0.
+ * @param {number|null|undefined} value
+ */
+export function formatWorkerScoreLabel(value) {
+  return value == null ? "—" : Math.round(Number(value));
+}
+
+/**
+ * O26: routing timestamps are UTC ISO strings — render local time like every
+ * other dashboard surface instead of a sliced UTC string with no TZ marker.
+ * @param {string|null|undefined} timestamp
+ */
+export function formatRoutingTimestamp(timestamp) {
+  if (!timestamp) return "—";
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? String(timestamp) : date.toLocaleString();
+}
+
 function WorkerTooltip({ active, payload }) {
   if (!active || !payload?.length) return null;
   const model = payload[0].payload;
   return (
     <div className="font-mono" style={TOOLTIP_STYLE}>
       <p className="mb-1 text-text-muted">{model.worker}</p>
-      <p className="text-text-main">Score: {Math.round(Number(model.avgScore) || 0)}</p>
+      <p className="text-text-main">Score: {formatWorkerScoreLabel(model.avgScore)}</p>
       {model.winRate != null && (
         <p className="text-text-main">Win rate: {Math.round(model.winRate * 100)}%</p>
       )}
@@ -262,37 +281,6 @@ function RoutingInsightsInner() {
             <option value={30}>last 30 days</option>
             <option value={90}>last 90 days</option>
           </select>
-          <select
-            value={cluster}
-            onChange={(e) => setCluster(e.target.value)}
-            className="text-[11.5px] font-mono text-text-subtle px-2 py-1.5 rounded-[7px] bg-surface-2 border border-border max-w-[140px]"
-            title="Filter cluster"
-          >
-            <option value="">all clusters</option>
-            {(data?.clusters || []).map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-          <select
-            value={worker}
-            onChange={(e) => setWorker(e.target.value)}
-            className="text-[11.5px] font-mono text-text-subtle px-2 py-1.5 rounded-[7px] bg-surface-2 border border-border max-w-[160px]"
-            title="Filter worker"
-          >
-            <option value="">all workers</option>
-            {(data?.workers || []).map((w) => (
-              <option key={w} value={w}>{w.split("/").pop()}</option>
-            ))}
-          </select>
-          <label className="inline-flex items-center gap-1 text-[11px] text-text-muted cursor-pointer">
-            <input
-              type="checkbox"
-              className="rounded border-border"
-              checked={explorationOnly}
-              onChange={(e) => setExplorationOnly(e.target.checked)}
-            />
-            exploration only
-          </label>
           <Button size="sm" variant="secondary" onClick={load} disabled={loading}>
             Refresh
           </Button>
@@ -563,7 +551,7 @@ function RoutingInsightsInner() {
                       <LabelList
                         dataKey="avgScore"
                         position="right"
-                        formatter={(value) => Math.round(Number(value) || 0)}
+                        formatter={(value) => formatWorkerScoreLabel(value)}
                         fill="var(--color-text-muted)"
                         className="font-mono"
                       />
@@ -717,7 +705,47 @@ function RoutingInsightsInner() {
           </div>
 
           <Card padding="md">
-            <span className="text-[13px] font-semibold">Recent decisions</span>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[13px] font-semibold">Recent decisions</span>
+              {/* O6: these filters scope the decisions list below only —
+                  heatmap, trend, comparison and tiles always show the full window. */}
+              <div className="flex flex-wrap items-center gap-2" aria-label="Filter recent decisions">
+                <span className="text-[10.5px] font-mono text-text-subtle">filter decisions:</span>
+                <select
+                  value={cluster}
+                  onChange={(e) => setCluster(e.target.value)}
+                  className="text-[11.5px] font-mono text-text-subtle px-2 py-1.5 rounded-[7px] bg-surface-2 border border-border max-w-[140px]"
+                  title="Filter recent decisions by cluster"
+                  aria-label="Filter recent decisions by cluster"
+                >
+                  <option value="">all clusters</option>
+                  {(data?.clusters || []).map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                <select
+                  value={worker}
+                  onChange={(e) => setWorker(e.target.value)}
+                  className="text-[11.5px] font-mono text-text-subtle px-2 py-1.5 rounded-[7px] bg-surface-2 border border-border max-w-[160px]"
+                  title="Filter recent decisions by worker"
+                  aria-label="Filter recent decisions by worker"
+                >
+                  <option value="">all workers</option>
+                  {(data?.workers || []).map((w) => (
+                    <option key={w} value={w}>{w.split("/").pop()}</option>
+                  ))}
+                </select>
+                <label className="inline-flex items-center gap-1 text-[11px] text-text-muted cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="rounded border-border"
+                    checked={explorationOnly}
+                    onChange={(e) => setExplorationOnly(e.target.checked)}
+                  />
+                  exploration only
+                </label>
+              </div>
+            </div>
             <div className="mt-3 overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="text-text-subtle font-mono uppercase tracking-wide">
@@ -736,7 +764,7 @@ function RoutingInsightsInner() {
                     return (
                     <tr key={e.id} className="border-t border-border">
                       <td className="py-1.5 pr-2 font-mono text-text-muted whitespace-nowrap">
-                        {e.timestamp?.slice(0, 19)?.replace("T", " ")}
+                        {formatRoutingTimestamp(e.timestamp)}
                         {e.meta?.exploration ? (
                           <span className="ml-1 text-[9px] text-primary">ε</span>
                         ) : null}
@@ -809,7 +837,7 @@ function RoutingInsightsInner() {
                   className="flex flex-wrap gap-2 text-[11px] font-mono border-b border-border py-1"
                 >
                   <span className="text-text-muted">
-                    {e.timestamp?.slice(0, 19)?.replace("T", " ")}
+                    {formatRoutingTimestamp(e.timestamp)}
                   </span>
                   <span>{e.cluster || "—"}</span>
                   <span className="text-primary">{e.pickedWorker?.split("/").pop()}</span>

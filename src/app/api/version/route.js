@@ -96,6 +96,12 @@ function looksLikeOurPackage(meta, expectedName) {
   return false;
 }
 
+// Module-level memo: the npm lookup takes 1.5–4 s and every dashboard
+// mount hits this route, so cache a successful lookup for an hour and
+// serve the stale entry when the registry is unreachable.
+let versionCache = null; // { at: number, payload: object }
+const VERSION_CACHE_TTL_MS = 60 * 60 * 1000;
+
 export async function GET() {
   const currentVersion = pkg.version;
   const packageName = resolveNpmPackageName();
@@ -110,8 +116,15 @@ export async function GET() {
     });
   }
 
+  const now = Date.now();
+  if (versionCache && now - versionCache.at < VERSION_CACHE_TTL_MS) {
+    return Response.json(versionCache.payload);
+  }
+
   const meta = await fetchLatestPackage(packageName);
   if (!meta?.version) {
+    // Registry unreachable — serve the stale entry instead of a blank miss.
+    if (versionCache) return Response.json(versionCache.payload);
     return Response.json({
       currentVersion,
       latestVersion: null,
@@ -135,10 +148,12 @@ export async function GET() {
   const latestVersion = meta.version;
   const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
 
-  return Response.json({
+  const payload = {
     currentVersion,
     latestVersion,
     hasUpdate,
     packageName,
-  });
+  };
+  versionCache = { at: Date.now(), payload };
+  return Response.json(payload);
 }

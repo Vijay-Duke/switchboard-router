@@ -138,7 +138,8 @@ export async function DELETE() {
         let backup = null;
         try { backup = JSON.parse(await fs.readFile(getBackupPath(), "utf-8")); } catch { /* legacy */ }
         const managed = current.provider === "openai"
-            && current.providers?.openai?.base_url === backup?.managedBaseUrl;
+            && (current.providers?.openai?.base_url === backup?.managedBaseUrl
+                || (!backup && hasSwitchboardConfig(current)));
         if (managed) {
             if (backup?.provider) current.provider = backup.provider;
             else delete current.provider;

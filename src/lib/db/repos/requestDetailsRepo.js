@@ -1,5 +1,6 @@
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { registerAdapterCloser } from "../adapters/adapterShutdownRegistry.js";
 import { noteBodyLength } from "../../../../open-sse/utils/usageTracking.js";
 
 const DEFAULT_MAX_RECORDS = 200;
@@ -68,6 +69,52 @@ function sanitizeHeaders(headers) {
     if (sensitiveKeys.some((s) => key.toLowerCase().includes(s))) delete sanitized[key];
   }
   return sanitized;
+}
+
+export const REDACTED_BODY_VALUE = "[REDACTED]";
+
+// Secret-typed keys stripped from stored request/response bodies (same idea as
+// SECRET_FIELDS in connectionsRepo.js, plus header-style names), matched
+// case-insensitively with -/_ ignored so apiKey/api_key/API-KEY all hit.
+// Exact-name match only: "tokens" (prompt/completion counts) must survive.
+const BODY_SECRET_KEYS = new Set([
+  "accesstoken", "refreshtoken", "idtoken", "apikey", "copilottoken",
+  "cookies", "clientsecret", "secretaccesskey",
+  "authorization", "xapikey", "xswitchboardkey", "cookie", "token",
+  "password", "passwd", "secret", "bearer", "setcookie", "xauthtoken",
+]);
+
+function isSecretBodyKey(key) {
+  return BODY_SECRET_KEYS.has(String(key).toLowerCase().replace(/[-_]/g, ""));
+}
+
+/**
+ * Deep-strip secret-typed values from a stored body. Never mutates the input;
+ * secret values (string or nested) become "[REDACTED]". Copy-on-write: a body
+ * with nothing to redact is returned by reference so the identity-keyed
+ * truncation memo below (P8) still hits for the common clean case.
+ * @param {*} value
+ * @param {WeakSet<object>} [seen] cycle guard (truncateField tolerates cycles; so must this)
+ */
+export function sanitizeBody(value, seen = new WeakSet()) {
+  if (!value || typeof value !== "object") return value;
+  if (seen.has(value)) return value;
+  seen.add(value);
+  let out = null;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      const nv = sanitizeBody(value[i], seen);
+      if (nv !== value[i] && !out) out = value.slice();
+      if (out) out[i] = nv;
+    }
+    return out || value;
+  }
+  for (const [k, v] of Object.entries(value)) {
+    const nv = isSecretBodyKey(k) ? REDACTED_BODY_VALUE : sanitizeBody(v, seen);
+    if (nv !== v && !out) out = { ...value };
+    if (out) out[k] = nv;
+  }
+  return out || value;
 }
 
 function generateDetailId(model) {
@@ -139,81 +186,137 @@ function shrinkDetail(detail, maxJsonSize) {
   if (out.request?.headers) {
     out.request = { ...out.request, headers: sanitizeHeaders(out.request.headers) };
   }
-  out.request = truncateField(out.request, maxJsonSize);
-  out.providerRequest = truncateField(out.providerRequest, maxJsonSize);
-  out.providerResponse = truncateField(out.providerResponse, maxJsonSize);
-  out.response = truncateField(out.response, maxJsonSize);
+  out.request = truncateField(sanitizeBody(out.request), maxJsonSize);
+  out.providerRequest = truncateField(sanitizeBody(out.providerRequest), maxJsonSize);
+  out.providerResponse = truncateField(sanitizeBody(out.providerResponse), maxJsonSize);
+  out.response = truncateField(sanitizeBody(out.response), maxJsonSize);
   // Drop accidental full-body clones nested under unknown keys
-  if (out.body) out.body = truncateField(out.body, maxJsonSize);
-  if (out.raw) out.raw = truncateField(out.raw, maxJsonSize);
+  if (out.body) out.body = truncateField(sanitizeBody(out.body), maxJsonSize);
+  if (out.raw) out.raw = truncateField(sanitizeBody(out.raw), maxJsonSize);
   return out;
+}
+
+function buildDetailRecord(item, config) {
+  if (!item.id) item.id = generateDetailId(item.model);
+  if (!item.timestamp) item.timestamp = new Date().toISOString();
+
+  // Fields already truncated on push; re-truncate defensively in case
+  // maxJsonSize was lowered between push and flush.
+  return {
+    id: item.id,
+    provider: item.provider || null,
+    model: item.model || null,
+    connectionId: item.connectionId || null,
+    timestamp: item.timestamp,
+    status: item.status || null,
+    latency: item.latency || {},
+    tokens: item.tokens || {},
+    request: truncateField(item.request, config.maxJsonSize),
+    providerRequest: truncateField(item.providerRequest, config.maxJsonSize),
+    providerResponse: truncateField(item.providerResponse, config.maxJsonSize),
+    response: truncateField(item.response, config.maxJsonSize),
+    pxpipe: item.pxpipe || undefined,
+    // Cap hits: one entry per compressed tool_result; pathological histories stay bounded.
+    rtk: item.rtk ? { ...item.rtk, hits: item.rtk.hits?.slice(0, 50) } : undefined,
+  };
+}
+
+function insertDetailItemsSync(db, config, items) {
+  db.transaction(() => {
+    for (const item of items) {
+      const record = buildDetailRecord(item, config);
+      db.run(
+        `INSERT INTO requestDetails(id, timestamp, provider, model, connectionId, status, data) VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp, provider = excluded.provider, model = excluded.model, connectionId = excluded.connectionId, status = excluded.status, data = excluded.data`,
+        [record.id, record.timestamp, record.provider, record.model, record.connectionId, record.status, stringifyJson(record)]
+      );
+    }
+
+    // Retention via a single index-seek cutoff + range delete (both use
+    // idx_rd_ts), so an under-cap flush pays one seek instead of a
+    // full-table pass. The cutoff is the oldest row to keep; rows sharing
+    // its exact timestamp survive, which is acceptable.
+    const cut = db.get(
+      `SELECT timestamp FROM requestDetails ORDER BY timestamp DESC LIMIT 1 OFFSET ?`,
+      [Math.max(0, config.maxRecords - 1)]
+    );
+    if (cut) {
+      db.run(`DELETE FROM requestDetails WHERE timestamp < ?`, [cut.timestamp]);
+    }
+  });
+}
+
+// Last-known live adapter + config for the synchronous SIGTERM/SIGINT drain.
+// Refresh on every flush (and best-effort on save) so a signal that arrives
+// before any async flush still has something to write through.
+let lastSyncAdapter = null;
+let lastSyncConfig = null;
+
+/**
+ * Synchronously drain the write buffer (SIGTERM/SIGINT path — signals cannot
+ * await). Best-effort: returns the flushed count, never throws.
+ */
+export function flushRequestDetailsSync() {
+  if (writeBuffer.length === 0) return 0;
+  const db = lastSyncAdapter;
+  const config = lastSyncConfig;
+  if (!db || !config) return 0;
+  try {
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    const items = writeBuffer.splice(0, writeBuffer.length);
+    try {
+      insertDetailItemsSync(db, config, items);
+    } catch {
+      writeBuffer.unshift(...items);
+      return 0;
+    }
+    return items.length;
+  } catch {
+    return 0;
+  }
 }
 
 async function flushToDatabase() {
   if (isFlushing) return;
   if (writeBuffer.length === 0) return;
   isFlushing = true;
+  let failure = null;
   try {
     // Drain entire buffer (loop in case more pushed during await)
     while (writeBuffer.length > 0) {
       const items = writeBuffer.splice(0, writeBuffer.length);
-      const db = await getAdapter();
-      const config = await getObservabilityConfig();
-
-      db.transaction(() => {
-        for (const item of items) {
-          if (!item.id) item.id = generateDetailId(item.model);
-          if (!item.timestamp) item.timestamp = new Date().toISOString();
-
-          // Fields already truncated on push; re-truncate defensively in case
-          // maxJsonSize was lowered between push and flush.
-          const record = {
-            id: item.id,
-            provider: item.provider || null,
-            model: item.model || null,
-            connectionId: item.connectionId || null,
-            timestamp: item.timestamp,
-            status: item.status || null,
-            latency: item.latency || {},
-            tokens: item.tokens || {},
-            request: truncateField(item.request, config.maxJsonSize),
-            providerRequest: truncateField(item.providerRequest, config.maxJsonSize),
-            providerResponse: truncateField(item.providerResponse, config.maxJsonSize),
-            response: truncateField(item.response, config.maxJsonSize),
-            pxpipe: item.pxpipe || undefined,
-            // Cap hits: one entry per compressed tool_result; pathological histories stay bounded.
-            rtk: item.rtk ? { ...item.rtk, hits: item.rtk.hits?.slice(0, 50) } : undefined,
-          };
-
-          db.run(
-            `INSERT INTO requestDetails(id, timestamp, provider, model, connectionId, status, data) VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET timestamp = excluded.timestamp, provider = excluded.provider, model = excluded.model, connectionId = excluded.connectionId, status = excluded.status, data = excluded.data`,
-            [record.id, record.timestamp, record.provider, record.model, record.connectionId, record.status, stringifyJson(record)]
-          );
-        }
-
-        // Retention via a single index-seek cutoff + range delete (both use
-        // idx_rd_ts), so an under-cap flush pays one seek instead of a
-        // full-table pass. The cutoff is the oldest row to keep; rows sharing
-        // its exact timestamp survive, which is acceptable.
-        const cut = db.get(
-          `SELECT timestamp FROM requestDetails ORDER BY timestamp DESC LIMIT 1 OFFSET ?`,
-          [Math.max(0, config.maxRecords - 1)]
-        );
-        if (cut) {
-          db.run(`DELETE FROM requestDetails WHERE timestamp < ?`, [cut.timestamp]);
-        }
-      });
+      try {
+        const db = await getAdapter();
+        const config = await getObservabilityConfig();
+        lastSyncAdapter = db;
+        lastSyncConfig = config;
+        insertDetailItemsSync(db, config, items);
+      } catch (e) {
+        // A spliced batch must never vanish silently (e.g. transient
+        // SQLITE_BUSY): re-queue it at the front and stop draining; the next
+        // save retries the flush.
+        failure = e;
+        writeBuffer.unshift(...items);
+        break;
+      }
     }
-  } catch (e) {
-    console.error("[requestDetailsRepo] Batch write failed:", e);
   } finally {
     isFlushing = false;
   }
+  if (failure) console.error("[requestDetailsRepo] Batch write failed:", failure);
 }
 
 export async function saveRequestDetail(detail) {
   const config = await getObservabilityConfig();
   if (!config.enabled) return;
+  lastSyncConfig = config;
+  // Best-effort adapter handle for the sync signal drain. Fire-and-forget so
+  // a slow/failing init never delays the save path.
+  try {
+    getAdapter().then(
+      (db) => { lastSyncAdapter = db; },
+      () => {}
+    );
+  } catch { /* ignore */ }
 
   // Truncate large payloads BEFORE buffering so heap stays bounded (#2472).
   const shrunk = shrinkDetail(detail, config.maxJsonSize);
@@ -298,6 +401,7 @@ export const flushPendingRequestDetails = async () => {
 };
 
 const BEFORE_EXIT_HANDLER_SLOT = "__switchboardRequestDetailsBeforeExitHandler";
+const SYNC_FLUSH_SLOT = "__switchboardRequestDetailsSyncFlushUnregister";
 
 function ensureShutdownHandler() {
   const previousHandler = globalThis[BEFORE_EXIT_HANDLER_SLOT];
@@ -306,4 +410,17 @@ function ensureShutdownHandler() {
   process.on("beforeExit", flushPendingRequestDetails);
 }
 
+function ensureSyncFlushRegistered() {
+  try {
+    const previousUnregister = globalThis[SYNC_FLUSH_SLOT];
+    if (typeof previousUnregister === "function") {
+      try { previousUnregister(); } catch { /* ignore */ }
+    }
+    // Runs on beforeExit AND synchronously on SIGTERM/SIGINT via the adapter
+    // shutdown registry, so buffered rows survive docker stop / restart.
+    globalThis[SYNC_FLUSH_SLOT] = registerAdapterCloser(flushRequestDetailsSync, { flush: true });
+  } catch { /* registry unavailable — beforeExit handler still covers clean exits */ }
+}
+
 ensureShutdownHandler();
+ensureSyncFlushRegistered();

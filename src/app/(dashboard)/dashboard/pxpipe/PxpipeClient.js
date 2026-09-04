@@ -90,6 +90,7 @@ export default function PxpipeClient() {
   const [logs, setLogs] = useState(null);
   const [windowId, setWindowId] = useState("last7d");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -99,18 +100,28 @@ export default function PxpipeClient() {
         fetch("/api/pxpipe/stats"),
         fetch("/api/pxpipe/logs?limit=50"),
       ]);
+      if (!statusRes.ok || !statsRes.ok || !logsRes.ok) {
+        throw new Error(`Failed to load PXPIPE data (HTTP ${statusRes.status}/${statsRes.status}/${logsRes.status})`);
+      }
       setStatus(await statusRes.json());
       setStats(await statsRes.json());
       setLogs(await logsRes.json());
       const healthRes = await fetch("/api/pxpipe/health", { method: "POST" });
+      if (!healthRes.ok) throw new Error(`PXPIPE health check failed (HTTP ${healthRes.status})`);
       setHealth(await healthRes.json());
-    } catch {
-      /* sections render placeholders */
+      setError("");
+    } catch (e) {
+      // Never adopt error payloads as real state, and never keep stale numbers
+      // looking live — clear them and say what failed.
+      setError(e?.message || "Failed to load PXPIPE data");
+      setStatus(null);
+      setStats(null);
+      setLogs(null);
+      setHealth(null);
     } finally {
       setLoading(false);
     }
   }, []);
-
   useEffect(() => {
     refresh();
   }, [refresh]);
@@ -125,9 +136,13 @@ export default function PxpipeClient() {
         : status.running
           ? "Running"
           : "Stopped";
-
   return (
     <div className="space-y-6 p-6">
+      {error && (
+        <div role="alert" className="border border-red-300 bg-red-500/10 rounded-lg px-3 py-2 text-sm text-red-600 dark:text-red-400">
+          {error}
+        </div>
+      )}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h2 className="text-lg font-semibold flex items-center gap-2">
           <span className="material-symbols-outlined text-primary">image</span>
@@ -276,7 +291,7 @@ export default function PxpipeClient() {
                       }`}
                       title={ev.detail || ""}
                     >
-                      {ev.applied ? "Compressed" : REASON_LABELS[ev.reason] || ev.reason}
+                      {ev.applied ? "Compressed" : REASON_LABELS[ev.reason] || ev.reason || "Skipped"}
                     </span>
                   </td>
                 </tr>

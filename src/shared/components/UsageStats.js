@@ -14,7 +14,7 @@ import Badge from "./Badge";
 import Card from "./Card";
 import Button from "./Button";
 import OverviewCards from "@/app/(dashboard)/dashboard/usage/components/OverviewCards";
-import UsageTable, { fmt, fmtTime } from "@/app/(dashboard)/dashboard/usage/components/UsageTable";
+import UsageTable, { fmt, fmtTime, getGroupProviderLabel, resolveUsageProviderName } from "@/app/(dashboard)/dashboard/usage/components/UsageTable";
 import ProviderTopology from "@/app/(dashboard)/dashboard/usage/components/ProviderTopology";
 import UsageChart from "@/app/(dashboard)/dashboard/usage/components/UsageChart";
 import { reportClientError } from "@/shared/utils/clientFeedback";
@@ -341,7 +341,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           emptyMessage: "No usage recorded yet.",
           renderSummaryCells: (group) => (
             <>
-              <td className="px-6 py-3 text-text-muted">—</td>
+              <td className="px-6 py-3 text-text-muted">{getGroupProviderLabel(group.items)}</td>
               <td className="px-6 py-3 text-right">{fmt(group.summary.requests)}</td>
               <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(group.summary.lastUsed)}</td>
             </>
@@ -349,7 +349,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           renderDetailCells: (item) => (
             <>
               <td className={`px-6 py-3 font-medium transition-colors ${item.pending > 0 ? "text-primary" : ""}`}>{item.rawModel}</td>
-              <td className="px-6 py-3"><Badge variant={item.pending > 0 ? "primary" : "neutral"} size="sm">{item.provider}</Badge></td>
+              <td className="px-6 py-3"><Badge variant={item.pending > 0 ? "primary" : "neutral"} size="sm">{resolveUsageProviderName(item.provider)}</Badge></td>
               <td className="px-6 py-3 text-right">{fmt(item.requests)}</td>
               <td className="px-6 py-3 text-right text-text-muted whitespace-nowrap">{fmtTime(item.lastUsed)}</td>
             </>

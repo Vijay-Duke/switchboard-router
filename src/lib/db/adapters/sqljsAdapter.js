@@ -133,8 +133,8 @@ export async function createSqlJsAdapter(filePath) {
     }
   }
 
-  // Flush on shutdown — beforeExit only. SIGINT/SIGTERM handled by CLI parent
-  // which now sends SIGTERM → 2s wait → SIGKILL (gives persist time to run).
+  // Flush on shutdown: the registry runs this on beforeExit AND on
+  // SIGTERM/SIGINT (synchronously, before re-raising the signal).
   const unregisterClose = registerAdapterCloser(close);
 
   return { driver: "sql.js", run, get, all, exec, transaction, close, raw: db };

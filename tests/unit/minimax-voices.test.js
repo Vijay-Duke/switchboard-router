@@ -1,27 +1,26 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/db/index.js", () => ({
   getProviderConnections: vi.fn(),
 }));
 
+// T126: the MiniMax voice catalog egress must go through proxyAwareFetch so
+// proxy-required environments behave like the MCP registry route. Route the
+// helper to a local mock so call assertions still work.
+const proxyFetchMock = vi.hoisted(() => vi.fn());
+vi.mock("open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: proxyFetchMock }));
+
 import { getProviderConnections } from "@/lib/db/index.js";
 import { GET } from "../../src/app/api/media-providers/tts/minimax/voices/route.js";
 
-const originalFetch = global.fetch;
-
 describe("MiniMax voices API", () => {
   beforeEach(() => {
-    global.fetch = vi.fn();
     vi.clearAllMocks();
   });
 
-  afterEach(() => {
-    global.fetch = originalFetch;
-  });
-
-  it("fetches global MiniMax voices with stored API key", async () => {
+  it("fetches global MiniMax voices with stored API key via proxyAwareFetch", async () => {
     getProviderConnections.mockResolvedValueOnce([{ apiKey: "test-key" }]);
-    global.fetch.mockResolvedValueOnce(
+    proxyFetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           system_voice: [
@@ -40,7 +39,7 @@ describe("MiniMax voices API", () => {
 
     expect(response.status).toBe(200);
     expect(getProviderConnections).toHaveBeenCalledWith({ provider: "minimax", isActive: true });
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(proxyFetchMock).toHaveBeenCalledWith(
       "https://api.minimax.io/v1/get_voice",
       expect.objectContaining({
         method: "POST",
@@ -62,7 +61,7 @@ describe("MiniMax voices API", () => {
 
   it("fetches China MiniMax voices when provider=minimax-cn", async () => {
     getProviderConnections.mockResolvedValueOnce([{ apiKey: "test-key" }]);
-    global.fetch.mockResolvedValueOnce(
+    proxyFetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           system_voice: [{ voice_id: "Chinese (Mandarin)_female_beijing", voice_name: "Female Beijing" }],
@@ -77,7 +76,7 @@ describe("MiniMax voices API", () => {
 
     expect(response.status).toBe(200);
     expect(getProviderConnections).toHaveBeenCalledWith({ provider: "minimax-cn", isActive: true });
-    expect(global.fetch.mock.calls[0][0]).toBe("https://api.minimaxi.com/v1/get_voice");
+    expect(proxyFetchMock.mock.calls[0][0]).toBe("https://api.minimaxi.com/v1/get_voice");
     expect(body.byLang["Chinese (Mandarin)"].voices[0].id).toBe("Chinese (Mandarin)_female_beijing");
   });
 });

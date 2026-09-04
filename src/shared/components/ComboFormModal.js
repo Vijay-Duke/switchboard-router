@@ -64,7 +64,13 @@ export default function ComboFormModal({ isOpen, combo, onClose, onSave, activeP
 
   useEffect(() => {
     if (!isOpen) return;
+    // Reset the create draft on every open so a previous name/models
+    // selection never leaks into the next create (or a later edit).
+    setName(initialName);
+    setModels(combo?.models || []);
+    setNameError("");
     fetch("/api/models/alias").then((r) => r.ok ? r.json() : null).then((d) => d && setModelAliases(d.aliases || {})).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   const validateName = (value) => {

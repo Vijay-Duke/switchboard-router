@@ -1,10 +1,11 @@
 "use client";
 // @ts-check
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, Button, ManualConfigModal, ComboFormModal, McpMarketplaceModal, ModelSelectModal } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
+import { cardHeaderToggleProps } from "./cardHeaderToggle";
 import ApiKeySelect from "./ApiKeySelect";
 
 const ENDPOINT = "/api/cli-tools/cowork-settings";
@@ -50,6 +51,16 @@ export default function CoworkToolCard({
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const [addMcpOpen, setAddMcpOpen] = useState(false);
   const [addMcpForm, setAddMcpForm] = useState({ name: "", url: "" });
+  // Init-once + dirty guards (T44): server state seeds the form exactly once;
+  // local edits set dirtyRef so background status refreshes never revert them.
+  // Cleared on successful Apply/Reset, when the server echo matches local state.
+  const statusInitRef = useRef(false);
+  const dirtyRef = useRef(false);
+  // BaseUrlSelect fires onChange once at mount (echo/default pick); that is
+  // not a user edit and must not dirty the form before the server state has
+  // seeded it. Editable controls only render once status.installed is shown,
+  // so "post-seed" == "user-reachable".
+  const markDirty = () => { if (statusInitRef.current) dirtyRef.current = true; };
 
   useEffect(() => {
     if (apiKeys?.length > 0 && !selectedApiKey) {
@@ -65,6 +76,14 @@ export default function CoworkToolCard({
     if (isExpanded && !status) checkStatus();
   }, [isExpanded, status]);
 
+  // Escape closes the Add Custom MCP dialog (T48).
+  useEffect(() => {
+    if (!addMcpOpen) return;
+    const onKey = (e) => { if (e.key === "Escape") setAddMcpOpen(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [addMcpOpen]);
+
   useEffect(() => {
     if (!isExpanded) return;
     fetch("/api/models/alias")
@@ -76,17 +95,16 @@ export default function CoworkToolCard({
   }, [isExpanded]);
 
   useEffect(() => {
+    if (!status || dirtyRef.current || statusInitRef.current) return;
+    statusInitRef.current = true;
     if (status?.cowork?.models?.length) {
       setSelectedModels(status.cowork.models);
-    }
-    if (status?.cowork?.baseUrl && !customBaseUrl) {
-      setCustomBaseUrl(stripV1(status.cowork.baseUrl));
     }
     // Initialize plugins: from current config, fallback to defaultPlugins
     if (Array.isArray(status?.cowork?.plugins) && status.cowork.plugins.length > 0) {
       setPlugins(status.cowork.plugins);
-    } else if (plugins.length === 0 && Array.isArray(status?.defaultPlugins)) {
-      setPlugins(status.defaultPlugins);
+    } else if (Array.isArray(status?.defaultPlugins)) {
+      setPlugins((prev) => (prev.length === 0 ? status.defaultPlugins : prev));
     }
     if (Array.isArray(status?.cowork?.localPlugins)) {
       setLocalPlugins(status.cowork.localPlugins);
@@ -94,7 +112,14 @@ export default function CoworkToolCard({
     if (Array.isArray(status?.cowork?.customPlugins) && status.cowork.customPlugins.length > 0) {
       setCustomPlugins(status.cowork.customPlugins);
     }
-  }, [status, customBaseUrl, plugins.length]);
+  }, [status]);
+
+  // Seed the endpoint dropdown from the server until the user touches it (T32 class).
+  useEffect(() => {
+    if (status?.cowork?.baseUrl && !customBaseUrl) {
+      setCustomBaseUrl(stripV1(status.cowork.baseUrl));
+    }
+  }, [status, customBaseUrl]);
 
   const checkStatus = async () => {
     setChecking(true);
@@ -109,7 +134,8 @@ export default function CoworkToolCard({
     }
   };
 
-  const getEffectiveBaseUrl = () => ensureV1(customBaseUrl);
+  // A cleared Custom field falls back to the local URL instead of posting "" (T46).
+  const getEffectiveBaseUrl = () => ensureV1(customBaseUrl) || ensureV1(baseUrl);
 
   const getConfigStatus = () => {
     if (!status?.installed) return null;
@@ -149,6 +175,7 @@ export default function CoworkToolCard({
       });
       const data = await res.json();
       if (res.ok) {
+        dirtyRef.current = false;
         setMessage({ type: "success", text: "Settings applied. Quit & reopen Claude Desktop to load." });
         checkStatus();
       } else {
@@ -168,12 +195,12 @@ export default function CoworkToolCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, models }),
       });
+      const comboData = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const err = await res.json();
-        setMessage({ type: "error", text: err.error || "Failed to create combo" });
-        return;
+        throw new Error(comboData.error || `Failed to create combo (status ${res.status})`);
       }
       if (!selectedModels.includes(name)) {
+        markDirty();
         setSelectedModels([...selectedModels, name]);
       }
       setComboModalOpen(false);
@@ -186,11 +213,13 @@ export default function CoworkToolCard({
   const handleAddModel = (model) => {
     const value = model?.value || model?.name || model;
     if (!value || selectedModels.includes(value)) return;
+    markDirty();
     setSelectedModels((prev) => [...prev, value]);
   };
 
   const handleRemoveModel = (model) => {
     const value = model?.value || model?.name || model;
+    markDirty();
     setSelectedModels((prev) => prev.filter((item) => item !== value));
   };
 
@@ -201,6 +230,7 @@ export default function CoworkToolCard({
       const res = await fetch(ENDPOINT, { method: "DELETE" });
       const data = await res.json();
       if (res.ok) {
+        dirtyRef.current = false;
         setMessage({ type: "success", text: "Settings reset successfully" });
         setSelectedModels([]);
         setPlugins(status?.defaultPlugins || []);
@@ -219,10 +249,12 @@ export default function CoworkToolCard({
 
   const addPlugin = (p) => {
     if (plugins.some((x) => x.name === p.name)) return;
+    markDirty();
     setPlugins([...plugins, p]);
   };
 
   const removePlugin = (name) => {
+    markDirty();
     setPlugins(plugins.filter((p) => p.name !== name));
   };
 
@@ -247,7 +279,7 @@ export default function CoworkToolCard({
 
   return (
     <Card padding="xs" className="overflow-hidden">
-      <div className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center" onClick={onToggle}>
+      <div {...cardHeaderToggleProps(onToggle, isExpanded, tool.name)} className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-lg">
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
             <Image src={tool.image} alt={tool.name} width={32} height={32} className="size-8 object-contain rounded-lg" sizes="32px" onError={(e) => { e.target.style.display = "none"; }} />
@@ -300,7 +332,8 @@ export default function CoworkToolCard({
                   <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
                   <BaseUrlSelect
                     value={getEffectiveBaseUrl()}
-                    onChange={(url) => setCustomBaseUrl(stripV1(url))}
+                    initialUrl={status?.cowork?.baseUrl || ""}
+                    onChange={(url) => { markDirty(); setCustomBaseUrl(stripV1(url)); }}
                     tunnelEnabled={tunnelEnabled}
                     tunnelPublicUrl={tunnelPublicUrl}
                     tailscaleEnabled={tailscaleEnabled}
@@ -323,9 +356,8 @@ export default function CoworkToolCard({
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
                   <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">API Key</span>
                   <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
-                  <ApiKeySelect value={selectedApiKey} onChange={setSelectedApiKey} apiKeys={apiKeys} cloudEnabled={cloudEnabled} />
+                  <ApiKeySelect value={selectedApiKey} onChange={(v) => { markDirty(); setSelectedApiKey(v); }} apiKeys={apiKeys} cloudEnabled={cloudEnabled} />
                 </div>
-
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-center sm:gap-2">
                   <span className="w-32 shrink-0 text-sm font-semibold text-text-main text-right">Models</span>
                   <span className="material-symbols-outlined text-text-muted text-[14px]">arrow_forward</span>
@@ -345,6 +377,7 @@ export default function CoworkToolCard({
                       )}
                     </div>
                     <button onClick={() => setComboModalOpen(true)} disabled={!hasActiveProviders} className={`shrink-0 px-2 py-1.5 rounded border text-xs whitespace-nowrap transition-colors ${hasActiveProviders ? "bg-primary/10 border-primary/40 text-primary hover:bg-primary/20 cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>+ Combo</button>
+                    <button onClick={() => setModelSelectOpen(true)} disabled={!hasActiveProviders} className={`shrink-0 px-2 py-1.5 rounded border text-xs whitespace-nowrap transition-colors ${hasActiveProviders ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>Add Model</button>
                   </div>
                 </div>
 
@@ -376,7 +409,7 @@ export default function CoworkToolCard({
                         <span className="text-xs font-medium min-w-0 truncate flex-shrink-0">{p.name}</span>
                         <span className="text-[8px] px-1 py-0.5 rounded bg-blue-500/10 text-blue-500 shrink-0">custom</span>
                         <span className="flex-1 text-[9px] text-text-muted truncate">{p.url}</span>
-                        <button onClick={() => setCustomPlugins(customPlugins.filter((x) => x.name !== p.name))} className="shrink-0 hover:text-red-500 ml-auto">
+                        <button onClick={() => { markDirty(); setCustomPlugins(customPlugins.filter((x) => x.name !== p.name)); }} className="shrink-0 hover:text-red-500 ml-auto">
                           <span className="material-symbols-outlined text-[12px]">close</span>
                         </button>
                       </div>
@@ -410,6 +443,7 @@ export default function CoworkToolCard({
                             type="checkbox"
                             checked={exaEnabled}
                             onChange={(e) => {
+                              markDirty();
                               if (e.target.checked && exaDef) setPlugins([...plugins.filter((p) => p.name !== "exa"), exaDef]);
                               else setPlugins(plugins.filter((p) => p.name !== "exa"));
                             }}
@@ -431,7 +465,7 @@ export default function CoworkToolCard({
                           <input
                             type="checkbox"
                             checked={browserEnabled}
-                            onChange={(e) => setLocalPlugins(e.target.checked ? [...localPlugins, "browsermcp"] : localPlugins.filter((n) => n !== "browsermcp"))}
+                            onChange={(e) => { markDirty(); setLocalPlugins(e.target.checked ? [...localPlugins, "browsermcp"] : localPlugins.filter((n) => n !== "browsermcp")); }}
                             className="mt-0.5"
                           />
                           <div className="flex-1 min-w-0">
@@ -460,7 +494,7 @@ export default function CoworkToolCard({
                               <input
                                 type="checkbox"
                                 checked={enabled}
-                                onChange={(e) => setLocalPlugins(e.target.checked ? [...localPlugins, p.name] : localPlugins.filter((n) => n !== p.name))}
+                                onChange={(e) => { markDirty(); setLocalPlugins(e.target.checked ? [...localPlugins, p.name] : localPlugins.filter((n) => n !== p.name)); }}
                                 className="mt-0.5"
                               />
                               <div className="flex-1 min-w-0">
@@ -547,18 +581,19 @@ export default function CoworkToolCard({
       {/* Add Custom MCP modal */}
       {addMcpOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setAddMcpOpen(false)}>
-          <div className="bg-surface border border-border rounded-xl shadow-xl w-full max-w-sm mx-4 p-5 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
+          <div role="dialog" aria-modal="true" aria-label="Add Custom MCP" className="bg-surface border border-border rounded-xl shadow-xl w-full max-w-sm mx-4 p-5 flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="font-semibold text-sm">Add Custom MCP</h3>
-              <button onClick={() => setAddMcpOpen(false)} className="text-text-muted hover:text-text-main">
+              <button onClick={() => setAddMcpOpen(false)} aria-label="Close Add Custom MCP dialog" className="text-text-muted hover:text-text-main">
                 <span className="material-symbols-outlined text-[18px]">close</span>
               </button>
             </div>
 
             <div className="flex flex-col gap-2">
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] text-text-muted font-medium">Name</label>
+                <label htmlFor="cowork-mcp-name" className="text-[11px] text-text-muted font-medium">Name</label>
                 <input
+                  id="cowork-mcp-name"
                   type="text"
                   placeholder="my-mcp"
                   value={addMcpForm.name}
@@ -567,8 +602,9 @@ export default function CoworkToolCard({
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] text-text-muted font-medium">SSE URL</label>
+                <label htmlFor="cowork-mcp-url" className="text-[11px] text-text-muted font-medium">SSE URL</label>
                 <input
+                  id="cowork-mcp-url"
                   type="text"
                   placeholder="https://your-mcp-server.com/sse"
                   value={addMcpForm.url}
@@ -584,6 +620,7 @@ export default function CoworkToolCard({
                 onClick={() => {
                   const name = addMcpForm.name.trim();
                   if (!name || !addMcpForm.url.trim()) return;
+                  markDirty();
                   setCustomPlugins((prev) => [...prev.filter((x) => x.name !== name), { name, url: addMcpForm.url.trim(), transport: "sse", custom: true }]);
                   setAddMcpOpen(false);
                 }}

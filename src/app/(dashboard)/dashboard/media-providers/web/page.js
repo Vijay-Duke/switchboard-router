@@ -206,6 +206,7 @@ export default function WebProvidersPage() {
   const router = useRouter();
   const [connections, setConnections] = useState([]);
   const [combos, setCombos] = useState([]);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [origin, setOrigin] = useState("http://127.0.0.1:20128");
   const { copied, copy } = useCopyToClipboard();
 
@@ -221,9 +222,11 @@ export default function WebProvidersPage() {
         fetch("/api/providers", { cache: "no-store" }),
         fetch("/api/combos", { cache: "no-store" }),
       ]);
-      if (connsRes.ok) setConnections((await connsRes.json()).connections || []);
-      if (combosRes.ok) setCombos((await combosRes.json()).combos || []);
-    } catch { /* noop */ }
+      if (!connsRes.ok || !combosRes.ok) throw new Error("load failed");
+      setConnections((await connsRes.json()).connections || []);
+      setCombos((await combosRes.json()).combos || []);
+      setLoadFailed(false);
+    } catch { setLoadFailed(true); }
   };
 
   useEffect(() => { fetchAll(); }, []);
@@ -249,13 +252,24 @@ export default function WebProvidersPage() {
       const created = await res.json();
       router.push(`/dashboard/media-providers/combo/${created.id}`);
     } else {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       reportClientError(err.error || "Failed to create combo");
     }
   };
 
   return (
     <div className="flex flex-col gap-8">
+      {loadFailed ? (
+        <div role="alert" className="flex flex-col gap-3 border border-red-300 bg-red-500/10 rounded-xl p-4">
+          <p className="text-sm font-medium text-red-600 dark:text-red-400">
+            Couldn&apos;t load providers or combos. Check the server and try again.
+          </p>
+          <div>
+            <Button size="sm" variant="outline" onClick={fetchAll}>Retry</Button>
+          </div>
+        </div>
+      ) : (
+      <>
       <div className="flex flex-col gap-1">
         <h1 className="text-[17px] font-semibold text-text-main">Web Fetch & Search</h1>
         <p className="text-xs font-mono text-text-subtle">Media providers · not agent Skills</p>
@@ -278,6 +292,8 @@ export default function WebProvidersPage() {
         onCreateCombo={() => handleCreateCombo("webFetch")}
         origin={origin} copied={copied} onCopy={copy}
       />
+      </>
+      )}
     </div>
   );
 }

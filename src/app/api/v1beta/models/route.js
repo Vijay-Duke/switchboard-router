@@ -2,6 +2,11 @@
 import { PROVIDER_MODELS } from "@/shared/constants/models";
 import { buildModelsList } from "@/app/api/v1/models/route.js";
 import { corsPreflightResponse } from "@/shared/utils/cors.js";
+import { getDisabledModels } from "@/lib/disabledModelsDb";
+import {
+  buildCanonicalDisabledModelSet,
+  isCanonicalModelDisabled,
+} from "@/shared/utils/providerCustomModels.js";
 
 // Gemini generateContent serves chat models — same filter as GET /v1/models.
 const LLM_KIND = "llm";
@@ -36,8 +41,23 @@ export async function GET(request) {
       });
     }
 
+    // Skip models disabled in the dashboard so discovery matches what
+    // generateContent actually serves (same helpers as GET /v1/models).
+    let disabledByAlias = {};
+    try {
+      disabledByAlias = await getDisabledModels();
+    } catch {
+      disabledByAlias = {};
+    }
+    const isDisabled = (alias, modelId) => {
+      const ids = disabledByAlias?.[alias];
+      if (!ids) return false;
+      return isCanonicalModelDisabled(buildCanonicalDisabledModelSet(ids, alias), modelId, alias);
+    };
+
     for (const [provider, providerModels] of Object.entries(PROVIDER_MODELS)) {
       for (const model of providerModels) {
+        if (isDisabled(provider, model.id)) continue;
         addModel({
           name: `models/${provider}/${model.id}`,
           displayName: model.name || model.id,
@@ -77,6 +97,6 @@ export async function GET(request) {
     return Response.json({ models });
   } catch (error) {
     console.log("Error fetching models:", error);
-    return Response.json({ error: { message: error.message } }, { status: 500 });
+    return Response.json({ error: { message: "Failed to fetch models", code: 500 } }, { status: 500 });
   }
 }

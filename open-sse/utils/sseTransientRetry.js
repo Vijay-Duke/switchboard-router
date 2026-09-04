@@ -83,7 +83,29 @@ function reassemble(reader, chunks) {
   });
 }
 
-async function peekResponse(response) {
+async function abortablePeekRead(reader, signal) {
+  if (!signal) return reader.read();
+  if (signal.aborted) throw abortError(signal);
+  let onAbort;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => {
+        onAbort = () => reject(abortError(signal));
+        signal.addEventListener?.("abort", onAbort, { once: true });
+      }),
+    ]);
+  } catch (error) {
+    if (signal.aborted) {
+      try { await reader.cancel(abortError(signal)); } catch { /* already closing */ }
+    }
+    throw error;
+  } finally {
+    if (onAbort) signal.removeEventListener?.("abort", onAbort);
+  }
+}
+
+async function peekResponse(response, signal) {
   if (!response?.ok || !response.body) return { matched: null, replacementBody: null };
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -95,7 +117,8 @@ async function peekResponse(response) {
 
   try {
     while (bytesRead < PEEK_BYTES && !matched && !meaningfulSeen) {
-      const { done, value } = await reader.read();
+      if (signal?.aborted) throw abortError(signal);
+      const { done, value } = await abortablePeekRead(reader, signal);
       if (done) break;
       chunks.push(value);
       bytesRead += value.byteLength;
@@ -113,9 +136,11 @@ async function peekResponse(response) {
       }
     }
     if (!matched && !meaningfulSeen) matched = transientMarker(parseFrame(pending));
-  } catch {
-    // Preserve the already-read bytes and let the replacement stream surface
-    // the upstream read failure normally.
+  } catch (error) {
+    // A client abort must surface promptly (the caller maps it to 499);
+    // every other read failure keeps the already-read bytes and lets the
+    // replacement stream surface it normally.
+    if (signal?.aborted || error?.name === "AbortError") throw error;
   }
 
   return { matched, replacementBody: reassemble(reader, chunks) };
@@ -141,12 +166,14 @@ export async function executeWithPreOutputSseRetry({
   provider = "UPSTREAM",
 }) {
   const config = { ...DEFAULT_RETRY_CONFIG, ...retryConfig };
-  const { attempts, delayMs } = resolveRetryEntry(config[503]);
+  // Stream-frame retries get their own slot (falling back to the 503 entry)
+  // so 503 HTTP tuning cannot silently reshape in-stream retry behavior.
+  const { attempts, delayMs } = resolveRetryEntry(config.sseTransient ?? config[503]);
 
   for (let attempt = 0; ; attempt++) {
     if (signal?.aborted) throw abortError(signal);
     const result = await execute();
-    const peek = await peekResponse(result.response);
+    const peek = await peekResponse(result.response, signal);
     const restored = withBody(result, peek.replacementBody);
     if (!peek.matched) return restored;
     if (attempt >= attempts) {

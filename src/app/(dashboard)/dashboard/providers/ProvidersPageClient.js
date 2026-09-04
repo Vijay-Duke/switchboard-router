@@ -21,6 +21,7 @@ import {
 } from "@/shared/constants/providers";
 import Link from "next/link";
 import { getErrorCode, getRelativeTime } from "@/shared/utils";
+import { isErrorStatus } from "@/shared/utils/connectionStatus";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
 import ModelAvailabilityBadge from "./components/ModelAvailabilityBadge";
 import AddCompatibleModal from "./components/AddCompatibleModal";
@@ -93,6 +94,21 @@ function getConnectionErrorTag(connection) {
 }
 
 const APIKEY_INITIAL_VISIBLE = 20;
+
+/**
+ * Built-in list position: connected first (0), then available (1), then
+ * disabled last (2). Pure helper so the ordering is unit-testable.
+ *
+ * @param {{ connected?: number, allDisabled?: boolean }} stats
+ * @returns {number}
+ */
+export function rankBuiltInProviderEntry(stats) {
+  // Disabled first: `connected` counts testStatus regardless of isActive, so a
+  // disabled provider can still report connected > 0.
+  if (stats?.allDisabled) return 2;
+  if (stats?.connected > 0) return 0;
+  return 1;
+}
 
 /**
  * @param {{ initialData?: { connections?: any[], nodes?: any[] } }} props
@@ -197,12 +213,9 @@ export default function ProvidersPageClient({ initialData }) {
       return status === "active" || status === "success";
     }).length;
 
-    const errorConns = providerConnections.filter((c) => {
-      const status = getEffectiveStatus(c);
-      return (
-        status === "error" || status === "expired" || status === "unavailable"
-      );
-    });
+    const errorConns = providerConnections.filter((c) =>
+      isErrorStatus(getEffectiveStatus(c)),
+    );
 
     const error = errorConns.length;
     const total = providerConnections.length;
@@ -227,10 +240,11 @@ export default function ProvidersPageClient({ initialData }) {
     const matches = (c) =>
       c.provider === providerId && authTypes.includes(c.authType);
     const providerConns = connections.filter(matches);
+    const previousActive = new Map(providerConns.map((c) => [c.id, c.isActive]));
     setConnections((prev) =>
       prev.map((c) => (matches(c) ? { ...c, isActive: newActive } : c)),
     );
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       providerConns.map((c) =>
         fetch(`/api/providers/${c.id}`, {
           method: "PUT",
@@ -239,6 +253,19 @@ export default function ProvidersPageClient({ initialData }) {
         }),
       ),
     );
+    const failed = results.filter(
+      (r) => r.status === "rejected" || !r.value?.ok,
+    ).length;
+    if (failed > 0) {
+      setConnections((prev) =>
+        prev.map((c) =>
+          previousActive.has(c.id) ? { ...c, isActive: previousActive.get(c.id) } : c,
+        ),
+      );
+      notify.error(
+        `Failed to ${newActive ? "enable" : "disable"} ${failed} connection${failed === 1 ? "" : "s"}`,
+      );
+    }
   };
 
   const handleBatchTest = async (mode, providerId = null) => {
@@ -303,7 +330,8 @@ export default function ProvidersPageClient({ initialData }) {
     ),
     "freeTier",
   ).sort(([, a], [, b]) => (b.noAuth ? 1 : 0) - (a.noAuth ? 1 : 0));
-  // API Key: connected providers first, then alphabetical by name
+  // API Key (built-in): connected first, then available (no connections),
+  // then disabled last; alphabetical within each group.
   const apikeyEntries = Object.entries(APIKEY_PROVIDERS)
     .filter(
       ([, info]) =>
@@ -312,9 +340,9 @@ export default function ProvidersPageClient({ initialData }) {
         matchSearch(info.name),
     )
     .sort(([ka, a], [kb, b]) => {
-      const ca = getProviderStats(ka, "apikey").total > 0 ? 0 : 1;
-      const cb = getProviderStats(kb, "apikey").total > 0 ? 0 : 1;
-      if (ca !== cb) return ca - cb;
+      const ra = rankBuiltInProviderEntry(getProviderStats(ka, "apikey"));
+      const rb = rankBuiltInProviderEntry(getProviderStats(kb, "apikey"));
+      if (ra !== rb) return ra - rb;
       return (a.name || "").localeCompare(b.name || "");
     });
   const isApikeySearching = !!searchQuery.trim();

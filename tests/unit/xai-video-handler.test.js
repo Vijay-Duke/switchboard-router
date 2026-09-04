@@ -17,6 +17,7 @@ const proxyAwareFetch = vi.hoisted(() => vi.fn());
 
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch,
+  proxyOptionsFromCredentials: vi.fn(() => ({})),
 }));
 
 const authMocks = vi.hoisted(() => ({

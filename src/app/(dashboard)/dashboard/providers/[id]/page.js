@@ -399,6 +399,8 @@ export default function ProviderDetailPage() {
         setProviderNode(data.node);
         await fetchConnections();
         setShowEditNodeModal(false);
+      } else {
+        reportClientError(data?.error || "Failed to update provider node");
       }
     } catch (error) {
       reportClientError("Error updating provider node:", error);
@@ -957,16 +959,18 @@ export default function ProviderDetailPage() {
         setConfirmState(null);
         let failed = 0;
         const idsToDelete = [...selectedConnectionIds];
+        const succeeded = [];
         for (const id of idsToDelete) {
           try {
             const res = await fetch(`/api/providers/${id}`, { method: "DELETE" });
             if (!res.ok) failed += 1;
+            else succeeded.push(id);
           } catch (error) {
             reportClientError("Error deleting connection:", error);
             failed += 1;
           }
         }
-        setConnections(prev => prev.filter(c => !idsToDelete.includes(c.id)));
+        setConnections(prev => prev.filter(c => !succeeded.includes(c.id)));
         setSelectedConnectionIds([]);
         if (failed > 0) reportClientError(`Deleted ${idsToDelete.length - failed} connection(s), ${failed} failed.`);
       }
@@ -1076,7 +1080,7 @@ export default function ProviderDetailPage() {
     setConnections(newConnections);
 
     try {
-      await Promise.all([
+      const responses = await Promise.all([
         fetch(`/api/providers/${newConnections[index1].id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -1088,6 +1092,7 @@ export default function ProviderDetailPage() {
           body: JSON.stringify({ priority: index2 }),
         }),
       ]);
+      if (responses.some((res) => !res.ok)) throw new Error("Failed to reorder connections");
     } catch (error) {
       reportClientError("Error swapping priority:", error);
       await fetchConnections();

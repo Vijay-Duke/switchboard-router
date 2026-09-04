@@ -32,15 +32,33 @@ export function openaiToOllamaRequest(model, body, stream) {
   }
 
   // Max tokens (Ollama uses num_predict)
-  if (body.max_tokens !== undefined) {
+  const maxTokens = body.max_tokens ?? body.max_completion_tokens;
+  if (maxTokens !== undefined) {
     result.options = result.options || {};
-    result.options.num_predict = body.max_tokens;
+    result.options.num_predict = maxTokens;
   }
 
   // Top_p
   if (body.top_p !== undefined) {
     result.options = result.options || {};
     result.options.top_p = body.top_p;
+  }
+
+  // Top_k and stop sequences map straight onto Ollama options.
+  if (body.top_k !== undefined) {
+    result.options = result.options || {};
+    result.options.top_k = body.top_k;
+  }
+  if (body.stop !== undefined) {
+    result.options = result.options || {};
+    result.options.stop = body.stop;
+  }
+
+  // JSON mode (Ollama `format`: "json" or a JSON schema).
+  if (body.response_format?.type === "json_object") {
+    result.format = "json";
+  } else if (body.response_format?.type === "json_schema" && body.response_format.json_schema?.schema) {
+    result.format = body.response_format.json_schema.schema;
   }
 
   // Tools (Ollama supports tools in OpenAI format)
@@ -53,6 +71,7 @@ export function openaiToOllamaRequest(model, body, stream) {
     result.tool_choice = body.tool_choice;
   }
 
+  // No sampling clamp: Ollama documents no hard temperature/top_k range.
   return result;
 }
 
@@ -85,22 +104,27 @@ function normalizeMessages(messages) {
     if (msg.role === ROLE.TOOL) {
       // Keep empty tool results so multi-tool pairs stay complete (wave11).
       const toolResult = normalizeContent(msg.content) || "";
+      const toolImages = extractImagesFromContent(msg.content);
 
       // Get tool_name from map or use msg.name as fallback
       const toolName = toolCallMap.get(msg.tool_call_id) || msg.name || "unknown_tool";
 
-      result.push({
+      const toolMsg = {
         role: ROLE.TOOL,
         tool_name: toolName,
         content: toolResult
-      });
+      };
+      if (toolImages.length > 0) {
+        toolMsg.images = toolImages;
+      }
+      result.push(toolMsg);
       continue;
     }
 
     // Handle assistant messages with tool_calls
     if (msg.role === ROLE.ASSISTANT && msg.tool_calls) {
       const content = normalizeContent(msg.content) || "";
-      
+
       // Convert OpenAI tool_calls format to Ollama format
       const ollamaToolCalls = msg.tool_calls.map(tc => ({
         type: OPENAI_BLOCK.FUNCTION,
@@ -123,13 +147,13 @@ function normalizeMessages(messages) {
       continue;
     }
 
-    // Normal messages
-    const role = msg.role;
+    // Normal messages (developer normalises to system — Ollama has no developer role)
+    const role = msg.role === ROLE.DEVELOPER ? ROLE.SYSTEM : msg.role;
     const content = normalizeContent(msg.content);
     const images = extractImagesFromContent(msg.content);
 
-    // Skip empty messages (except assistant)
-    if (!content && role !== ROLE.ASSISTANT) continue;
+    // Skip empty messages (except assistant) — but never drop a turn that carries images.
+    if (!content && images.length === 0 && role !== ROLE.ASSISTANT) continue;
 
     const out = {
       role: role,

@@ -25,10 +25,56 @@ function getToolCalls(completion) {
   return Array.isArray(calls) ? calls : [];
 }
 
+// Thread cache + reasoning usage details through projections (both OpenAI and
+// Claude-side detail keys) instead of dropping them to bare tokens.
+function projectUsage(usage) {
+  const u = usage || {};
+  const promptTokens = u.prompt_tokens || u.input_tokens || 0;
+  const completionTokens = u.completion_tokens || u.output_tokens || 0;
+  const out = {
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: u.total_tokens || (promptTokens + completionTokens),
+  };
+  // Accept OpenAI (prompt_tokens_details), Responses (input_tokens_details),
+  // and Claude-side (cache_read_input_tokens) detail keys.
+  const promptDetails = u.prompt_tokens_details || {};
+  const inputDetails = u.input_tokens_details || {};
+  const cachedTokens = promptDetails.cached_tokens || inputDetails.cached_tokens || u.cache_read_input_tokens || 0;
+  const cacheCreationTokens = promptDetails.cache_creation_tokens || inputDetails.cache_creation_tokens || u.cache_creation_input_tokens || 0;
+  if (cachedTokens > 0 || cacheCreationTokens > 0) {
+    out.prompt_tokens_details = {};
+    if (cachedTokens > 0) out.prompt_tokens_details.cached_tokens = cachedTokens;
+    if (cacheCreationTokens > 0) out.prompt_tokens_details.cache_creation_tokens = cacheCreationTokens;
+  }
+  const completionDetails = u.completion_tokens_details || {};
+  const outputDetails = u.output_tokens_details || {};
+  const reasoningTokens = completionDetails.reasoning_tokens || outputDetails.reasoning_tokens || 0;
+  if (reasoningTokens > 0) {
+    out.completion_tokens_details = { reasoning_tokens: reasoningTokens };
+  }
+  return out;
+}
+
+function projectClaudeUsage(usage) {
+  const u = usage || {};
+  const promptTokens = u.prompt_tokens || u.input_tokens || 0;
+  const completionTokens = u.completion_tokens || u.output_tokens || 0;
+  const out = { input_tokens: promptTokens, output_tokens: completionTokens };
+  const promptDetails = u.prompt_tokens_details || {};
+  const inputDetails = u.input_tokens_details || {};
+  const cacheRead = promptDetails.cached_tokens || inputDetails.cached_tokens || u.cache_read_input_tokens || 0;
+  const cacheCreate = promptDetails.cache_creation_tokens || inputDetails.cache_creation_tokens || u.cache_creation_input_tokens || 0;
+  if (cacheRead > 0) out.cache_read_input_tokens = cacheRead;
+  if (cacheCreate > 0) out.cache_creation_input_tokens = cacheCreate;
+  return out;
+}
+
 function openAIToGeminiFinish(reason) {
   switch (reason) {
     case OPENAI_FINISH.LENGTH: return GEMINI_FINISH.MAX_TOKENS;
     case OPENAI_FINISH.CONTENT_FILTER: return GEMINI_FINISH.SAFETY;
+    case OPENAI_FINISH.ERROR: return GEMINI_FINISH.MALFORMED_FUNCTION_CALL;
     default: return GEMINI_FINISH.STOP;
   }
 }
@@ -64,17 +110,14 @@ function openAICompletionToClaudeMessage(completion) {
     content,
     stop_reason: fromOpenAIFinish(choice.finish_reason, FORMATS.CLAUDE),
     stop_sequence: null,
-    usage: {
-      input_tokens: usage.prompt_tokens || usage.input_tokens || 0,
-      output_tokens: usage.completion_tokens || usage.output_tokens || 0,
-    },
+    usage: projectClaudeUsage(usage),
   };
 }
 
 function openAICompletionToGeminiResponse(completion) {
   if (!completion?.choices?.[0]) return completion;
   const message = getMessage(completion);
-  const usage = completion.usage || {};
+  const usage = projectUsage(completion.usage || {});
   const parts = [];
   const reasoning = message.reasoning_content || message.provider_specific_fields?.reasoning_content || "";
   if (reasoning) parts.push({ text: reasoning, thought: true });
@@ -100,9 +143,9 @@ function openAICompletionToGeminiResponse(completion) {
         index: 0
       }],
       usageMetadata: {
-        promptTokenCount: usage.prompt_tokens || usage.input_tokens || 0,
-        candidatesTokenCount: usage.completion_tokens || usage.output_tokens || 0,
-        totalTokenCount: usage.total_tokens || ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0)),
+        promptTokenCount: usage.prompt_tokens,
+        candidatesTokenCount: usage.completion_tokens,
+        totalTokenCount: usage.total_tokens,
       },
       modelVersion: completion.model || "unknown",
       responseId: completion.id || `resp_${Date.now()}`
@@ -137,7 +180,8 @@ function openAICompletionToOllama(completion) {
     created_at: completion.created ? new Date(completion.created * 1000).toISOString() : new Date().toISOString(),
     message: ollamaMessage,
     done: true,
-    done_reason: choice.finish_reason || "stop",
+    // Ollama's done_reason has no tool_calls value — hub tool turns are plain stops.
+    done_reason: choice.finish_reason === "tool_calls" ? "stop" : (choice.finish_reason || "stop"),
     prompt_eval_count: usage.prompt_tokens || usage.input_tokens || 0,
     eval_count: usage.completion_tokens || usage.output_tokens || 0,
   };
@@ -155,17 +199,25 @@ export function responsesApiToOpenAICompletion(responseBody, fallbackModel) {
     const content = Array.isArray(item.content) ? item.content : [];
     return content.some(part => typeof part.text === "string" && part.text.length > 0);
   }) || messages[messages.length - 1] || null;
-  const textContent = (Array.isArray(msgItem?.content) ? msgItem.content : [])
-    .map(part => part.type === "output_text" || typeof part.text === "string" ? part.text || "" : "")
+  const refusalText = output
+    .filter(item => item?.type === "refusal")
+    .map(item => item?.refusal || "")
     .join("");
+  const textContent = (Array.isArray(msgItem?.content) ? msgItem.content : [])
+    .map(part => part.type === "output_text" || part.type === "refusal" || typeof part.text === "string"
+      ? part.text || part.refusal || ""
+      : "")
+    .join("") || refusalText;
   const toolCalls = output
-    .filter(item => item?.type === "function_call")
+    .filter(item => item?.type === "function_call" || item?.type === "custom_tool_call")
     .map((item, idx) => ({
       id: item.call_id || `call_${item.name || "tool"}_${idx}`,
       type: "function",
       function: {
         name: item.name || "",
-        arguments: typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments || {}),
+        arguments: typeof item.arguments === "string"
+          ? item.arguments
+          : JSON.stringify(item.arguments ?? item.input ?? {}),
       },
     }));
 
@@ -177,19 +229,29 @@ export function responsesApiToOpenAICompletion(responseBody, fallbackModel) {
   if (reasoningText) message.reasoning_content = reasoningText;
   if (toolCalls.length > 0) message.tool_calls = toolCalls;
 
-  const responseDone = responseBody?.status === "completed" || responseBody?.status === "done";
-  const finishReason = toolCalls.length > 0 ? "tool_calls" : (responseDone ? "stop" : (responseBody?.status || "stop"));
+  // Map Responses statuses to valid OpenAI finish_reasons (never echo raw).
+  let finishReason;
+  if (toolCalls.length > 0) {
+    finishReason = "tool_calls";
+  } else if (refusalText && textContent.split(refusalText).join("").trim() === "") {
+    finishReason = "content_filter";
+  } else {
+    const status = responseBody?.status;
+    if (status === "completed" || status === "done") finishReason = "stop";
+    else if (status === "failed") finishReason = "error";
+    else if (status === "incomplete") {
+      finishReason = responseBody?.incomplete_details?.reason === "content_filter"
+        ? "content_filter"
+        : "length";
+    } else finishReason = "stop";
+  }
   return {
     id: responseBody?.id || `chatcmpl-${Date.now()}`,
     object: "chat.completion",
     created: responseBody?.created_at || Math.floor(Date.now() / 1000),
     model: responseBody?.model || fallbackModel || "unknown",
     choices: [{ index: 0, message, finish_reason: finishReason }],
-    usage: {
-      prompt_tokens: usage.input_tokens || usage.prompt_tokens || 0,
-      completion_tokens: usage.output_tokens || usage.completion_tokens || 0,
-      total_tokens: usage.total_tokens || ((usage.input_tokens || usage.prompt_tokens || 0) + (usage.output_tokens || usage.completion_tokens || 0)),
-    },
+    usage: projectUsage(usage),
   };
 }
 
@@ -245,16 +307,30 @@ function openAICompletionToResponsesOutput(completion) {
   }
 
   const finishReason = getChoice(completion).finish_reason || "stop";
+  // Map hub finish reasons to valid Responses statuses (never echo raw).
+  let status = "completed";
+  let incompleteDetails;
+  if (finishReason === "length") {
+    status = "incomplete";
+    incompleteDetails = { reason: "max_output_tokens" };
+  } else if (finishReason === "content_filter") {
+    status = "incomplete";
+    incompleteDetails = { reason: "content_filter" };
+  } else if (finishReason === "error") {
+    status = "failed";
+  }
+  const projected = projectUsage(usage);
   return {
     id: completion.id ? `resp_${completion.id}` : `resp_${Date.now()}`,
     object: "response",
     created_at: completion.created || Math.floor(Date.now() / 1000),
-    status: finishReason === "stop" || finishReason === "tool_calls" ? "completed" : finishReason,
+    status,
+    ...(incompleteDetails ? { incomplete_details: incompleteDetails } : {}),
     output,
     usage: {
-      input_tokens: usage.prompt_tokens || usage.input_tokens || 0,
-      output_tokens: usage.completion_tokens || usage.output_tokens || 0,
-      total_tokens: usage.total_tokens || ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0)),
+      input_tokens: projected.prompt_tokens,
+      output_tokens: projected.completion_tokens,
+      total_tokens: projected.total_tokens,
     },
   };
 }
@@ -273,6 +349,14 @@ export function projectCompletionToClientFormat(completion, sourceFormat) {
     case FORMATS.OPENAI_RESPONSES:
     case FORMATS.OPENAI_RESPONSE:
       return openAICompletionToResponsesOutput(completion);
+    // Kiro, Cursor, and CommandCode all consume OpenAI-shaped JSON on their
+    // non-streaming paths (their streaming translators pass OpenAI chunks
+    // through as-is: kiro-to-openai, cursor-to-openai, commandcode-to-openai).
+    // Returning the completion unchanged is intentional, not a gap.
+    case FORMATS.KIRO:
+    case FORMATS.CURSOR:
+    case FORMATS.COMMANDCODE:
+      return completion;
     default:
       return completion;
   }

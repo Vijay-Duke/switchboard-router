@@ -27,18 +27,24 @@ const fmtCost = (n) => `$${(n || 0).toFixed(4)}`;
 export default function UsageChart({ period = "7d" }) {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [viewMode, setViewMode] = useState("tokens");
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await fetch(`/api/usage/chart?period=${period}`);
-      if (res.ok) {
-        const json = await res.json();
-        setData(json);
+      if (!res.ok) {
+        throw new Error(`Request failed with status ${res.status}`);
       }
+      const json = await res.json();
+      setData(json);
     } catch (e) {
+      // O25: never keep a stale curve on screen after a failed fetch.
       reportClientError("Failed to fetch chart data:", e);
+      setData([]);
+      setLoadError(e?.message || "Network request failed");
     } finally {
       setLoading(false);
     }
@@ -69,6 +75,17 @@ export default function UsageChart({ period = "7d" }) {
 
       {loading ? (
         <div className="h-48 flex items-center justify-center text-text-muted text-sm">Loading...</div>
+      ) : loadError ? (
+        <div className="h-48 flex flex-col items-center justify-center gap-2 text-sm">
+          <p className="text-text-muted">Failed to load chart — {loadError}</p>
+          <button
+            type="button"
+            onClick={() => fetchData()}
+            className="rounded-md border border-border px-3 py-1 text-sm text-text-main transition-colors hover:bg-bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          >
+            Retry
+          </button>
+        </div>
       ) : !hasData ? (
         <div className="h-48 flex items-center justify-center text-text-muted text-sm">No data for this period</div>
       ) : (

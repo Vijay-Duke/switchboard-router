@@ -134,6 +134,19 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
           currentAssistantMsg.encrypted_content = pendingEncryptedReasoning;
           pendingEncryptedReasoning = "";
         }
+      } else {
+        // Reasoning arrived between two function_call items — attach to the
+        // already-open assistant message instead of dropping it.
+        if (pendingReasoning) {
+          currentAssistantMsg.reasoning_content = currentAssistantMsg.reasoning_content
+            ? `${currentAssistantMsg.reasoning_content}\n${pendingReasoning}`
+            : pendingReasoning;
+          pendingReasoning = "";
+        }
+        if (pendingEncryptedReasoning) {
+          currentAssistantMsg.encrypted_content = pendingEncryptedReasoning;
+          pendingEncryptedReasoning = "";
+        }
       }
       currentAssistantMsg.tool_calls.push({
         id: item.call_id,
@@ -175,7 +188,31 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
     }
   }
 
-  // Flush remaining
+  // Flush remaining. Trailing reasoning (no following assistant turn) joins
+  // the last assistant message so the thought is not lost at end-of-input.
+  // With no assistant message at all, carry it on a minimal assistant turn —
+  // downstream translators map reasoning_content to thinking blocks.
+  if (pendingReasoning || pendingEncryptedReasoning) {
+    const target = currentAssistantMsg
+      || [...result.messages].reverse().find((m) => m.role === ROLE.ASSISTANT);
+    if (target) {
+      if (pendingReasoning) {
+        target.reasoning_content = target.reasoning_content
+          ? `${target.reasoning_content}\n${pendingReasoning}`
+          : pendingReasoning;
+      }
+      if (pendingEncryptedReasoning) {
+        target.encrypted_content = pendingEncryptedReasoning;
+      }
+    } else {
+      const orphan = { role: ROLE.ASSISTANT, content: "" };
+      if (pendingReasoning) orphan.reasoning_content = pendingReasoning;
+      if (pendingEncryptedReasoning) orphan.encrypted_content = pendingEncryptedReasoning;
+      result.messages.push(orphan);
+    }
+    pendingReasoning = "";
+    pendingEncryptedReasoning = "";
+  }
   if (currentAssistantMsg) {
     result.messages.push(currentAssistantMsg);
   }
@@ -197,6 +234,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
         if (tool.function) return tool;
         // Responses API function tool: { type: "function", name, description, parameters }
         // Only convert when a non-empty name is present; skip hosted tools without one.
+        // Hybrid clients send Claude-shaped tools ({ name, input_schema }) — accept those too.
         const name = tool.name;
         if (!name || typeof name !== "string" || name.trim() === "") return null;
         return {
@@ -204,7 +242,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
           function: {
             name,
             description: typeof tool.description === "string" ? tool.description : String(tool.description || ""),
-            parameters: coerceSchemaNumericConstraints(normalizeToolParameters(tool.parameters)),
+            parameters: coerceSchemaNumericConstraints(normalizeToolParameters(tool.parameters ?? tool.input_schema)),
             strict: tool.strict
           }
         };
@@ -256,18 +294,32 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
     store: false
   };
 
-  // Extract system message as instructions
-  let hasSystemMessage = false;
+  // Extract system/developer messages as instructions — accumulate ALL of
+  // them (agent harnesses send multi-part system prompts), extracting text
+  // from array content like the message branch does.
+  const instructionParts = [];
   const messages = body.messages || [];
+  const extractInstructionText = (content) => {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content
+        .map((c) => {
+          if (!c || typeof c !== "object") return "";
+          if (typeof c.text === "string") return c.text;
+          if (typeof c.content === "string") return c.content;
+          return "";
+        })
+        .filter(Boolean)
+        .join("\n");
+    }
+    return "";
+  };
 
   for (const msg of messages) {
     if (msg.role === ROLE.SYSTEM || msg.role === ROLE.DEVELOPER) {
-      // Use the first instruction-bearing message as instructions.
       // OpenAI recommends role="developer" for GPT-5/Codex as the system-level prompt.
-      if (!hasSystemMessage) {
-        result.instructions = typeof msg.content === "string" ? msg.content : "";
-        hasSystemMessage = true;
-      }
+      const text = extractInstructionText(msg.content);
+      if (text) instructionParts.push(text);
       continue; // Skip instruction messages in input
     }
 
@@ -334,7 +386,7 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
       const output = typeof msg.content === "string"
         ? msg.content
         : Array.isArray(msg.content)
-          ? msg.content.map(c => c.text || JSON.stringify(c)).join("")
+          ? msg.content.map(c => c.text || JSON.stringify(c)).join("\n")
           : JSON.stringify(msg.content);
       result.input.push({
         type: RESPONSES_ITEM.FUNCTION_CALL_OUTPUT,
@@ -344,10 +396,8 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
     }
   }
 
-  // If no system message, leave instructions empty (will be filled by executor)
-  if (!hasSystemMessage) {
-    result.instructions = "";
-  }
+  // All system/developer content concatenated; empty when none (filled by executor).
+  result.instructions = instructionParts.join("\n");
 
   // Convert tools format
   if (body.tools && Array.isArray(body.tools)) {
@@ -382,6 +432,34 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
   if (body.reasoning !== undefined) result.reasoning = body.reasoning;
   if (body.reasoning_effort !== undefined) result.reasoning = { effort: body.reasoning_effort, summary: "auto" };
   if (body.prompt_cache_key !== undefined) result.prompt_cache_key = body.prompt_cache_key;
+  // Forced-tool / parallel-call / JSON-mode intent must survive onto Responses
+  // backends. (`stop` is NOT a Responses API parameter — sending it 400s.)
+  if (body.parallel_tool_calls !== undefined) result.parallel_tool_calls = body.parallel_tool_calls;
+  if (body.tool_choice !== undefined) {
+    const tc = body.tool_choice;
+    if (typeof tc === "string") {
+      result.tool_choice = tc;
+    } else if (tc?.function?.name) {
+      result.tool_choice = { type: "function", name: tc.function.name };
+    } else if (tc?.type) {
+      result.tool_choice = tc;
+    }
+  }
+  if (body.response_format !== undefined) {
+    const rf = body.response_format;
+    if (rf?.type === "json_object") {
+      result.text = { format: { type: "json_object" } };
+    } else if (rf?.type === "json_schema" && rf.json_schema) {
+      result.text = {
+        format: {
+          type: "json_schema",
+          name: rf.json_schema.name || "response",
+          schema: rf.json_schema.schema,
+          ...(rf.json_schema.strict !== undefined && { strict: rf.json_schema.strict }),
+        },
+      };
+    }
+  }
 
   return result;
 }

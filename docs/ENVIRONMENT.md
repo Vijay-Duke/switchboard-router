@@ -101,7 +101,7 @@ nodes, scripts, or provider-specific fallback paths.
 
 | Variable | Default | Purpose |
 |---|---:|---|
-| `OPENAI_API_KEY` | unset | Fallback API key used by the Azure/OpenAI-compatible executor path. |
+| `AZURE_API_KEY` | unset | Fallback `api-key` for the Azure OpenAI executor when the connection has no credential. `OPENAI_API_KEY` is never used for Azure. |
 | `AZURE_ENDPOINT` | connection/registry value | Azure OpenAI endpoint fallback. |
 | `AZURE_DEPLOYMENT` | connection/registry value | Azure deployment fallback. |
 | `AZURE_API_VERSION` | connection/registry value | Azure API-version fallback. |

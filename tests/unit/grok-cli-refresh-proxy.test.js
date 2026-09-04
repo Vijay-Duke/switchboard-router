@@ -7,6 +7,16 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch: vi.fn(),
+  proxyOptionsFromCredentials: (credentials) => {
+    const psd = credentials?.providerSpecificData || {};
+    return {
+      connectionProxyEnabled: psd.connectionProxyEnabled === true,
+      connectionProxyUrl: psd.connectionProxyUrl || "",
+      connectionNoProxy: psd.connectionNoProxy || "",
+      vercelRelayUrl: psd.vercelRelayUrl || "",
+      strictProxy: psd.strictProxy === true,
+    };
+  },
 }));
 
 vi.mock("../../open-sse/executors/index.js", () => ({
@@ -118,12 +128,13 @@ describe("Grok CLI credential refresh proxy", () => {
       },
     });
 
-    expect(mocks.refreshCredentials).toHaveBeenCalledWith(credentials, log, {
+    expect(mocks.refreshCredentials).toHaveBeenCalledWith(credentials, log, expect.objectContaining({
       connectionProxyEnabled: true,
       connectionProxyUrl: "http://proxy.example:8080",
       connectionNoProxy: "",
       vercelRelayUrl: "",
-    });
+      strictProxy: false,
+    }));
   });
 
   it("completes reactive refresh inside the handler-owned lock", async () => {

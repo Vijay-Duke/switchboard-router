@@ -3,17 +3,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+// Same storage BaseUrlSelect reads — one schema, and no raw API keys in
+// localStorage (T54). Legacy entries that still carry an apiKey are tolerated
+// on read but never written back.
 const STORAGE_KEY = "switchboard.cliToolEndpointPresets";
-
-function maskApiKey(apiKey) {
-  if (!apiKey) return "No API key";
-  if (apiKey.length <= 12) return `${apiKey.slice(0, 4)}...`;
-  return `${apiKey.slice(0, 8)}...${apiKey.slice(-4)}`;
-}
 
 function normalizePresets(value) {
   if (!Array.isArray(value)) return [];
-  return value.filter((preset) => preset?.name && preset?.baseUrl && preset?.apiKey);
+  return value
+    .filter((preset) => preset?.name && preset?.baseUrl)
+    .map(({ name, baseUrl }) => ({ name, baseUrl }));
 }
 
 function readPresets() {
@@ -32,9 +31,7 @@ function writePresets(presets) {
 
 export default function EndpointPresetControl({
   baseUrl,
-  apiKey,
   onBaseUrlChange,
-  onApiKeyChange,
 }) {
   const [presets, setPresets] = useState([]);
   const [selectedName, setSelectedName] = useState("");
@@ -53,24 +50,22 @@ export default function EndpointPresetControl({
     const preset = presets.find((item) => item.name === name);
     if (!preset) return;
     onBaseUrlChange(preset.baseUrl);
-    onApiKeyChange(preset.apiKey);
   };
 
   const handleSave = () => {
     const trimmedBaseUrl = (baseUrl || "").trim();
-    const trimmedApiKey = (apiKey || "").trim();
-    if (!trimmedBaseUrl || !trimmedApiKey) return;
+    if (!trimmedBaseUrl) return;
 
-    let defaultName = selectedPreset?.name || trimmedBaseUrl;
+    let defaultName = trimmedBaseUrl;
     try {
-      defaultName = selectedPreset?.name || new URL(trimmedBaseUrl).host;
+      defaultName = new URL(trimmedBaseUrl).host;
     } catch {
-      defaultName = selectedPreset?.name || trimmedBaseUrl;
+      defaultName = trimmedBaseUrl;
     }
-    const name = window.prompt("Preset name", defaultName);
+    const name = window.prompt("Preset name", selectedPreset?.name || defaultName);
     if (!name?.trim()) return;
 
-    const nextPreset = { name: name.trim(), baseUrl: trimmedBaseUrl, apiKey: trimmedApiKey };
+    const nextPreset = { name: name.trim(), baseUrl: trimmedBaseUrl };
     const nextPresets = [
       ...presets.filter((preset) => preset.name !== nextPreset.name),
       nextPreset,
@@ -101,16 +96,16 @@ export default function EndpointPresetControl({
         <option value="">Manual / current endpoint</option>
         {presets.map((preset) => (
           <option key={preset.name} value={preset.name}>
-            {preset.name} - {preset.baseUrl} ({maskApiKey(preset.apiKey)})
+            {preset.name} - {preset.baseUrl}
           </option>
         ))}
       </select>
       <button
         type="button"
         onClick={handleSave}
-        disabled={!baseUrl || !apiKey}
+        disabled={!baseUrl}
         className="px-2 py-1.5 rounded border text-xs bg-surface border-border text-text-main hover:border-primary disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-        title="Save current Base URL and API key as a browser-local preset"
+        title="Save the current Base URL as a browser-local preset"
       >
         Save
       </button>

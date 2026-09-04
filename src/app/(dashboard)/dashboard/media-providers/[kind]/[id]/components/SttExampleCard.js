@@ -17,7 +17,10 @@ export function SttExampleCard({ providerId }) {
 
   const [selectedModel, setSelectedModel] = useState(builtinSttModels[0]?.id ?? "");
   const selectedModelObj = sttModels.find((m) => m.id === selectedModel);
-  const allowedParams = Array.isArray(selectedModelObj?.params) ? selectedModelObj.params : [];
+  // Catalog models without an explicit params list still accept the standard
+  // transcription fields; gate only when the model declares params.
+  const STT_STANDARD_PARAMS = ["language", "response_format", "temperature", "prompt"];
+  const allowedParams = Array.isArray(selectedModelObj?.params) ? selectedModelObj.params : STT_STANDARD_PARAMS;
 
   const [audioFile, setAudioFile] = useState(null);
   const [language, setLanguage] = useState("");
@@ -83,7 +86,8 @@ export function SttExampleCard({ providerId }) {
       const ct = res.headers.get("content-type") || "";
       const data = ct.includes("application/json") ? await res.json() : await res.text();
       if (!res.ok) {
-        setError(data?.error?.message || data?.error || data || `HTTP ${res.status}`);
+        const errMsg = data?.error?.message || data?.error || data;
+        setError(typeof errMsg === "string" && errMsg ? errMsg : `HTTP ${res.status}`);
         return;
       }
       setResult(data);

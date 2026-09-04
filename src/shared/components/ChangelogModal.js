@@ -14,6 +14,11 @@ export default function ChangelogModal({ isOpen, onClose }) {
 
   useEffect(() => {
     if (!isOpen || html) return;
+    if (!GITHUB_CONFIG.changelogUrl) {
+      setError("Changelog is not configured for this build.");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
     fetch(GITHUB_CONFIG.changelogUrl)

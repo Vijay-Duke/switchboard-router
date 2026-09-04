@@ -12,6 +12,10 @@ import {
 } from "../endpoint/endpointConstants";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 
+// O23: the PXPIPE settings section is currently unshipped (rendered behind
+// `{false && (` below). While hidden, skip its status/health round-trips.
+const PXPIPE_SECTION_VISIBLE = false;
+
 function formatVaultBytes(value) {
   const bytes = Number(value);
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -116,7 +120,13 @@ export default function TokenSaverClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ rtkEnabled: value }),
       });
-      if (res.ok) setRtkEnabledState(value);
+      if (res.ok) {
+        setRtkEnabledState(value);
+      } else {
+        // O30: a failed save must say so — the toggle keeps the old value.
+        const body = await res.json().catch(() => ({}));
+        reportClientError(body.error || "Failed to update RTK setting");
+      }
     } catch (error) {
       reportClientError("Error updating rtkEnabled:", error);
     }
@@ -458,7 +468,9 @@ export default function TokenSaverClient() {
           if (typeof data.pxpipeMinChars === "number") setPxpipeMinChars(data.pxpipeMinChars);
           refreshHeadroomStatus();
           // PRD: run the PXPIPE health check automatically when the page opens
-          refreshPxpipeStatus().then(runPxpipeHealth);
+          if (PXPIPE_SECTION_VISIBLE) {
+            refreshPxpipeStatus().then(runPxpipeHealth);
+          }
         }
       } catch {}
     };
@@ -884,7 +896,11 @@ export default function TokenSaverClient() {
       <Modal
         isOpen={showHeadroomInstallModal}
         title={headroomRunning ? "Headroom" : "Setup Headroom"}
-        onClose={() => setShowHeadroomInstallModal(false)}
+        onClose={() => {
+          // O23: don't greet the next open with the previous error.
+          setHeadroomActionError("");
+          setShowHeadroomInstallModal(false);
+        }}
       >
         <div className="flex flex-col gap-4">
           <div className="flex items-center justify-between text-sm">
@@ -990,7 +1006,10 @@ export default function TokenSaverClient() {
       </Modal>
       <ConfirmModal
         isOpen={!!extrasConfirm}
-        onClose={() => setExtrasConfirm(null)}
+        onClose={() => {
+          setExtrasActionError("");
+          setExtrasConfirm(null);
+        }}
         onConfirm={() => {
           const fn = extrasConfirm?.onConfirm;
           setExtrasConfirm(null);
@@ -1005,7 +1024,10 @@ export default function TokenSaverClient() {
       <Modal
         isOpen={showPxpipeModal}
         title={pxpipeStatus.installed ? "PXPIPE" : "Setup PXPIPE"}
-        onClose={() => setShowPxpipeModal(false)}
+        onClose={() => {
+          setPxpipeActionError("");
+          setShowPxpipeModal(false);
+        }}
       >
         <div className="flex flex-col gap-4">
           <p className="text-sm text-text-muted">

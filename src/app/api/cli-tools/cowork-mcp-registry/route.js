@@ -36,7 +36,7 @@ async function fetchAll() {
       provider: "claude",
       format: "claude",
     });
-    if (!r.ok) break;
+    if (!r.ok) throw new Error(`Registry page fetch failed (HTTP ${r.status})`);
     const j = await r.json();
     for (const item of j.servers || []) {
       const s = item.server || {};

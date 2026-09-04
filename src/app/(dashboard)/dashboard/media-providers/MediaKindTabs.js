@@ -11,6 +11,7 @@ const TABS = [
   { id: "tts", label: "TTS", href: "/dashboard/media-providers/tts" },
   { id: "stt", label: "STT", href: "/dashboard/media-providers/stt" },
   { id: "embedding", label: "Embedding", href: "/dashboard/media-providers/embedding" },
+  { id: "video", label: "Video", href: "/dashboard/media-providers/video" },
   { id: "web", label: "Web", href: "/dashboard/media-providers/web" },
 ];
 

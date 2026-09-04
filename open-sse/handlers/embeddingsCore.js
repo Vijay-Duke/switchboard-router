@@ -6,8 +6,12 @@ import { withCredentialRefreshLock } from "../services/oauthCredentialManager.js
 import { getEmbeddingAdapter } from "./embeddingProviders/index.js";
 import { assertPublicUrlResolved } from "../utils/ssrfGuard.js";
 import { getOpenSseDeps } from "../runtimeDeps.js";
-import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { proxyAwareFetch, proxyOptionsFromCredentials } from "../utils/proxyFetch.js";
 import { PROVIDERS, PROVIDER_MEDIA } from "../providers/index.js";
+
+// Local input caps: fail fast instead of surfacing upstream 400s / OOMs.
+const EMBEDDINGS_MAX_BATCH = 256;
+const EMBEDDINGS_MAX_TOTAL_CHARS = 1024 * 1024;
 
 function embeddingTransport(provider) {
   const transport = PROVIDERS[provider] || {};
@@ -34,14 +38,25 @@ export async function handleEmbeddingsCore({
 }) {
   const { provider, model } = modelInfo;
   const transport = embeddingTransport(provider);
+  const proxyOptions = proxyOptionsFromCredentials(credentials);
 
   // Validate input
   const input = body.input;
-  if (!input) {
+  if (input === undefined) {
     return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Missing required field: input");
   }
   if (typeof input !== "string" && !Array.isArray(input)) {
-    return createErrorResult(HTTP_STATUS.BAD_REQUEST, "input must be a string or array of strings");
+    return createErrorResult(HTTP_STATUS.BAD_REQUEST, "input must be a string or array of non-empty strings");
+  }
+  const items = typeof input === "string" ? [input] : input;
+  if (items.length === 0 || items.length > EMBEDDINGS_MAX_BATCH) {
+    return createErrorResult(HTTP_STATUS.BAD_REQUEST, `input must contain 1-${EMBEDDINGS_MAX_BATCH} items`);
+  }
+  if (items.some((item) => typeof item !== "string" || !item.trim())) {
+    return createErrorResult(HTTP_STATUS.BAD_REQUEST, "input must be a non-empty string or array of non-empty strings");
+  }
+  if (items.reduce((total, item) => total + item.length, 0) > EMBEDDINGS_MAX_TOTAL_CHARS) {
+    return createErrorResult(HTTP_STATUS.BAD_REQUEST, `input exceeds ${EMBEDDINGS_MAX_TOTAL_CHARS} total characters`);
   }
 
   const adapter = getEmbeddingAdapter(provider);
@@ -89,7 +104,7 @@ export async function handleEmbeddingsCore({
       identity: transport.identity,
       provider,
       format: transport.format,
-    });
+    }, proxyOptions);
   } catch (error) {
     if (error?.name === "AbortError" || abortSignal?.aborted) {
       return createErrorResult(499, "Embeddings request aborted");
@@ -136,7 +151,7 @@ export async function handleEmbeddingsCore({
           identity: transport.identity,
           provider,
           format: transport.format,
-        });
+        }, proxyOptions);
       } catch (error) {
         if (error?.name === "AbortError" || abortSignal?.aborted) {
           return createErrorResult(499, "Embeddings request aborted");

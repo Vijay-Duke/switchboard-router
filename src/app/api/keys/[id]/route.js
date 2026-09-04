@@ -2,6 +2,8 @@
 import { NextResponse } from "next/server";
 import { deleteApiKey, getApiKeyById, normalizeClientKeyPatch, updateApiKey } from "@/lib/db/index.js";
 
+export const dynamic = "force-dynamic";
+
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
   try {
@@ -55,7 +57,7 @@ export async function DELETE(request, { params }) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ message: "Key deleted successfully" });
+    return NextResponse.json({ success: true, message: "Key deleted successfully" });
   } catch (error) {
     console.log("Error deleting key:", error);
     return NextResponse.json({ error: "Failed to delete key" }, { status: 500 });

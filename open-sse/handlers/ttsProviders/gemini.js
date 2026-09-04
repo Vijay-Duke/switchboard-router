@@ -2,6 +2,7 @@
 import { Buffer } from "node:buffer";
 import { PROVIDER_MEDIA, PROVIDER_MODELS } from "../../providers/index.js";
 import { authenticatedMediaFetch } from "./_base.js";
+import { proxyOptionsFromCredentials } from "../../utils/proxyFetch.js";
 
 const TTS_CFG = PROVIDER_MEDIA["gemini"]?.ttsConfig || {};
 const TTS_BASE = TTS_CFG.baseUrl;
@@ -53,9 +54,13 @@ function pcmToWav(pcmBuffer) {
   return Buffer.concat([header, pcmBuffer]);
 }
 
-// Build TTS prompt: add "Say [in {language}]:" prefix to force TTS mode
-function buildPrompt(text, language) {
-  if (/:\s/.test(text)) return text; // user already provided style instruction
+// Build TTS prompt: add "Say [in {language}]:" prefix to force TTS mode.
+// Only skip when the text already opens with a speak-style instruction — the
+// old "any colon" heuristic skipped ordinary prose like "Note: ...", which
+// then returned text ("returned no audio").
+const SPEAK_INSTRUCTION_RE = /^(say|speak|read|narrate|announce|whisper|shout)\b[^:]{0,60}:/i;
+export function buildPrompt(text, language) {
+  if (SPEAK_INSTRUCTION_RE.test(text.trim())) return text;
   return language ? `Say in ${language}: ${text}` : `Say: ${text}`;
 }
 
@@ -63,7 +68,7 @@ const moduleDefault = {
   async synthesize(text, model, credentials, _responseFormat, opts = {}) {
     if (!credentials?.apiKey) throw new Error("No Gemini API key configured");
     const { modelId, voiceId } = parseGeminiModelVoice(model);
-    const url = `${TTS_BASE}/${modelId}:generateContent?key=${credentials.apiKey}`;
+    const url = `${TTS_BASE}/${modelId}:generateContent?key=${encodeURIComponent(credentials.apiKey)}`;
     const res = await authenticatedMediaFetch("gemini", "tts", url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -74,6 +79,8 @@ const moduleDefault = {
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceId } } },
         },
       }),
+      signal: opts?.signal,
+      proxyOptions: proxyOptionsFromCredentials(credentials),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

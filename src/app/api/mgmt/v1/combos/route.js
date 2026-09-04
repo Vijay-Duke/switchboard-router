@@ -39,6 +39,7 @@ export async function GET(request) {
 /** POST /api/mgmt/v1/combos */
 export async function POST(request) {
   const denied = await requireManagementAuth(request);
+  if (denied) return denied;
   let body;
   try {
     body = await request.json();

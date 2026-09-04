@@ -303,11 +303,15 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
 
         // Abort-aware backoff, then splice the retried attempt into this stream.
         await waitForBackoff(signal, baseDelayMs * 2 ** attempt);
+        // Downstream is gone: nobody is listening, so stop instead of burning
+        // another upstream execution (quota spend) or emitting to the void.
+        if (downstreamGone) return;
         if (signal?.aborted) return abortStream();
 
         try {
           currentReader = (await reexecute()).getReader();
         } catch (error) {
+          if (downstreamGone) return;
           if (error?.name === "AbortError" || signal?.aborted) return abortStream();
           return exhaust(error?.message || "retry request failed");
         }

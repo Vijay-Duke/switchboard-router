@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 function getDays(value) {
   const days = Number(value);
   if (!Number.isFinite(days)) return DEFAULT_DAYS;
-  return Math.min(90, Math.max(1, days));
+  return Math.min(90, Math.max(1, Math.floor(days)));
 }
 
 /** @param {string} combo @param {number} days */

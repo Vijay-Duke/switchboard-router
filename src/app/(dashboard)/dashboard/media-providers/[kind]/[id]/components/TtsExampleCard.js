@@ -61,6 +61,10 @@ export function TtsExampleCard({ providerId }) {
   // Language hint (e.g. Gemini): controls the spoken language without affecting voice selection
   const [languageHint, setLanguageHint]     = useState("");
 
+  // Revoke the last created object URL whenever it is replaced, and on unmount
+  useEffect(() => () => {
+    if (audioUrl) { try { URL.revokeObjectURL(audioUrl); } catch {} }
+  }, [audioUrl]);
   useEffect(() => {
     setLocalEndpoint(window.location.origin);
 
@@ -195,7 +199,7 @@ export function TtsExampleCard({ providerId }) {
     if (!input.trim() || !modelFull || !apiKey.trim()) return;
     setRunning(true);
     setError("");
-    setAudioUrl("");
+    setAudioUrl(""); // the [audioUrl] effect cleanup revokes the previous object URL
     setJsonResponse(null);
     const start = Date.now();
     try {

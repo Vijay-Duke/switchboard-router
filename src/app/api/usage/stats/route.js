@@ -1,8 +1,7 @@
 // @ts-check
 import { NextResponse } from "next/server";
 import { getUsageStats } from "@/lib/db/index.js";
-
-const VALID_PERIODS = new Set(["today", "24h", "7d", "30d", "60d", "all"]);
+import { VALID_PERIODS } from "../_lib/periods.js";
 
 export const dynamic = "force-dynamic";
 

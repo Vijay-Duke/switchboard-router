@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const proxyAwareFetch = vi.hoisted(() => vi.fn());
 
-vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch }));
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch, proxyOptionsFromCredentials: () => null }));
 
 import { handleTtsCore } from "../../open-sse/handlers/ttsCore.js";
 
@@ -44,7 +44,8 @@ describe("MiniMax TTS", () => {
         identity: "claude-cli",
         provider: "minimax",
         format: "minimax-tts",
-      })
+      }),
+      null,
     );
 
     const sent = JSON.parse(proxyAwareFetch.mock.calls[0][1].body);

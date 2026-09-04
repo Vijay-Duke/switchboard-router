@@ -142,6 +142,11 @@ export async function GET(request) {
       notes: {
         eventCountScope:
           "eventCount is request-level (terminal rows / distinct requestId). Heuristic and single-worker shortcuts are not logged and do not appear here.",
+        // O6: cluster/worker/exploration params scope the recent-decisions
+        // list only. heatmap, modelStats and scoreTrend always cover the full
+        // window — the dashboard labels the selects accordingly.
+        filterScope:
+          "cluster/worker/exploration filters apply to recent/explorationLog only.",
       },
     });
   } catch (e) {

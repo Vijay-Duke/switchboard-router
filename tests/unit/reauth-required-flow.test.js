@@ -124,7 +124,10 @@ describe("chatCore unrecoverable refresh branch", () => {
     expect(out.success).toBe(false);
     expect(out.status).toBe(401);
     expect(out.error).toMatch(/reconnect/);
-  });
+  // The timed window includes the dynamic import of chatCore's whole module
+  // graph (translators, rtk, identity) after resetModules — ~5-9s under a
+  // loaded suite worker; the handleChatCore call itself is ~25ms.
+  }, 30000);
 });
 
 describe("updateProviderCredentials status passthrough", () => {

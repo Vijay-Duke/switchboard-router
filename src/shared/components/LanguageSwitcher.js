@@ -61,7 +61,10 @@ export default function LanguageSwitcher({ className = "", isOpen: controlledOpe
     if (nextLocale === locale || isPending) return;
 
     setIsPending(true);
-    setIsOpen(false);
+    // Close with the chosen locale so a controlled parent never re-applies the
+    // previous one (setIsOpen closes over the stale `locale`).
+    if (isControlled) onClose?.(nextLocale);
+    else setInternalOpen(false);
     try {
       await fetch("/api/locale", {
         method: "POST",

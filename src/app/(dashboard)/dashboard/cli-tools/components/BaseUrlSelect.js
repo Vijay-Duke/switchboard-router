@@ -52,6 +52,7 @@ const buildOptions = ({ requiresExternalUrl, savedPresets, withV1 }) => {
 export default function BaseUrlSelect({
   value,
   onChange,
+  initialUrl = "",
   requiresExternalUrl = false, // kept for call-site compatibility; ignored
   tunnelEnabled = false,
   tunnelPublicUrl = "",
@@ -75,11 +76,28 @@ export default function BaseUrlSelect({
     [requiresExternalUrl, savedPresets, withV1]
   );
 
-  // Always default to first option (127.0.0.1) on mount, ignore persisted value
+  // Initialize from the server-configured endpoint when one is provided;
+  // otherwise default to the first option (127.0.0.1). Never re-run after mount.
   useEffect(() => {
     if (initializedRef.current) return;
     if (options.length === 0) return;
     initializedRef.current = true;
+    const normalize = (url) => (withV1 ? ensureV1(url) : (url || "").replace(/\/+$/, ""));
+    const initial = (initialUrl || "").trim();
+    const match = initial && options.find((o) => o.value !== CUSTOM_VALUE && o.url === normalize(initial));
+    if (match) {
+      setMode(match.value);
+      onChange(match.url);
+      return;
+    }
+    if (initial) {
+      // Server URL that is not one of the presets: keep it in custom mode
+      // instead of silently repointing the tool at localhost.
+      setMode(CUSTOM_VALUE);
+      setCustomInput(initial);
+      onChange(normalize(initial));
+      return;
+    }
     const first = options.find((o) => o.value !== CUSTOM_VALUE);
     if (first) {
       setMode(first.value);
@@ -87,7 +105,7 @@ export default function BaseUrlSelect({
     } else {
       setMode(CUSTOM_VALUE);
     }
-  }, [options, onChange]);
+  }, [options, onChange, initialUrl, withV1]);
 
   const handleSelect = (e) => {
     const next = e.target.value;
@@ -141,6 +159,7 @@ export default function BaseUrlSelect({
         <select
           value={mode}
           onChange={handleSelect}
+          aria-label="Select Endpoint"
           className="flex-1 min-w-0 px-2 py-2 bg-surface rounded text-xs border border-border focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5"
         >
           {options.map((o) => (

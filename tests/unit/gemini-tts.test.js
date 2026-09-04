@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const proxyAwareFetch = vi.hoisted(() => vi.fn());
 
-vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch }));
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch, proxyOptionsFromCredentials: () => null }));
 
 import { handleTtsCore } from "../../open-sse/handlers/ttsCore.js";
 import { buildTtsProviderModels } from "../../open-sse/config/ttsModels.js";

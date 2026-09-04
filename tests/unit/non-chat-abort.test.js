@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const proxyAwareFetch = vi.hoisted(() => vi.fn());
 
-vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch }));
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch, proxyOptionsFromCredentials: () => null }));
 
 import { handleFetchCore } from "../../open-sse/handlers/fetch/index.js";
 import { handleSearchCore } from "../../open-sse/handlers/search/index.js";

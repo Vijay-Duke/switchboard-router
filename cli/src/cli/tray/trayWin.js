@@ -22,14 +22,17 @@ function sendCommand(cmd) {
  *   items: [{ title, enabled }]
  * @returns {Object|null} controller with sendAction/kill
  */
-function initWinTray(options) {
+function initWinTray(options, { spawnImpl = spawn } = {}) {
   const { iconPath, tooltip, items, onClick } = options;
   clickHandler = onClick;
+  let started = false;
+  const startedWaiters = [];
+  const exitedWaiters = [];
 
   const scriptPath = path.join(__dirname, "tray.ps1");
 
   try {
-    psProcess = spawn(
+    psProcess = spawnImpl(
       "powershell.exe",
       [
         "-NoProfile",
@@ -53,12 +56,18 @@ function initWinTray(options) {
       const evt = JSON.parse(line);
       if (evt.type === "click" && clickHandler) {
         clickHandler(evt.index);
+      } else if (evt.type === "started") {
+        started = true;
+        while (startedWaiters.length) startedWaiters.shift()();
       }
     } catch (e) {}
   });
 
   psProcess.on("error", () => {});
-  psProcess.on("exit", () => { psProcess = null; });
+  psProcess.on("exit", () => {
+    psProcess = null;
+    while (exitedWaiters.length) exitedWaiters.shift()();
+  });
   psProcess.stderr.on("data", () => {});
 
   // Send initial menu items
@@ -67,6 +76,17 @@ function initWinTray(options) {
   });
 
   return {
+    ready(timeoutMs = 5000) {
+      if (started) return Promise.resolve(true);
+      if (!psProcess) return Promise.reject(new Error("tray process exited before started"));
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error("tray startup timed out"));
+        }, timeoutMs);
+        startedWaiters.push(() => { clearTimeout(timer); resolve(true); });
+        exitedWaiters.push(() => { clearTimeout(timer); reject(new Error("tray process exited before started")); });
+      });
+    },
     updateItem(index, title, enabled) {
       sendCommand({ action: "update-item", index, title, enabled });
     },

@@ -2,6 +2,7 @@
 // @ts-check
 
 import { useCallback, useEffect, useState } from "react";
+import { formatShellWords, splitShellWords } from "./shellWords.js";
 import { Card, Button, Badge } from "@/shared/components";
 import { requestConfirmation } from "@/store/confirmationStore";
 import { useNotificationStore } from "@/store/notificationStore";
@@ -63,6 +64,7 @@ export default function AgentLibraryPage() {
 
   // Export path
   const [exportPath, setExportPath] = useState("");
+  const [projectPathDraft, setProjectPathDraft] = useState(/** @type {string|null} */ (null));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,12 +101,15 @@ export default function AgentLibraryPage() {
     load();
     checkUpdates();
     fetch("/api/agent-library/catalog")
-      .then((r) => r.json())
-      .then((j) => {
+      .then(async (r) => {
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || "Failed to load skill catalog");
         setPresets(j.presets || []);
         setMcpPresets(j.mcpPresets || []);
       })
-      .catch(() => {});
+      .catch((e) => notify.error(e.message));
+    // notify is a stable store closure; see load() above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, checkUpdates]);
 
   const settings = data?.settings || {};
@@ -126,6 +131,16 @@ export default function AgentLibraryPage() {
       notify.error(e.message);
     } finally {
       setBusy("");
+    }
+  }
+
+  /** T6: commit the project-path draft once (blur/Enter), not per keystroke. */
+  function commitProjectPathDraft() {
+    if (projectPathDraft === null) return;
+    const draft = projectPathDraft;
+    setProjectPathDraft(null);
+    if (draft !== (settings.projectPath || "")) {
+      patchSettings({ projectPath: draft });
     }
   }
 
@@ -181,7 +196,7 @@ export default function AgentLibraryPage() {
     setBusy("mcp");
     try {
       const args = mcpForm.args
-        ? mcpForm.args.split(/\s+/).filter(Boolean)
+        ? splitShellWords(mcpForm.args)
         : [];
       const r = await fetch("/api/agent-library/mcp", {
         method: "POST",
@@ -269,7 +284,7 @@ export default function AgentLibraryPage() {
         method: "DELETE",
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error);
+      if (!r.ok) throw new Error(j.error || "Delete failed");
       notify.success("MCP removed from library");
       await load();
     } catch (e) {
@@ -287,7 +302,7 @@ export default function AgentLibraryPage() {
         method: "DELETE",
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error);
+      if (!r.ok) throw new Error(j.error || "Delete failed");
       notify.success("Skill removed from library");
       await load();
       await checkUpdates();
@@ -696,10 +711,17 @@ export default function AgentLibraryPage() {
                   <span className="text-text-muted">Project path (absolute)</span>
                   <input
                     className="bg-surface border border-border rounded-md px-2 py-1.5 font-mono text-text-main"
-                    value={settings.projectPath || ""}
+                    value={projectPathDraft ?? settings.projectPath ?? ""}
                     placeholder="/Users/you/my-app"
                     disabled={!!busy}
-                    onChange={(e) => patchSettings({ projectPath: e.target.value })}
+                    onChange={(e) => setProjectPathDraft(e.target.value)}
+                    onBlur={commitProjectPathDraft}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.currentTarget.blur();
+                      }
+                    }}
                   />
                 </label>
               )}
@@ -863,13 +885,19 @@ export default function AgentLibraryPage() {
                 onClick={async () => {
                   setBusy("ensure");
                   try {
-                    await fetch("/api/agent-library/skills", {
+                    const r = await fetch("/api/agent-library/skills", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ action: "ensure_product" }),
                     });
+                    const j = await r.json().catch(() => ({}));
+                    if (!r.ok || j.ok === false) {
+                      throw new Error(j.error || "Failed to ensure product skills");
+                    }
                     await load();
                     notify.success("Product skills ensured");
+                  } catch (e) {
+                    notify.error(e.message);
                   } finally {
                     setBusy("");
                   }
@@ -913,7 +941,7 @@ export default function AgentLibraryPage() {
                         size="sm"
                         variant="secondary"
                         disabled={!!busy}
-                        loading={busy === "upd-preview" && updPreview?.id !== s.id}
+                        loading={busy === "upd-preview" && updPreview?.id === s.id}
                         onClick={() => previewUpdate(s.id)}
                       >
                         Update
@@ -1205,7 +1233,7 @@ export default function AgentLibraryPage() {
                     <div className="text-[11px] text-text-muted mt-1">
                       {s.transport || "stdio"} ·{" "}
                       {s.command
-                        ? `${s.command} ${(s.args || []).join(" ")}`
+                        ? `${s.command} ${formatShellWords(s.args || [])}`
                         : s.url}
                     </div>
                   </div>
@@ -1308,6 +1336,7 @@ export default function AgentLibraryPage() {
                 </Button>
                 {smartInput && (
                   <Button
+                    type="button"
                     size="sm"
                     variant="ghost"
                     disabled={!!busy}
@@ -1387,9 +1416,10 @@ export default function AgentLibraryPage() {
                 </div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   {discoveredSkills.map((s) => (
-                    <div
+                    <button
+                      type="button"
                       key={s.path || s.skillId}
-                      className={`p-2.5 rounded-lg border transition-all text-xs cursor-pointer ${
+                      className={`w-full text-left p-2.5 rounded-lg border transition-all text-xs cursor-pointer ${
                         catalogUrl === s.rawUrl
                           ? "border-primary bg-primary/5 shadow-sm"
                           : "border-border-subtle hover:border-border bg-surface-2/40"
@@ -1408,7 +1438,7 @@ export default function AgentLibraryPage() {
                       {s.description && (
                         <p className="text-[11px] text-text-muted mt-1 line-clamp-2">{s.description}</p>
                       )}
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -1524,6 +1554,7 @@ export default function AgentLibraryPage() {
                       size="sm"
                       variant="ghost"
                       onClick={() => {
+                        setCatalogConfirm(false);
                         setSmartInput(p.rawUrl);
                         setCatalogUrl(p.rawUrl);
                         setCatalogSkillId(p.skillId);

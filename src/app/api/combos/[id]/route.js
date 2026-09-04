@@ -7,6 +7,8 @@ import {
   updateComboWrite,
 } from "@/lib/combos/comboWrites.js";
 
+export const dynamic = "force-dynamic";
+
 // GET /api/combos/[id] - Get combo by ID
 export async function GET(request, { params }) {
   try {

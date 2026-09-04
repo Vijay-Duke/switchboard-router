@@ -19,6 +19,7 @@ export default function AddCustomEmbeddingModal({ isOpen, onClose, onCreated, on
     baseUrl: DEFAULT_BASE_URL,
   });
   const [submitting, setSubmitting] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const [checkKey, setCheckKey] = useState("");
   const [checkModelId, setCheckModelId] = useState("");
   const [validating, setValidating] = useState(false);
@@ -27,6 +28,7 @@ export default function AddCustomEmbeddingModal({ isOpen, onClose, onCreated, on
   useEffect(() => {
     if (!isOpen) return;
     setValidationResult(null);
+    setSaveError(null);
     setCheckKey("");
     setCheckModelId("");
     if (isEdit) {
@@ -42,6 +44,7 @@ export default function AddCustomEmbeddingModal({ isOpen, onClose, onCreated, on
   const handleSubmit = async () => {
     if (!formData.name.trim() || !formData.baseUrl.trim()) return;
     setSubmitting(true);
+    setSaveError(null);
     try {
       const url = isEdit ? `/api/provider-nodes/${node.id}` : "/api/provider-nodes";
       const method = isEdit ? "PUT" : "POST";
@@ -56,13 +59,24 @@ export default function AddCustomEmbeddingModal({ isOpen, onClose, onCreated, on
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {
+        data = null;
+      }
       if (res.ok) {
-        if (isEdit) onSaved?.(data.node);
-        else onCreated?.(data.node);
+        if (isEdit) onSaved?.(data?.node);
+        else onCreated?.(data?.node);
+      } else {
+        const message = data?.error || `Failed to save custom embedding (${res.status})`;
+        setSaveError(message);
+        reportClientError(message);
       }
     } catch (error) {
-      reportClientError("Error saving custom embedding node:", error);
+      const message = "Error saving custom embedding node";
+      setSaveError(message);
+      reportClientError(`${message}:`, error);
     } finally {
       setSubmitting(false);
     }
@@ -156,6 +170,11 @@ export default function AddCustomEmbeddingModal({ isOpen, onClose, onCreated, on
           </Button>
           {renderValidationResult()}
         </div>
+        {saveError && (
+          <div role="alert" className="bg-red-50 dark:bg-red-900/20 p-3 rounded-lg border border-red-200 dark:border-red-800">
+            <p className="text-sm text-red-600 dark:text-red-400">{saveError}</p>
+          </div>
+        )}
         <div className="flex gap-2">
           <Button
             onClick={handleSubmit}

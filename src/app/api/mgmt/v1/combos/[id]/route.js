@@ -33,6 +33,9 @@ export async function GET(request, { params }) {
   if (denied) return denied;
   try {
     const { id } = await params;
+    if (typeof id !== "string" || !id.trim() || id.length > 200) {
+      return fail(400, "Invalid combo id", "bad_request");
+    }
     const combo = await getComboById(id);
     if (!combo) return fail(404, "Combo not found", "not_found");
     const settings = await getSettings();
@@ -49,6 +52,7 @@ export async function GET(request, { params }) {
  */
 export async function PUT(request, { params }) {
   const denied = await requireManagementAuth(request);
+  if (denied) return denied;
   let body;
   try {
     body = await request.json();
@@ -57,6 +61,9 @@ export async function PUT(request, { params }) {
   }
   try {
     const { id } = await params;
+    if (typeof id !== "string" || !id.trim() || id.length > 200) {
+      return fail(400, "Invalid combo id", "bad_request");
+    }
     const combo = await updateComboWrite(id, body);
     if (!combo) return fail(404, "Combo not found", "not_found");
     return ok(combo);
@@ -78,6 +85,9 @@ export async function DELETE(request, { params }) {
   if (denied) return denied;
   try {
     const { id } = await params;
+    if (typeof id !== "string" || !id.trim() || id.length > 200) {
+      return fail(400, "Invalid combo id", "bad_request");
+    }
     const success = await deleteComboWrite(id);
     if (!success) return fail(404, "Combo not found", "not_found");
     return ok({ success: true });

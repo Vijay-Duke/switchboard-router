@@ -103,3 +103,39 @@ describe("pre-output SSE transient retry", () => {
     expect(await returned.response.text()).toBe(OUTPUT);
   });
 });
+
+describe("pre-output peek abort and retry slot (H30/H31)", () => {
+  it("aborts a never-resolving peek read promptly and cancels the upstream reader", async () => {
+    const onCancel = vi.fn();
+    const stalled = new Response(new ReadableStream({ start() {}, cancel: onCancel }), {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+    const execute = vi.fn().mockResolvedValue({ response: stalled, url: "https://upstream.test", headers: {}, transformedBody: {} });
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 10);
+
+    await expect(executeWithPreOutputSseRetry({ execute, retryConfig, signal: controller.signal }))
+      .rejects.toMatchObject({ name: "AbortError" });
+    expect(onCancel).toHaveBeenCalled();
+  });
+
+  it("reads a dedicated sseTransient slot and falls back to the 503 entry", async () => {
+    const dedicated = vi.fn()
+      .mockResolvedValueOnce(result(TRANSIENT))
+      .mockResolvedValueOnce(result(TRANSIENT))
+      .mockResolvedValueOnce(result(OUTPUT));
+    const retried = await executeWithPreOutputSseRetry({
+      execute: dedicated,
+      retryConfig: { 503: { attempts: 0, delayMs: 0 }, sseTransient: { attempts: 2, delayMs: 0 } },
+    });
+    expect(dedicated).toHaveBeenCalledTimes(3);
+    expect(await retried.response.text()).toBe(OUTPUT);
+
+    const fallback = vi.fn()
+      .mockResolvedValueOnce(result(TRANSIENT))
+      .mockResolvedValueOnce(result(OUTPUT));
+    await executeWithPreOutputSseRetry({ execute: fallback, retryConfig: { 503: { attempts: 1, delayMs: 0 } } });
+    expect(fallback).toHaveBeenCalledTimes(2);
+  });
+});

@@ -35,7 +35,10 @@ const USAGE_EXTRACTORS = {
       candidates = total - prompt - thoughts;
       if (candidates < 0) candidates = 0;
     }
-    return { promptTokens: prompt, completionTokens: candidates + thoughts, totalTokens: total, cachedTokens: cached, reasoningTokens: thoughts };
+    // Fallback: derive total from parts when upstream omits it (else 0 breaks
+    // cost math with total < prompt).
+    const resolvedTotal = total > 0 ? total : prompt + candidates + thoughts;
+    return { promptTokens: prompt, completionTokens: candidates + thoughts, totalTokens: resolvedTotal, cachedTokens: cached, reasoningTokens: thoughts };
   },
   kiro(raw) {
     const input = n(raw.inputTokens), output = n(raw.outputTokens);

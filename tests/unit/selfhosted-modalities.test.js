@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const proxyAwareFetch = vi.hoisted(() => vi.fn());
 const assertPublicUrlResolved = vi.hoisted(() => vi.fn());
 
-vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch }));
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch, proxyOptionsFromCredentials: () => null }));
 vi.mock("../../open-sse/utils/ssrfGuard.js", () => ({ assertPublicUrlResolved }));
 vi.mock("../../open-sse/executors/index.js", () => ({
   getExecutor: vi.fn(() => ({ noAuth: true })),
@@ -71,6 +71,7 @@ describe("self-hosted STT", () => {
         provider: "selfhosted-stt",
         headers: { Authorization: "Bearer optional" },
       }),
+      null,
     );
   });
 });
@@ -141,6 +142,7 @@ describe("self-hosted embeddings", () => {
     expect(proxyAwareFetch).toHaveBeenCalledWith(
       "http://10.0.0.4:8080/v1/embeddings",
       expect.objectContaining({ identity: "openai-node", provider: "selfhosted-embedding" }),
+      null,
     );
   });
 });

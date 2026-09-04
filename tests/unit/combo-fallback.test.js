@@ -208,3 +208,26 @@ describe("combo fallback", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("combo same-model transient retry (E10)", () => {
+  it("retries a plain 503 on the same model before falling through", async () => {
+    const calls = [];
+    const handleSingleModel = vi.fn(async (_body, model) => {
+      calls.push(model);
+      if (calls.length === 1) return errResponse(503, { error: { message: "Service Unavailable" } });
+      return okResponse("recovered");
+    });
+
+    const res = await handleComboChat({
+      body: { messages: [{ role: "user", content: "hi" }] },
+      models: ["p/flaky", "p/other"],
+      handleSingleModel,
+      log,
+    });
+
+    expect(calls).toEqual(["p/flaky", "p/flaky"]);
+    expect(res.ok).toBe(true);
+    const json = await res.json();
+    expect(json.choices[0].message.content).toBe("recovered");
+  }, 15000);
+});

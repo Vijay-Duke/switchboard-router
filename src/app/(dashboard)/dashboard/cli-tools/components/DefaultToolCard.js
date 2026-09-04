@@ -5,11 +5,12 @@ import { useState } from "react";
 import { Card, ModelSelectModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import Image from "next/image";
+import { reportClientError } from "@/shared/utils/clientFeedback";
 import ApiKeySelect from "./ApiKeySelect";
+import { cardHeaderToggleProps } from "./cardHeaderToggle";
 import ModelCatalogInput from "./ModelCatalogInput";
 
 export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders = [], cloudEnabled = false, tunnelEnabled = false }) {
-  const [copiedField, setCopiedField] = useState(null);
   const [showModelModal, setShowModelModal] = useState(false);
   const [modelValue, setModelValue] = useState("");
   const [modelValues, setModelValues] = useState([]);
@@ -48,14 +49,16 @@ export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, ba
     return { baseUrl: effectiveBaseUrl, apiKey: keyToUse, model: models[0], models };
   };
 
-  const { copy: copyToClipboard } = useCopyToClipboard();
+
+  // The hook owns copied feedback (and resets it); its boolean result tells us
+  // whether copying succeeded so failures can be reported, never shown as "Copied!".
+  const { copied: copiedField, copy: copyToClipboard } = useCopyToClipboard();
 
   const handleCopy = async (text, field) => {
-    await copyToClipboard(replaceVars(text), `toolcard-${field}`);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 2000);
-  };
+    const ok = await copyToClipboard(replaceVars(text), field);
+    if (!ok) reportClientError("Failed to copy to clipboard");
 
+  };
   const handleSelectModel = (model) => {
     if (supportsMultipleModels) {
       setModelValues((current) => current.includes(model.value) ? current : [...current, model.value]);
@@ -285,7 +288,7 @@ export default function DefaultToolCard({ toolId, tool, isExpanded, onToggle, ba
 
   return (
     <Card padding="xs" className="overflow-hidden overflow-x-hidden">
-      <div className="flex items-center justify-between hover:cursor-pointer" onClick={onToggle}>
+      <div {...cardHeaderToggleProps(onToggle, isExpanded, tool.name)} className="flex items-center justify-between hover:cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-lg">
         <div className="flex items-center gap-3">
           <div className="size-8 rounded-lg flex items-center justify-center shrink-0">
             {renderIcon()}

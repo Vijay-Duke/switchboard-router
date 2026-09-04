@@ -28,6 +28,7 @@ vi.mock("../../open-sse/services/tokenRefresh.js", () => ({
 // Mock proxyFetch to avoid proxy-agent imports in test env
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch: vi.fn(),
+  proxyOptionsFromCredentials: () => null,
 }));
 
 vi.mock("../../open-sse/utils/ssrfGuard.js", () => ({
@@ -433,16 +434,14 @@ describe("handleEmbeddingsCore — input validation", () => {
     expect(result.status).toBe(400);
   });
 
-  it("empty array input passes validation and reaches provider", async () => {
-    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(
-      makeProviderResponse(VALID_EMBEDDING_RESPONSE)
-    );
+  it("empty array input → 400 Bad Request, provider never called", async () => {
     const result = await handleEmbeddingsCore(makeOptions({
       body: { model: "text-embedding-ada-002", input: [] },
     }));
-    // Empty array is truthy → passes, fetch is called
-    expect(proxyAwareFetch).toHaveBeenCalledOnce();
-    expect(result.success).toBe(true);
+    // Empty batches are rejected locally instead of surfacing an upstream 400.
+    expect(result.success).toBe(false);
+    expect(result.status).toBe(400);
+    expect(proxyAwareFetch).not.toHaveBeenCalled();
   });
 });
 

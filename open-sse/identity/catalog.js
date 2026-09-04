@@ -1,5 +1,6 @@
 import { ANTHROPIC_API_VERSION } from "../providers/shared.js";
 import { mapStainlessArch, mapStainlessOs, hostArch, hostPlatform } from "./os.js";
+import { release as osRelease } from "node:os";
 import { GROK_CLI_CLIENT_IDENTIFIER, GROK_CLI_VERSION } from "../config/grokCli.js";
 
 const CLAUDE_BETAS = "claude-code-20250219,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24,structured-outputs-2025-12-15";
@@ -65,7 +66,8 @@ function clineHeaders(snapshot) {
     "X-Title": "Cline",
     "User-Agent": `Cline/${version}`,
     "X-PLATFORM": hostPlatform() || "unknown",
-    "X-PLATFORM-VERSION": process.version || "unknown",
+    // OS release, not the Node runtime version.
+    "X-PLATFORM-VERSION": snapshot?.platformVersion || osRelease() || "unknown",
     "X-CLIENT-TYPE": "extension",
     "X-CLIENT-VERSION": version,
     "X-CORE-VERSION": version,
@@ -77,9 +79,10 @@ function geminiHeaders(snapshot) {
   const version = snapshot?.version || "0.56.0";
   const model = snapshot?.upstreamModel || "unknown";
   const a = hostArch() === "ia32" ? "x86" : hostArch();
+  const nodeVer = typeof process !== "undefined" && process.version ? process.version.replace(/^v/, "") : "unknown";
   return {
     "User-Agent": `GeminiCLI/${version}/${model} (${hostPlatform()}; ${a}; terminal)`,
-    "X-Goog-Api-Client": snapshot?.apiClient || "google-genai-sdk/1.41.0 gl-node/v22.19.0",
+    "X-Goog-Api-Client": snapshot?.apiClient || `google-genai-sdk/1.41.0 gl-node/v${nodeVer}`,
   };
 }
 
@@ -139,17 +142,33 @@ function grokCliHeaders(snapshot) {
   };
 }
 
+function grokShellArch() {
+  const a = hostArch();
+  if (a === "x64") return "x86_64";
+  if (a === "arm64") return "aarch64";
+  if (a === "ia32") return "x86";
+  return a || "x86_64";
+}
+
 function grokBuildHeaders() {
   return {
-    "User-Agent": `grok-shell/${GROK_CLI_VERSION} (linux; x86_64)`,
+    "User-Agent": `grok-shell/${GROK_CLI_VERSION} (${hostPlatform() || "linux"}; ${grokShellArch()})`,
     "x-grok-client-identifier": GROK_CLI_CLIENT_IDENTIFIER,
     "x-grok-client-version": GROK_CLI_VERSION,
   };
 }
 
-function chromeHeaders() {
+function chromePlatformToken() {
+  const p = hostPlatform();
+  if (p === "darwin") return "Macintosh; Intel Mac OS X 10_15_7";
+  if (p === "win32") return "Windows NT 10.0; Win64; x64";
+  return "X11; Linux x86_64";
+}
+
+function chromeHeaders(snapshot) {
+  const chromeVersion = snapshot?.chromeVersion || "136";
   return {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+    "User-Agent": `Mozilla/5.0 (${chromePlatformToken()}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion}.0.0.0 Safari/537.36`,
   };
 }
 
@@ -361,10 +380,22 @@ export function applyIdentity(base, profileId, opts = {}) {
   const auth = new Map();
   for (const [key, value] of Object.entries(base || {})) {
     const lower = key.toLowerCase();
-    if (lower === "authorization" || lower === "x-api-key" || lower === "api-key" || lower === "cookie") {
+    // NB: client cookies are never preserved — providers authenticate via
+    // their own credentials, and forwarding downstream cookies leaks sessions
+    // across the trust boundary.
+    if (lower === "authorization" || lower === "x-api-key" || lower === "api-key") {
       auth.set(lower, [key, value]);
     }
   }
+  // A caller-set User-Agent (browser-mimicking hops like edge/google TTS that
+  // go through the patched global fetch with no identity) survives the merge
+  // only when the caller opted in (`preserveUserAgent`, set by wrapHeaders
+  // when no explicit identity was requested). An explicit profile always
+  // owns the UA — the live snapshot, never a caller constant, is the wire
+  // source of truth (e.g. a frozen `claude-cli/2.1.92` must be replaced).
+  const baseUaEntry = opts.preserveUserAgent === true && profileId !== "claude-cli"
+    ? Object.entries(base || {}).find(([key]) => key.toLowerCase() === "user-agent") || null
+    : null;
   const merged = mergeHeadersCaseInsensitive(base, identity);
   const overlay = opts.overlay && typeof opts.overlay === "object"
     ? (profileId === "claude-cli" ? sanitizeClaudeOverlay(opts.overlay, opts.snapshot) : { ...opts.overlay })
@@ -373,6 +404,12 @@ export function applyIdentity(base, profileId, opts = {}) {
     if (auth.has(key.toLowerCase())) delete overlay[key];
   }
   const overlaid = mergeHeadersCaseInsensitive(merged, overlay);
+  if (baseUaEntry && !Object.keys(overlay).some((key) => key.toLowerCase() === "user-agent")) {
+    for (const existing of Object.keys(overlaid)) {
+      if (existing.toLowerCase() === "user-agent") delete overlaid[existing];
+    }
+    overlaid[baseUaEntry[0]] = baseUaEntry[1];
+  }
   if (profileId === "claude-cli") {
     if (opts.stream === true) overlaid["X-Stainless-Helper-Method"] = "stream";
     else {

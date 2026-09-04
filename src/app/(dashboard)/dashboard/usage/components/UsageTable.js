@@ -1,14 +1,45 @@
 "use client";
 // @ts-check
 
-import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
 import PropTypes from "prop-types";
 import Card from "@/shared/components/Card";
 import Badge from "@/shared/components/Badge";
+import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 
 const fmt = (n) => new Intl.NumberFormat().format(n || 0);
 const fmtCost = (n) => `$${(n || 0).toFixed(2)}`;
+
+/**
+ * Resolve a provider id to its display name (same lookup chain as the
+ * request-details provider name cache: alias map, then AI_PROVIDERS).
+ * Already-display names and unknown ids pass through unchanged.
+ *
+ * @param {string} providerId
+ * @returns {string}
+ */
+export function resolveUsageProviderName(providerId) {
+  if (!providerId) return "—";
+  const viaAlias = getProviderByAlias(providerId);
+  if (viaAlias?.name) return viaAlias.name;
+  const direct = AI_PROVIDERS[providerId];
+  if (direct?.name) return direct.name;
+  return providerId;
+}
+
+/**
+ * Provider label for a grouped summary row: the single display name when
+ * every item in the group shares one provider, "—" otherwise.
+ *
+ * @param {Array<{ provider?: string }>} items
+ * @returns {string}
+ */
+export function getGroupProviderLabel(items) {
+  const providers = [...new Set((items || []).map((i) => i?.provider).filter(Boolean))];
+  if (providers.length === 1) return resolveUsageProviderName(providers[0]);
+  return "—";
+}
 
 function fmtTime(iso) {
   if (!iso) return "Never";
@@ -109,9 +140,14 @@ export default function UsageTable({
   emptyMessage,
 }) {
   const [expanded, setExpanded] = useState(new Set());
+  // O24: load and save effects run on the same commit — the save must skip
+  // once per load (mount + storageKey change), or it serializes the initial
+  // empty Set over the stored value before the load's setExpanded applies.
+  const skipNextSaveRef = useRef(false);
 
   // Load expanded state from localStorage
   useEffect(() => {
+    skipNextSaveRef.current = true;
     try {
       const saved = localStorage.getItem(storageKey);
       if (saved) {
@@ -125,6 +161,10 @@ export default function UsageTable({
 
   // Save expanded state to localStorage
   useEffect(() => {
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
     try {
       localStorage.setItem(storageKey, JSON.stringify([...expanded]));
     } catch (e) {

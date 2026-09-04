@@ -139,6 +139,7 @@ export class KiroExecutor extends BaseExecutor {
     const state = {
       endDetected: false,
       finishEmitted: false,
+      upstreamError: null,
       hasToolCalls: false,
       hasReasoningContent: false,
       reasoningChunkCount: 0,
@@ -174,6 +175,32 @@ export class KiroExecutor extends BaseExecutor {
           if (!event) continue;
 
           const eventType = event.headers[":event-type"] || "";
+
+          // Modeled exception frames carry :exception-type / :message-type=exception
+          // instead of :event-type — without this check they are silently dropped
+          // and flush() emits a clean finish_reason:stop, disguising a throttled
+          // stream as a truncated-but-successful answer.
+          const exceptionType = event.headers[":exception-type"] || "";
+          if (exceptionType || event.headers[":message-type"] === "exception") {
+            const payload = event.payload && typeof event.payload === "object" ? event.payload : {};
+            const message = payload.message || payload.Message
+              || (typeof event.payload === "string" ? event.payload : "")
+              || exceptionType || "Kiro upstream exception";
+            state.upstreamError = String(message);
+            // Skip the clean-finish path; flush still sends the [DONE] terminator.
+            state.finishEmitted = true;
+            const errorChunk = {
+              id: responseId,
+              object: "chat.completion.chunk",
+              created,
+              model,
+              choices: [{ index: 0, delta: {}, finish_reason: null }],
+              error: { message: state.upstreamError, type: "server_error", code: exceptionType || "upstream_exception" }
+            };
+            chunkIndex++;
+            controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(errorChunk)}\n\n`));
+            continue;
+          }
 
           // Track total content length for token estimation
           if (!state.totalContentLength) state.totalContentLength = 0;

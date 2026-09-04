@@ -29,4 +29,15 @@ async function ensureTrayReady(trayReady, initTrayIcon) {
   return Boolean(await initTrayIcon());
 }
 
-module.exports = { buildInterfaceMenuItems, ensureTrayReady };
+/**
+ * Map a selectMenu() index to a menu action. ESC / non-TTY resolves -1 and
+ * out-of-range indexes are treated as "back" (re-show the menu) — never as
+ * "exit", so dismissing the menu cannot shut down a healthy gateway.
+ */
+function mapInterfaceSelection(menuItems, selected) {
+  if (!Array.isArray(menuItems)) return "back";
+  if (!Number.isInteger(selected) || selected < 0 || selected >= menuItems.length) return "back";
+  return menuItems[selected]?.action || "back";
+}
+
+module.exports = { buildInterfaceMenuItems, ensureTrayReady, mapInterfaceSelection };

@@ -26,6 +26,11 @@ export async function GET(request) {
 
   const stream = new ReadableStream({
     start(controller) {
+      // Initial comment frame: forces the headers + first byte out
+      // immediately so the client's EventSource onopen fires and the status
+      // flips to "connected" even when no log has arrived yet. Comments are
+      // ignored by EventSource (no onmessage dispatch).
+      controller.enqueue(encoder.encode(": connected\n\n"));
       // Send all buffered logs immediately on connect
       const buffered = getConsoleLogs();
       if (buffered.length > 0) {

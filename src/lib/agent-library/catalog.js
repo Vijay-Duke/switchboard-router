@@ -105,26 +105,96 @@ const ALLOWED_HOST_SUFFIXES = [
   "cdn.jsdelivr.net",
 ];
 
+function isPrivateIpv4Dotted(ip) {
+  const parts = ip.split(".").map(Number);
+  if (parts[0] === 10) return true;
+  if (parts[0] === 127) return true;
+  if (parts[0] === 0) return true;
+  if (parts[0] === 169 && parts[1] === 254) return true;
+  if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
+  if (parts[0] === 192 && parts[1] === 168) return true;
+  return false;
+}
+
+/**
+ * Expand an IPv6 literal (including embedded-IPv4 forms like
+ * `::ffff:127.0.0.1`) to 8 numeric hextets. Returns null when unparseable.
+ * @param {string} ip
+ * @returns {number[]|null}
+ */
+function expandIPv6(ip) {
+  let s = ip.toLowerCase();
+  let tailGroups = [];
+  const dotAt = s.lastIndexOf(":");
+  const maybeV4 = dotAt === -1 ? null : s.slice(dotAt + 1);
+  if (maybeV4 && maybeV4.includes(".") && net.isIPv4(maybeV4)) {
+    const bytes = maybeV4.split(".").map(Number);
+    tailGroups = [(bytes[0] << 8) | bytes[1], (bytes[2] << 8) | bytes[3]];
+    s = dotAt === 0 ? "" : s.slice(0, dotAt);
+    // A bare "::" head with an embedded v4 (e.g. "::127.0.0.1") leaves s
+    // ending in ":" — normalize so the "::" split below still works.
+    if (s.endsWith(":") && !s.endsWith("::")) s += ":";
+  } else if (s.includes(".")) {
+    return null;
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const parseSide = (side) => {
+    if (!side) return [];
+    const out = [];
+    for (const chunk of side.split(":")) {
+      if (!/^[0-9a-f]{1,4}$/.test(chunk)) return null;
+      out.push(parseInt(chunk, 16));
+    }
+    return out;
+  };
+  const left = parseSide(halves[0]);
+  const right = halves.length === 2 ? parseSide(halves[1]) : [];
+  if (!left || !right) return null;
+  const zeros = 8 - tailGroups.length - left.length - right.length;
+  if (halves.length === 1 ? zeros !== 0 : zeros < 0) return null;
+  return [...left, ...new Array(Math.max(0, zeros)).fill(0), ...right, ...tailGroups];
+}
+
 function isPrivateIp(ip) {
   if (net.isIPv4(ip)) {
-    const parts = ip.split(".").map(Number);
-    if (parts[0] === 10) return true;
-    if (parts[0] === 127) return true;
-    if (parts[0] === 0) return true;
-    if (parts[0] === 169 && parts[1] === 254) return true;
-    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true;
-    if (parts[0] === 192 && parts[1] === 168) return true;
-    return false;
+    return isPrivateIpv4Dotted(ip);
   }
   if (net.isIPv6(ip)) {
-    const lower = ip.toLowerCase();
-    if (lower === "::1") return true;
-    if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
-    if (lower.startsWith("fe80")) return true;
+    const groups = expandIPv6(ip);
+    if (!groups) return true;
+    // Unspecified :: (all zero) and loopback ::1.
+    if (groups.every((g) => g === 0)) return true;
+    if (groups.slice(0, 7).every((g) => g === 0) && groups[7] === 1) return true;
+    // fc00::/7 (unique-local) and fe80::/10 (link-local).
+    if (groups[0] >= 0xfc00 && groups[0] <= 0xfdff) return true;
+    if (groups[0] >= 0xfe80 && groups[0] <= 0xfebf) return true;
+    // ::ffff:0:0/96 (IPv4-mapped), ::/96 (IPv4-compatible), and
+    // 64:ff9b::/96 (NAT64): judge by the embedded IPv4 address.
+    const mappedV4 =
+      groups.slice(0, 5).every((g) => g === 0) && (groups[5] === 0 || groups[5] === 0xffff);
+    const nat64 =
+      groups[0] === 0x64 &&
+      groups[1] === 0xff9b &&
+      groups[2] === 0 &&
+      groups[3] === 0 &&
+      groups[4] === 0 &&
+      groups[5] === 0;
+    if (mappedV4 || nat64) {
+      const dotted = [
+        groups[6] >> 8,
+        groups[6] & 0xff,
+        groups[7] >> 8,
+        groups[7] & 0xff,
+      ].join(".");
+      return isPrivateIpv4Dotted(dotted);
+    }
     return false;
   }
   return true;
 }
+
+export { isPrivateIp };
 
 /**
  * SSRF guard: https only, allowlisted public hosts, no private IPs after DNS.

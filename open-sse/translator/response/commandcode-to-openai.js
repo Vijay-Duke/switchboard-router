@@ -35,7 +35,6 @@ function ensureState(state, model) {
     state.model = state.model || model || "commandcode";
     state.chunkIndex = 0;
     state.toolIndex = 0;
-    state.openText = false;
     state.finishReason = null;
     state.usage = null;
   }
@@ -56,7 +55,19 @@ function makeChunk(state, delta, finishReason = null) {
 const mapFinishReason = (reason) => toOpenAIFinish(reason, "commandcode");
 
 export function commandCodeToOpenAIResponse(chunk, state) {
-  if (!chunk) return null;
+  // EOF flush: a truncated stream (finish-step but no finish) still terminates
+  // exactly once; a fresh stream stays silent.
+  if (!chunk) {
+    if (state.commandcodeFinished) return null;
+    const hadActivity = (state.chunkIndex || 0) > 0 || (state.toolIndex || 0) > 0;
+    if (!hadActivity) return null;
+    state.commandcodeFinished = true;
+    ensureState(state);
+    const finalChunk = makeChunk(state, {}, state.finishReason || OPENAI_FINISH.STOP);
+    const usage = toOpenAIUsage(state.usage, "commandcode");
+    if (usage) finalChunk.usage = usage;
+    return [finalChunk];
+  }
 
   // Already-OpenAI chunk: pass through
   if (chunk && typeof chunk === "object" && chunk.object === "chat.completion.chunk") {
@@ -89,7 +100,6 @@ export function commandCodeToOpenAIResponse(chunk, state) {
       if (!text) break;
       const delta = state.chunkIndex === 0 ? { role: ROLE.ASSISTANT, content: text } : { content: text };
       state.chunkIndex++;
-      state.openText = true;
       out.push(makeChunk(state, delta));
       break;
     }
@@ -124,7 +134,10 @@ export function commandCodeToOpenAIResponse(chunk, state) {
       break;
     }
     case "tool-input-delta": {
-      const id = event.id || event.toolCallId;
+      // Same fallback as tool-input-start: id-less deltas attribute to the
+      // single open tool when exactly one is open.
+      const id = event.id || event.toolCallId ||
+        (state.openTools?.size === 1 ? [...state.openTools][0] : undefined);
       const idx = state.toolIndexById.get(id);
       if (idx == null) break;
       const delta = {
@@ -138,7 +151,7 @@ export function commandCodeToOpenAIResponse(chunk, state) {
     }
     case "tool-call": {
       // Final consolidated tool call — only emit if we never saw tool-input-* deltas.
-      const id = event.toolCallId;
+      const id = event.toolCallId || event.id || fallbackToolCallId(state.toolIndex);
       if (state.toolIndexById.has(id)) break;
       const idx = state.toolIndex++;
       state.toolIndexById.set(id, idx);
@@ -162,6 +175,8 @@ export function commandCodeToOpenAIResponse(chunk, state) {
       break;
     }
     case "finish": {
+      if (state.commandcodeFinished) break;
+      state.commandcodeFinished = true;
       const finishReason = state.finishReason || mapFinishReason(event.finishReason || "stop");
       const finalChunk = makeChunk(state, {}, finishReason);
       const totalUsage = event.totalUsage || state.usage;
@@ -171,6 +186,8 @@ export function commandCodeToOpenAIResponse(chunk, state) {
       break;
     }
     case "error": {
+      if (state.commandcodeFinished) break;
+      state.commandcodeFinished = true;
       state.finishReason = OPENAI_FINISH.STOP;
       const errVal = event.error ?? event.message ?? "unknown";
       const errStr = typeof errVal === "string" ? errVal : JSON.stringify(errVal);

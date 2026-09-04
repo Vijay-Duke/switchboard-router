@@ -112,7 +112,9 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
     const sanitizedTitle = (titleMatch?.[1] || '').replace(/<[^>]*>/g, '').replace(/[\r\n]+/g, ' ').trim().slice(0, 160);
     const shortMsg = sanitizedTitle
       || (bodyText.length < 200 ? bodyText.replace(/<[^>]*>/g, '').trim().slice(0, 160) : `Upstream returned non-SSE response (${upstreamContentType})`);
-    const status = providerResponse.status || 502;
+    // A 200 with HTML/text is an upstream failure, not a success: reuse the
+    // upstream status only when it already signals an error.
+    const status = providerResponse.status >= 400 ? providerResponse.status : 502;
     console.warn(`[STREAM] ${provider} | ${model} | blocked pipe: ${shortMsg} [${status}]`);
     streamController?.handleError?.(new Error(`upstream non-SSE: ${status}`));
     return {

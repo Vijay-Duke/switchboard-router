@@ -1,9 +1,24 @@
 import { platform, arch } from "os";
 import { PROVIDERS, PROVIDER_OAUTH } from "./providers.js";
+import { getConsistentSnapshot } from "../identity/snapshot.js";
 
-// === Gemini CLI === derive từ registry gemini-cli.transport
-export const GEMINI_CLI_VERSION = PROVIDERS["gemini-cli"]?.cliVersion;
-export const GEMINI_CLI_API_CLIENT = PROVIDERS["gemini-cli"]?.apiClient;
+// === Gemini CLI === registry gemini-cli.transport carries no version keys, so
+// derive from the identity snapshot (the wire source of truth applied by
+// wrapHeaders) with committed-version fallbacks — never emit "undefined".
+function geminiCliSnapshot() {
+  try {
+    return getConsistentSnapshot("gemini-cli") || null;
+  } catch {
+    return null;
+  }
+}
+
+export const GEMINI_CLI_VERSION = PROVIDERS["gemini-cli"]?.cliVersion
+  || geminiCliSnapshot()?.version
+  || "0.56.0";
+export const GEMINI_CLI_API_CLIENT = PROVIDERS["gemini-cli"]?.apiClient
+  || geminiCliSnapshot()?.apiClient
+  || "google-genai-sdk/1.41.0 gl-node/v22.19.0";
 
 // Map Node arch to Gemini CLI arch string (x64/x86/arm64/...)
 function geminiCLIArch() {
@@ -12,8 +27,11 @@ function geminiCLIArch() {
   return a;
 }
 
+// Read the snapshot per call so a poller update mid-process reaches the UA
+// the same way it reaches the catalog headers (one snapshot per call site).
 export function geminiCLIUserAgent(model = "unknown") {
-  return `GeminiCLI/${GEMINI_CLI_VERSION}/${model || "unknown"} (${platform()}; ${geminiCLIArch()}; terminal)`;
+  const version = geminiCliSnapshot()?.version || GEMINI_CLI_VERSION;
+  return `GeminiCLI/${version}/${model || "unknown"} (${platform()}; ${geminiCLIArch()}; terminal)`;
 }
 
 

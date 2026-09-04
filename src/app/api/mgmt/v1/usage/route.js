@@ -1,8 +1,7 @@
 // @ts-check
 import { getProviderConnections, getUsageStats } from "@/lib/db/index.js";
 import { fail, ok, requireManagementAuth } from "../_lib/http.js";
-
-const VALID_PERIODS = new Set(["today", "24h", "7d", "30d", "60d", "all"]);
+import { VALID_PERIODS } from "@/app/api/usage/_lib/periods.js";
 
 export const dynamic = "force-dynamic";
 

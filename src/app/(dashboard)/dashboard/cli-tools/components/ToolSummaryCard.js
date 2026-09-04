@@ -5,9 +5,17 @@ import Link from "next/link";
 import Image from "next/image";
 import { Card } from "@/shared/components";
 
-// Derive simple connected/configured/not-installed status from API payload
-function getStatus(status) {
-  if (!status) return { label: "Unknown", cls: "bg-gray-500/10 text-gray-500" };
+// Derive simple connected/configured/not-installed status from API payload.
+// A missing payload means the tool was not detected on this machine
+// (detection is by config file presence), not an indeterminate state.
+const NOT_DETECTED_TITLE = "Not detected — detection is by config file presence on this machine";
+function getStatus(status, tool) {
+  // Guide-only tools (registry configType "guide") have no config to detect —
+  // badge them neutrally instead of a failure-sounding "Not detected" (T89).
+  if (tool?.configType === "guide") {
+    return { label: "Guide", cls: "bg-blue-500/10 text-blue-600 dark:text-blue-400" };
+  }
+  if (!status) return { label: "Not detected", cls: "bg-gray-500/10 text-gray-500", title: NOT_DETECTED_TITLE };
   if (!status.installed) {
     return {
       label: "Not installed",
@@ -27,7 +35,7 @@ function getStatus(status) {
 }
 
 export default function ToolSummaryCard({ toolId, tool, status }) {
-  const s = getStatus(status);
+  const s = getStatus(status, tool);
   return (
     <Link href={`/dashboard/cli-tools/${toolId}`} className="block">
       <Card padding="sm" className="h-full overflow-hidden hover:border-primary/50 transition-colors cursor-pointer">
@@ -42,7 +50,7 @@ export default function ToolSummaryCard({ toolId, tool, status }) {
             </div>
             <div className="min-w-0 flex-1">
               <h3 className="font-medium text-sm truncate">{tool.name}</h3>
-              <span className={`inline-block mt-1 px-1.5 py-0.5 text-[10px] font-medium rounded-full ${s.cls}`}>{s.label}</span>
+              <span className={`inline-block mt-1 px-1.5 py-0.5 text-[10px] font-medium rounded-full ${s.cls}`} title={s.title || s.label}>{s.label}</span>
             </div>
             <span className="material-symbols-outlined text-text-muted text-[18px] shrink-0">chevron_right</span>
           </div>

@@ -107,6 +107,24 @@ function writeJsonFile(sessionPath, filename, data) {
   }
 }
 
+// Extra credential-header fragments beyond the centralized config list.
+// (config/ is owned by another worker; these live here so log masking cannot
+// regress on providers whose key headers contain neither config substring —
+// e.g. ElevenLabs `xi-api-key`, BFL `x-key`.)
+const EXTRA_SENSITIVE_REQUEST_LOG_HEADER_NAMES = ["api-key", "x-key"];
+
+function isSensitiveRequestLogHeader(lowerKey) {
+  return SENSITIVE_REQUEST_LOG_HEADER_NAMES.some((name) => lowerKey.includes(name))
+    || EXTRA_SENSITIVE_REQUEST_LOG_HEADER_NAMES.some((name) => lowerKey.includes(name));
+}
+
+// Gemini-style hops embed `?key=SECRET` in the URL — mask query secrets so
+// provider keys never reach disk logs.
+export function scrubLoggedUrl(url) {
+  if (typeof url !== "string" || !url) return url;
+  return url.replace(/([?&])(key|api_key|api-key)=[^&]*/gi, "$1$2=[redacted]");
+}
+
 // Mask sensitive headers before writing request logs to disk (H6).
 export function maskSensitiveHeaders(headers) {
   if (!headers) return {};
@@ -114,9 +132,12 @@ export function maskSensitiveHeaders(headers) {
 
   for (const key of Object.keys(masked)) {
     const lowerKey = key.toLowerCase();
-    if (SENSITIVE_REQUEST_LOG_HEADER_NAMES.some((name) => lowerKey.includes(name))) {
+    if (isSensitiveRequestLogHeader(lowerKey)) {
       const value = masked[key];
-      if (FULL_REDACTION_REQUEST_LOG_HEADER_NAMES.some((name) => lowerKey.includes(name))) {
+      // Key material is fully redacted — partial masking still leaks enough
+      // characters to brute-force short provider keys.
+      if (FULL_REDACTION_REQUEST_LOG_HEADER_NAMES.some((name) => lowerKey.includes(name))
+        || lowerKey.includes("api-key") || lowerKey.includes("x-key")) {
         masked[key] = "[redacted]";
       } else if (typeof value === "string" && value.length > 12) {
         masked[key] = value.slice(0, 8) + "..." + value.slice(-4);
@@ -226,7 +247,7 @@ export async function createRequestLogger(sourceFormat, targetFormat, model) {
     logTargetRequest(url, headers, body) {
       writeJsonFile(sessionPath, "4_req_target.json", {
         timestamp: new Date().toISOString(),
-        url,
+        url: scrubLoggedUrl(url),
         headers: maskSensitiveHeaders(headers),
         body
       });

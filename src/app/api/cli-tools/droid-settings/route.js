@@ -140,7 +140,7 @@ export async function POST(request) {
 
     // Normalize baseUrl to ensure /v1 suffix
     const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
-    const keyToUse = apiKey || "your_api_key";
+    const keyToUse = apiKey || "sk_switchboard";
 
     // Determine active model: prefer explicit activeModel, else first of modelsArray
     // If activeModel is explicitly empty string, no model will be set as default

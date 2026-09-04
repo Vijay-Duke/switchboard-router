@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import PropTypes from "prop-types";
 import OAuthModal from "./OAuthModal";
 import KiroAuthModal from "./KiroAuthModal";
@@ -14,6 +14,15 @@ export default function KiroOAuthWrapper({ isOpen, providerInfo, onSuccess, onCl
   const [authMethod, setAuthMethod] = useState(null); // null | "builder-id" | "idc" | "social" | "import"
   const [socialProvider, setSocialProvider] = useState(null); // "google" | "github"
   const [idcConfig, setIdcConfig] = useState(null);
+
+  // Reset sub-flow state when the modal closes so reopening starts fresh
+  // at method selection (the wrapper stays mounted while closed).
+  useEffect(() => {
+    if (isOpen) return;
+    setAuthMethod(null);
+    setSocialProvider(null);
+    setIdcConfig(null);
+  }, [isOpen]);
 
   const handleMethodSelect = useCallback((method, config) => {
     if (method === "builder-id") {
@@ -29,6 +38,9 @@ export default function KiroOAuthWrapper({ isOpen, providerInfo, onSuccess, onCl
       setSocialProvider(config.provider);
     } else if (method === "import" || method === "api-key") {
       // Import / API-key handled in KiroAuthModal, just close
+      onSuccess?.();
+    } else if (method === "import-cli-proxy") {
+      // CLIProxyAPI import handled in KiroAuthModal, just close
       onSuccess?.();
     }
   }, [onSuccess]);

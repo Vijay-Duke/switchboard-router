@@ -71,6 +71,14 @@ export function GenericExampleCard({ providerId, kind }) {
 
   useEffect(() => {
     setLocalEndpoint(window.location.origin);
+    // Provider changed (route navigation reuses this component): drop the
+    // previous provider's connection pin, extra-field values, model and result.
+    setPinnedConnectionId("");
+    setExtraValues((safeExConfig.extraFields || []).reduce((acc, f) => { acc[f.key] = f.default ?? ""; return acc; }, {}));
+    setSelectedModel(kindModels[0]?.id ?? "");
+    setResult(null);
+    setError("");
+    if (binaryImageUrl) { try { URL.revokeObjectURL(binaryImageUrl); } catch {} setBinaryImageUrl(""); }
     // Load active connections of this provider for pinning
     fetch("/api/providers/client")
       .then((r) => r.json())
@@ -79,6 +87,7 @@ export function GenericExampleCard({ providerId, kind }) {
         setConnections(conns);
       })
       .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerId]);
 
   // Safe to early-return now that all hooks are declared
@@ -389,9 +398,10 @@ export function GenericExampleCard({ providerId, kind }) {
           </Row>
         )}
 
-        {/* Extra fields — for kinds without model concept (webSearch/webFetch), show all; otherwise filter by model.params */}
+        {/* Extra fields — for kinds without model concept (webSearch/webFetch), show all;
+            with a model, hide a field only when the model declares a params list that excludes it */}
         {(exConfig.extraFields || [])
-          .filter((f) => kindModels.length === 0 || (Array.isArray(selectedModelObj?.params) && selectedModelObj.params.includes(f.key)))
+          .filter((f) => !selectedModelObj || !Array.isArray(selectedModelObj.params) || selectedModelObj.params.includes(f.key))
           .map((f) => (
           <Row key={f.key} label={f.label} htmlFor={`generic-example-${f.key}`}>
             {f.type === "select" ? (
@@ -520,28 +530,35 @@ export function GenericExampleCard({ providerId, kind }) {
           <pre className="bg-sidebar rounded-lg px-3 py-2.5 text-xs font-mono text-text-main overflow-x-auto whitespace-pre-wrap break-all opacity-70">
             {result ? resultJson : exConfig.defaultResponse}
           </pre>
-          {kind === "image" && (binaryImageUrl || result?.data?.data?.[0]) && (
-            <div className="mt-2">
-              <div className="flex items-center justify-end mb-1.5">
-                <a
-                  href={binaryImageUrl || (result?.data?.data?.[0]?.b64_json ? `data:image/png;base64,${result.data.data[0].b64_json}` : result?.data?.data?.[0]?.url || "")}
-                  download="image.png"
-                  className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
-                >
-                  <span className="material-symbols-outlined text-[14px]">download</span>
-                  Download
-                </a>
+          {kind === "image" && (() => {
+            const first = result?.data?.data?.[0];
+            const imageSrc = binaryImageUrl
+              || (first?.b64_json ? `data:image/png;base64,${first.b64_json}` : (first?.url || ""));
+            // Atypical payloads (e.g. {revised_prompt}-only) have no renderable image
+            if (!imageSrc) return null;
+            return (
+              <div className="mt-2">
+                <div className="flex items-center justify-end mb-1.5">
+                  <a
+                    href={imageSrc}
+                    download="image.png"
+                    className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">download</span>
+                    Download
+                  </a>
+                </div>
+                <Image
+                  src={imageSrc}
+                  alt="Generated"
+                  width={1024}
+                  height={1024}
+                  unoptimized
+                  className="max-w-full rounded-lg border border-border"
+                />
               </div>
-              <Image
-                src={binaryImageUrl || (result?.data?.data?.[0]?.b64_json ? `data:image/png;base64,${result.data.data[0].b64_json}` : result?.data?.data?.[0]?.url)}
-                alt="Generated"
-                width={1024}
-                height={1024}
-                unoptimized
-                className="max-w-full rounded-lg border border-border"
-              />
-            </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     </Card>

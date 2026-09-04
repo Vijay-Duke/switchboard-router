@@ -76,10 +76,15 @@ export async function del(url, options = {}) {
  * @returns {Promise<object>}
  */
 async function handleResponse(response) {
-  const data = await response.json();
+  let data = null;
+  try {
+    data = await response.json();
+  } catch {
+    data = null;
+  }
 
   if (!response.ok) {
-    const error = new Error(data.error || "An error occurred");
+    const error = new Error(data?.error || `Request failed (${response.status})`);
     error.status = response.status;
     error.data = data;
     throw error;

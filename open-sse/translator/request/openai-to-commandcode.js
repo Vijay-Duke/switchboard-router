@@ -13,6 +13,8 @@ import { register } from "../registry.js";
 import { FORMATS } from "../formats.js";
 import { randomUUID } from "crypto";
 import { ROLE, OPENAI_BLOCK } from "../schema/index.js";
+import { resolveSessionId } from "../../utils/sessionManager.js";
+import { clampSampling } from "../concerns/params.js";
 import { DEFAULT_MAX_TOKENS } from "../../config/runtimeConfig.js";
 
 function flattenText(content) {
@@ -73,11 +75,24 @@ function convertMessages(messages = []) {
   const out = [];
   const systemTexts = [];
 
+  // First pass: tool_call_id → tool name (OpenAI tool messages carry no name;
+  // without this every toolName is "" and upstream cannot match results).
+  const toolCallMap = new Map();
+  for (const m of messages) {
+    if (m?.role === ROLE.ASSISTANT && Array.isArray(m.tool_calls)) {
+      for (const tc of m.tool_calls) {
+        if (tc?.id && tc.function?.name) toolCallMap.set(tc.id, tc.function.name);
+      }
+    }
+  }
+
+  // parallel_tool_calls / top_k have no upstream equivalent and are dropped.
+
   for (const m of messages) {
     if (!m) continue;
     const role = m.role;
 
-    if (role === ROLE.SYSTEM) {
+    if (role === ROLE.SYSTEM || role === ROLE.DEVELOPER) {
       const t = flattenText(m.content);
       if (t) systemTexts.push(t);
       continue;
@@ -90,7 +105,7 @@ function convertMessages(messages = []) {
         content: [{
           type: "tool-result",
           toolCallId: m.tool_call_id || "",
-          toolName: m.name || "",
+          toolName: toolCallMap.get(m.tool_call_id) || m.name || "",
           output: { type: "text", value },
         }],
       });
@@ -148,26 +163,40 @@ function convertTools(tools) {
   return result.length ? result : undefined;
 }
 
-export function openaiToCommandCodeRequest(model, body, stream /* , credentials */) {
+export function openaiToCommandCodeRequest(model, body, stream, credentials = null) {
   const { messages, system } = convertMessages(body.messages);
   const params = {
     model,
     messages,
     stream: stream !== false,
-    max_tokens: body.max_tokens ?? body.max_output_tokens ?? DEFAULT_MAX_TOKENS,
+    max_tokens: body.max_tokens ?? body.max_completion_tokens ?? body.max_output_tokens ?? DEFAULT_MAX_TOKENS,
     temperature: body.temperature ?? 0.3,
   };
 
-  if (system) params.system = system;
+  // JSON mode has no native field — carry it as a system instruction.
+  const systemParts = [];
+  if (body.response_format?.type === "json_object") {
+    systemParts.push("You must respond with valid JSON. Respond ONLY with a JSON object, no other text.");
+  } else if (body.response_format?.type === "json_schema" && body.response_format.json_schema?.schema) {
+    systemParts.push(`You must respond with valid JSON that strictly follows this JSON schema:\n${JSON.stringify(body.response_format.json_schema.schema)}\nRespond ONLY with the JSON object, no other text.`);
+  }
+  if (system) systemParts.push(system);
+  if (systemParts.length > 0) params.system = systemParts.join("\n\n");
+
+  // Stop sequences pass through natively.
+  if (body.stop !== undefined) params.stop = body.stop;
 
   const tools = convertTools(body.tools);
   if (tools) params.tools = tools;
   if (body.top_p != null) params.top_p = body.top_p;
+  clampSampling(params);
 
   const today = new Date().toISOString().slice(0, 10);
 
   return {
-    threadId: randomUUID(),
+    // Stable per client session/connection (a fresh UUID per request breaks
+    // any upstream state keyed by thread).
+    threadId: resolveSessionId({ headers: credentials?.rawHeaders, body, connectionId: credentials?.connectionId, scope: "commandcode" }) || randomUUID(),
     memory: "",
     config: {
       workingDir: process.cwd(),

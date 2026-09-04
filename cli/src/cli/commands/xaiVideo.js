@@ -18,6 +18,7 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_MODEL = "xai/grok-imagine-video";
 const DEFAULT_TIMEOUT_SEC = 600;
 const DEFAULT_POLL_INTERVAL_MS = 5000;
+const DEFAULT_REQUEST_TIMEOUT_SEC = 30;
 
 const TERMINAL_STATUSES = new Set(["done", "failed", "completed", "error", "expired", "cancelled"]);
 const FAILED_STATUSES = new Set(["failed", "error", "expired", "cancelled"]);
@@ -37,6 +38,8 @@ Options:
   --resolution <res>      480p | 720p | 1080p
   --image <path-or-url>   Image input for image-to-video
   --timeout <seconds>     Max wait for the job (default: ${DEFAULT_TIMEOUT_SEC})
+  --request-timeout <seconds> Per-request gateway timeout (default: ${DEFAULT_REQUEST_TIMEOUT_SEC})
+  --force               Overwrite the output file if it exists
   --port <port>           Gateway port (default: ${DEFAULT_PORT})
   --host <host>           Gateway host (default: ${DEFAULT_HOST})
   --api-key <key>         Switchboard API key (or env SWITCHBOARD_API_KEY)
@@ -47,19 +50,29 @@ function sanitizeText(text) {
   return String(text ?? "").replace(/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [redacted]");
 }
 
+function requireValue(argv, i, flag) {
+  const value = argv[i + 1];
+  if (value === undefined || value.startsWith("-")) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return value;
+}
+
 function parseArgs(argv) {
   const opts = {
     model: DEFAULT_MODEL,
     output: "video.mp4",
     timeoutSec: DEFAULT_TIMEOUT_SEC,
+    requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_SEC * 1000,
     port: DEFAULT_PORT,
     host: DEFAULT_HOST,
     apiKey: process.env.SWITCHBOARD_API_KEY || null,
     pollIntervalMs: DEFAULT_POLL_INTERVAL_MS,
+    force: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    const next = () => argv[++i];
+    const next = (flag = a) => { const v = requireValue(argv, i, flag); i++; return v; };
     if (a === "--prompt") opts.prompt = next();
     else if (a === "--output" || a === "-o") opts.output = next();
     else if (a === "--model") opts.model = next();
@@ -68,6 +81,8 @@ function parseArgs(argv) {
     else if (a === "--resolution") opts.resolution = next();
     else if (a === "--image") opts.image = next();
     else if (a === "--timeout") opts.timeoutSec = parseInt(next(), 10) || DEFAULT_TIMEOUT_SEC;
+    else if (a === "--request-timeout") opts.requestTimeoutMs = (parseInt(next(), 10) || DEFAULT_REQUEST_TIMEOUT_SEC) * 1000;
+    else if (a === "--force") opts.force = true;
     else if (a === "--port" || a === "-p") opts.port = parseInt(next(), 10) || DEFAULT_PORT;
     else if (a === "--host" || a === "-H") opts.host = next() || DEFAULT_HOST;
     else if (a === "--api-key") opts.apiKey = next();
@@ -90,7 +105,7 @@ function imageInputToUrl(input) {
 }
 
 /** Minimal JSON request against the local gateway. Returns { status, headers, body }. */
-function gatewayRequest({ host, port, apiKey, method, reqPath, body, signal }) {
+function gatewayRequest({ host, port, apiKey, method, reqPath, body, signal, timeoutMs = DEFAULT_REQUEST_TIMEOUT_SEC * 1000 }) {
   return new Promise((resolve, reject) => {
     const payload = body ? JSON.stringify(body) : null;
     const headers = { Accept: "application/json" };
@@ -100,7 +115,7 @@ function gatewayRequest({ host, port, apiKey, method, reqPath, body, signal }) {
     }
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-    const req = http.request({ hostname: host, port, path: reqPath, method, headers, signal }, (res) => {
+    const req = http.request({ hostname: host, port, path: reqPath, method, headers, signal, timeout: timeoutMs }, (res) => {
       let data = "";
       res.on("data", (c) => (data += c));
       res.on("end", () => {
@@ -109,6 +124,7 @@ function gatewayRequest({ host, port, apiKey, method, reqPath, body, signal }) {
         resolve({ status: res.statusCode, headers: res.headers, body: parsed, raw: data });
       });
     });
+    req.on("timeout", () => req.destroy(new Error("gateway request timed out")));
     req.on("error", reject);
     if (payload) req.write(payload);
     req.end();
@@ -125,7 +141,7 @@ const sleep = (ms, signal) =>
  * Poll GET /v1/videos/{id} until a terminal status or deadline.
  * @returns {Promise<object>} final poll body (status done) — throws on failed/timeout.
  */
-async function pollUntilDone({ host, port, apiKey, requestId, connectionId, timeoutSec, pollIntervalMs, signal, onProgress }) {
+async function pollUntilDone({ host, port, apiKey, requestId, connectionId, timeoutSec, pollIntervalMs, signal, onProgress, timeoutMs }) {
   const deadline = Date.now() + timeoutSec * 1000;
   while (true) {
     if (signal?.aborted) throw new Error("aborted");
@@ -133,7 +149,7 @@ async function pollUntilDone({ host, port, apiKey, requestId, connectionId, time
       throw new Error(`Timed out after ${timeoutSec}s waiting for video job ${requestId}`);
     }
 
-    const res = await gatewayRequestWithConnection({ host, port, apiKey, requestId, connectionId, signal });
+    const res = await gatewayRequestWithConnection({ host, port, apiKey, requestId, connectionId, signal, timeoutMs });
     if (res.status === 200 && res.body) {
       const status = String(res.body.status || "").toLowerCase();
       onProgress?.(status || "pending", res.body.progress);
@@ -149,13 +165,13 @@ async function pollUntilDone({ host, port, apiKey, requestId, connectionId, time
   }
 }
 
-function gatewayRequestWithConnection({ host, port, apiKey, requestId, connectionId, signal }) {
+function gatewayRequestWithConnection({ host, port, apiKey, requestId, connectionId, signal, timeoutMs = DEFAULT_REQUEST_TIMEOUT_SEC * 1000 }) {
   return new Promise((resolve, reject) => {
     const headers = { Accept: "application/json" };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     if (connectionId) headers["x-connection-id"] = connectionId;
     const req = http.request(
-      { hostname: host, port, path: `/v1/videos/${encodeURIComponent(requestId)}`, method: "GET", headers, signal },
+      { hostname: host, port, path: `/v1/videos/${encodeURIComponent(requestId)}`, method: "GET", headers, signal, timeout: timeoutMs },
       (res) => {
         let data = "";
         res.on("data", (c) => (data += c));
@@ -166,6 +182,7 @@ function gatewayRequestWithConnection({ host, port, apiKey, requestId, connectio
         });
       }
     );
+    req.on("timeout", () => req.destroy(new Error("gateway request timed out")));
     req.on("error", reject);
     req.end();
   });
@@ -224,6 +241,10 @@ async function run(argv) {
     console.log(HELP);
     return 1;
   }
+  if (!opts.force && fs.existsSync(opts.output)) {
+    console.error(`❌ Output file already exists: ${opts.output} (use --force to overwrite)`);
+    return 1;
+  }
 
   const controller = new AbortController();
   const partPath = `${opts.output}.part`;
@@ -246,6 +267,7 @@ async function run(argv) {
     const create = await gatewayRequest({
       host: opts.host, port: opts.port, apiKey: opts.apiKey,
       method: "POST", reqPath: "/v1/videos/generations", body, signal: controller.signal,
+      timeoutMs: opts.requestTimeoutMs,
     });
 
     if (create.status !== 200 || !create.body?.request_id) {
@@ -266,6 +288,7 @@ async function run(argv) {
       host: opts.host, port: opts.port, apiKey: opts.apiKey,
       requestId, connectionId,
       timeoutSec: opts.timeoutSec, pollIntervalMs: opts.pollIntervalMs,
+      timeoutMs: opts.requestTimeoutMs,
       signal: controller.signal,
       onProgress: (status, progress) => {
         const line = `⏳ ${status}${Number.isFinite(progress) ? ` ${progress}%` : ""}`;
@@ -297,4 +320,4 @@ async function run(argv) {
   }
 }
 
-module.exports = { run, parseArgs, pollUntilDone, downloadToFile, imageInputToUrl, sanitizeText };
+module.exports = { run, parseArgs, pollUntilDone, downloadToFile, imageInputToUrl, sanitizeText, gatewayRequest, gatewayRequestWithConnection, DEFAULT_REQUEST_TIMEOUT_SEC };

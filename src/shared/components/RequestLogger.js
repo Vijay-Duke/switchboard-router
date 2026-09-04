@@ -90,9 +90,12 @@ export default function RequestLogger() {
                   if (parts.length < 7) return null;
 
                   const status = parts[6];
-                  const isPending = status.includes("PENDING");
-                  const isFailed = status.includes("FAILED");
-                  const isSuccess = status.includes("OK");
+                  // Producers write lowercase ("ok", "success", "error",
+                  // "pending", ...), so normalize case before matching.
+                  const s = String(status).toLowerCase();
+                  const isPending = s.includes("pending");
+                  const isFailed = s.includes("failed") || s.includes("error");
+                  const isSuccess = s.includes("ok") || s.includes("success");
 
                   return (
                     <tr key={i} className={`hover:bg-primary/5 transition-colors ${isPending ? 'bg-primary/5' : ''}`}>

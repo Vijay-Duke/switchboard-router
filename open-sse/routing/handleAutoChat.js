@@ -6,7 +6,7 @@ import { randomUUID } from "crypto";
 import { detectRequiredCapabilities, reorderByCapabilities } from "../services/combo.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { errorResponse } from "../utils/error.js";
-import { HTTP_STATUS } from "../config/runtimeConfig.js";
+import { HTTP_STATUS, MAX_COMBO_DEPTH } from "../config/runtimeConfig.js";
 import { buildRouterPrompt, healthFromStats, clusterLatencyRef } from "./buildRouterPrompt.js";
 import { parseRouterPick } from "./parseRouterResponse.js";
 import {
@@ -100,6 +100,8 @@ export function invalidateCachedRoutes(comboName) {
  * @param {Function} [opts.loadProviderQuota] - () => Promise<Record<string, number>>
  * @param {Function} [opts.recordEvent]
  * @param {number} [opts.autoDepth] - recursion depth (reject at MAX_AUTO_DEPTH)
+ * @param {number} [opts.comboDepth] - outer fallback-combo depth, threaded through
+ *   so alternating Auto↔fallback nesting counts against one combined cap
  * @param {AbortSignal} [opts.clientAbortSignal] - client disconnect aborts router + workers
  * @param {object|null} [opts.feedbackCtx] - eligible OpenAI feedback context
  * @param {Record<string, object>} [opts.workerCaps] - resolved worker capability overrides
@@ -121,14 +123,18 @@ export async function handleAutoChat({
   recordEvent = async () => {},
   applyJudgeScore = async () => {},
   autoDepth = 0,
+  comboDepth = 0,
   clientAbortSignal = null,
   feedbackCtx = null,
   workerCaps = {},
 }) {
-  if (autoDepth >= MAX_AUTO_DEPTH) {
+  // Combined nesting cap: Auto layers (autoDepth) plus outer fallback layers
+  // (comboDepth) share one budget so A-contains-B-contains-A mixes cannot
+  // reset both counters by alternating strategies.
+  if (autoDepth >= MAX_AUTO_DEPTH || autoDepth + comboDepth >= MAX_COMBO_DEPTH) {
     return errorResponse(
       HTTP_STATUS.BAD_REQUEST,
-      `Auto combo "${comboName}" recursion limit (depth ${autoDepth})`
+      `Auto combo "${comboName}" recursion limit (auto ${autoDepth} + combo ${comboDepth})`
     );
   }
 
@@ -206,6 +212,7 @@ export async function handleAutoChat({
       skippedRouter: true,
       stats: [],
       autoDepth: childDepth,
+      comboDepth,
       emitHeaders,
       loadClusterP50,
       windowDays,
@@ -291,6 +298,7 @@ export async function handleAutoChat({
     alternates: route.pick.alternates,
     stats,
     autoDepth: childDepth,
+    comboDepth,
     routerInPool: route.routerInPool,
     emitHeaders,
     loadClusterP50,
@@ -838,6 +846,7 @@ async function executeAndRecord({
   skippedRouter = false,
   stats = [],
   autoDepth = 1,
+  comboDepth = 0,
   routerInPool = false,
   emitHeaders = true,
   loadClusterP50 = null,
@@ -863,6 +872,7 @@ async function executeAndRecord({
     handleSingleModel,
     log,
     autoDepth,
+    comboDepth,
     clientAbortSignal,
   });
   const success = await runWorkerFallbackChain({
@@ -870,6 +880,7 @@ async function executeAndRecord({
     alternates,
     pool,
     attempted,
+    attempts,
     tryWorker,
     tierSplit,
     log,
@@ -1182,6 +1193,7 @@ function createWorkerAttemptRunner({
   handleSingleModel,
   log,
   autoDepth,
+  comboDepth = 0,
   clientAbortSignal,
 }) {
   /** @type {Set<string>} */
@@ -1209,6 +1221,7 @@ function createWorkerAttemptRunner({
     try {
       result = await handleSingleModel(cloneBody(body), modelStr, {
         autoDepth,
+        comboDepth,
         signal: clientAbortSignal || undefined,
       });
     } catch (e) {
@@ -1283,6 +1296,7 @@ async function runWorkerFallbackChain({
   alternates,
   pool,
   attempted,
+  attempts = [],
   tryWorker,
   tierSplit = null,
   log,
@@ -1293,7 +1307,12 @@ async function runWorkerFallbackChain({
   // Auto v2 escalation: when the cheap-tier primary failed and a frontier tier
   // exists, the whole remaining chain goes frontier-first — router-suggested
   // alternates do NOT jump ahead of the tier bump ("move up a tier" wins).
-  const escalating = isCheapTierEscalation(tierSplit, worker);
+  // Escalation is gated on the primary failure status: a deterministic
+  // 400/401/403/404 fails the same way on frontier (burning frontier spend
+  // and discarding the router's alternates), so only retriable failures
+  // (429/408/5xx) escalate.
+  const primaryStatus = [...attempts].reverse().find((a) => a.worker === worker && !a.ok)?.status;
+  const escalating = isCheapTierEscalation(tierSplit, worker, primaryStatus);
 
   // Try all declared alternates (not just [0]) first — unless escalating.
   if (!success && !escalating && Array.isArray(alternates)) {
@@ -1321,12 +1340,20 @@ async function runWorkerFallbackChain({
   return success;
 }
 
-/** True when the failed primary was cheap-tier and a frontier tier exists. */
-function isCheapTierEscalation(tierSplit, primaryWorker) {
+/**
+ * True when the failed primary was cheap-tier, a frontier tier exists, and the
+ * primary failed retriably (429/408/5xx). Deterministic client errors fail the
+ * same way on frontier, so they use the normal alternates path instead.
+ * Unknown status fails open to the old always-escalate behavior.
+ */
+export function isCheapTierEscalation(tierSplit, primaryWorker, primaryStatus = null) {
   if (!tierSplit || tierSplit.disabled) return false;
   const cheapSet = new Set(tierSplit.cheap || []);
   const frontier = tierSplit.frontier || [];
-  return cheapSet.has(primaryWorker) && frontier.length > 0;
+  if (!cheapSet.has(primaryWorker) || frontier.length === 0) return false;
+  if (primaryStatus === undefined || primaryStatus === null) return true;
+  return primaryStatus === 408 || primaryStatus === 429
+    || (primaryStatus >= 500 && primaryStatus <= 599);
 }
 
 /** Reorder the pool frontier-tier-first (within tier keep pool order). */

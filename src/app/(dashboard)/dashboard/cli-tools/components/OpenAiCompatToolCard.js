@@ -12,6 +12,7 @@ import { useState, useEffect, useRef } from "react";
 import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
+import { cardHeaderToggleProps } from "./cardHeaderToggle";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import ModelCatalogInput from "./ModelCatalogInput";
@@ -104,6 +105,8 @@ export default function OpenAiCompatToolCard({
 
   const configStatus = getConfigStatus();
   const controlsLocked = applying || restoring || generatingPickerLabels;
+  // Cloud mode has no implicit local key — require an explicit one before Apply (T77).
+  const needsApiKey = cloudEnabled && !selectedApiKey?.trim() && !(apiKeys?.length > 0);
 
   /** Notes that are install-only should not appear once the binary is present. */
   const visibleNotes = (tool.notes || []).filter((note) => {
@@ -183,6 +186,13 @@ export default function OpenAiCompatToolCard({
       }
     }
   }, [status, supportsModelLabels]);
+
+  // Seed the endpoint dropdown from the server until the user touches it (T75).
+  useEffect(() => {
+    if (status?.settings?.baseUrl && !customBaseUrl) {
+      setCustomBaseUrl(status.settings.baseUrl.replace(/\/v1\/?$/, ""));
+    }
+  }, [status, customBaseUrl]);
 
   const checkStatus = async () => {
     setChecking(true);
@@ -389,7 +399,7 @@ export default function OpenAiCompatToolCard({
 
   return (
     <Card padding="xs" className="overflow-hidden">
-      <div className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center" onClick={onToggle}>
+      <div {...cardHeaderToggleProps(onToggle, isExpanded, tool.name)} className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-lg">
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
             {tool.image ? (
@@ -572,6 +582,7 @@ export default function OpenAiCompatToolCard({
                   <BaseUrlSelect
                     value={customBaseUrl || getEffectiveBaseUrl()}
                     onChange={setCustomBaseUrl}
+                    initialUrl={status?.settings?.baseUrl || ""}
                     requiresExternalUrl={tool.requiresExternalUrl}
                     tunnelEnabled={tunnelEnabled}
                     tunnelPublicUrl={tunnelPublicUrl}
@@ -749,7 +760,7 @@ export default function OpenAiCompatToolCard({
                   variant="primary"
                   size="sm"
                   onClick={handleApply}
-                  disabled={controlsLocked || (multipleModels ? selectedModels.length === 0 : !selectedModel)}
+                  disabled={controlsLocked || needsApiKey || (multipleModels ? selectedModels.length === 0 : !selectedModel)}
                   loading={applying}
                 >
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>
@@ -770,6 +781,11 @@ export default function OpenAiCompatToolCard({
                   Manual Config
                 </Button>
               </div>
+              {needsApiKey && (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  Select or paste a Switchboard API key for this endpoint before applying.
+                </p>
+              )}
             </>
           )}
         </div>

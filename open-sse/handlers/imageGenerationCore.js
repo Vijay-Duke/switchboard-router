@@ -5,8 +5,12 @@ import { withCredentialRefreshLock } from "../services/oauthCredentialManager.js
 import { getExecutor } from "../executors/index.js";
 import { getImageAdapter } from "./imageProviders/index.js";
 import { urlToBase64 } from "./imageProviders/_base.js";
-import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { proxyAwareFetch, proxyOptionsFromCredentials } from "../utils/proxyFetch.js";
 import { PROVIDERS, PROVIDER_MEDIA } from "../providers/index.js";
+
+// Local input caps: fail fast instead of forwarding (and billing) absurd values.
+const IMAGE_MAX_N = 10;
+const IMAGE_MAX_PROMPT_CHARS = 32 * 1024;
 
 function serializeRequestBody(requestBody) {
   if (typeof FormData !== "undefined" && requestBody instanceof FormData) return requestBody;
@@ -50,9 +54,17 @@ export async function handleImageGenerationCore({
 }) {
   const { provider, model } = modelInfo;
   const transport = imageTransport(provider);
+  const proxyOptions = proxyOptionsFromCredentials(credentials);
 
-  if (!body.prompt) {
-    return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Missing required field: prompt");
+  if (typeof body?.prompt !== "string" || !body.prompt.trim()) {
+    return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Missing required field: prompt (must be a non-empty string)");
+  }
+  if (body.prompt.length > IMAGE_MAX_PROMPT_CHARS) {
+    return createErrorResult(HTTP_STATUS.BAD_REQUEST, `prompt exceeds ${IMAGE_MAX_PROMPT_CHARS} characters`);
+  }
+  if (body.n !== undefined && body.n !== null) {
+    const n = Math.floor(Number(body.n));
+    body = { ...body, n: Number.isFinite(n) ? Math.min(IMAGE_MAX_N, Math.max(1, n)) : 1 };
   }
 
   const adapter = getImageAdapter(provider);
@@ -124,11 +136,13 @@ export async function handleImageGenerationCore({
       method: "POST",
       headers,
       body: serializeRequestBody(requestBody),
+      // Never follow redirects server-side past the pre-flight URL.
+      redirect: "error",
       signal: abortSignal || undefined,
       identity: transport.identity,
       provider,
       format: transport.format,
-    });
+    }, proxyOptions);
   } catch (error) {
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
     log?.debug?.("IMAGE", `Fetch error: ${errMsg}`);
@@ -167,11 +181,17 @@ export async function handleImageGenerationCore({
           method: "POST",
           headers: retryHeaders,
           body: serializeRequestBody(retryBody),
+          redirect: "error",
           signal: abortSignal || undefined,
           identity: transport.identity,
           provider,
           format: transport.format,
-        });
+        }, proxyOptions);
+        // Async adapters poll with these headers — use the refreshed set, or
+        // every poll 401s after a mid-call key rotation.
+        headers = retryHeaders;
+        url = retryUrl;
+        requestBody = retryBody;
       } catch {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);
       }
@@ -200,6 +220,7 @@ export async function handleImageGenerationCore({
         requestBody,
         model,
         body,
+        proxyOptions,
       });
       // Codex streaming case: returns an SSE Response directly
       if (parsed?.sseResponse) {

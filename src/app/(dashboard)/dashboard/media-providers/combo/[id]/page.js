@@ -86,11 +86,26 @@ export default function ComboDetailPage() {
       const s = settingsRes.ok ? await settingsRes.json() : {};
       setRoundRobin(s.comboStrategies?.[c.name]?.fallbackStrategy === "round-robin");
       const allLogs = logsRes.ok ? await logsRes.json() : [];
-      setLogs(allLogs.filter((l) => typeof l === "string" && l.includes(c.name)).slice(0, 50));
+      // Attribute logs by the pipe-delimited model column only (field 2);
+      // substring matching misattributes lines that merely mention the name
+      const comboModelKeys = new Set(
+        [c.name, ...(c.models || []).map((entry) => {
+          const { model } = parseModelEntry(entry);
+          return model || entry;
+        })].map((v) => (typeof v === "string" ? v.toLowerCase() : v))
+      );
+      const logModel = (line) => {
+        const parts = line.split(" | ");
+        return parts.length >= 2 ? parts[1].trim().toLowerCase() : "";
+      };
+      setLogs(allLogs.filter((l) => typeof l === "string" && comboModelKeys.has(logModel(l))).slice(0, 50));
     } catch { /* noop */ }
     setLoading(false);
   };
 
+  // id changed (navigation reuses this component): drop the previous combo
+  // immediately instead of flashing it while the new one loads
+  useEffect(() => { setLoading(true); setCombo(null); }, [id]);
   useEffect(() => { fetchAll(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const validateName = (v) => {
@@ -101,42 +116,76 @@ export default function ComboDetailPage() {
   };
 
   const saveCombo = async (patch) => {
-    const res = await fetch(`/api/combos/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    if (!res.ok) { const err = await res.json(); reportClientError(err.error || "Failed to save"); return false; }
-    return true;
+    try {
+      const res = await fetch(`/api/combos/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        reportClientError(err.error || "Failed to save combo");
+        return false;
+      }
+      return true;
+    } catch (e) {
+      reportClientError("Failed to save combo:", e?.message || e);
+      return false;
+    }
   };
 
   const handleSaveName = async () => {
     if (!validateName(name)) return;
     if (name === combo.name) return;
+    const prevName = combo.name;
     const ok = await saveCombo({ name });
-    if (ok) await fetchAll();
+    if (!ok) return;
+    // Round-robin strategies are keyed by combo name — move the entry so a
+    // rename doesn't orphan it (stale key would apply to nothing).
+    try {
+      const settingsRes = await fetch("/api/settings", { cache: "no-store" });
+      if (settingsRes.ok) {
+        const s = await settingsRes.json();
+        const strategies = s.comboStrategies || {};
+        if (strategies[prevName]) {
+          const updated = { ...strategies };
+          updated[name] = updated[prevName];
+          delete updated[prevName];
+          const res = await fetch("/api/settings", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ comboStrategies: updated }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        }
+      }
+    } catch (e) {
+      reportClientError("Failed to migrate round-robin setting:", e?.message || e);
+    }
+    await fetchAll();
+  };
+
+  const commitModels = async (next) => {
+    const prev = providers;
+    setProviders(next);
+    // Revert the optimistic edit when the server rejects it
+    if (!await saveCombo({ models: next })) setProviders(prev);
   };
 
   const handleAddModel = async (model) => {
     const value = model?.value || model;
     if (!value || providers.includes(value)) return;
-    const next = [...providers, value];
-    setProviders(next);
-    await saveCombo({ models: next });
+    await commitModels([...providers, value]);
   };
 
   const handleDeselectModel = async (model) => {
     const value = model?.value || model;
     if (!value || !providers.includes(value)) return;
-    const next = providers.filter((p) => p !== value);
-    setProviders(next);
-    await saveCombo({ models: next });
+    await commitModels(providers.filter((p) => p !== value));
   };
 
   const handleRemoveProvider = async (idx) => {
-    const next = providers.filter((_, i) => i !== idx);
-    setProviders(next);
-    await saveCombo({ models: next });
+    await commitModels(providers.filter((_, i) => i !== idx));
   };
 
   const handleMove = async (idx, dir) => {
@@ -144,28 +193,35 @@ export default function ComboDetailPage() {
     const swap = idx + dir;
     if (swap < 0 || swap >= next.length) return;
     [next[idx], next[swap]] = [next[swap], next[idx]];
-    setProviders(next);
-    await saveCombo({ models: next });
+    await commitModels(next);
   };
 
   const handleToggleRoundRobin = async (enabled) => {
     setRoundRobin(enabled);
-    const settingsRes = await fetch("/api/settings", { cache: "no-store" });
-    const s = settingsRes.ok ? await settingsRes.json() : {};
-    const updated = { ...(s.comboStrategies || {}) };
-    if (enabled) updated[combo.name] = { fallbackStrategy: "round-robin" };
-    else delete updated[combo.name];
-    await fetch("/api/settings", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ comboStrategies: updated }),
-    });
+    try {
+      const settingsRes = await fetch("/api/settings", { cache: "no-store" });
+      if (!settingsRes.ok) throw new Error(`HTTP ${settingsRes.status}`);
+      const s = await settingsRes.json();
+      const updated = { ...(s.comboStrategies || {}) };
+      if (enabled) updated[combo.name] = { fallbackStrategy: "round-robin" };
+      else delete updated[combo.name];
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comboStrategies: updated }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (e) {
+      // Failed toggles must not look saved — undo the optimistic flip
+      setRoundRobin(!enabled);
+      reportClientError("Failed to save round-robin setting:", e?.message || e);
+    }
   };
 
   const handleDelete = async () => {
     if (!await requestConfirmation({ message: `Delete combo "${combo.name?.trim() || id}"?`, confirmText: "Continue" })) return;
     try {
-      await fetchJson(`/api/combos/${id}`, { method: "DELETE" });
+      await fetchJson(`/api/combos/${encodeURIComponent(id)}`, { method: "DELETE" });
       router.push(getListingHref(combo.kind));
     } catch (error) {
       reportClientError("Error deleting combo:", error);
@@ -192,7 +248,8 @@ export default function ComboDetailPage() {
       const latencyMs = Date.now() - start;
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        setTestError(d?.error?.message || d?.error || `HTTP ${res.status}`);
+        const errMsg = d?.error?.message || d?.error;
+        setTestError(typeof errMsg === "string" && errMsg ? errMsg : `HTTP ${res.status}`);
         setTestResult({ json: JSON.stringify(d, null, 2), latencyMs });
         return;
       }
@@ -218,8 +275,10 @@ export default function ComboDetailPage() {
       setTestResult({ json: JSON.stringify(maskB64(data), null, 2), imageUrl, latencyMs });
     } catch (e) {
       setTestError(e.message || "Network error");
+    } finally {
+      // Early returns above must still release the Run button
+      setTesting(false);
     }
-    setTesting(false);
   };
 
   // Mask large b64_json strings to keep JSON view readable

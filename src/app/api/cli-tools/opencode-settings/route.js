@@ -78,7 +78,7 @@ export async function GET() {
       configPath: getConfigPath(),
         opencode: {
           models: Object.keys(modelMap),
-          activeModel: config?.model?.startsWith("switchboard/") ? config.model.replace(/^switchboard\//, "") : null,
+          activeModel: typeof config?.model === "string" && config.model.startsWith("switchboard/") ? config.model.replace(/^switchboard\//, "") : null,
           baseURL: providerConfig?.options?.baseURL || null,
         },
     });
@@ -111,12 +111,7 @@ export async function POST(request) {
 
     await fs.mkdir(configDir, { recursive: true });
 
-    // Read existing config or start fresh
-    let config = {};
-    try {
-      const existing = await fs.readFile(configPath, "utf-8");
-      config = JSON.parse(existing);
-    } catch { /* No existing config */ }
+    let config = (await readConfig()) || {};
 
     const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
     const keyToUse = apiKey || "sk_switchboard";
@@ -191,20 +186,14 @@ export async function PATCH(request) {
     const { clearActiveModel } = body || {};
     const configPath = getConfigPath();
 
-    let config = {};
-    try {
-      const existing = await fs.readFile(configPath, "utf-8");
-      config = JSON.parse(existing);
-    } catch (error) {
-      if (error.code === "ENOENT") {
-        return NextResponse.json({ success: true, message: "No config file found" });
-      }
-      throw error;
+    let config = await readConfig();
+    if (config === null) {
+      return NextResponse.json({ success: true, message: "No config file found" });
     }
 
     if (clearActiveModel === true) {
       // Clear active model but keep models in the list
-      if (config.model?.startsWith("switchboard/")) {
+      if (typeof config.model === "string" && config.model.startsWith("switchboard/")) {
         config.model = "";
       }
     }
@@ -228,15 +217,9 @@ export async function DELETE(request) {
     const modelToRemove = searchParams.get("model");
     const configPath = getConfigPath();
 
-    let config = {};
-    try {
-      const existing = await fs.readFile(configPath, "utf-8");
-      config = JSON.parse(existing);
-    } catch (error) {
-      if (error.code === "ENOENT") {
-        return NextResponse.json({ success: true, message: "No config file to reset" });
-      }
-      throw error;
+    let config = await readConfig();
+    if (config === null) {
+      return NextResponse.json({ success: true, message: "No config file to reset" });
     }
 
     // If specific model provided, remove just that model
@@ -246,7 +229,7 @@ export async function DELETE(request) {
       // If no models left, remove the provider
       if (Object.keys(config.provider["switchboard"].models).length === 0) {
         delete config.provider["switchboard"];
-        if (config.model?.startsWith("switchboard/")) delete config.model;
+        if (typeof config.model === "string" && config.model.startsWith("switchboard/")) delete config.model;
       } else if (config.model === `switchboard/${modelToRemove}`) {
         // If removed model was active, switch to first remaining model
         const remainingModels = Object.keys(config.provider["switchboard"].models);
@@ -255,11 +238,11 @@ export async function DELETE(request) {
     } else {
       // No specific model - remove entire switchboard provider
       if (config.provider) delete config.provider["switchboard"];
-      if (config.model?.startsWith("switchboard/")) delete config.model;
+      if (typeof config.model === "string" && config.model.startsWith("switchboard/")) delete config.model;
     }
 
     // Remove subagent configuration
-    if (config.agent?.explorer?.model?.startsWith("switchboard/")) {
+    if (typeof config.agent?.explorer?.model === "string" && config.agent.explorer.model.startsWith("switchboard/")) {
       delete config.agent.explorer;
       // Clean up empty agent object
       if (Object.keys(config.agent).length === 0) delete config.agent;

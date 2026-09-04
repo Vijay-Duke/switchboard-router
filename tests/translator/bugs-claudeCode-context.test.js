@@ -39,8 +39,10 @@ describe("Claude Code CLI context → OpenAI", () => {
     expect(JSON.stringify(out)).toContain("step-by-step plan");
   });
 
-  // claude-to-openai.js: redacted_thinking preserved
-  it("redacted_thinking block is not silently dropped", () => {
+  // claude-to-openai.js: redacted_thinking is opaque ciphertext — it must never
+  // be flattened into readable reasoning_content/content on the OpenAI side
+  // (request-gate ruling); the rest of the turn survives intact.
+  it("redacted_thinking ciphertext is not exposed as readable text", () => {
     const out = T(FORMATS.CLAUDE, FORMATS.OPENAI, {
       messages: [
         { role: "assistant", content: [
@@ -50,7 +52,9 @@ describe("Claude Code CLI context → OpenAI", () => {
         { role: "user", content: "go" },
       ],
     });
-    expect(JSON.stringify(out)).toContain("ENCRYPTED_BLOB");
+    expect(JSON.stringify(out)).not.toContain("ENCRYPTED_BLOB");
+    const assistant = out.messages.find((m) => m.role === "assistant");
+    expect(JSON.stringify(assistant)).toContain("answer");
   });
 
   // claude-to-openai.js: tool_result image block preserved

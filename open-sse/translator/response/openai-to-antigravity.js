@@ -1,19 +1,28 @@
 import { register } from "../registry.js";
 import { FORMATS } from "../formats.js";
-import { GEMINI_ROLE, OPENAI_FINISH, GEMINI_FINISH } from "../schema/index.js";
+import { GEMINI_ROLE, OPENAI_FINISH, GEMINI_FINISH, OPENAI_BLOCK } from "../schema/index.js";
+import { extractReasoningText } from "../concerns/reasoning.js";
+import { parseDataUri } from "../concerns/image.js";
 
 const FINISH_REASON_MAP = {
   [OPENAI_FINISH.STOP]: GEMINI_FINISH.STOP,
   [OPENAI_FINISH.LENGTH]: GEMINI_FINISH.MAX_TOKENS,
   [OPENAI_FINISH.TOOL_CALLS]: GEMINI_FINISH.STOP,
   [OPENAI_FINISH.CONTENT_FILTER]: GEMINI_FINISH.SAFETY,
+  // Aborted upstream turns (e.g. Gemini MALFORMED_FUNCTION_CALL via the hub)
+  // must not surface as clean STOPs.
+  [OPENAI_FINISH.ERROR]: GEMINI_FINISH.MALFORMED_FUNCTION_CALL,
 };
 
 function appendToolCallParts(state, parts) {
   for (const idx of Object.keys(state._toolCallAccum)) {
     const accum = state._toolCallAccum[idx];
     let args = {};
-    try { args = JSON.parse(accum.arguments); } catch { /* empty */ }
+    try { args = JSON.parse(accum.arguments); } catch {
+      // Truncated mid-args payloads fail closed to {} — mark the corruption
+      // in-turn instead of emitting silent empty args.
+      if (accum.arguments) parts.push({ text: "[tool arguments truncated in transit]" });
+    }
     const originalName = state.toolNameMap?.get(accum.name) || accum.name;
     parts.push({
       functionCall: {
@@ -53,6 +62,17 @@ function buildResponse(state, parts, finishReason = null, usage = state._usage) 
   return { response };
 }
 
+// Map an OpenAI image_url value to a Gemini part: data URIs become inlineData,
+// remote URLs become fileData references.
+function toImagePart(url) {
+  const parsed = parseDataUri(url);
+  if (parsed) return { inlineData: { mime_type: parsed.mimeType, data: parsed.base64 } };
+  if (typeof url === "string" && /^https?:\/\//.test(url)) {
+    return { fileData: { fileUri: url } };
+  }
+  return null;
+}
+
 // Convert OpenAI SSE chunk to Antigravity SSE format
 // Real Antigravity format:
 //   data: {"response":{"candidates":[{"content":{"role":"model","parts":[...]}, "finishReason":"STOP"}], "usageMetadata":{...}, "modelVersion":"...", "responseId":"..."}}
@@ -65,6 +85,12 @@ export function openaiToAntigravityResponse(chunk, state) {
   // EOF so buffered tool calls do not disappear when upstream truncates.
   if (chunk === null) {
     if (state._finishHandled) return null;
+    // A stream that died before any content flowed is a stall, not an empty
+    // answer — let the stream layer's stall/empty guards handle it.
+    if (!state._sawContent) {
+      const toolKeys = Object.keys(state._toolCallAccum || {});
+      if (toolKeys.length === 0) return null;
+    }
     if (!state._responseId) state._responseId = `resp_${Date.now()}`;
     if (!state._modelVersion) state._modelVersion = "";
     state._finishHandled = true;
@@ -82,6 +108,11 @@ export function openaiToAntigravityResponse(chunk, state) {
 
   const choice = chunk.choices?.[0];
   if (!choice) {
+    // Split-usage upstreams send finish first, then a choiceless usage chunk.
+    // Once finished, deliver the stored usage in a parts-light response.
+    if (state._finishHandled) {
+      return buildResponse(state, [], null, chunk.usage || state._usage);
+    }
     return null;
   }
 
@@ -92,15 +123,77 @@ export function openaiToAntigravityResponse(chunk, state) {
   if (!state._modelVersion) state._modelVersion = chunk.model || "";
 
   const parts = [];
+  const markFlow = () => { state._sawContent = true; };
 
-  // Thinking/reasoning → thought part
-  if (delta.reasoning_content) {
-    parts.push({ thought: true, text: delta.reasoning_content });
+  // Thinking/reasoning across vendor shapes → thought part
+  const thinking = extractReasoningText(delta);
+  if (thinking) {
+    parts.push({ thought: true, text: thinking });
+    markFlow();
   }
 
-  // Text content
-  if (delta.content) {
-    parts.push({ text: delta.content });
+  // Text content. Claude thinking round-trips through OpenAI as literal
+  // <think> markers (content-only OpenAI clients rely on them); Gemini-family
+  // clients get thought parts instead.
+  const pushThoughtText = (text) => {
+    const re = /<think>([\s\S]*?)<\/think>/g;
+    let last = 0;
+    let m;
+    let emitted = false;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) {
+        parts.push({ text: text.slice(last, m.index) });
+        emitted = true;
+      }
+      if (m[1]) {
+        parts.push({ thought: true, text: m[1] });
+        emitted = true;
+      }
+      last = m.index + m[0].length;
+    }
+    const tail = text.slice(last);
+    // Exact lone markers carry no text — drop them silently.
+    if (tail && tail !== "<think>" && tail !== "</think>") {
+      parts.push({ text: tail });
+      emitted = true;
+    }
+    return emitted;
+  };
+  if (typeof delta.content === "string" && delta.content) {
+    if (delta.content === "<think>" || delta.content === "</think>") {
+      // Lone marker chunk — absorbed, not forwarded.
+    } else if (pushThoughtText(delta.content)) {
+      markFlow();
+    }
+  } else if (Array.isArray(delta.content)) {
+    for (const part of delta.content) {
+      if (typeof part === "string") {
+        if (part !== "<think>" && part !== "</think>" && part) {
+          parts.push({ text: part });
+          markFlow();
+        }
+      } else if (part?.type === "text" && part.text) {
+        parts.push({ text: part.text });
+        markFlow();
+      } else if (part?.type === OPENAI_BLOCK.IMAGE_URL && part.image_url?.url) {
+        const imagePart = toImagePart(part.image_url.url);
+        if (imagePart) {
+          parts.push(imagePart);
+          markFlow();
+        }
+      }
+    }
+  }
+
+  // Legacy gemini image shape (delta.images) — same inlineData forwarding.
+  if (Array.isArray(delta.images)) {
+    for (const entry of delta.images) {
+      const imagePart = entry?.image_url?.url ? toImagePart(entry.image_url.url) : null;
+      if (imagePart) {
+        parts.push(imagePart);
+        markFlow();
+      }
+    }
   }
 
   // Accumulate tool calls silently (no emit until finish)
@@ -118,9 +211,15 @@ export function openaiToAntigravityResponse(chunk, state) {
       if (tc.function?.name) {
         const n = tc.function.name;
         if (!accum.name) accum.name = n;
+        // Fragment-then-full retransmit (look + lookup): adopt the longer full
+        // name instead of discarding it as a duplicate.
+        else if (n.startsWith(accum.name) && n.length > accum.name.length) accum.name = n;
         else if (!accum.name.endsWith(n) && !n.startsWith(accum.name)) accum.name += n;
       }
-      if (tc.function?.arguments) accum.arguments += tc.function.arguments;
+      if (tc.function?.arguments) {
+        accum.arguments += tc.function.arguments;
+        markFlow();
+      }
     }
     // Skip emit — wait for finish_reason
     if (parts.length === 0 && !finishReason) return null;

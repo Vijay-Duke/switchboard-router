@@ -83,7 +83,11 @@ const writeManagedEnv = (text, values) => {
 
 const readSettings = async () => {
   try { return JSON.parse(await fs.readFile(getSettingsPath(), "utf-8")); }
-  catch (error) { if (error.code === "ENOENT") return {}; throw error; }
+  catch {
+    // ENOENT and corrupt/hand-edited JSON both read as "no settings" so a bad
+    // file can't 500 the status check into "not installed".
+    return {};
+  }
 };
 
 const readBackup = async () => {

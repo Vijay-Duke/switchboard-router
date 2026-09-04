@@ -25,7 +25,8 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
     const provider   = searchParams.get("provider") || "edge-tts";
     const langFilter = searchParams.get("lang");
-    const apiKey     = searchParams.get("apiKey");
+    // Prefer header transport over the URL-logged query param (T125).
+    const apiKey     = request.headers.get("x-api-key") || searchParams.get("apiKey");
 
     const fetcher = VOICE_FETCHERS[provider];
     if (!fetcher) {
@@ -41,7 +42,7 @@ export async function GET(request) {
       voices = raw.map((v) => ({
         id:      v.id,
         name:    v.name,
-        locale:  v.locale.replace("_", "-"),
+        locale:  v.locale.replace(/_/g, "-"),
         lang:    v.lang,
         country: v.country,
         countryName: countryName(v.country),

@@ -63,6 +63,8 @@ function sanitize(headers) {
           .replace(/(OpenAI\/NodeJS\/)v?\d+(?:\.\d+)+/gi, "$1<NODE_VERSION>")
           .replace(/(\b(?:claude-cli|codex_cli_rs|GeminiCLI|Cline|antigravity|GitHubCopilotChat|QwenCode|grok-cli)\/)\d+(?:\.\d+)+(?:-[0-9A-Za-z.-]+)?/gi, "$1<VERSION>")
           .replace(/kimi-\d{10,}/g, "kimi-<TS>")
+          // grok-shell reports the live host OS/arch (identity gate E1); keep the snapshot runner-independent.
+          .replace(/(grok-shell\/[\d.]+) \([^)]*\)/i, "$1 (<PLATFORM>; <ARCH>)")
       : v;
   }
   return out;

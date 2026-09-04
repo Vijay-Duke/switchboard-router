@@ -166,11 +166,30 @@ function lowerMap(headers) {
   return out;
 }
 
+// Per-profile UA product tokens. A snapshot whose UA carries another
+// profile's token cannot belong to this profile (cross-profile write guard).
+const PROFILE_UA_PATTERNS = {
+  "claude-cli": /claude-(?:cli|code)\//i,
+  "codex-cli": /codex_cli_rs\//i,
+  "gemini-cli": /GeminiCLI\//i,
+  cline: /Cline\//i,
+  antigravity: /antigravity\//i,
+  qwen: /QwenCode\//i,
+  copilot: /GitHubCopilotChat\//i,
+};
+
+export function snapshotBelongsToProfile(profileId, snapshot) {
+  const pattern = PROFILE_UA_PATTERNS[profileId];
+  if (!pattern || !snapshot?.userAgent) return true;
+  return pattern.test(snapshot.userAgent);
+}
+
 export function harvest(profileId, headers) {
   const h = lowerMap(headers);
   const userAgent = h["user-agent"];
   const version = extractVersion(userAgent);
   if (!userAgent || !version) return false;
+  if (!snapshotBelongsToProfile(profileId, { userAgent })) return false;
   if (profileId === "claude-cli") {
     const packageVersion = h["x-stainless-package-version"];
     const runtimeVersion = h["x-stainless-runtime-version"];
@@ -252,7 +271,7 @@ export async function pollIdentityVersions(fetchImpl = globalThis.fetch) {
     try {
       const latestVersion = await fetchLatestVersion(profileId, fetchImpl);
       if (!latestVersion) return;
-      const current = getConsistentSnapshot(profileId) || fallbackSnapshot(profileId) || {};
+      let current = getConsistentSnapshot(profileId) || fallbackSnapshot(profileId) || {};
       if (profileId === "claude-cli") {
         if (compareVersions(latestVersion, current.version) > 0) {
           setSnapshot(profileId, { ...current, latestVersion, checkedAt: Date.now() });
@@ -260,7 +279,18 @@ export async function pollIdentityVersions(fetchImpl = globalThis.fetch) {
         }
         return;
       }
-      if (compareVersions(latestVersion, current.version) <= 0) return;
+      // A stored snapshot that carries another profile's UA, or a version
+      // ahead of this source's own latest, cannot have come from this
+      // registry: discard it, otherwise "only move forward" pins the bogus
+      // value forever (gemini-cli.json once held codex's 0.149.0).
+      const foreign = !snapshotBelongsToProfile(profileId, current)
+        || compareVersions(current.version, latestVersion) > 0;
+      if (foreign) {
+        markStale(profileId, `stored snapshot ${current.version} cannot belong to ${profileId}; reset to npm ${latestVersion}`);
+        current = fallbackSnapshot(profileId) || {};
+      } else if (compareVersions(latestVersion, current.version) <= 0) {
+        return;
+      }
       const userAgent = profileId === "codex-cli" ? `codex_cli_rs/${latestVersion}` : current.userAgent;
       setSnapshot(profileId, { ...current, version: latestVersion, ...(userAgent ? { userAgent } : {}), checkedAt: Date.now() });
     } catch {

@@ -5,6 +5,7 @@ import { useState, useEffect, useRef } from "react";
 import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
+import { cardHeaderToggleProps } from "./cardHeaderToggle";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import { reportClientError } from "@/shared/utils/clientFeedback";
@@ -17,7 +18,6 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
   const [message, setMessage] = useState(null);
   const [showInstallGuide, setShowInstallGuide] = useState(false);
   const [selectedApiKey, setSelectedApiKey] = useState("");
-  const [selectedModel, setSelectedModel] = useState("");
   const [subagentModel, setSubagentModel] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [subagentModalOpen, setSubagentModalOpen] = useState(false);
@@ -26,11 +26,9 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [selectedModels, setSelectedModels] = useState([]);
   const [activeModel, setActiveModel] = useState("");
-  const selectedModelsRef = useRef([]);
-
-  useEffect(() => {
-    selectedModelsRef.current = selectedModels;
-  }, [selectedModels]);
+  // Seed local state from the server once; later refreshes must not wipe
+  // local edits (active-model choice) between Apply presses (T82).
+  const hasSyncedConfigRef = useRef(false);
 
   useEffect(() => {
     if (apiKeys?.length > 0 && !selectedApiKey) {
@@ -50,17 +48,19 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
     if (isExpanded) fetchModelAliases();
   }, [isExpanded, status]);
 
-  // Sync models from existing config
+  // Seed models/active/subagent from the server exactly once; checkStatus
+  // refreshes must not revert local edits before Apply (T82).
   useEffect(() => {
-    if (status?.opencode?.models) {
+    if (!status || hasSyncedConfigRef.current) return;
+    hasSyncedConfigRef.current = true;
+    if (status.opencode?.models) {
       setSelectedModels(status.opencode.models);
     }
-    if (status?.opencode?.activeModel) {
+    if (status.opencode?.activeModel) {
       setActiveModel(status.opencode.activeModel);
     }
-
     // Parse subagent settings from agent.explorer if exists
-    if (status?.config?.agent?.explorer?.model?.startsWith("switchboard/")) {
+    if (status.config?.agent?.explorer?.model?.startsWith("switchboard/")) {
       setSubagentModel(status.config.agent.explorer.model.replace("switchboard/", ""));
     }
   }, [status]);
@@ -75,27 +75,6 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
     }
   };
 
-  const saveModels = async (models) => {
-    try {
-      const keyToUse = (selectedApiKey && selectedApiKey.trim())
-        ? selectedApiKey
-        : (!cloudEnabled ? "sk_switchboard" : selectedApiKey);
-      const validActiveModel = models.includes(activeModel) ? activeModel : (models[0] || "");
-      await fetch("/api/cli-tools/opencode-settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          baseUrl: getEffectiveBaseUrl(),
-          apiKey: keyToUse,
-          models,
-          activeModel: validActiveModel,
-          subagentModel,
-        }),
-      });
-    } catch (error) {
-      reportClientError("Error saving models:", error);
-    }
-  };
 
   const getConfigStatus = () => {
     if (!status?.installed) return null;
@@ -168,7 +147,6 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
       const data = await res.json();
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
-        setSelectedModel("");
         setSubagentModel("");
         setSelectedModels([]);
         setActiveModel("");
@@ -221,7 +199,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
 
   return (
     <Card padding="xs" className="overflow-hidden">
-      <div className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center" onClick={onToggle}>
+      <div {...cardHeaderToggleProps(onToggle, isExpanded, tool.name)} className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-lg">
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
             <Image src="/providers/opencode.png" alt={tool.name} width={32} height={32} className="size-8 object-contain rounded-lg" sizes="32px" onError={(e) => { e.target.style.display = "none"; }} />
@@ -295,6 +273,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                   <BaseUrlSelect
                     value={customBaseUrl || getDisplayUrl()}
                     onChange={setCustomBaseUrl}
+                    initialUrl={status?.config?.provider?.switchboard?.options?.baseURL || ""}
                     requiresExternalUrl={tool.requiresExternalUrl}
                     tunnelEnabled={tunnelEnabled}
                     tunnelPublicUrl={tunnelPublicUrl}
@@ -333,39 +312,32 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                         selectedModels.map((model) => (
                           <span
                             key={model}
-                            onClick={async () => {
-                              if (model === activeModel) {
-                                try {
-                                  const res = await fetch("/api/cli-tools/opencode-settings", {
-                                    method: "PATCH",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ clearActiveModel: true }),
-                                  });
-                                  if (res.ok) {
-                                    setActiveModel("");
-                                    checkStatus();
-                                  }
-                                } catch (error) {
-                                  reportClientError("Error clearing active model:", error);
-                                }
-                              } else {
-                                setActiveModel(model);
-                              }
-                            }}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs cursor-pointer transition-colors ${
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs transition-colors ${
                               model === activeModel
                                 ? "bg-primary/10 text-primary border border-primary"
                                 : "bg-black/5 dark:bg-white/5 text-text-muted border border-transparent hover:border-border"
                             }`}
-                            title={model === activeModel ? "Click to clear active model" : "Click to set as active"}
                           >
-                            {model === activeModel && <span className="material-symbols-outlined text-[10px]">star</span>}
-                            {model}
                             <button
-                              onClick={async (e) => {
-                                e.stopPropagation();
+                              type="button"
+                              onClick={() => {
+                                // Set/clear is local state, persisted by Apply —
+                                // refresh-triggered checkStatus no longer wipes it (T82).
+                                setActiveModel((current) => (current === model ? "" : model));
+                              }}
+                              className="inline-flex items-center gap-1 cursor-pointer"
+                              title={model === activeModel ? "Click to clear active model (Apply to save)" : "Click to set as active (Apply to save)"}
+                              aria-pressed={model === activeModel}
+                            >
+                              {model === activeModel && <span className="material-symbols-outlined text-[10px]">star</span>}
+                              {model}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
                                 try {
                                   const res = await fetch(`/api/cli-tools/opencode-settings?model=${encodeURIComponent(model)}`, { method: "DELETE" });
+                                  const data = await res.json().catch(() => ({}));
                                   if (res.ok) {
                                     const newModels = selectedModels.filter((m) => m !== model);
                                     setSelectedModels(newModels);
@@ -373,12 +345,17 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                                       setActiveModel("");
                                     }
                                     checkStatus();
+                                  } else {
+                                    reportClientError("Error removing model:", data.error || res.status);
+                                    setMessage({ type: "error", text: data.error || `Failed to remove ${model}` });
                                   }
                                 } catch (error) {
                                   reportClientError("Error removing model:", error);
+                                  setMessage({ type: "error", text: error.message });
                                 }
                               }}
                               className="ml-0.5 hover:text-red-500"
+                              aria-label={`Remove ${model}`}
                             >
                               <span className="material-symbols-outlined text-[12px]">close</span>
                             </button>
@@ -392,7 +369,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                         {selectedModels.length > 0 && activeModel ? (
                           <>Active: <span className="text-primary">{activeModel}</span></>
                         ) : selectedModels.length > 0 ? (
-                          <span className="text-yellow-500">Click a model to set/clear active</span>
+                          <span className="text-yellow-500">Click a model to set/clear active — Apply saves it</span>
                         ) : (
                           "Select models to add"
                         )}
@@ -409,7 +386,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                     type="text"
                     value={subagentModel}
                     onChange={(e) => setSubagentModel(e.target.value)}
-                    placeholder={selectedModel || "provider/model-id (defaults to main model)"}
+                    placeholder={activeModel || "provider/model-id (defaults to main model)"}
                     className="w-full min-w-0 px-2 py-2 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5"
                   />
                   <button
@@ -456,10 +433,7 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
 
       <ModelSelectModal
         isOpen={modalOpen}
-        onClose={() => {
-          setModalOpen(false);
-          saveModels(selectedModelsRef.current);
-        }}
+        onClose={() => setModalOpen(false)}
         onSelect={(model) => {
           if (!selectedModels.includes(model.value)) {
             setSelectedModels([...selectedModels, model.value]);

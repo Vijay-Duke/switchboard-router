@@ -4,16 +4,37 @@ import { UA } from "./_base.js";
 
 const REFRESH_MS = 5 * 60 * 1000; // token TTL ~1h, refresh early
 const VOICES_TTL = 24 * 60 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 15000;
 
 const cache = { token: null, tokenTime: 0 };
 let _voicesCache = null;
 let _voicesCacheTime = 0;
 
-async function getToken() {
+// Bound every scrape/synth hop: a blackholed Bing endpoint must abort,
+// not hang the request forever.
+function timeoutSignal(signal) {
+  const timeout = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+  if (signal && typeof AbortSignal.any === "function") return AbortSignal.any([signal, timeout]);
+  return signal?.aborted ? signal : timeout;
+}
+
+// Escape raw user text (and the voice attribute) before SSML interpolation —
+// unescaped `&`/`<`/`>` breaks synthesis or injects SSML elements.
+export function escapeSsml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+async function getToken(signal) {
   const now = Date.now();
   if (cache.token && now - cache.tokenTime < REFRESH_MS) return cache.token;
   const res = await fetch("https://www.bing.com/translator", {
     headers: { "User-Agent": UA, "Accept-Language": "vi,en-US;q=0.9,en;q=0.8" },
+    signal: timeoutSignal(signal),
   });
   if (!res.ok) throw new Error(`Bing translator fetch failed: ${res.status}`);
   const rawCookies = res.headers.getSetCookie?.() || [];
@@ -26,11 +47,11 @@ async function getToken() {
   return cache.token;
 }
 
-async function ttsRequest(text, voiceId, token) {
+async function ttsRequest(text, voiceId, token, signal) {
   const parts = voiceId.split("-");
   const xmlLang = parts.slice(0, 2).join("-");
   const gender = voiceId.toLowerCase().includes("male") ? "Male" : "Female";
-  const ssml = `<speak version='1.0' xml:lang='${xmlLang}'><voice xml:lang='${xmlLang}' xml:gender='${gender}' name='${voiceId}'><prosody rate='0.00%'>${text}</prosody></voice></speak>`;
+  const ssml = `<speak version='1.0' xml:lang='${escapeSsml(xmlLang)}'><voice xml:lang='${escapeSsml(xmlLang)}' xml:gender='${gender}' name='${escapeSsml(voiceId)}'><prosody rate='0.00%'>${escapeSsml(text)}</prosody></voice></speak>`;
   const body = new URLSearchParams();
   body.append("ssml", ssml);
   body.append("token", token.token);
@@ -46,15 +67,16 @@ async function ttsRequest(text, voiceId, token) {
       "User-Agent": UA,
       ...(token.cookie ? { "Cookie": token.cookie } : {}),
     },
+    signal: timeoutSignal(signal),
   });
 }
 
-export async function fetchEdgeTtsVoices() {
+export async function fetchEdgeTtsVoices(signal) {
   const now = Date.now();
   if (_voicesCache && now - _voicesCacheTime < VOICES_TTL) return _voicesCache;
   const res = await fetch(
     "https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=6A5AA1D4EAFF4E9FB37E23D68491D6F4",
-    { headers: { "User-Agent": UA } }
+    { headers: { "User-Agent": UA }, signal: timeoutSignal(signal) }
   );
   if (!res.ok) throw new Error(`Edge TTS voices fetch failed: ${res.status}`);
   const voices = await res.json();
@@ -65,17 +87,18 @@ export async function fetchEdgeTtsVoices() {
 
 const moduleDefault = {
   noAuth: true,
-  async synthesize(text, model) {
+  async synthesize(text, model, _credentials, _responseFormat, opts = {}) {
+    const signal = opts?.signal;
     const voiceId = model || "vi-VN-HoaiMyNeural";
-    let token = await getToken();
-    let res = await ttsRequest(text, voiceId, token);
+    let token = await getToken(signal);
+    let res = await ttsRequest(text, voiceId, token, signal);
 
     // 429/403: invalidate cache and retry once
     if (res.status === 429 || res.status === 403) {
       cache.token = null;
       cache.tokenTime = 0;
-      token = await getToken();
-      res = await ttsRequest(text, voiceId, token);
+      token = await getToken(signal);
+      res = await ttsRequest(text, voiceId, token, signal);
     }
 
     if (!res.ok) {

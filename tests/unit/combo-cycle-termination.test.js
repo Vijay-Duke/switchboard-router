@@ -151,3 +151,29 @@ describe("combo cycle termination", () => {
     expect(response.status).toBeLessThan(600);
   });
 });
+
+describe("combined auto+combo depth cap through the chat handler (E7)", () => {
+  it("stops an alternating Auto→fallback→Auto chain at the shared cap", async () => {
+    // A(auto) contains B(fallback) contains A(auto)... Each layer used to reset
+    // the counter the other layer tracks, so the chain recursed unbounded.
+    configureCycle(
+      { A: ["B"], B: ["A"] },
+      {
+        A: { fallbackStrategy: "auto", routerModel: "router/x" },
+        B: { fallbackStrategy: "fallback" },
+      },
+      50
+    );
+
+    const response = await handleChat(cycleRequest());
+
+    // Shared budget is MAX_COMBO_DEPTH=3: A(0,0) → B(auto1) → A(auto1,combo1)
+    // → B(auto2) → handleComboChat rejects at combo2+auto2. That is 4 combo
+    // dispatches plus one transient-503 retry of A by the outer fallback layer.
+    // Pre-fix the chain ran to maxReentries and threw.
+    expect(mocks.comboReentries).toBeGreaterThanOrEqual(4);
+    expect(mocks.comboReentries).toBeLessThanOrEqual(6);
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.status).toBeLessThan(600);
+  });
+});

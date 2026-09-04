@@ -166,8 +166,10 @@ export function createDisconnectAwareStream(transformStream, streamController, o
 
     cancel(reason) {
       streamController.handleDisconnect(reason || "cancelled");
-      reader.cancel();
-      writer.abort();
+      // Floating these promises surfaces unhandled rejections when the other
+      // end already settled — swallow like every sibling path in this file.
+      try { reader.cancel()?.catch?.(() => {}); } catch { /* already closed */ }
+      try { writer.abort()?.catch?.(() => {}); } catch { /* already closed */ }
     }
   });
 }

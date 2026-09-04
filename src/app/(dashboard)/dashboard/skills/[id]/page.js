@@ -34,6 +34,7 @@ export default function SkillDetailPage() {
     setLoading(true);
     setError("");
     setHtml("");
+    setFrontmatter({});
 
     fetch(rawPath)
       .then(async (res) => {

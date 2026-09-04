@@ -7,6 +7,8 @@ import {
   redactSecrets,
 } from "@/models";
 
+export const dynamic = "force-dynamic";
+
 function normalizeProxyConfig(body = {}) {
   const hasAnyProxyField =
     Object.prototype.hasOwnProperty.call(body, "connectionProxyEnabled") ||
@@ -179,7 +181,7 @@ export async function DELETE(request, { params }) {
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ message: "Connection deleted successfully" });
+    return NextResponse.json({ success: true, message: "Connection deleted successfully" });
   } catch (error) {
     console.log("Error deleting connection:", error);
     return NextResponse.json({ error: "Failed to delete connection" }, { status: 500 });

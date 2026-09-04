@@ -89,3 +89,42 @@ describe("SQLite adapter shutdown registry", () => {
     reopened.close();
   });
 });
+
+describe("SQLite adapter shutdown registry — flush phase and signals (L10)", () => {
+  it("runs flush-phase closers before adapter closers regardless of registration order", async () => {
+    const { registerAdapterCloser } = await import("@/lib/db/adapters/adapterShutdownRegistry.js");
+    const order = [];
+    const unregisterClose = registerAdapterCloser(() => order.push("close"));
+    const unregisterFlush = registerAdapterCloser(() => order.push("flush"), { flush: true });
+    try {
+      process.emit("beforeExit", 0);
+      expect(order).toEqual(["flush", "close"]);
+    } finally {
+      unregisterClose();
+      unregisterFlush();
+    }
+  });
+
+  it("flushes on SIGTERM and defers the exit to another listener when one exists", async () => {
+    const { registerAdapterCloser } = await import("@/lib/db/adapters/adapterShutdownRegistry.js");
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => { throw new Error("exit called"); });
+    const other = vi.fn();
+    const closer = vi.fn();
+    process.on("SIGTERM", other);
+    registerAdapterCloser(closer);
+    try {
+      expect(() => process.emit("SIGTERM", "SIGTERM")).not.toThrow();
+      expect(closer).toHaveBeenCalledTimes(1);
+      expect(other).toHaveBeenCalledTimes(1);
+      expect(kill).not.toHaveBeenCalled();
+      expect(exit).not.toHaveBeenCalled();
+      // The registry stepped aside: only the other listener remains.
+      expect(process.listeners("SIGTERM")).toEqual([other]);
+    } finally {
+      process.removeListener("SIGTERM", other);
+      kill.mockRestore();
+      exit.mockRestore();
+    }
+  });
+});

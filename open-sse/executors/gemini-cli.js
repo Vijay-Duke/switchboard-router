@@ -11,6 +11,30 @@ function withoutTransportStream(body) {
   return { ...envelope, request };
 }
 
+/**
+ * Convert a Google RPC RetryInfo.retryDelay Duration to milliseconds.
+ * Accepts the JSON string form ("30s", "1.5s") and the object form
+ * ({ seconds: "30", nanos: 0 }); returns null when unparseable.
+ */
+export function retryDelayToMs(value) {
+  if (typeof value === "string") {
+    const match = value.match(/^(\d+(?:\.\d+)?)s$/);
+    if (!match) return null;
+    const ms = Math.round(Number(match[1]) * 1000);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? Math.round(value * 1000) : null;
+  }
+  if (value && typeof value === "object") {
+    const seconds = Number(value.seconds || 0);
+    const nanos = Number(value.nanos || 0);
+    if (!Number.isFinite(seconds) || !Number.isFinite(nanos)) return null;
+    return Math.round(seconds * 1000 + nanos / 1e6);
+  }
+  return null;
+}
+
 export class GeminiCLIExecutor extends BaseExecutor {
   constructor() {
     super("gemini-cli", PROVIDERS["gemini-cli"]);
@@ -44,7 +68,8 @@ export class GeminiCLIExecutor extends BaseExecutor {
     };
   }
 
-  // Parse RetryInfo.retryDelay from Google API 429 body to surface upstream retry hint
+  // Parse RetryInfo.retryDelay from Google API 429 body to surface upstream retry hint.
+  // parseUpstreamError only forwards resetsAtMs, so convert the Duration here.
   parseError(response, bodyText) {
     const base = super.parseError(response, bodyText);
     if (response.status !== 429 || !bodyText) return base;
@@ -55,6 +80,10 @@ export class GeminiCLIExecutor extends BaseExecutor {
         for (const d of details) {
           if (d?.["@type"] === "type.googleapis.com/google.rpc.RetryInfo" && d?.retryDelay) {
             base.retryAfter = d.retryDelay;
+            const retryMs = retryDelayToMs(d.retryDelay);
+            if (retryMs !== null && retryMs > 0) {
+              base.resetsAtMs = Date.now() + retryMs;
+            }
             break;
           }
         }

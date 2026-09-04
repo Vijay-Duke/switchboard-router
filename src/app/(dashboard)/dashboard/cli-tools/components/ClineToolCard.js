@@ -1,7 +1,7 @@
 "use client";
 // @ts-check
 
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
@@ -27,6 +27,7 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
   const [modelAliases, setModelAliases] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
+  const hasInitializedSettings = useRef(false);
 
   useEffect(() => {
     if (apiKeys?.length > 0 && !selectedApiKey) setSelectedApiKey(apiKeys[0].keySecret);
@@ -39,19 +40,29 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
   useEffect(() => {
     if (isExpanded && !status) {
       checkStatus();
-      fetchModelAliases();
     }
-    if (isExpanded) fetchModelAliases();
   }, [isExpanded, status]);
 
   useEffect(() => {
-    if (!status?.settings) return;
+    if (!isExpanded) return;
+    fetchModelAliases();
+  }, [isExpanded]);
+
+  // Sync from the server exactly once: later refreshes must not wipe
+  // in-progress edits (Apply/Reset both re-check the status route).
+  useEffect(() => {
+    if (hasInitializedSettings.current || !status?.settings) return;
+    hasInitializedSettings.current = true;
     const models = Array.isArray(status.settings.models) ? status.settings.models : [];
     setSelectedModels(models);
     setSelectedModel(status.settings.defaultModel || models[0] || "");
     setActModel(status.settings.actModel || status.settings.defaultModel || models[0] || "");
     setPlanModel(status.settings.planModel || status.settings.defaultModel || models[0] || "");
-  }, [status]);
+    // Seed the endpoint dropdown from the server until the user touches it.
+    if (status.settings.baseUrl && !customBaseUrl) {
+      setCustomBaseUrl(status.settings.baseUrl);
+    }
+  }, [status, customBaseUrl]);
 
   const fetchModelAliases = async () => {
     try {
@@ -90,22 +101,23 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
   };
 
   const removeModel = (model) => {
-    setSelectedModels((current) => {
-      const next = current.filter((entry) => entry !== model);
-      const fallback = next[0] || "";
-      if (selectedModel === model) setSelectedModel(fallback);
-      if (actModel === model) setActModel(fallback);
-      if (planModel === model) setPlanModel(fallback);
-      return next;
-    });
+    const next = selectedModels.filter((entry) => entry !== model);
+    const fallback = next[0] || "";
+    if (selectedModel === model) setSelectedModel(fallback);
+    if (actModel === model) setActModel(fallback);
+    if (planModel === model) setPlanModel(fallback);
+    setSelectedModels(next);
   };
 
   const checkStatus = async () => {
     setChecking(true);
     try {
       const res = await fetch("/api/cli-tools/cline-settings");
-      const data = await res.json();
-      setStatus(data);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `Failed to read Cline settings (${res.status})`);
+      }
+      setStatus(await res.json());
     } catch (error) {
       setStatus({ installed: false, error: error.message });
     } finally {
@@ -178,6 +190,15 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
     const effectiveUrl = getEffectiveBaseUrl();
     const models = selectedModels.length ? selectedModels : ["provider/model-id"];
     const activeModel = selectedModel || models[0];
+    // Mirror the Apply route's legacy VS Code state sync so manual followers'
+    // Plan/Act modes point at Switchboard too (route LEGACY_STATE_KEYS).
+    const legacyState = {
+      actModeApiProvider: "openai",
+      planModeApiProvider: "openai",
+      openAiBaseUrl: effectiveUrl,
+      actModeOpenAiModelId: models.includes(actModel) ? actModel : activeModel,
+      planModeOpenAiModelId: models.includes(planModel) ? planModel : activeModel,
+    };
 
     return [
       {
@@ -205,12 +226,30 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
           },
         }, null, 2),
       },
+      {
+        filename: "~/.cline/data/globalState.json",
+        content: JSON.stringify(legacyState, null, 2),
+      },
     ];
   };
 
   return (
     <Card padding="xs" className="overflow-hidden">
-      <div className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center" onClick={onToggle}>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={isExpanded}
+        aria-controls="cline-tool-card-content"
+        aria-label={`${isExpanded ? "Collapse" : "Expand"} ${tool.name} settings`}
+        className="flex items-start justify-between gap-3 hover:cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-lg sm:items-center"
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+      >
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
             <Image src="/providers/cline.png" alt={tool.name} width={32} height={32} className="size-8 object-contain rounded-lg" sizes="32px" onError={(e) => { e.target.style.display = "none"; }} />
@@ -229,7 +268,7 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
       </div>
 
       {isExpanded && (
-        <div className="mt-4 pt-4 border-t border-border flex flex-col gap-4">
+        <div id="cline-tool-card-content" className="mt-4 pt-4 border-t border-border flex flex-col gap-4">
           {checking && (
             <div className="flex items-center gap-2 text-text-muted">
               <span className="material-symbols-outlined animate-spin">progress_activity</span>
@@ -239,6 +278,12 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
 
           {!checking && status && !status.installed && (
             <div className="flex flex-col gap-4">
+              {status.error && (
+                <div role="alert" className="flex items-center gap-2 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+                  <span className="material-symbols-outlined text-[16px]">error</span>
+                  <span>{status.error}</span>
+                </div>
+              )}
               <div className="flex flex-col gap-3 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
                 <div className="flex items-start gap-3">
                   <span className="material-symbols-outlined text-yellow-500">warning</span>
@@ -278,6 +323,7 @@ export default function ClineToolCard({ tool, isExpanded, onToggle, baseUrl, api
                   <BaseUrlSelect
                     value={customBaseUrl || getDisplayUrl()}
                     onChange={setCustomBaseUrl}
+                    initialUrl={customBaseUrl || status?.settings?.baseUrl || ""}
                     requiresExternalUrl={tool.requiresExternalUrl}
                     tunnelEnabled={tunnelEnabled}
                     tunnelPublicUrl={tunnelPublicUrl}

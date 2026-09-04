@@ -3,7 +3,7 @@ import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { refreshTokenByProvider } from "../services/tokenRefresh.js";
 import { withCredentialRefreshLock } from "../services/oauthCredentialManager.js";
 import { PROVIDER_MEDIA, PROVIDERS } from "../providers/index.js";
-import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { proxyAwareFetch, proxyOptionsFromCredentials } from "../utils/proxyFetch.js";
 
 // Upstream fetch deadline for video job submission/polling (the job itself is
 // async upstream — this only bounds the HTTP round-trip, not video rendering).
@@ -113,6 +113,7 @@ export async function handleVideoProxyCore({
   const url = buildUpstreamUrl(config, action, requestId);
   const fetchSignal = combineSignals(signal, timeoutMs);
 
+  const proxyOptions = proxyOptionsFromCredentials(credentials);
   const doFetch = (token) =>
     proxyAwareFetch(url, {
       method,
@@ -122,7 +123,7 @@ export async function handleVideoProxyCore({
       identity,
       format,
       provider,
-    });
+    }, proxyOptions);
 
   let upstream;
   try {

@@ -189,6 +189,8 @@ export default function BasicChatPageClient() {
   const [providerGroups, setProviderGroups] = useState([]);
   const [loadingData, setLoadingData] = useState(true);
   const [loadError, setLoadError] = useState("");
+  const [sendError, setSendError] = useState("");
+  const [attachNotice, setAttachNotice] = useState("");
   const [sessions, setSessions] = useState(() => {
     if (typeof window === "undefined") return [];
     try {
@@ -242,11 +244,19 @@ export default function BasicChatPageClient() {
           fetch("/api/combos", { cache: "no-store" }).catch(() => null),
         ]);
         const providersData = await providersRes.json().catch(() => ({}));
-        const combosData = combosRes && combosRes.ok ? await combosRes.json().catch(() => ({})) : {};
+        if (!providersRes.ok) {
+          throw new Error(
+            providersData?.error || `Failed to load providers (HTTP ${providersRes.status}).`
+          );
+        }
 
         const connections = Array.isArray(providersData.connections)
           ? providersData.connections.filter((connection) => connection?.isActive !== false)
           : [];
+
+        const combosData = combosRes && combosRes.ok
+          ? await combosRes.json().catch(() => ({}))
+          : {};
 
         const llmCombos = Array.isArray(combosData?.combos)
           ? combosData.combos.filter((c) => !c.kind || c.kind === "llm")
@@ -295,7 +305,7 @@ export default function BasicChatPageClient() {
         const liveResults = await Promise.all(
           connections.map(async (connection) => {
             try {
-              const response = await fetch(`/api/providers/${connection.id}/models`, { cache: "no-store" });
+              const response = await fetch(`/api/providers/${encodeURIComponent(connection.id)}/models`, { cache: "no-store" });
               const data = await response.json().catch(() => ({}));
               if (!response.ok) return { connection, models: [] };
               const models = parseProviderModelsPayload(data)
@@ -411,6 +421,10 @@ export default function BasicChatPageClient() {
 
   useEffect(() => {
     if (!isHydrated) return;
+    if (sessions.some((session) => (session.messages || []).some((message) => message.status === "streaming"))) {
+      // T13: skip per-token persistence; the done/error transitions re-run this effect.
+      return;
+    }
     try {
       globalThis.localStorage.setItem(STORAGE_KEYS.sessions, JSON.stringify(sessions));
       globalThis.localStorage.setItem(STORAGE_KEYS.activeSessionId, activeSessionId);
@@ -480,8 +494,17 @@ export default function BasicChatPageClient() {
     };
   };
 
+  /** T12: leaving a session must stop its live stream and reset stream state. */
+  const stopActiveStream = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setIsSending(false);
+    setStreamingMessageId("");
+    setStreamingText("");
+  };
+
   const handleNewChat = () => {
-    if (!activeModel) return;
+    stopActiveStream();
     const session = ensureSessionForModel(activeModel);
     if (!session) return;
     setSessions((prev) => [session, ...prev]);
@@ -497,6 +520,7 @@ export default function BasicChatPageClient() {
   const handleSelectSession = (sessionId) => {
     const session = sessions.find((item) => item.id === sessionId);
     if (!session) return;
+    stopActiveStream();
     setActiveSessionId(sessionId);
     setActiveProviderId(session.providerId || activeProviderId);
     setActiveModelId(session.modelId || activeModelId);
@@ -505,6 +529,7 @@ export default function BasicChatPageClient() {
 
   const handleDeleteCurrentChat = () => {
     if (!activeSessionId) return;
+    stopActiveStream();
     const nextSessions = sessions.filter((session) => session.id !== activeSessionId);
     const fallback = nextSessions[0] || null;
     setSessions(nextSessions);
@@ -583,10 +608,11 @@ export default function BasicChatPageClient() {
 
     const images = files.filter((file) => file.type.startsWith("image/"));
     if (images.length === 0) {
+      setAttachNotice("Only image files are supported.");
       event.target.value = "";
       return;
     }
-
+    setAttachNotice("");
     const converted = await Promise.all(images.map(async (file) => ({
       id: createId(),
       name: file.name,
@@ -668,6 +694,7 @@ export default function BasicChatPageClient() {
     } : item)));
     setDraft("");
     setAttachments([]);
+    setSendError("");
     setIsSending(true);
     setStreamingMessageId(assistantMessageId);
     setStreamingText("");
@@ -775,7 +802,7 @@ export default function BasicChatPageClient() {
           messages: currentSession.messages.map((message) => (message.id === assistantMessageId ? { ...message, content: message.content || `Error: ${errorText}`, status: "error" } : message)),
           updatedAt: new Date().toISOString(),
         }));
-        setLoadError(errorText || "Failed to send message.");
+        setSendError(errorText || "Failed to send message.");
       }
     } finally {
       setIsSending(false);
@@ -944,7 +971,7 @@ export default function BasicChatPageClient() {
                   <div key={message.id} className={`flex w-full ${isUser ? "justify-end" : "justify-start"} mb-6`}>
                     <div className={`max-w-[min(88%,42rem)] ${isUser ? "rounded-3xl bg-[#2f2f2f] px-5 py-3.5 text-white" : "text-white/90"}`}>
                       <div className="mb-1 flex items-center justify-between gap-3">
-                        <span className="text-xs font-semibold">{isUser ? "You" : activeModel?.name || "Assistant"}</span>
+                        <span className="text-xs font-semibold">{isUser ? "You" : currentSession?.modelName || activeModel?.name || "Assistant"}</span>
                       </div>
 
                       {message.attachments?.length ? (
@@ -970,8 +997,21 @@ export default function BasicChatPageClient() {
               })}
             </div>
           </div>
-
           <div className="shrink-0 pt-2">
+            {sendError ? (
+              <div className="mx-auto mb-3 w-full max-w-3xl px-4">
+                <div className="rounded-[18px] border border-rose-500/20 bg-rose-500/10 px-4 py-2 text-sm text-rose-100" role="alert">
+                  {sendError}
+                </div>
+              </div>
+            ) : null}
+            {attachNotice ? (
+              <div className="mx-auto mb-3 w-full max-w-3xl px-4">
+                <div className="rounded-[18px] border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-sm text-amber-100" role="status">
+                  {attachNotice}
+                </div>
+              </div>
+            ) : null}
             {attachments.length > 0 ? (
               <div className="mx-auto mb-3 flex w-full max-w-3xl flex-wrap gap-2 px-4">
                 {attachments.map((attachment) => (

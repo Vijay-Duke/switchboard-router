@@ -602,7 +602,7 @@ async function showInterfaceMenu(latestVersion, { trayAvailable = true } = {}) {
   const { selectMenu } = require("./src/cli/utils/input");
   const { clearScreen } = require("./src/cli/utils/display");
   const { getEndpoint } = require("./src/cli/utils/endpoint");
-  const { buildInterfaceMenuItems } = require("./src/cli/interfaceMenu");
+  const { buildInterfaceMenuItems, mapInterfaceSelection } = require("./src/cli/interfaceMenu");
 
   clearScreen();
 
@@ -626,7 +626,7 @@ async function showInterfaceMenu(latestVersion, { trayAvailable = true } = {}) {
   });
 
   const selected = await selectMenu(`Choose Interface (v${pkg.version})`, menuItems, 0, subtitle);
-  return menuItems[selected]?.action || "exit";
+  return mapInterfaceSelection(menuItems, selected);
 }
 
 
@@ -860,7 +860,9 @@ function startServer(latestVersion) {
       while (true) {
         const choice = await showInterfaceMenu(latestVersion, { trayAvailable: trayReady });
 
-        if (choice === "update") {
+        if (choice === "back") {
+          continue;
+        } else if (choice === "update") {
           const { clearScreen } = require("./src/cli/utils/display");
           clearScreen();
           console.log(`\n⬆  Update v${pkg.version} → v${latestVersion}\n`);

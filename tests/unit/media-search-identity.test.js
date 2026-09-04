@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const proxyAwareFetch = vi.hoisted(() => vi.fn());
 
-vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch }));
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch, proxyOptionsFromCredentials: () => null }));
 
 import { handleSttCore } from "../../open-sse/handlers/sttCore.js";
 import { handleTtsCore } from "../../open-sse/handlers/ttsCore.js";
@@ -47,6 +47,7 @@ describe("media and search provider identity", () => {
         provider: "openai",
         format: "openai",
       }),
+      null,
     );
   });
 
@@ -77,6 +78,7 @@ describe("media and search provider identity", () => {
           "X-Title": expect.anything(),
         }),
       }),
+      null,
     );
   });
 
@@ -109,6 +111,7 @@ describe("media and search provider identity", () => {
         provider: "brave-search",
         format: "openai",
       }),
+      null,
     );
   });
 });

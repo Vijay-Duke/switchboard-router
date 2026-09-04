@@ -15,9 +15,11 @@ const LOG_LEVEL_COLORS = {
   DEBUG: "text-purple-400",
 };
 
-function colorLine(line) {
-  const match = line.match(/\[(\w+)\]/g);
-  const levelTag = match ? match[1]?.replace(/\[|\]/g, "") : null;
+export function colorLine(line) {
+  // O8: no /g flag — String.match with /g returns full matches, not groups,
+  // so match[1] was the *second* tag (or undefined). Read the capture group.
+  const match = line.match(/\[(\w+)\]/);
+  const levelTag = match ? match[1] : null;
   const color = LOG_LEVEL_COLORS[levelTag] || "text-green-400";
   return <span className={color}>{line}</span>;
 }
@@ -32,7 +34,11 @@ export default function ConsoleLogClient() {
 
   const handleClear = async () => {
     try {
-      await fetch("/api/translator/console-logs", { method: "DELETE" });
+      // O28: a non-ok DELETE never produces the SSE "clear" event — toast it.
+      const res = await fetch("/api/translator/console-logs", { method: "DELETE" });
+      if (!res.ok) {
+        throw new Error(`Request failed with status ${res.status}`);
+      }
       // UI cleared via SSE "clear" event
     } catch (err) {
       reportClientError("Failed to clear console logs:", err);
@@ -91,10 +97,18 @@ export default function ConsoleLogClient() {
     setRetry((n) => n + 1);
   };
 
-  // Auto-scroll to bottom on new logs
+  // O4: stick-only auto-scroll — pin to the bottom only when the user is
+  // already near it; never yank the view away from history they scrolled to.
+  const stickRef = useRef(true);
+  const handleScroll = () => {
+    const el = logRef.current;
+    if (!el) return;
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  };
   useEffect(() => {
-    if (!logRef.current) return;
-    logRef.current.scrollTop = logRef.current.scrollHeight;
+    const el = logRef.current;
+    if (!el) return;
+    if (stickRef.current) el.scrollTop = el.scrollHeight;
   }, [logs]);
 
   const { copied, copy } = useCopyToClipboard();
@@ -147,6 +161,7 @@ export default function ConsoleLogClient() {
         )}
         <div
           ref={logRef}
+          onScroll={handleScroll}
           className="bg-black rounded-b-lg p-4 text-xs font-mono h-[calc(100vh-220px)] overflow-y-auto"
           aria-label="Console log stream"
         >

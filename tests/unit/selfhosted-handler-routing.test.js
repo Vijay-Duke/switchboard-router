@@ -32,7 +32,7 @@ vi.mock("@/sse/services/connectionInFlight.js", () => ({
 vi.mock("@/sse/utils/logger.js", () => ({
   debug: vi.fn(), error: vi.fn(), info: vi.fn(), request: vi.fn(), warn: vi.fn(),
 }));
-vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: mocks.proxyAwareFetch }));
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: mocks.proxyAwareFetch, proxyOptionsFromCredentials: vi.fn(() => ({})) }));
 
 const { handleEmbeddings } = await import("@/sse/handlers/embeddings.js");
 const { handleStt } = await import("@/sse/handlers/stt.js");
@@ -67,6 +67,7 @@ describe("self-hosted route connection forwarding", () => {
     expect(mocks.proxyAwareFetch).toHaveBeenCalledWith(
       "http://127.0.0.1:8080/v1/audio/transcriptions",
       expect.any(Object),
+      expect.anything(), // per-connection proxy options (H27)
     );
   });
 
@@ -90,6 +91,7 @@ describe("self-hosted route connection forwarding", () => {
     expect(mocks.proxyAwareFetch).toHaveBeenCalledWith(
       "http://192.168.1.20:8880/v1/audio/speech",
       expect.any(Object),
+      expect.anything(), // per-connection proxy options (H27)
     );
   });
 
@@ -116,6 +118,7 @@ describe("self-hosted route connection forwarding", () => {
     expect(mocks.proxyAwareFetch).toHaveBeenCalledWith(
       "http://10.0.0.4:8080/v1/embeddings",
       expect.any(Object),
+      expect.anything(), // per-connection proxy options (H27)
     );
   });
 });

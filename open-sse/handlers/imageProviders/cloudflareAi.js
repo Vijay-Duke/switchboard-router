@@ -90,7 +90,13 @@ async function buildJsonBody(body) {
   return req;
 }
 
-function buildMultipartBody(body) {
+function buildMultipartBody(model, body) {
+  // The multipart path has no image/mask parts — fail loudly instead of
+  // silently running an edit as text-to-image (billed, wrong output).
+  if (body.image || (Array.isArray(body.images) && body.images.length > 0)
+    || body.mask || body.mask_image || body.maskImage) {
+    throw new Error(`image editing is not supported for ${model} via multipart`);
+  }
   const form = new FormData();
   form.append("prompt", body.prompt);
 
@@ -157,7 +163,7 @@ const moduleDefault = {
 
   buildBody: async (model, body) => (
     MULTIPART_MODELS.has(model)
-      ? buildMultipartBody(body)
+      ? buildMultipartBody(model, body)
       : await buildJsonBody(body)
   ),
 

@@ -3,7 +3,6 @@ import { FORMATS } from "../formats.js";
 import { ROLE, OPENAI_BLOCK, OPENAI_FINISH } from "../schema/index.js";
 import { buildChunk } from "../concerns/chunk.js";
 import { toOpenAIUsage } from "../concerns/usage.js";
-import { fallbackToolCallId } from "../concerns/toolCall.js";
 import { toOpenAIFinish } from "../concerns/finishReason.js";
 
 /**
@@ -18,6 +17,31 @@ import { toOpenAIFinish } from "../concerns/finishReason.js";
  *  "choices": [{"index": 0, "delta": {"content": "..."}, "finish_reason": null}]}
  */
 export function ollamaToOpenAIResponse(chunk, state) {
+  // EOF flush: a truncated stream (no done:true line) still terminates exactly
+  // once; a fresh stream stays silent.
+  if (!chunk) {
+    if (state.ollamaFinished || !state.ollamaSawContent) return null;
+    state.ollamaFinished = true;
+    const { id, created, model } = state.ollama || {};
+    const flushChunk = buildChunk(
+      { id: id || `chatcmpl-${Date.now()}`, created: created || Math.floor(Date.now() / 1000), model: model || "ollama" },
+      {},
+      state.hadToolCalls ? OPENAI_FINISH.TOOL_CALLS : OPENAI_FINISH.STOP
+    );
+    if (state.ollamaUsage) flushChunk.usage = state.ollamaUsage;
+    return flushChunk;
+  }
+
+  // Tolerate raw NDJSON lines (string chunks) — parse, drop only on failure.
+  if (typeof chunk === "string") {
+    const line = chunk.trim();
+    if (!line || line === "[DONE]") return null;
+    try {
+      chunk = JSON.parse(line.startsWith("data:") ? line.slice(5).trim() : line);
+    } catch {
+      return null;
+    }
+  }
   if (!chunk || typeof chunk !== "object") return null;
 
   // Initialize state on first chunk
@@ -27,14 +51,19 @@ export function ollamaToOpenAIResponse(chunk, state) {
       created: Math.floor(Date.now() / 1000),
       model: chunk.model || state.model
     };
+    state.toolCallIndex = 0;
+    state.ollamaStreamTs = Date.now();
   }
+  if (typeof state.toolCallIndex !== "number") state.toolCallIndex = 0;
 
   const { id, created, model } = state.ollama;
 
   // Final chunk with done=true
   if (chunk.done) {
     const usage = extractUsage(chunk);
-    
+    state.ollamaUsage = usage;
+    state.ollamaFinished = true;
+
     // Determine finish_reason: map upstream done_reason, override to tool_calls if tools used
     let finishReason = toOpenAIFinish(chunk.done_reason, "ollama");
     if (chunk.done_reason === OPENAI_FINISH.TOOL_CALLS || state.hadToolCalls) {
@@ -66,13 +95,24 @@ export function ollamaToOpenAIResponse(chunk, state) {
   }
 
   const delta = {};
-  if (content) delta.content = content;
-  if (thinking) delta.reasoning_content = thinking;
-  
-  // Convert Ollama tool_calls to OpenAI format
+  if (content) {
+    delta.content = content;
+    state.ollamaSawContent = true;
+  }
+  if (thinking) {
+    delta.reasoning_content = thinking;
+    state.ollamaSawContent = true;
+  }
+
+  // Convert Ollama tool_calls to OpenAI format. Real Ollama emits one tool per
+  // chunk with no id/index — allocate stream-wide indices/ids so multi-tool
+  // turns never collide on index 0 with duplicate ids.
   if (toolCalls) {
     state.hadToolCalls = true;
-    delta.tool_calls = convertToolCalls(toolCalls);
+    state.ollamaSawContent = true;
+    const base = state.toolCallIndex;
+    delta.tool_calls = convertToolCalls(toolCalls, base, state.ollamaStreamTs);
+    state.toolCallIndex = base + toolCalls.length;
   }
 
   return buildChunk({ id, created, model }, delta, null);
@@ -86,12 +126,15 @@ function extractUsage(ollamaChunk) {
 }
 
 /**
- * Convert tool_calls from Ollama format to OpenAI format
+ * Convert tool_calls from Ollama format to OpenAI format.
+ * base is the stream-wide starting index. Synthesized ids embed that index
+ * (unique within the turn) plus a per-stream timestamp (unique across turns —
+ * clients key tool_use/tool_result pairing on ids across the whole transcript).
  */
-function convertToolCalls(toolCalls) {
+function convertToolCalls(toolCalls, base = 0, streamTs = Date.now()) {
   return toolCalls.map((tc, i) => ({
-    index: tc.function?.index ?? i,
-    id: tc.id || fallbackToolCallId(i),
+    index: tc.function?.index ?? (base + i),
+    id: tc.id || `call_${base + i}_${streamTs}`,
     type: OPENAI_BLOCK.FUNCTION,
     function: {
       name: tc.function?.name || "",

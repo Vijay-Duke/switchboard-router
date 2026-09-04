@@ -6,10 +6,20 @@ import path from "path";
 
 export async function POST(request) {
   try {
-    const { file, content } = await request.json();
+    let parsed;
+    try {
+      parsed = await request.json();
+    } catch {
+      return NextResponse.json({ success: false, error: "Invalid JSON body" }, { status: 400 });
+    }
+    const { file, content } = parsed || {};
 
     if (!file || content === undefined) {
       return NextResponse.json({ success: false, error: "File and content required" }, { status: 400 });
+    }
+
+    if (typeof content !== "string") {
+      return NextResponse.json({ success: false, error: "Content must be a string" }, { status: 400 });
     }
 
     // Security: only allow specific filenames

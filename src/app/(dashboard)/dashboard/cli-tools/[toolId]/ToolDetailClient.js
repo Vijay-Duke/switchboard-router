@@ -1,12 +1,12 @@
 "use client";
 // @ts-check
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { CardSkeleton } from "@/shared/components";
 import { CLI_TOOLS } from "@/shared/constants/cliTools";
 import { getModelsByProviderId, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
-import { resolveProviderId } from "@/shared/constants/providers";
+import { isAnthropicCompatibleProvider, isOpenAICompatibleProvider, resolveProviderId } from "@/shared/constants/providers";
 import {
   ClaudeToolCard, CodexToolCard, DroidToolCard, OpenClawToolCard,
   HermesToolCard, DefaultToolCard, OpenCodeToolCard, CoworkToolCard,
@@ -15,38 +15,50 @@ import {
 } from "../components";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 
+
 export default function ToolDetailClient({ toolId, machineId }) {
   const tool = CLI_TOOLS[toolId];
   const [connections, setConnections] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  const [cloudSettings, setCloudSettings] = useState({});
   const [modelMappings, setModelMappings] = useState({});
   const [apiKeys, setApiKeys] = useState([]);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let mounted = true;
+    setLoading(true);
+    setLoadError(null);
     (async () => {
       try {
-        const [provRes, keysRes] = await Promise.all([
+        const [provRes, keysRes, settingsRes] = await Promise.all([
           fetch("/api/providers"),
           fetch("/api/keys"),
+          fetch("/api/settings"),
         ]);
         if (!mounted) return;
-        if (provRes.ok) {
-          const data = await provRes.json();
-          setConnections(data.connections || []);
+        if (!provRes.ok) {
+          const data = await provRes.json().catch(() => ({}));
+          throw new Error(data.error || `Failed to load providers (${provRes.status})`);
         }
+        setConnections((await provRes.json()).connections || []);
         if (keysRes.ok) {
           const data = await keysRes.json();
           setApiKeys(data.keys || []);
         }
+        if (settingsRes.ok) {
+          setCloudSettings(await settingsRes.json());
+        }
       } catch (error) {
         reportClientError("Error loading tool data:", error);
+        if (mounted) setLoadError(error instanceof Error ? error.message : String(error));
       } finally {
         if (mounted) setLoading(false);
       }
     })();
     return () => { mounted = false; };
-  }, []);
+  }, [reloadKey]);
 
   const getActiveProviders = () => connections
     .filter((c) => c.isActive !== false)
@@ -88,18 +100,23 @@ export default function ToolDetailClient({ toolId, machineId }) {
 
   const renderToolCard = () => {
     const availableModels = getAllAvailableModels();
-    const hasActiveProviders = availableModels.length > 0;
+    // Static-catalog models OR any live openai/anthropic-compatible connection:
+    // compatible providers serve arbitrary models that never appear in the catalog.
+    const hasActiveProviders = availableModels.length > 0
+      || getActiveProviders().some((conn) => (
+        isOpenAICompatibleProvider(conn.provider) || isAnthropicCompatibleProvider(conn.provider)
+      ));
     const commonProps = {
       tool,
       isExpanded: true,
       onToggle: () => {},
       baseUrl: getBaseUrl(),
       apiKeys,
-      tunnelEnabled: false,
-      tunnelPublicUrl: "",
-      tailscaleEnabled: false,
-      tailscaleUrl: "",
-      cloudEnabled: false,
+      tunnelEnabled: Boolean(cloudSettings.tunnelPublicUrl),
+      tunnelPublicUrl: cloudSettings.tunnelPublicUrl || "",
+      tailscaleEnabled: Boolean(cloudSettings.tailscaleUrl),
+      tailscaleUrl: cloudSettings.tailscaleUrl || "",
+      cloudEnabled: Boolean(cloudSettings.cloudEnabled),
     };
 
     switch (toolId) {
@@ -167,6 +184,22 @@ export default function ToolDetailClient({ toolId, machineId }) {
       {machineId ? (
         <p className="text-xs text-text-muted font-mono">Machine: {machineId}</p>
       ) : null}
+      {loadError && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+          <span className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-[16px]">error</span>
+            Error loading tool data: {loadError}
+          </span>
+          <button
+            type="button"
+            onClick={() => setReloadKey((k) => k + 1)}
+            className="flex items-center gap-1 rounded border border-red-500/40 px-2 py-1 font-medium hover:bg-red-500/10"
+          >
+            <span className="material-symbols-outlined text-[14px]">refresh</span>
+            Retry
+          </button>
+        </div>
+      )}
       {renderToolCard()}
     </div>
   );

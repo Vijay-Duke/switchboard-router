@@ -13,53 +13,56 @@ export default function MitmPageClient() {
   const [modelAliases, setModelAliases] = useState({});
   const [cloudEnabled, setCloudEnabled] = useState(false);
   const [expandedTool, setExpandedTool] = useState(null);
+  const [loadError, setLoadError] = useState(false);
   const [mitmStatus, setMitmStatus] = useState({ running: false, certExists: false, dnsStatus: {}, hasCachedPassword: false });
 
-  useEffect(() => {
+  const loadAll = () => {
+    setLoadError(false);
     fetchConnections();
     fetchApiKeys();
     fetchAliases();
     fetchCloudSettings();
+  };
+
+  useEffect(() => {
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchConnections = async () => {
     try {
       const res = await fetch("/api/providers");
-      if (res.ok) {
-        const data = await res.json();
-        setConnections(data.connections || []);
-      }
-    } catch { /* ignore */ }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setConnections(data.connections || []);
+    } catch { setLoadError(true); }
   };
 
   const fetchApiKeys = async () => {
     try {
       const res = await fetch("/api/keys");
-      if (res.ok) {
-        const data = await res.json();
-        setApiKeys(data.keys || []);
-      }
-    } catch { /* ignore */ }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setApiKeys(data.keys || []);
+    } catch { setLoadError(true); }
   };
 
   const fetchAliases = async () => {
     try {
       const res = await fetch("/api/models/alias");
-      if (res.ok) {
-        const data = await res.json();
-        setModelAliases(data.aliases || {});
-      }
-    } catch { /* ignore */ }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setModelAliases(data.aliases || {});
+    } catch { setLoadError(true); }
   };
 
   const fetchCloudSettings = async () => {
     try {
       const res = await fetch("/api/settings");
-      if (res.ok) {
-        const data = await res.json();
-        setCloudEnabled(data.cloudEnabled || false);
-      }
-    } catch { /* ignore */ }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setCloudEnabled(data.cloudEnabled || false);
+    } catch { setLoadError(true); }
   };
 
   const getActiveProviders = () => connections.filter(c => c.isActive !== false);
@@ -77,6 +80,20 @@ export default function MitmPageClient() {
 
   return (
     <div className="flex w-full flex-col gap-6">
+      {loadError && (
+        <div role="alert" className="flex items-center justify-between gap-3 border border-red-300 bg-red-500/10 rounded-lg px-3 py-2">
+          <p className="text-xs font-medium text-red-600 dark:text-red-400">
+            Couldn&apos;t load provider data — model mapping pickers may be incomplete. Retry once the server responds.
+          </p>
+          <button
+            type="button"
+            onClick={loadAll}
+            className="shrink-0 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-text-main hover:bg-surface"
+          >
+            Retry
+          </button>
+        </div>
+      )}
       <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
         <span className="material-symbols-outlined text-[16px] text-yellow-500 mt-0.5 shrink-0">warning</span>
         <p className="text-xs text-red-600 dark:text-yellow-400 leading-relaxed">

@@ -11,7 +11,7 @@ import { buildSearchRequest } from "./callers.js";
 import { normalizeSearchResponse } from "./normalizers.js";
 import { handleChatSearch } from "./chatSearch.js";
 import { mergeAbortSignals } from "../../utils/abort.js";
-import { proxyAwareFetch } from "../../utils/proxyFetch.js";
+import { proxyAwareFetch, proxyOptionsFromCredentials } from "../../utils/proxyFetch.js";
 import { assertPublicUrlResolved } from "../../utils/ssrfGuard.js";
 import { getOpenSseDeps } from "../../runtimeDeps.js";
 import { PROVIDERS, PROVIDER_MEDIA } from "../../providers/index.js";
@@ -40,11 +40,24 @@ function sanitizeQuery(query) {
 }
 
 // Strip non-ASCII chars from header values (HTTP headers must be ByteString).
-function sanitizeHeaders(headers) {
+// Auth-bearing headers are never mangled: a unicode credential is a local 400,
+// not a mysterious upstream 401.
+const AUTH_HEADER_NAMES = new Set([
+  "authorization", "x-api-key", "api-key", "xi-api-key", "x-key",
+  "cookie", "token", "x-goog-api-key", "x-subscription-token",
+]);
+export function sanitizeHeaders(headers) {
   if (!headers) return headers;
   const out = {};
   for (const [k, v] of Object.entries(headers)) {
-    out[k] = typeof v === "string" ? v.replace(/[^\x00-\xFF]/g, "").trim() : v;
+    if (typeof v === "string" && /[^\x00-\xFF]/.test(v)) {
+      if (AUTH_HEADER_NAMES.has(k.toLowerCase())) {
+        throw new Error(`header '${k}' contains non-Latin1 characters`);
+      }
+      out[k] = v.replace(/[^\x00-\xFF]/g, "").trim();
+    } else {
+      out[k] = typeof v === "string" ? v.trim() : v;
+    }
   }
   return out;
 }
@@ -87,7 +100,7 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
   const params = {
     query: body.query,
     searchType: body.search_type || (providerConfig.searchTypes?.[0] || "web"),
-    maxResults: Math.min(body.max_results || providerConfig.defaultMaxResults || 5, providerConfig.maxMaxResults || 100),
+    maxResults: Math.max(1, Math.min(Number(body.max_results) || providerConfig.defaultMaxResults || 5, providerConfig.maxMaxResults || 100)),
     token,
     country: body.country,
     language: body.language,
@@ -130,15 +143,22 @@ async function tryDedicatedProvider({ provider, providerConfig, body, credential
 
   log?.info?.("SEARCH", `${provider.id} | "${params.query.slice(0, 80)}" | type=${params.searchType}`);
 
+  let sanitizedHeaders;
+  try {
+    sanitizedHeaders = sanitizeHeaders(init.headers);
+  } catch (err) {
+    return { success: false, status: 400, error: err?.message || "Invalid header value" };
+  }
+
   try {
     const resp = await proxyAwareFetch(url, {
       ...init,
-      headers: sanitizeHeaders(init.headers),
+      headers: sanitizedHeaders,
       signal: mergeAbortSignals(controller.signal, abortSignal),
       // Never follow redirects: each hop would bypass the SSRF check above.
       redirect: "error",
       ...searchTransport(provider.id, providerConfig),
-    });
+    }, proxyOptionsFromCredentials(credentials));
     clearTimeout(timer);
     if (!resp.ok) {
       const errText = await resp.text().catch(() => "");

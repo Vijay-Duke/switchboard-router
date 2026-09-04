@@ -529,7 +529,7 @@ const OBJECTIVE_OPTIONS = [
   { value: "latency", label: "Latency" },
 ];
 
-function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy }) {
+export function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
   const [showRouterSelect, setShowRouterSelect] = useState(false);
   // routerModel is mandatory for Auto — when switching to Auto without one, open
@@ -545,6 +545,23 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
   const objective = strategy.objective || "balanced";
   const providerStrategy = strategy.providerStrategy || "off";
   const capacityAutoSwitch = strategy.capacityAutoSwitch !== false;
+  // O21: draft these text inputs locally and PATCH only on blur/Enter —
+  // committing per keystroke spams PATCH /api/settings with partial values.
+  const committedOrder = Array.isArray(strategy.providerOrder) ? strategy.providerOrder.join(", ") : "";
+  const committedGuard = strategy.providerLatencyGuardMs ?? "";
+  const [orderDraft, setOrderDraft] = useState(committedOrder);
+  const [guardDraft, setGuardDraft] = useState(committedGuard === "" ? "" : String(committedGuard));
+  useEffect(() => { setOrderDraft(committedOrder); }, [committedOrder]);
+  useEffect(() => { setGuardDraft(committedGuard === "" ? "" : String(committedGuard)); }, [committedGuard]);
+  const commitOrderDraft = () => {
+    const next = orderDraft.split(",").map((value) => value.trim()).filter(Boolean);
+    const prev = Array.isArray(strategy.providerOrder) ? strategy.providerOrder : [];
+    if (next.join(",") !== prev.join(",")) onSetStrategy({ providerOrder: next });
+  };
+  const commitGuardDraft = () => {
+    const next = guardDraft.trim() === "" ? undefined : (Number(guardDraft) || undefined);
+    if (next !== strategy.providerLatencyGuardMs) onSetStrategy({ providerLatencyGuardMs: next });
+  };
 
   return (
     <Card padding="sm" className="group">
@@ -714,12 +731,10 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
                     <>
                       <input
                         type="text"
-                        value={Array.isArray(strategy.providerOrder) ? strategy.providerOrder.join(", ") : ""}
-                        onChange={(e) =>
-                          onSetStrategy({
-                            providerOrder: e.target.value.split(",").map((value) => value.trim()).filter(Boolean),
-                          })
-                        }
+                        value={orderDraft}
+                        onChange={(e) => setOrderDraft(e.target.value)}
+                        onBlur={commitOrderDraft}
+                        onKeyDown={(e) => { if (e.key === "Enter") commitOrderDraft(); }}
                         placeholder="provider-a, provider-b"
                         className="w-40 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-main"
                       />
@@ -729,10 +744,10 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
                   <input
                     type="number"
                     min="1"
-                    value={strategy.providerLatencyGuardMs ?? ""}
-                    onChange={(e) =>
-                      onSetStrategy({ providerLatencyGuardMs: Number(e.target.value) || undefined })
-                    }
+                    value={guardDraft}
+                    onChange={(e) => setGuardDraft(e.target.value)}
+                    onBlur={commitGuardDraft}
+                    onKeyDown={(e) => { if (e.key === "Enter") commitGuardDraft(); }}
                     placeholder="20000"
                     title="Demote providers slower than this latency in milliseconds"
                     className="w-20 rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-main"
@@ -1397,7 +1412,7 @@ function CapacityAdapterSection({ capacityAdapter, onChange, activeProviders, ge
   );
 }
 
-function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getCaps }) {
+export function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getCaps }) {
   const [showModelSelect, setShowModelSelect] = useState(false);
   const { enabled, roundRobin, models } = entry;
 
@@ -1444,7 +1459,9 @@ function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getCaps }) 
               {models.length === 0 ? (
                 <span className="text-xs text-text-muted italic">No models</span>
               ) : (
-                models.slice(0, 3).map((model, index) => (
+                // O13: render the full pool — slicing to 3 left entries at
+                // index 3+ unremovable/unreorderable (no separate editor here).
+                models.map((model, index) => (
                   <code
                     key={`${model}-${index}`}
                     className="group/chip inline-flex items-center gap-1 rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs text-text-muted dark:bg-white/5"
@@ -1462,9 +1479,6 @@ function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getCaps }) 
                     </button>
                   </code>
                 ))
-              )}
-              {models.length > 3 && (
-                <span className="text-[10px] text-text-muted">+{models.length - 3} more</span>
               )}
             </div>
           </div>

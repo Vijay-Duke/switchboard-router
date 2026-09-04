@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import Modal from "./Modal";
@@ -12,6 +12,7 @@ import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS,
 import { reportClientError } from "@/shared/utils/clientFeedback";
 import {
   buildCanonicalDisabledModelSet,
+  filterModelGroupsByQuery,
   getCompatibleProviderModelRows,
   getSelectableProviderModelRows,
   isCanonicalModelDisabled,
@@ -376,30 +377,37 @@ export default function ModelSelectModal({
     return [...added, ...rest];
   }, [addedModelValues]);
 
-  // Filter models by search query
-  const filteredGroups = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
+  // Whether a text query is active (drives "N of M" counts + empty state).
+  const hasSearchQuery = searchQuery.trim().length > 0;
 
+  // Autofocus the search box whenever the modal opens. The shared Modal
+  // leaves focus alone when something inside already took it, so this wins
+  // over the default close-button focus.
+  const searchInputRef = useRef(null);
+  useEffect(() => {
+    if (isOpen) searchInputRef.current?.focus();
+  }, [isOpen]);
+
+  // Filter models by capability + search query. Capability first, then the
+  // shared query helper (provider-name match keeps the whole group).
+  const filteredGroups = useMemo(() => {
+    let groups = groupedModels;
+    // Filter by input-modality capability (vision/pdf/audioInput/videoInput).
+    if (capFilter) {
+      groups = {};
+      Object.entries(groupedModels).forEach(([providerId, group]) => {
+        const models = group.models.filter((m) => getCaps(m.value)?.[capFilter] === true);
+        if (models.length > 0) groups[providerId] = { ...group, models };
+      });
+    }
+    const queried = filterModelGroupsByQuery(groups, searchQuery);
     const filtered = {};
-    Object.entries(groupedModels).forEach(([providerId, group]) => {
-      let models = group.models;
-      // Filter by input-modality capability (vision/pdf/audioInput/videoInput).
-      if (capFilter) {
-        models = models.filter((m) => getCaps(m.value)?.[capFilter] === true);
-        if (models.length === 0) return;
-      }
-      if (query) {
-        const providerNameMatches = group.name.toLowerCase().includes(query);
-        models = models.filter(
-          (m) =>
-            m.name.toLowerCase().includes(query) ||
-            m.id.toLowerCase().includes(query)
-        );
-        if (models.length === 0 && !providerNameMatches) return;
-      }
+    Object.entries(queried).forEach(([providerId, group]) => {
       filtered[providerId] = {
         ...group,
-        models: sortModels(models),
+        // Pre-query count for the "N of M" header while searching.
+        totalModels: groups[providerId]?.models.length ?? group.models.length,
+        models: sortModels(group.models),
       };
     });
 
@@ -462,17 +470,21 @@ export default function ModelSelectModal({
             search
           </span>
           <input
+            ref={searchInputRef}
             type="text"
             placeholder="Search..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            autoFocus
+            aria-label="Search models"
             className="w-full pl-8 pr-3 py-1.5 bg-surface border border-border rounded text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
           />
         </div>
       </div>
 
-      {/* Models grouped by provider - compact */}
-      <div className="max-h-[400px] overflow-y-auto space-y-3">
+      {/* Models grouped by provider - fixed height so the modal does not
+          resize/jump as search results change; header/footer stay put. */}
+      <div className="h-[50vh] min-h-[280px] overflow-y-auto space-y-3" aria-label="Models by provider">
         {/* Combos section - always first */}
         {filteredCombos.length > 0 && (
           <div>
@@ -526,7 +538,9 @@ export default function ModelSelectModal({
                 {group.name}
               </span>
               <span className="text-[10px] text-text-muted">
-                ({group.models.length})
+                {hasSearchQuery
+                  ? `(${group.models.length} of ${group.totalModels ?? group.models.length})`
+                  : `(${group.models.length})`}
               </span>
             </div>
 
@@ -581,11 +595,13 @@ export default function ModelSelectModal({
         ))}
 
         {Object.keys(filteredGroups).length === 0 && filteredCombos.length === 0 && (
-          <div className="text-center py-4 text-text-muted">
+          <div className="text-center py-4 text-text-muted" role="status">
             <span className="material-symbols-outlined text-2xl mb-1 block">
               search_off
             </span>
-            <p className="text-xs">No models found</p>
+            <p className="text-xs">
+              {hasSearchQuery ? `No models match '${searchQuery.trim()}'` : "No models found"}
+            </p>
           </div>
         )}
       </div>

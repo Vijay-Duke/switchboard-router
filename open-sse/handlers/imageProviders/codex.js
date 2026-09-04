@@ -60,18 +60,20 @@ async function parseStream(response, log, callbacks = {}) {
     bytesReceived += value?.byteLength || 0;
     buffer += decoder.decode(value, { stream: true });
 
-    let sepIdx;
-    while ((sepIdx = buffer.indexOf("\n\n")) !== -1) {
-      const block = buffer.slice(0, sepIdx);
-      buffer = buffer.slice(sepIdx + 2);
+    const EVENT_SEP = /\r?\n\r?\n/;
+    let match;
+    while ((match = EVENT_SEP.exec(buffer)) !== null) {
+      const block = buffer.slice(0, match.index);
+      buffer = buffer.slice(match.index + match[0].length);
 
-      const lines = block.split("\n");
+      const lines = block.split(/\r?\n/);
       let eventName = null;
-      let dataStr = "";
+      const dataLines = [];
       for (const line of lines) {
         if (line.startsWith("event:")) eventName = line.slice(6).trim();
-        else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
       }
+      const dataStr = dataLines.join("\n");
       if (!eventName) continue;
       if (eventName !== lastEvent) {
         log?.info?.("IMAGE", `codex progress: ${eventName}`);
@@ -115,6 +117,12 @@ function buildSseResponse(providerResponse, log, onSuccess) {
       const send = (event, data) => {
         controller.enqueue(enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       };
+      // OpenAI-compat clients wait for the terminal sentinel — always emit it,
+      // including after error events, or they hang until timeout.
+      const terminate = () => {
+        try { controller.enqueue(enc.encode("data: [DONE]\n\n")); } catch { /* already closed */ }
+        try { controller.close(); } catch { /* already closed */ }
+      };
       try {
         const b64 = await parseStream(providerResponse, log, {
           onProgress: (info) => send("progress", info),
@@ -129,7 +137,7 @@ function buildSseResponse(providerResponse, log, onSuccess) {
       } catch (err) {
         send("error", { message: err?.message || "Stream failed" });
       } finally {
-        controller.close();
+        terminate();
       }
     },
   });

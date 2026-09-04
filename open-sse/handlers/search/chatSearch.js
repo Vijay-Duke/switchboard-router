@@ -4,7 +4,7 @@
  */
 import { PROVIDER_MEDIA } from "../../providers/index.js";
 import { mergeAbortSignals } from "../../utils/abort.js";
-import { proxyAwareFetch } from "../../utils/proxyFetch.js";
+import { proxyAwareFetch, proxyOptionsFromCredentials } from "../../utils/proxyFetch.js";
 import { PROVIDERS } from "../../providers/index.js";
 
 // Default search model + endpoint derive from registry searchViaChat (single source)
@@ -348,14 +348,14 @@ export async function handleChatSearch({
       identity: searchConfig.identity || transport.identity || "openai-node",
       provider,
       format: searchConfig.format || transport.format || "openai",
-    });
+    }, proxyOptionsFromCredentials(credentials));
   } catch (err) {
     clearTimeout(timer);
     if (err?.name === "AbortError") {
-      log?.warn?.(`[chatSearch] timeout provider=${provider}`);
+      log?.warn?.("[chatSearch]", `timeout provider=${provider}`);
       return { success: false, status: 504, error: "Upstream timeout" };
     }
-    log?.error?.(`[chatSearch] network error provider=${provider}: ${err?.message}`);
+    log?.error?.("[chatSearch]", `network error provider=${provider}: ${err?.message}`);
     return {
       success: false,
       status: 502,
@@ -382,7 +382,7 @@ export async function handleChatSearch({
       data?.error ||
       data?.message ||
       `Upstream HTTP ${resp.status}`;
-    log?.warn?.(`[chatSearch] upstream error provider=${provider} status=${resp.status}`);
+    log?.warn?.("[chatSearch]", `upstream error provider=${provider} status=${resp.status}`);
     return {
       success: false,
       status: resp.status,

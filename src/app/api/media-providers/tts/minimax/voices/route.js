@@ -1,6 +1,7 @@
 // @ts-check
 import { NextResponse } from "next/server";
 import { getProviderConnections } from "@/lib/db/index.js";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 
 const MINIMAX_VOICE_ENDPOINTS = {
   minimax: "https://api.minimax.io/v1/get_voice",
@@ -76,7 +77,7 @@ export async function GET(request) {
       return NextResponse.json({ error: `No ${provider} connection found` }, { status: 400 });
     }
 
-    const res = await fetch(MINIMAX_VOICE_ENDPOINTS[provider], {
+    const res = await proxyAwareFetch(MINIMAX_VOICE_ENDPOINTS[provider], {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,

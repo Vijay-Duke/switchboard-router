@@ -5,6 +5,9 @@ vi.mock("../../src/lib/db/driver.js", () => ({ getAdapter: vi.fn() }));
 const HANDLER_SLOT = "__switchboardRequestDetailsBeforeExitHandler";
 
 it("keeps one beforeExit handler across module reloads", async () => {
+  // The shared adapter shutdown registry owns its own single beforeExit
+  // listener; load it first so the baseline counts only the repo's handler.
+  await import("../../src/lib/db/adapters/adapterShutdownRegistry.js");
   const baselineListeners = process.listeners("beforeExit");
   const hadHandlerSlot = Object.hasOwn(globalThis, HANDLER_SLOT);
   const baselineHandler = globalThis[HANDLER_SLOT];

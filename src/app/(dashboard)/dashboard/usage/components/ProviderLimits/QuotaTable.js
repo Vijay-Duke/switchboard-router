@@ -109,9 +109,13 @@ export default function QuotaTable({
 
   const totalPages = Math.max(1, Math.ceil(sortedQuotas.length / PAGE_SIZE));
 
+  // O9: reset to page 1 only when the row set actually changes — a 60s
+  // auto-refresh rebuilds the quotas array identity with identical content,
+  // which must not bounce the user off page 3.
+  const rowSetKey = (quotas || []).map((q) => q?.name).join("\n");
   useEffect(() => {
     setPage(1);
-  }, [sortMode, quotas]);
+  }, [sortMode, rowSetKey]);
 
   useEffect(() => {
     setPage((currentPage) => Math.min(currentPage, totalPages));

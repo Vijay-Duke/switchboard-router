@@ -9,6 +9,7 @@ import { isUnrecoverableRefreshError, refreshWithRetry } from "../services/token
 import { REAUTH_REQUIRED_STATUS } from "../services/accountFallback.js";
 import { withCredentialRefreshLock } from "../services/oauthCredentialManager.js";
 import { createRequestLogger } from "../utils/requestLogger.js";
+import { proxyOptionsFromCredentials } from "../utils/proxyFetch.js";
 import { getModelSupportedFormats, getModelTargetFormat, getModelStrip, getModelUpstreamId, getModelType, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
 import { PROVIDERS } from "../config/providers.js";
 import { createErrorResult, parseUpstreamError, formatProviderError } from "../utils/error.js";
@@ -97,13 +98,22 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     }
   }
 
-  const clientRequestedStreaming = body.stream === true || sourceFormat === FORMATS.ANTIGRAVITY || sourceFormat === FORMATS.GEMINI || sourceFormat === FORMATS.GEMINI_CLI;
+  // Check client Accept header preference for non-streaming requests
+  // This fixes AI SDK compatibility where clients send Accept: application/json
+  const acceptHeader = clientRawRequest?.headers?.accept || "";
+  const clientPrefersJson = acceptHeader.includes("application/json");
+  const clientPrefersSSE = acceptHeader.includes("text/event-stream");
+  // URL-controlled (Gemini-family) formats default to streaming, but an
+  // explicit JSON Accept without `stream: true` is a JSON request — otherwise
+  // a Gemini JSON client routed to a forceStream provider gets SSE it rejected.
+  const urlControlledStreaming = sourceFormat === FORMATS.ANTIGRAVITY || sourceFormat === FORMATS.GEMINI || sourceFormat === FORMATS.GEMINI_CLI;
+  const clientRequestedStreaming = body.stream === true || (urlControlledStreaming && !(clientPrefersJson && !clientPrefersSSE));
   const providerRequiresStreaming = PROVIDERS[provider]?.forceStream === true;
   let stream = providerRequiresStreaming ? true : (body.stream !== false);
 
   // Image generation models require non-streaming (Google v1internal:generateContent)
   const modelType = getModelType(alias, model);
-  const isImageGenModel = modelType === "imageGen" || /image|imagen|image-generation/i.test(model);
+  const isImageGenModel = modelType === "imageGen";
   if (isImageGenModel && (provider === "antigravity" || provider === "gemini-cli")) {
     stream = false;
   }
@@ -114,11 +124,6 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const detectedTool = detectClientTool(clientRawRequest?.headers || {}, body);
   if (detectedTool === "deepseek-tui" && body.stream !== true) stream = false;
 
-  // Check client Accept header preference for non-streaming requests
-  // This fixes AI SDK compatibility where clients send Accept: application/json
-  const acceptHeader = clientRawRequest?.headers?.accept || "";
-  const clientPrefersJson = acceptHeader.includes("application/json");
-  const clientPrefersSSE = acceptHeader.includes("text/event-stream");
   if (clientPrefersJson && !clientPrefersSSE && body.stream !== true && !providerRequiresStreaming) {
     stream = false;
   }
@@ -345,12 +350,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     }
   }
 
-  const proxyOptions = {
-    connectionProxyEnabled: credentials?.providerSpecificData?.connectionProxyEnabled === true,
-    connectionProxyUrl: credentials?.providerSpecificData?.connectionProxyUrl || "",
-    connectionNoProxy: credentials?.providerSpecificData?.connectionNoProxy || "",
-    vercelRelayUrl: credentials?.providerSpecificData?.vercelRelayUrl || "",
-  };
+  const proxyOptions = proxyOptionsFromCredentials(credentials);
 
   if (proxyOptions.vercelRelayUrl) {
     const connectionName = credentials?.connectionName || credentials?.connectionId || "unknown";
@@ -388,7 +388,9 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Execute request
   let providerResponse, providerUrl, providerHeaders, finalBody;
   try {
-    const result = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions });
+    // Clone per attempt: executors mutate the body in place (schema fallback,
+    // stream_options delete/inject), so retries must not inherit attempt-1 edits.
+    const result = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions });
     providerResponse = result.response;
     providerUrl = result.url;
     providerHeaders = result.headers;
@@ -440,11 +442,14 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
           try { await onCredentialsRefreshed(newCredentials); } catch (e) { log?.warn?.("TOKEN", `onCredentialsRefreshed failed: ${e.message}`); }
         }
         try {
-          const retryResult = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions });
+          const retryResult = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions });
           // Cancel superseded response body to avoid undici pool pinning
           try { await providerResponse.body?.cancel?.(); } catch {}
           providerResponse = retryResult.response;
           providerUrl = retryResult.url;
+          providerHeaders = retryResult.headers ?? providerHeaders;
+          finalBody = retryResult.transformedBody ?? finalBody;
+          reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
         } catch { log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`); }
       } else if (isUnrecoverableRefreshError(newCredentials)) {
         // Permanent refresh failure (revoked/expired refresh token): persist
@@ -502,9 +507,10 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Antigravity empty-stream guard: Gemini often returns HTTP 200 with no usable
   // output (thought-only, bare STOP, MALFORMED_FUNCTION_CALL). Retry in-stream so
   // the client doesn't hang on a blank turn. Switchboard PR#2462.
-  if (provider === "antigravity" && stream && providerResponse.body) {
+  // gemini-cli/gemini/vertex share the same backend failure mode (H26).
+  if ((provider === "antigravity" || provider === "gemini-cli" || provider === "gemini" || provider === "vertex") && stream && providerResponse.body) {
     const reexecute = async () => {
-      const retryResult = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions });
+      const retryResult = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions });
       if (!retryResult.response.ok) {
         const { statusCode, message } = await parseUpstreamError(retryResult.response, executor);
         throw new Error(`[${statusCode}] ${message}`);
@@ -534,7 +540,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // One identity per completed request. Handlers pass it to saveUsageStats so a
   // replayed save is idempotent instead of double-counting usage.
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-  const sharedCtx = { provider, model, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, clientRawRequest, onRequestSuccess, requestId, pxpipe: pxpipeSummary || undefined };
+  const sharedCtx = { provider, model, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, clientRawRequest, onRequestSuccess, requestId, pxpipe: pxpipeSummary || undefined, streamSignal: streamController.signal };
   const appendLog = (extra) => {
     if (!vaultInternal) appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });
   };

@@ -88,13 +88,29 @@ export function convertOpenAIContentToParts(content) {
             inlineData: { mime_type: mimeType, data: data }
           });
         }
-      } else if (item.type === OPENAI_BLOCK.FILE && item.file?.file_data?.startsWith("data:")) {
-        const url = item.file.file_data;
-        const commaIndex = url.indexOf(",");
-        if (commaIndex !== -1) {
-          const mimeType = url.substring(5, commaIndex).split(";")[0];
-          const data = url.substring(commaIndex + 1);
-          parts.push({ inlineData: { mime_type: mimeType, data: data } });
+      } else if (item.type === OPENAI_BLOCK.FILE) {
+        const fileData = item.file?.file_data;
+        if (typeof fileData === "string" && fileData.startsWith("data:")) {
+          const commaIndex = fileData.indexOf(",");
+          if (commaIndex !== -1) {
+            const mimeType = fileData.substring(5, commaIndex).split(";")[0];
+            const data = fileData.substring(commaIndex + 1);
+            parts.push({ inlineData: { mime_type: mimeType, data: data } });
+          }
+        } else if (item.file?.file_id) {
+          // File reference without inline bytes — carry as a URI part, never drop.
+          parts.push({ fileData: { fileUri: item.file.file_id } });
+        } else if (typeof fileData === "string" && fileData) {
+          parts.push({ text: `[File: ${fileData}]` });
+        }
+      } else if (item.type === OPENAI_BLOCK.IMAGE && item.source) {
+        // Claude-bridge image block: { source: { type: base64|url, ... } }.
+        if (item.source.type === "base64" && item.source.data) {
+          parts.push({
+            inlineData: { mime_type: item.source.media_type || "image/png", data: item.source.data }
+          });
+        } else if (item.source.type === "url" && item.source.url) {
+          parts.push({ fileData: { fileUri: item.source.url, mimeType: "image/*" } });
         }
       }
     }

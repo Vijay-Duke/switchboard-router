@@ -27,7 +27,9 @@ export function toOpenAIFinish(reason, format) {
         case "tool_use": return OPENAI_FINISH.TOOL_CALLS;
         case "content-filter": return OPENAI_FINISH.CONTENT_FILTER;
         case "error": return OPENAI_FINISH.STOP;
-        default: return reason || OPENAI_FINISH.STOP;
+        // AI-SDK-v5 "other" and any unknown reason are not valid OpenAI
+        // finish_reasons — collapse to STOP instead of echoing verbatim.
+        default: return OPENAI_FINISH.STOP;
       }
     case "gemini": {
       const geminiReason = String(reason).toUpperCase();

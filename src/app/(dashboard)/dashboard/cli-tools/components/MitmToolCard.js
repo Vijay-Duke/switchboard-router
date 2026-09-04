@@ -1,7 +1,7 @@
 "use client";
 // @ts-check
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Card, Button, Badge, Input, ModelSelectModal } from "@/shared/components";
 import { TOOL_HOSTS } from "@/shared/constants/mitmToolHosts";
 import Image from "next/image";
@@ -34,7 +34,9 @@ export default function MitmToolCard({
   const [sudoPassword, setSudoPassword] = useState("");
   const [pendingDnsAction, setPendingDnsAction] = useState(null);
   const [modalError, setModalError] = useState(null);
-  const [modelMappings, setModelMappings] = useState({});
+  const [actionError, setActionError] = useState(null);
+  const [mappingError, setMappingError] = useState(null);
+  const saveChainRef = useRef(Promise.resolve());
   const [modalOpen, setModalOpen] = useState(false);
   const [currentEditingAlias, setCurrentEditingAlias] = useState(null);
 
@@ -46,7 +48,8 @@ export default function MitmToolCard({
       const res = await fetch(`/api/cli-tools/antigravity-mitm/alias?tool=${tool.id}`);
       if (res.ok) {
         const data = await res.json();
-        if (Object.keys(data.aliases || {}).length > 0) setModelMappings(data.aliases);
+        // Unconditional: an empty server state must clear stale chips (T72).
+        setModelMappings(data.aliases || {});
       }
     } catch { /* ignore */ }
   }, [tool.id]);
@@ -55,34 +58,59 @@ export default function MitmToolCard({
     if (isExpanded) loadSavedMappings();
   }, [isExpanded, loadSavedMappings]);
 
-  const saveMappings = useCallback(async (mappings) => {
-    try {
-      await fetch("/api/cli-tools/antigravity-mitm/alias", {
+  // Serialize mapping PUTs so rapid edits persist in order (last writer wins),
+  // and surface failures instead of swallowing them (T71).
+  const saveMappings = useCallback((mappings) => {
+    const run = saveChainRef.current.then(async () => {
+      const res = await fetch("/api/cli-tools/antigravity-mitm/alias", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tool: tool.id, mappings }),
       });
-    } catch { /* ignore */ }
+      if (!res.ok) throw new Error(`Failed to save model mappings (status ${res.status})`);
+    });
+    saveChainRef.current = run.catch(() => {});
+    return run;
   }, [tool.id]);
 
+  const queueSaveMappings = (mappings) => {
+    setMappingError(null);
+    saveMappings(mappings).catch((error) => {
+      setMappingError(error?.message || "Failed to save model mappings");
+    });
+  };
+
+  // Empty values delete the key (never persist "") so the UI can be fully cleared (T72).
+  const setMappingValue = (alias, value) => {
+    const updated = { ...modelMappings };
+    if (value) updated[alias] = value;
+    else delete updated[alias];
+    return updated;
+  };
+
   const handleMappingBlur = (alias, value) => {
-    saveMappings({ ...modelMappings, [alias]: value });
+    queueSaveMappings(setMappingValue(alias, value));
   };
 
   const handleModelMappingChange = (alias, value) => {
-    setModelMappings(prev => ({ ...prev, [alias]: value }));
-  };
-
-  const openModelSelector = (alias) => {
-    setCurrentEditingAlias(alias);
-    setModalOpen(true);
+    setModelMappings((prev) => {
+      const updated = { ...prev };
+      if (value) updated[alias] = value;
+      else delete updated[alias];
+      return updated;
+    });
   };
 
   const handleModelSelect = (model) => {
-    if (!currentEditingAlias || model.isPlaceholder) return;
+    if (!currentEditingAlias) return;
+    if (model.isPlaceholder) {
+      // Say why the pick did nothing instead of silently closing (T73).
+      setWarning(`"${model.value}" is a placeholder — connect the provider first, then pick a real model`);
+      return;
+    }
     const updated = { ...modelMappings, [currentEditingAlias]: model.value };
     setModelMappings(updated);
-    saveMappings(updated);
+    queueSaveMappings(updated);
   };
 
   const handleDnsToggle = () => {
@@ -100,14 +128,15 @@ export default function MitmToolCard({
   const doDnsAction = async (action, password) => {
     setLoading(true);
     setWarning(null);
+    setActionError(null);
     try {
       const res = await fetch("/api/cli-tools/antigravity-mitm", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tool: tool.id, action, sudoPassword: password }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to toggle DNS");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Failed to toggle DNS (status ${res.status})`);
 
       if (action === "enable") {
         setWarning(`Restart ${tool.name} to apply changes`);
@@ -116,7 +145,10 @@ export default function MitmToolCard({
       setShowPasswordModal(false);
       setSudoPassword("");
       onDnsChange?.(data);
-    } catch { /* ignore */ } finally {
+    } catch (error) {
+      // DNS state lives in the parent — a silent no-op reads as a broken toggle (T70).
+      setActionError(error?.message || "Failed to toggle DNS");
+    } finally {
       setLoading(false);
       setPendingDnsAction(null);
     }
@@ -223,8 +255,9 @@ export default function MitmToolCard({
                       {modelMappings[model.alias] && (
                         <button
                           onClick={() => {
-                            handleModelMappingChange(model.alias, "");
-                            saveMappings({ ...modelMappings, [model.alias]: "" });
+                            const updated = setMappingValue(model.alias, "");
+                            setModelMappings(updated);
+                            queueSaveMappings(updated);
                           }}
                           className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-text-muted hover:text-red-500 rounded transition-colors"
                           title="Clear"
@@ -276,6 +309,12 @@ export default function MitmToolCard({
                 <div className="flex items-center gap-2 px-2 py-1.5 rounded text-xs text-amber-500">
                   <span className="material-symbols-outlined text-[14px]">warning</span>
                   <span>{warning}</span>
+                </div>
+              )}
+              {(actionError || mappingError) && (
+                <div role="alert" className="flex items-center gap-2 px-2 py-1.5 rounded text-xs bg-red-500/10 text-red-600 dark:text-red-400">
+                  <span className="material-symbols-outlined text-[14px]">error</span>
+                  <span>{actionError || mappingError}</span>
                 </div>
               )}
             </div>

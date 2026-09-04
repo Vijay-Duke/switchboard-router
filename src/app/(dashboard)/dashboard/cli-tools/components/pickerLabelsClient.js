@@ -34,8 +34,8 @@ export async function requestPickerLabels({
         existingLabels: contextLabels,
       }),
     });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "Failed to generate picker labels");
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `Failed to generate picker labels (status ${response.status})`);
     const batchLabels = data.labels && typeof data.labels === "object" ? data.labels : {};
     Object.assign(labels, batchLabels);
     Object.assign(contextLabels, batchLabels);

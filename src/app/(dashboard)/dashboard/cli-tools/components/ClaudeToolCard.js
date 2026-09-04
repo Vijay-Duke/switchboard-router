@@ -197,7 +197,10 @@ export default function ClaudeToolCard({
   useEffect(() => {
     const controller = new AbortController();
     fetch("/api/settings", { signal: controller.signal })
-      .then(r => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`Failed to read settings (${r.status})`);
+        return r.json();
+      })
       .then(data => {
         if (mountedRef.current) setCcFilterNaming(!!data.ccFilterNaming);
       })
@@ -207,12 +210,20 @@ export default function ClaudeToolCard({
 
   const handleCcFilterNamingToggle = async (e) => {
     const value = e.target.checked;
+    const previous = ccFilterNaming;
     setCcFilterNaming(value);
-    await fetch("/api/settings", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ccFilterNaming: value }),
-    }).catch(() => {});
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ccFilterNaming: value }),
+      });
+      if (!res.ok) throw new Error(`Failed to update filter naming (${res.status})`);
+    } catch (error) {
+      // Revert so the toggle shows the server's value, not a wish.
+      if (mountedRef.current) setCcFilterNaming(previous);
+      reportClientError("Error toggling filter naming:", error);
+    }
   };
 
   /**
@@ -313,14 +324,26 @@ export default function ClaudeToolCard({
         : CLAUDE_ROUTING_MODES.PASS_THROUGH);
       const mappings = readClaudeModelMappings(tool.defaultModels, claudeStatus.settings);
       Object.entries(mappings).forEach(([alias, value]) => onModelMappingChange(alias, value));
-      // Only set selectedApiKey if it exists in apiKeys list
-      const tokenFromFile = env.ANTHROPIC_AUTH_TOKEN
-        || readSwitchboardKeyFromCustomHeaders(env.ANTHROPIC_CUSTOM_HEADERS);
-      if (tokenFromFile && apiKeys?.some(k => k.keySecret === tokenFromFile)) {
-        setSelectedApiKey(tokenFromFile);
+      // Seed the endpoint dropdown from the server until the user touches it.
+      if (env.ANTHROPIC_BASE_URL && !customBaseUrl) {
+        setCustomBaseUrl(env.ANTHROPIC_BASE_URL);
       }
     }
-  }, [claudeStatus, apiKeys, tool.defaultModels, onModelMappingChange]);
+  }, [claudeStatus, tool.defaultModels, onModelMappingChange, customBaseUrl]);
+
+  // Prefer the key already in settings.json once both status and apiKeys have
+  // resolved — whichever lands last (T62: the init-once effect above would miss
+  // keys that arrive after status).
+  const envKeySyncedRef = useRef(false);
+  useEffect(() => {
+    if (envKeySyncedRef.current || !claudeStatus?.installed) return;
+    const env = claudeStatus.settings?.env || {};
+    const tokenFromFile = env.ANTHROPIC_AUTH_TOKEN
+      || readSwitchboardKeyFromCustomHeaders(env.ANTHROPIC_CUSTOM_HEADERS);
+    if (!tokenFromFile || !apiKeys?.some((k) => k.keySecret === tokenFromFile)) return;
+    envKeySyncedRef.current = true;
+    setSelectedApiKey(tokenFromFile);
+  }, [claudeStatus, apiKeys]);
 
   /**
    * @param {{signal?: AbortSignal, canCommit?: () => boolean}} [options]
@@ -777,6 +800,10 @@ export default function ClaudeToolCard({
                       if (isFullCatalog) fullCatalogDraftTouchedRef.current = true;
                       setCustomBaseUrl(value);
                     }}
+                    initialUrl={customBaseUrl
+                      || (isFullCatalog
+                        ? fullCatalogProfile?.baseUrl || ""
+                        : claudeStatus?.settings?.env?.ANTHROPIC_BASE_URL || "")}
                     requiresExternalUrl={tool.requiresExternalUrl}
                     tunnelEnabled={tunnelEnabled}
                     tunnelPublicUrl={tunnelPublicUrl}

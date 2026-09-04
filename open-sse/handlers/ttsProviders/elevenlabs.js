@@ -1,9 +1,20 @@
 // ElevenLabs TTS — voice id with optional model_id prefix
 import { Buffer } from "node:buffer";
 import { authenticatedMediaFetch } from "./_base.js";
+import { proxyOptionsFromCredentials } from "../../utils/proxyFetch.js";
 
 const VOICES_TTL = 24 * 60 * 60 * 1000;
+// Bound keyed entries — TTL alone never evicts, so distinct keys accumulate.
+export const ELEVENLABS_VOICES_CACHE_MAX = 100;
 const _voicesCache = new Map(); // by API key
+
+function cacheVoices(apiKey, voices) {
+  _voicesCache.delete(apiKey);
+  _voicesCache.set(apiKey, { voices, time: Date.now() });
+  while (_voicesCache.size > ELEVENLABS_VOICES_CACHE_MAX) {
+    _voicesCache.delete(_voicesCache.keys().next().value);
+  }
+}
 
 export async function fetchElevenLabsVoices(apiKey) {
   if (!apiKey) throw new Error("ElevenLabs API key required");
@@ -18,12 +29,12 @@ export async function fetchElevenLabsVoices(apiKey) {
   const data = await res.json();
   // Normalize: derive lang from labels for grouping
   const voices = (data.voices || []).map((v) => ({ ...v, lang: v.labels?.language || "en" }));
-  _voicesCache.set(apiKey, { voices, time: now });
+  cacheVoices(apiKey, voices);
   return voices;
 }
 
 const moduleDefault = {
-  async synthesize(text, model, credentials) {
+  async synthesize(text, model, credentials, _responseFormat, opts = {}) {
     if (!credentials?.apiKey) throw new Error("ElevenLabs API key required");
     let modelId = "eleven_flash_v2_5";
     let voiceId = model;
@@ -37,6 +48,8 @@ const moduleDefault = {
         model_id: modelId,
         voice_settings: { stability: 0.5, similarity_boost: 0.75 },
       }),
+      signal: opts?.signal,
+      proxyOptions: proxyOptionsFromCredentials(credentials),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

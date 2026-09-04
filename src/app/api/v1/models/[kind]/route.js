@@ -45,7 +45,7 @@ export async function GET(request, { params }) {
   } catch (error) {
     console.log("Error fetching models by kind:", error);
     return Response.json(
-      { error: { message: error.message, type: "server_error" } },
+      { error: { message: "Failed to fetch models", type: "server_error" } },
       { status: 500 }
     );
   }

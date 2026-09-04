@@ -3,7 +3,8 @@
  */
 
 import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
-import { unavailableResponse } from "../utils/error.js";
+import { errorResponse, unavailableResponse } from "../utils/error.js";
+import { HTTP_STATUS, MAX_COMBO_DEPTH } from "../config/runtimeConfig.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
 import { detectFormat } from "./provider.js";
@@ -287,6 +288,14 @@ function abortedComboResponse() {
   );
 }
 
+// Deep-clone a request body (same pattern as the sequential combo path:
+// callees mutate messages in place).
+function cloneComboBody(value) {
+  return typeof structuredClone === "function"
+    ? structuredClone(value)
+    : JSON.parse(JSON.stringify(value));
+}
+
 function mergeAbortSignals(...signals) {
   const active = signals.filter((signal) => signal && typeof signal === "object");
   if (active.length === 0) return undefined;
@@ -340,11 +349,24 @@ function waitForComboDelay(ms, signal) {
  * @param {number} [options.providerLatencyGuardMs] - Slow-provider demotion threshold
  * @param {AbortSignal} [options.abortSignal] - Caller disconnect signal
  * @param {number} [options.childComboDepth=0] - Depth for nested combo model attempts
+ * @param {number} [options.autoDepth=0] - Outer Auto-combo depth, threaded through
+ *   so alternating Auto↔fallback nesting counts against one combined cap
  * @returns {Promise<Response>}
  */
-export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, providerStrategy = "off", providerOrder = [], providerLatencyMs = {}, providerUsage = {}, providerQuota = {}, providerLatencyGuardMs, abortSignal = null, clientAbortSignal = null, signal = null, childComboDepth = 0 }) {
+export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, providerStrategy = "off", providerOrder = [], providerLatencyMs = {}, providerUsage = {}, providerQuota = {}, providerLatencyGuardMs, abortSignal = null, clientAbortSignal = null, signal = null, childComboDepth = 0, autoDepth = 0 }) {
   const callerSignal = abortSignal || clientAbortSignal || signal || null;
   if (callerSignal?.aborted) return abortedComboResponse();
+
+  // Combined nesting cap: fallback layers (childComboDepth) plus outer Auto
+  // layers (autoDepth) share one budget so A-contains-B-contains-A mixes
+  // cannot reset both counters by alternating strategies.
+  if (childComboDepth + autoDepth > MAX_COMBO_DEPTH) {
+    log.warn("COMBO", `Combo nesting limit (combo ${childComboDepth} + auto ${autoDepth})`);
+    return errorResponse(
+      HTTP_STATUS.BAD_REQUEST,
+      `Combo nesting too deep (>${MAX_COMBO_DEPTH})`
+    );
+  }
 
   // Apply rotation strategy if enabled
   let rotatedModels = getRotatedModels(models, comboName, comboStrategy, comboStickyLimit);
@@ -399,6 +421,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       const result = await handleSingleModel(attemptBody, modelStr, {
         signal: callerSignal || undefined,
         comboDepth: childComboDepth,
+        autoDepth,
       });
 
       if (callerSignal?.aborted) return abortedComboResponse();
@@ -454,13 +477,16 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         return result;
       }
 
-      // For transient errors (503/502/504), wait for cooldown then retry the
-      // same model once before falling through — the sleep was burning latency
-      // without ever re-trying the overloaded provider.
-      if (cooldownMs && cooldownMs > 0 && cooldownMs <= 5000 &&
+      // For transient errors (503/502/504), retry the same model once before
+      // falling through. checkFallbackError reports the full 30s transient
+      // cooldown for a plain 503, so cap the pre-retry wait at 1s — sleeping
+      // the whole cooldown burns the request budget (and previously the
+      // <=5000ms gate meant plain 503s were never retried at all).
+      if (cooldownMs && cooldownMs > 0 &&
           (result.status === 503 || result.status === 502 || result.status === 504)) {
-        log.info("COMBO", `Model ${modelStr} transient ${result.status}, waiting ${cooldownMs}ms then retrying`);
-        await waitForComboDelay(cooldownMs, callerSignal);
+        const retryDelayMs = Math.min(cooldownMs, 1000);
+        log.info("COMBO", `Model ${modelStr} transient ${result.status}, waiting ${retryDelayMs}ms then retrying`);
+        await waitForComboDelay(retryDelayMs, callerSignal);
         if (callerSignal?.aborted) return abortedComboResponse();
         try {
           const retryBody = typeof structuredClone === "function"
@@ -469,6 +495,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
           const retryResult = await handleSingleModel(retryBody, modelStr, {
             signal: callerSignal || undefined,
             comboDepth: childComboDepth,
+            autoDepth,
           });
           if (callerSignal?.aborted) return abortedComboResponse();
           if (retryResult.ok) {
@@ -477,7 +504,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
             });
             if (callerSignal?.aborted) return abortedComboResponse();
             if (accepted.ok) {
-              log.info("COMBO", `Model ${modelStr} succeeded on retry after ${cooldownMs}ms cooldown`);
+              log.info("COMBO", `Model ${modelStr} succeeded on retry after ${retryDelayMs}ms cooldown`);
               return accepted.result;
             }
           }
@@ -919,9 +946,10 @@ function wrapAnswerAsSse(json) {
  * @param {Object} [options.tuning] - Override FUSION_DEFAULTS (minPanel, grace, timeout)
  * @param {AbortSignal} [options.abortSignal] - Caller disconnect signal
  * @param {number} [options.childComboDepth=0] - Depth for nested combo model attempts
+ * @param {number} [options.autoDepth=0] - Outer Auto-combo depth (combined cap)
  * @returns {Promise<Response>}
  */
-export async function handleFusionChat({ body, models, handleSingleModel, log, comboName, judgeModel, tuning, abortSignal = null, clientAbortSignal = null, signal = null, childComboDepth = 0 }) {
+export async function handleFusionChat({ body, models, handleSingleModel, log, comboName, judgeModel, tuning, abortSignal = null, clientAbortSignal = null, signal = null, childComboDepth = 0, autoDepth = 0 }) {
   const callerSignal = abortSignal || clientAbortSignal || signal || null;
   if (callerSignal?.aborted) return abortedComboResponse();
 
@@ -933,12 +961,22 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
     );
   }
 
+  // Combined nesting cap shared with handleComboChat (see above).
+  if (childComboDepth + autoDepth > MAX_COMBO_DEPTH) {
+    log.warn("FUSION", `Combo nesting limit (combo ${childComboDepth} + auto ${autoDepth})`);
+    return errorResponse(
+      HTTP_STATUS.BAD_REQUEST,
+      `Combo nesting too deep (>${MAX_COMBO_DEPTH})`
+    );
+  }
+
   // A single-model fusion has nothing to fuse — just answer directly.
   if (panel.length === 1) {
     try {
       const result = await handleSingleModel(body, panel[0], {
         signal: callerSignal || undefined,
         comboDepth: childComboDepth,
+        autoDepth,
       });
       return wrapBufferedResponseAsSse(result, body, panel[0]);
     } catch (error) {
@@ -969,11 +1007,14 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   const panelSignals = abortControllers.map((controller) => mergeAbortSignals(callerSignal, controller.signal));
   const calls = panel.map((m, i) =>
     withTimeout(
+      // Clone per panel: callees mutate the body in place (RTK/headroom/strip),
+      // so sharing one panelBody object races across parallel panels.
       // Prefer callOpts shape { isPanel, signal }; third-arg `true` still works for old wrappers
-      handleSingleModel(panelBody, m, {
+      handleSingleModel(cloneComboBody(panelBody), m, {
         isPanel: true,
         signal: panelSignals[i],
         comboDepth: childComboDepth,
+        autoDepth,
       }),
       cfg.panelHardTimeoutMs,
       abortControllers[i]
@@ -1027,6 +1068,7 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
     const result = await handleSingleModel(judgeBody, judge, {
       signal: callerSignal || undefined,
       comboDepth: childComboDepth,
+      autoDepth,
     });
     if (!result?.ok) {
       const best = answers.reduce((a, b) => (a.text.length >= b.text.length ? a : b));

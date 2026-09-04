@@ -42,8 +42,8 @@ export function createBetterSqliteAdapter(filePath) {
     gracefulClose();
   }
 
-  // Ensure WAL is flushed on shutdown — beforeExit only. CLI parent handles
-  // SIGINT/SIGTERM with SIGTERM → 2s wait → SIGKILL, giving checkpoint time.
+  // Ensure WAL is flushed on shutdown: the registry runs this on beforeExit
+  // AND on SIGTERM/SIGINT (synchronously, before re-raising the signal).
   const unregisterClose = registerAdapterCloser(close);
 
   return {

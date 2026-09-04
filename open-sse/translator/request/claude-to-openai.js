@@ -29,6 +29,19 @@ export function claudeToOpenAIRequest(model, body, stream) {
     result.temperature = body.temperature;
   }
 
+  // Sampling / stop intent must survive the pivot.
+  if (body.stop_sequences !== undefined) {
+    result.stop = body.stop_sequences;
+  } else if (body.stop !== undefined) {
+    result.stop = body.stop;
+  }
+  if (body.top_p !== undefined) {
+    result.top_p = body.top_p;
+  }
+  if (body.top_k !== undefined) {
+    result.top_k = body.top_k;
+  }
+
   // System message
   if (body.system) {
     const systemContent = Array.isArray(body.system)
@@ -60,8 +73,8 @@ export function claudeToOpenAIRequest(model, body, stream) {
   }
 
   // Fix missing tool responses - OpenAI requires every tool_call to have a response.
-  // Local variant: scans contiguous tool replies + inserts "[No response received]"
-  // (distinct from the global immediate-next check in concerns/toolCall, runs on the openai leg).
+  // Local variant: scans contiguous tool replies + inserts "" stubs (same as
+  // the global fixMissingToolResponses in concerns/toolCall, runs on the openai leg).
   fixMissingToolResponsesOpenAI(result.messages);
 
   // Tools
@@ -114,14 +127,17 @@ function fixMissingToolResponsesOpenAI(messages) {
         }
       }
       
-      // Find missing responses and insert them
+      // Find missing responses and insert them.
+      // Empty content matches the pipeline-global fixMissingToolResponses
+      // (concerns/toolCall.js) — the same event must not surface two
+      // different model-visible strings depending on path.
       const missingIds = toolCallIds.filter(id => !respondedIds.has(id));
-      
+
       if (missingIds.length > 0) {
         const missingResponses = missingIds.map(id => ({
           role: ROLE.TOOL,
           tool_call_id: id,
-          content: "[No response received]"
+          content: ""
         }));
         messages.splice(insertPosition, 0, ...missingResponses);
         i = insertPosition + missingResponses.length - 1;
@@ -139,6 +155,29 @@ function systemReminderText(content) {
   const text = parts.filter(Boolean).join("\n");
   if (!text.trim()) return "";
   return `<instructions>\n${text}\n</instructions>`;
+}
+
+// Convert a Claude document block to an OpenAI part.
+// Base64 PDFs become file blocks (data-uri); anything else becomes a note so
+// the attachment is never silently erased on the pivot.
+function claudeDocumentToOpenAI(block) {
+  const source = block.source || {};
+  if (source.type === "base64" && source.data) {
+    return {
+      type: OPENAI_BLOCK.FILE,
+      file: {
+        file_data: encodeDataUri(source.media_type || "application/pdf", source.data),
+        ...(block.name ? { filename: block.name } : {}),
+      },
+    };
+  }
+  if (source.type === "url" && source.url) {
+    return { type: OPENAI_BLOCK.TEXT, text: `[Document: ${source.url}]` };
+  }
+  if (source.type === "text" && typeof source.data === "string") {
+    return { type: OPENAI_BLOCK.TEXT, text: source.data };
+  }
+  return { type: OPENAI_BLOCK.TEXT, text: `[Document: ${block.name || "omitted"}]` };
 }
 
 // Convert single Claude message - returns single message or array of messages
@@ -174,12 +213,19 @@ function convertClaudeMessage(msg) {
           // Preserve thinking history across the OpenAI pivot (PR#2401 / #2400).
           // Also keep Claude's signature so prepareClaudeRequest won't drop the
           // block when pivoting back to native Claude (unsigned thinking is stripped).
-          if (block.thinking) reasoningContent += block.thinking;
+          if (block.thinking) {
+            reasoningContent = reasoningContent ? `${reasoningContent}\n${block.thinking}` : block.thinking;
+          }
           if (block.signature && !reasoningSignature) reasoningSignature = block.signature;
           break;
 
         case CLAUDE_BLOCK.REDACTED_THINKING:
-          if (block.data) reasoningContent += block.data;
+          // Opaque ciphertext — never present it as readable reasoning_content.
+          if (block.signature && !reasoningSignature) reasoningSignature = block.signature;
+          break;
+
+        case CLAUDE_BLOCK.DOCUMENT:
+          parts.push(claudeDocumentToOpenAI(block));
           break;
 
         case CLAUDE_BLOCK.IMAGE:
@@ -233,6 +279,8 @@ function convertClaudeMessage(msg) {
                     image_url: { url: c.source.url }
                   });
                 }
+              } else if (c.type === CLAUDE_BLOCK.DOCUMENT) {
+                imageParts.push(claudeDocumentToOpenAI(c));
               }
             }
             if (imageParts.length > 0) {
@@ -264,10 +312,11 @@ function convertClaudeMessage(msg) {
       }
     }
 
-    // If has tool results, return array of tool messages
+    // If has tool results, return array of tool messages.
+    // Co-located text keeps turn order: text first, then results.
     if (toolResults.length > 0) {
       if (parts.length > 0) {
-        return [...toolResults, { role: ROLE.USER, content: collapseTextParts(parts) }];
+        return [{ role: ROLE.USER, content: collapseTextParts(parts) }, ...toolResults];
       }
       return toolResults;
     }

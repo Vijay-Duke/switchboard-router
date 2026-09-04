@@ -126,11 +126,33 @@ function normalizeString(value) {
 }
 
 /**
- * Resolve real IP using Google DNS (bypass system DNS)
+ * Build per-connection egress options from credentials (same shape chatCore
+ * uses): connection proxy, no_proxy bypass, vercel relay, strict proxy.
+ * Non-chat cores must pass this as proxyAwareFetch's 3rd arg or those
+ * connections silently egress direct.
  */
-async function resolveRealIP(hostname) {
+export function proxyOptionsFromCredentials(credentials) {
+  const psd = credentials?.providerSpecificData || {};
+  return {
+    connectionProxyEnabled: psd.connectionProxyEnabled === true,
+    connectionProxyUrl: psd.connectionProxyUrl || "",
+    connectionNoProxy: psd.connectionNoProxy || "",
+    vercelRelayUrl: psd.vercelRelayUrl || "",
+    strictProxy: psd.strictProxy === true,
+  };
+}
+
+/**
+ * Resolve real IP using Google DNS (bypass system DNS).
+ * Caches the full address list with per-request round-robin (no single-PoP
+ * pinning past DNS failover) and falls back to AAAA when A is empty.
+ */
+export async function resolveRealIP(hostname) {
   const cached = DNS_CACHE.get(hostname);
-  if (cached && Date.now() < cached.expiry) return cached.ip;
+  if (cached && Date.now() < cached.expiry && Array.isArray(cached.ips) && cached.ips.length > 0) {
+    cached.idx = (cached.idx + 1) % cached.ips.length;
+    return cached.ips[cached.idx];
+  }
 
   try {
     const dns = await import("dns");
@@ -138,7 +160,12 @@ async function resolveRealIP(hostname) {
     const resolver = new dns.Resolver();
     resolver.setServers(GOOGLE_DNS_SERVERS);
     const resolve4 = promisify(resolver.resolve4.bind(resolver));
-    const addresses = await resolve4(hostname);
+    const resolve6 = promisify(resolver.resolve6.bind(resolver));
+    let addresses = await resolve4(hostname).catch(() => []);
+    if (!Array.isArray(addresses) || addresses.length === 0) {
+      addresses = await resolve6(hostname).catch(() => []);
+    }
+    if (!Array.isArray(addresses) || addresses.length === 0) return null;
     if (DNS_CACHE.size >= MEMORY_CONFIG.dnsCacheMaxSize) {
       const now = Date.now();
       for (const [key, value] of DNS_CACHE) {
@@ -148,7 +175,7 @@ async function resolveRealIP(hostname) {
         DNS_CACHE.delete(DNS_CACHE.keys().next().value);
       }
     }
-    DNS_CACHE.set(hostname, { ip: addresses[0], expiry: Date.now() + MEMORY_CONFIG.dnsCacheTtlMs });
+    DNS_CACHE.set(hostname, { ips: addresses, idx: 0, expiry: Date.now() + MEMORY_CONFIG.dnsCacheTtlMs });
     return addresses[0];
   } catch (error) {
     console.warn(`[ProxyFetch] DNS resolve failed for ${hostname}:`, error.message);
@@ -315,6 +342,28 @@ export function __setTransportLoadersForTests(loaders = {}) {
   if (loaders.loadImpit) _loadImpit = loaders.loadImpit;
 }
 
+// Header objects may be plain records or Headers instances — spread only
+// works on the former. Normalize so a future Headers/FormData caller cannot
+// silently lose auth on these paths.
+function normalizeBypassHeaders(headers) {
+  if (!headers) return {};
+  if (typeof Headers !== "undefined" && headers instanceof Headers) {
+    return Object.fromEntries(headers.entries());
+  }
+  return { ...headers };
+}
+
+function serializeBypassBody(body) {
+  if (typeof body === "string") return body;
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(body)) return body;
+  if (body instanceof Uint8Array) return body;
+  if (typeof ArrayBuffer !== "undefined" && body instanceof ArrayBuffer) return Buffer.from(body);
+  if (typeof FormData !== "undefined" && body instanceof FormData) {
+    throw new Error("[ProxyFetch] FormData bodies are not supported on the MITM bypass path");
+  }
+  return JSON.stringify(body);
+}
+
 /**
  * Create HTTPS request with manual socket connection (bypass DNS)
  */
@@ -372,7 +421,7 @@ export async function createBypassRequest(parsedUrl, realIP, options) {
         path: parsedUrl.pathname + parsedUrl.search,
         method: options.method || "POST",
         headers: {
-          ...options.headers,
+          ...normalizeBypassHeaders(options.headers),
           Host: parsedUrl.hostname,
         },
       };
@@ -419,8 +468,17 @@ export async function createBypassRequest(parsedUrl, realIP, options) {
         cleanup();
         reject(err);
       });
-      if (options.body) {
-        req.write(typeof options.body === "string" ? options.body : JSON.stringify(options.body));
+      if (options.body != null) {
+        try {
+          req.write(serializeBypassBody(options.body));
+        } catch (bodyError) {
+          if (!settled) {
+            settled = true;
+            cleanup();
+            reject(bodyError);
+          }
+          return;
+        }
       }
       req.end();
     });
@@ -447,7 +505,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     return originalFetch(vercelRelayUrl, {
       ...fetchInit,
       headers: {
-        ...fetchInit.headers,
+        ...normalizeBypassHeaders(fetchInit.headers),
         "x-relay-target": `${parsed.protocol}//${parsed.host}`,
         "x-relay-path": `${parsed.pathname}${parsed.search}`,
       },

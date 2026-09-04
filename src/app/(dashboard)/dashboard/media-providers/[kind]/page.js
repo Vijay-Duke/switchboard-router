@@ -33,10 +33,8 @@ function MediaProviderCard({ provider, kind, connections, isCustom, onToggle }) 
   const total = providerConns.length;
   const allDisabled = total > 0 && providerConns.every((c) => c.isActive === false);
 
-  const handleToggleClick = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (onToggle) onToggle(provider.id, allDisabled);
+  const handleToggleChange = (next) => {
+    if (onToggle) onToggle(provider.id, next);
   };
 
   const renderStatus = () => {
@@ -82,17 +80,17 @@ function MediaProviderCard({ provider, kind, connections, isCustom, onToggle }) 
             </div>
           </div>
           {total > 0 && (
-            <div
+            <span
               className="shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
-              onClick={handleToggleClick}
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
             >
               <Toggle
                 size="sm"
                 checked={!allDisabled}
-                onChange={() => {}}
+                onChange={handleToggleChange}
                 title={allDisabled ? "Enable provider" : "Disable provider"}
               />
-            </div>
+            </span>
           )}
         </div>
       </Card>
@@ -183,6 +181,7 @@ export default function MediaProviderKindPage() {
   const [showAddCustomEmbedding, setShowAddCustomEmbedding] = useState(false);
   const [origin, setOrigin] = useState("http://127.0.0.1:20128");
   const { copied, copy } = useCopyToClipboard();
+  const [connectionsError, setConnectionsError] = useState(false);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -205,9 +204,13 @@ export default function MediaProviderKindPage() {
   useEffect(() => {
     if (!kindConfig) return;
     fetch("/api/providers", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => setConnections(d.connections || []))
-      .catch(() => {});
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const d = await r.json();
+        setConnections(d.connections || []);
+        setConnectionsError(false);
+      })
+      .catch(() => setConnectionsError(true));
     if (isEmbedding) {
       fetch("/api/provider-nodes", { cache: "no-store" })
         .then((r) => r.json())
@@ -239,18 +242,29 @@ export default function MediaProviderKindPage() {
 
   const handleToggleProvider = async (providerId, newActive) => {
     const providerConns = connections.filter((c) => c.provider === providerId);
+    const prevActive = new Map(providerConns.map((c) => [c.id, c.isActive]));
     setConnections((prev) =>
       prev.map((c) => (c.provider === providerId ? { ...c, isActive: newActive } : c))
     );
-    await Promise.allSettled(
+    const results = await Promise.allSettled(
       providerConns.map((c) =>
-        fetch(`/api/providers/${c.id}`, {
+        fetch(`/api/providers/${encodeURIComponent(c.id)}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ isActive: newActive }),
         })
       )
     );
+    const failed = results.filter((r) => r.status === "rejected" || !r.value.ok).length;
+    if (failed > 0) {
+      // Server kept the old state — put the UI back and say so.
+      setConnections((prev) =>
+        prev.map((c) => (prevActive.has(c.id) ? { ...c, isActive: prevActive.get(c.id) } : c))
+      );
+      reportClientError(
+        `Failed to ${newActive ? "enable" : "disable"} provider (${failed}/${providerConns.length} connections rejected). Reverted.`
+      );
+    }
   };
 
   const handleCreateCombo = async () => {
@@ -277,12 +291,32 @@ export default function MediaProviderKindPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-[17px] font-semibold text-text-main">{kindConfig.label}</h1>
-        <p className="text-xs font-mono text-text-subtle">
-          Media providers · not agent Skills
-        </p>
-      </div>
+      {connectionsError ? (
+        <div role="alert" className="flex flex-col gap-3 border border-red-300 bg-red-500/10 rounded-xl p-4">
+          <p className="text-sm font-medium text-red-600 dark:text-red-400">
+            Couldn&apos;t load provider connections. Check the server and try again.
+          </p>
+          <div>
+            <Button size="sm" variant="outline" onClick={() => {
+              setConnectionsError(false);
+              fetch("/api/providers", { cache: "no-store" })
+                .then(async (r) => {
+                  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                  const d = await r.json();
+                  setConnections(d.connections || []);
+                })
+                .catch(() => setConnectionsError(true));
+            }}>Retry</Button>
+          </div>
+        </div>
+      ) : (
+      <>
+        <div className="flex flex-col gap-1">
+          <h1 className="text-[17px] font-semibold text-text-main">{kindConfig.label}</h1>
+          <p className="text-xs font-mono text-text-subtle">
+            Media providers · not agent Skills
+          </p>
+        </div>
       <MediaKindTabs activeKind={kind} />
 
       {endpointMeta && (
@@ -380,6 +414,8 @@ export default function MediaProviderKindPage() {
             setShowAddCustomEmbedding(false);
           }}
         />
+      )}
+      </>
       )}
     </div>
   );

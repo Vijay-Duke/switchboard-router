@@ -18,6 +18,7 @@ import {
   cleanJSONSchemaForAntigravity
 } from "../formats/gemini.js";
 import { deriveSessionId, toNumericSessionId } from "../../utils/sessionManager.js";
+import { clampSampling } from "../concerns/params.js";
 import { ROLE, GEMINI_ROLE, OPENAI_BLOCK, CLAUDE_BLOCK } from "../schema/index.js";
 
 // Sanitize function names for Gemini API.
@@ -65,8 +66,24 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
   if (body.top_k !== undefined) {
     result.generationConfig.topK = body.top_k;
   }
-  if (body.max_tokens !== undefined) {
-    result.generationConfig.maxOutputTokens = body.max_tokens;
+  const maxTokens = body.max_tokens ?? body.max_completion_tokens ?? body.max_output_tokens;
+  if (maxTokens !== undefined) {
+    result.generationConfig.maxOutputTokens = maxTokens;
+  }
+  if (body.stop !== undefined) {
+    const stops = (Array.isArray(body.stop) ? body.stop : [body.stop])
+      .filter((s) => typeof s === "string" && s);
+    if (stops.length > 0) {
+      result.generationConfig.stopSequences = stops.slice(0, 5);
+    }
+  }
+  if (body.response_format?.type === "json_object") {
+    result.generationConfig.responseMimeType = "application/json";
+  } else if (body.response_format?.type === "json_schema" && body.response_format.json_schema?.schema) {
+    result.generationConfig.responseMimeType = "application/json";
+    result.generationConfig.responseSchema = cleanJSONSchemaForAntigravity(
+      structuredClone(body.response_format.json_schema.schema)
+    );
   }
 
   // Build tool_call_id -> name map
@@ -103,7 +120,7 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
       const content = msg.content;
 
       if (role === ROLE.SYSTEM && body.messages.length > 1) {
-        const text = typeof content === "string" ? content : extractTextContent(content);
+        const text = typeof content === "string" ? content : extractTextContent(content, "\n");
         if (text) {
           // Multiple system/developer messages must accumulate — assigning here
           // dropped every one but the last.
@@ -145,7 +162,10 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
           for (const tc of msg.tool_calls) {
             if (tc.type !== OPENAI_BLOCK.FUNCTION) continue;
 
-            const args = tryParseJSON(tc.function?.arguments || "{}");
+            const args = tryParseJSON(tc.function?.arguments || "{}") ?? {};
+            // `id` is part of the Gemini API FunctionCall/FunctionResponse schema
+            // and pairs the call with its functionResponse.id below (the
+            // post-translate orphan strip keys on it; Vertex strips both).
             parts.push({
               thoughtSignature: signature,
               functionCall: {
@@ -179,19 +199,14 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
                 }
               }
 
-              let resp = toolResponses.get(fid);
-              let parsedResp = tryParseJSON(resp);
-              if (parsedResp === null) {
-                parsedResp = { result: resp ?? "" };
-              } else if (typeof parsedResp !== "object") {
-                parsedResp = { result: parsedResp };
-              }
+              const resp = toolResponses.get(fid);
+              const parsedResp = tryParseJSON(resp);
 
               toolParts.push({
                 functionResponse: {
                   id: fid,
                   name: sanitizeGeminiFunctionName(name),
-                  response: { result: parsedResp }
+                  response: { result: parsedResp === null ? (resp ?? "") : parsedResp }
                 }
               });
             }
@@ -245,6 +260,7 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
   }
 
   result.contents = normalizeGeminiContents(result.contents);
+  clampSampling(result.generationConfig);
   return result;
 }
 
@@ -263,10 +279,13 @@ function mapOpenAIToolChoiceToGemini(choice) {
   return { mode: "AUTO" };
 }
 
-// OpenAI -> Gemini (standard API)
+// OpenAI -> Gemini (standard API). The registry invokes this with credentials
+// as the 4th arg — never forward it as the thought signature. Vertex calls
+// openaiToGeminiBase directly with its own signature string.
 export function openaiToGeminiRequest(model, body, stream) {
   return openaiToGeminiBase(model, body, stream);
 }
+export { openaiToGeminiBase };
 
 // OpenAI -> Gemini CLI (Cloud Code Assist)
 export function openaiToGeminiCLIRequest(model, body, stream) {
@@ -361,7 +380,7 @@ function wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentials = nu
       sessionId: toNumericSessionId(credentials?._clientSessionId) || deriveSessionId(credentials?.email || credentials?.connectionId),
       contents: [],
       generationConfig: {
-        temperature: claudeRequest.temperature || 1,
+        temperature: claudeRequest.temperature ?? 1,
         maxOutputTokens: claudeRequest.max_tokens || 4096
       }
     }
@@ -445,8 +464,11 @@ function wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentials = nu
     }
     if (functionDeclarations.length > 0) {
       envelope.request.tools = [{ functionDeclarations }];
+      // Preserve the client's tool_choice (carried as Claude-shaped tool_choice
+      // on claudeRequest); default to VALIDATED only when unset — mirrors the
+      // OpenAI→Gemini path above.
       envelope.request.toolConfig = {
-        functionCallingConfig: { mode: "VALIDATED" }
+        functionCallingConfig: mapClaudeToolChoiceToGemini(claudeRequest.tool_choice),
       };
     }
   }
@@ -479,10 +501,22 @@ function wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentials = nu
   return envelope;
 }
 
-// Detect if model should use Claude backend in Antigravity
-// Claude models have specific ID patterns — more reliable than caps at routing level
+// Detect if model should use Claude backend in Antigravity.
+// Antigravity Claude models are `claude-*` prefixed (e.g. claude-sonnet-4-6);
+// a substring match would misroute a Gemini/finetune id that merely contains
+// "claude" elsewhere.
 function isClaudeModel(model) {
-  return model.toLowerCase().includes("claude");
+  return /^(claude|anthropic)[-/]/i.test(String(model || ""));
+}
+
+function mapClaudeToolChoiceToGemini(choice) {
+  if (choice?.type === "none") return { mode: "NONE" };
+  if (choice?.type === "auto") return { mode: "AUTO" };
+  if (choice?.type === "any") return { mode: "ANY" };
+  if (choice?.type === "tool" && choice.name) {
+    return { mode: "ANY", allowedFunctionNames: [sanitizeGeminiFunctionName(choice.name)] };
+  }
+  return { mode: "VALIDATED" };
 }
 
 // OpenAI -> Antigravity (Sandbox Cloud Code with wrapper)

@@ -9,6 +9,8 @@ import { getSettings } from "@/lib/db/index.js";
 import { PROVIDER_MODELS } from "@/shared/constants/models";
 import { GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS } from "open-sse/config/runtimeConfig.js";
 import { initTranslators } from "open-sse/translator/index.js";
+import { getRequestTranslator } from "open-sse/translator/registry.js";
+import { FORMATS } from "open-sse/translator/formats.js";
 import { authorizeClientKeyRequest, runWithClientKeyLease } from "@/sse/services/clientKeyPolicy.js";
 import { withConnectionInFlight } from "@/sse/services/connectionInFlight.js";
 import { corsPreflightResponse } from "@/shared/utils/cors.js";
@@ -57,6 +59,10 @@ export async function POST(request, { params }) {
 
     let model;
     let action; // ":generateContent" | ":streamGenerateContent"
+
+    if (path.length !== 1 && path.length !== 2) {
+      return Response.json({ error: { message: "Invalid model path", code: 404 } }, { status: 404 });
+    }
 
     if (path.length >= 2) {
       // Format: /v1beta/models/provider/model:generateContent
@@ -129,7 +135,7 @@ export async function POST(request, { params }) {
   } catch (error) {
     console.log("Error handling Gemini request:", error);
     return Response.json(
-      { error: { message: error.message, code: 500 } },
+      { error: { message: "Failed to handle Gemini request", code: 500 } },
       { status: 500 }
     );
   }
@@ -398,40 +404,17 @@ async function forwardGeminiNativeRequest(request, body, model, action) {
 /**
  * Convert Gemini request format to OpenAI/internal format.
  *
+ * Delegates to the registered gemini->openai request translator so this route
+ * shares one converter with the engine: stable functionCall ids, co-located
+ * functionResponse splitting, tools/functionDeclarations, toolConfig ->
+ * tool_choice, and thinkingConfig -> reasoning_effort.
+ *
  * @param {object} geminiBody  - parsed Gemini request body
  * @param {string} model       - resolved model string (e.g. "gemini-pro-high")
  * @param {boolean} stream     - whether to stream (from URL action)
  */
-function convertGeminiToInternal(geminiBody, model, stream) {
-  const messages = [];
-
-  // Convert system instruction
-  if (geminiBody.systemInstruction) {
-    const systemText = geminiBody.systemInstruction.parts
-      ?.map(p => p.text)
-      .join("\n") || "";
-    if (systemText) {
-      messages.push({ role: "system", content: systemText });
-    }
-  }
-
-  // Convert contents to messages
-  if (geminiBody.contents) {
-    for (const content of geminiBody.contents) {
-      const role = content.role === "model" ? "assistant" : "user";
-      const text = content.parts?.map(p => p.text).join("\n") || "";
-      messages.push({ role, content: text });
-    }
-  }
-
-  return {
-    model,
-    messages,
-    stream,
-    max_tokens: geminiBody.generationConfig?.maxOutputTokens,
-    temperature: geminiBody.generationConfig?.temperature,
-    top_p: geminiBody.generationConfig?.topP,
-  };
+export function convertGeminiToInternal(geminiBody, model, stream) {
+  return getRequestTranslator(FORMATS.GEMINI, FORMATS.OPENAI)(model, geminiBody, stream);
 }
 
 /** Map OpenAI finish_reason => Gemini finishReason */

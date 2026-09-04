@@ -157,7 +157,12 @@ async function runFirecrawl({ url, fmt, timeoutMs, apiKey, maxCharacters, costPe
 }
 
 async function runJina({ url, fmt, timeoutMs, apiKey, maxCharacters, costPerQuery, startedAt, abortSignal }) {
-  const target = `https://r.jina.ai/${encodeURIComponent(url)}`;
+  // The Reader router expects the raw `https://...` path form — never encode
+  // the whole target (the scheme would become `https%3A%2F%2F` and 404).
+  if (!/^https?:\/\//i.test(url)) {
+    return { success: false, status: 400, error: "jina-reader requires an http(s) URL" };
+  }
+  const target = `https://r.jina.ai/${url}`;
   const upstreamStart = Date.now();
   const r = await tryFetch(target, {
     method: "GET",

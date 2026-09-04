@@ -133,7 +133,7 @@ const writeAgentModels = async (agentDir, models, baseUrl, apiKey) => {
   if (!existing.providers) existing.providers = {};
   existing.providers["switchboard"] = {
     baseUrl,
-    apiKey: apiKey || "your_api_key",
+    apiKey: apiKey || "sk_switchboard",
     api: "openai-completions",
     models: normalizeModelIds(models).map((model) => ({ id: model, name: model.split("/").pop() || model })),
   };
@@ -246,7 +246,7 @@ export async function POST(request) {
     // Update models.providers.switchboard with all models
     settings.models.providers["switchboard"] = {
       baseUrl: normalizedBaseUrl,
-      apiKey: apiKey || "your_api_key",
+      apiKey: apiKey || "sk_switchboard",
       api: "openai-completions",
       models: [...allModelIds].map((m) => ({ id: m, name: m.split("/").pop() || m })),
     };

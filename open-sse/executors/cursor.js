@@ -128,6 +128,23 @@ function readCursorFrame(buffer, offset, frameNum, tag) {
   return { status: "ok", payload, offset: newOffset };
 }
 
+const CURSOR_RATE_LIMIT_MESSAGE = /rate.?limit|rate_limited|resource_exhausted|quota|too many requests|throttl|capacity|overloaded|\b429\b/i;
+
+/**
+ * Classify a protobuf-decoded Cursor error string. Rate/quota/throttle signals
+ * map to 429 (account rotation + cooldown); everything else (auth, ToS, bans,
+ * malformed requests) maps to 400 so it fails fast instead of benching every
+ * account with a bogus rate-limit cooldown. Mirrors createErrorResponse.
+ * @param {string} message - Decoded upstream error text
+ * @returns {{ status: number, type: string, code: string }}
+ */
+export function classifyCursorError(message) {
+  if (CURSOR_RATE_LIMIT_MESSAGE.test(String(message || ""))) {
+    return { status: HTTP_STATUS.RATE_LIMITED, type: "rate_limit_error", code: "rate_limited" };
+  }
+  return { status: HTTP_STATUS.BAD_REQUEST, type: "api_error", code: "upstream_error" };
+}
+
 function createErrorResponse(jsonError) {
   const errorMsg = jsonError?.error?.details?.[0]?.debug?.details?.title
     || jsonError?.error?.details?.[0]?.debug?.details?.detail
@@ -360,16 +377,17 @@ export class CursorExecutor extends BaseExecutor {
         if (hasContent) {
           break;
         }
+        const classified = classifyCursorError(result.error);
         return new Response(
           JSON.stringify({
             error: {
               message: result.error,
-              type: "rate_limit_error",
-              code: "rate_limited"
+              type: classified.type,
+              code: classified.code
             }
           }),
           {
-            status: HTTP_STATUS.RATE_LIMITED,
+            status: classified.status,
             headers: { "Content-Type": "application/json" }
           }
         );
@@ -527,16 +545,17 @@ export class CursorExecutor extends BaseExecutor {
         if (hasContent) {
           break;
         }
+        const classified = classifyCursorError(result.error);
         return new Response(
           JSON.stringify({
             error: {
               message: result.error,
-              type: "rate_limit_error",
-              code: "rate_limited"
+              type: classified.type,
+              code: classified.code
             }
           }),
           {
-            status: HTTP_STATUS.RATE_LIMITED,
+            status: classified.status,
             headers: { "Content-Type": "application/json" }
           }
         );

@@ -22,16 +22,16 @@ const moduleDefault = {
     if (body.image) req.image_url = body.image;
     return req;
   },
-  async parseResponse(response, { headers }) {
+  async parseResponse(response, { headers, proxyOptions }) {
     const { status_url, response_url } = await response.json();
     const deadline = Date.now() + POLL_TIMEOUT_MS;
     while (Date.now() < deadline) {
       await sleep(POLL_INTERVAL_MS);
-      const r = await proxyAwareFetch(status_url, { headers, ...TRANSPORT });
+      const r = await proxyAwareFetch(status_url, { headers, ...TRANSPORT }, proxyOptions);
       if (!r.ok) throw new Error(`Fal status ${r.status}`);
       const s = await r.json();
       if (s.status === "COMPLETED") {
-        const fr = await proxyAwareFetch(response_url, { headers, ...TRANSPORT });
+        const fr = await proxyAwareFetch(response_url, { headers, ...TRANSPORT }, proxyOptions);
         return await fr.json();
       }
       if (s.status === "FAILED") throw new Error(s.error || "Fal generation failed");
@@ -42,7 +42,12 @@ const moduleDefault = {
     const images = Array.isArray(responseBody.images)
       ? responseBody.images
       : (responseBody.image ? [responseBody.image] : []);
-    return { created: nowSec(), data: images.map((img) => ({ url: img.url || img })) };
+    // Unexpected payload shapes (object without .url) are dropped, not
+    // forwarded as `url: <object>`.
+    const data = images
+      .map((img) => (typeof img === "string" ? { url: img } : (img?.url ? { url: img.url } : null)))
+      .filter(Boolean);
+    return { created: nowSec(), data };
   },
 };
 

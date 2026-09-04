@@ -322,6 +322,12 @@ export async function POST(request) {
     if (!baseUrl || !apiKey) {
       return NextResponse.json({ error: "baseUrl and apiKey are required" }, { status: 400 });
     }
+    try {
+      const parsedBaseUrl = new URL(baseUrl);
+      if (!["http:", "https:"].includes(parsedBaseUrl.protocol)) throw new Error("unsupported protocol");
+    } catch {
+      return NextResponse.json({ error: "baseUrl must be a valid HTTP(S) URL" }, { status: 400 });
+    }
     const modelsArray = Array.isArray(models) ? models.filter((m) => typeof m === "string" && m.trim()) : [];
     if (modelsArray.length === 0) {
       return NextResponse.json({ error: "At least one model is required" }, { status: 400 });
@@ -344,7 +350,7 @@ export async function POST(request) {
     const newConfig = {
       ...SECURITY_RELAX,
       inferenceProvider: PROVIDER,
-      inferenceGatewayBaseUrl: baseUrl,
+      inferenceGatewayBaseUrl: baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`,
       inferenceGatewayApiKey: apiKey,
       inferenceModels: modelsArray.map((name) => ({ name })),
     };

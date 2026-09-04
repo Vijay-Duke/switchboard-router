@@ -52,7 +52,17 @@ function extrasProxyArgs({ codeAware, kompress } = {}) {
   return args;
 }
 
-export async function startHeadroomProxy({ port = DEFAULT_PORT, codeAware = false, kompress = true } = {}) {
+// Serialized: concurrent callers await the same run (same pattern as
+// installInFlight in src/lib/pxpipe/install.js).
+let startInFlight = null;
+
+export function startHeadroomProxy(opts = {}) {
+  if (startInFlight) return startInFlight;
+  startInFlight = runStartHeadroomProxy(opts).finally(() => { startInFlight = null; });
+  return startInFlight;
+}
+
+async function runStartHeadroomProxy({ port = DEFAULT_PORT, codeAware = false, kompress = true, startupTimeoutMs = STARTUP_TIMEOUT_MS } = {}) {
   const safePort = Number(port) > 0 && Number(port) < 65536 ? Number(port) : DEFAULT_PORT;
   const binary = findHeadroomBinary();
   if (!binary) {
@@ -86,25 +96,47 @@ export async function startHeadroomProxy({ port = DEFAULT_PORT, codeAware = fals
   child.unref();
   writePid(child.pid);
 
-  // Wait until the process either stays alive briefly (success) or exits fast (failure).
-  await new Promise((resolve, reject) => {
-    const startupTimer = setTimeout(() => {
-      if (isPidAlive(child.pid)) resolve();
-      else reject(new Error("headroom proxy exited during startup — see proxy.log"));
-    }, STARTUP_TIMEOUT_MS);
+  // Tracks whether the early-exit handler already closed our fd copy, so the
+  // success path below never double-closes it (EBADF).
+  let fdClosed = false;
+  const closeOutFd = () => {
+    if (fdClosed) return;
+    fdClosed = true;
+    try { fs.closeSync(outFd); } catch { /* already closed */ }
+  };
 
-    child.once("exit", (code) => {
-      clearTimeout(startupTimer);
-      clearPid();
-      fs.closeSync(outFd);
-      const e = new Error(`headroom proxy exited early (code=${code}) — see proxy.log`);
-      e.code = "EARLY_EXIT";
-      reject(e);
-    });
+  // Wait until the process either stays alive briefly (success) or exits fast (failure).
+  let startupTimer = null;
+  let rejectStartup = null;
+  const onEarlyExit = (code) => {
+    if (startupTimer) clearTimeout(startupTimer);
+    // Only clear the pid file when it still points at this child — a
+    // successor proxy may have rewritten it by the time we exit.
+    try { if (readPid() === child.pid) clearPid(); } catch { /* ignore */ }
+    closeOutFd();
+    const e = new Error(`headroom proxy exited early (code=${code}) — see proxy.log`);
+    e.code = "EARLY_EXIT";
+    rejectStartup?.(e);
+  };
+
+  await new Promise((resolve, reject) => {
+    rejectStartup = reject;
+    startupTimer = setTimeout(() => {
+      // Success: detach the stale listener so a later exit of this child
+      // can neither double-close the fd nor clobber a successor's pid file.
+      child.removeListener("exit", onEarlyExit);
+      if (isPidAlive(child.pid)) resolve();
+      else {
+        closeOutFd();
+        reject(new Error("headroom proxy exited during startup — see proxy.log"));
+      }
+    }, startupTimeoutMs);
+
+    child.once("exit", onEarlyExit);
   });
 
   // Close parent's copy of the fd; child retains its own after unref.
-  fs.closeSync(outFd);
+  closeOutFd();
 
   return { pid: child.pid, alreadyRunning: false };
 }

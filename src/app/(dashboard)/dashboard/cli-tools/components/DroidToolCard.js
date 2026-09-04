@@ -5,6 +5,7 @@ import { useState, useEffect, useRef } from "react";
 import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
+import { cardHeaderToggleProps } from "./cardHeaderToggle";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import { reportClientError } from "@/shared/utils/clientFeedback";
@@ -83,10 +84,11 @@ export default function DroidToolCard({
   useEffect(() => {
     if (droidStatus?.installed && !hasInitializedModel.current) {
       hasInitializedModel.current = true;
-      const existingModels = (droidStatus.settings?.customModels || [])
+      const existingModels = [...new Set((droidStatus.settings?.customModels || [])
         .filter(m => m.id?.startsWith("custom:Switchboard"))
         .sort((a, b) => (a.index || 0) - (b.index || 0))
-        .map(m => m.model);
+        .map(m => (typeof m.model === "string" ? m.model.trim() : ""))
+        .filter(Boolean))];
       if (existingModels.length > 0) {
         setModelList(existingModels);
       } else {
@@ -130,11 +132,9 @@ export default function DroidToolCard({
   };
 
   const removeModel = (id) => setModelList((prev) => prev.filter((m) => m !== id));
-
   const handleModelSelect = (model) => {
     if (!model.value || modelList.includes(model.value)) return;
     setModelList((prev) => [...prev, model.value]);
-    setModalOpen(false);
   };
 
   const handleApplySettings = async () => {
@@ -224,7 +224,7 @@ export default function DroidToolCard({
 
   return (
     <Card padding="xs" className="overflow-hidden">
-      <div className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center" onClick={onToggle}>
+      <div {...cardHeaderToggleProps(onToggle, isExpanded, tool.name)} className="flex items-start justify-between gap-3 hover:cursor-pointer sm:items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 rounded-lg">
         <div className="flex min-w-0 items-center gap-3">
           <div className="size-8 flex items-center justify-center shrink-0">
             <Image src="/providers/droid.png" alt={tool.name} width={32} height={32} className="size-8 object-contain rounded-lg" sizes="32px" onError={(e) => { e.target.style.display = "none"; }} />
@@ -297,6 +297,7 @@ export default function DroidToolCard({
                   <BaseUrlSelect
                     value={customBaseUrl || getDisplayUrl()}
                     onChange={setCustomBaseUrl}
+                    initialUrl={droidStatus?.settings?.customModels?.find((m) => m.id?.startsWith("custom:Switchboard"))?.baseUrl || ""}
                     requiresExternalUrl={tool.requiresExternalUrl}
                     tunnelEnabled={tunnelEnabled}
                     tunnelPublicUrl={tunnelPublicUrl}
@@ -395,10 +396,13 @@ export default function DroidToolCard({
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         onSelect={handleModelSelect}
+        onDeselect={(model) => removeModel(model.value)}
         selectedModel={null}
         activeProviders={activeProviders}
         modelAliases={modelAliases}
-        title="Select Model for Factory Droid"
+        addedModelValues={modelList}
+        closeOnSelect={false}
+        title="Add Models for Factory Droid"
       />
 
       <ManualConfigModal

@@ -71,6 +71,12 @@ function findInvalidAccountScheduler(providerStrategies) {
   return null;
 }
 
+// [settingKey, inclusive upper bound]; lower bound is always 1.
+const STICKY_LIMIT_BOUNDS = [
+  ["stickyRoundRobinLimit", 32],
+  ["comboStickyRoundRobinLimit", 100],
+];
+
 const SETTINGS_RESPONSE_HEADERS = {
   "Cache-Control": "no-store",
 };
@@ -191,6 +197,19 @@ export async function PATCH(request) {
           { status: 400, headers: SETTINGS_RESPONSE_HEADERS }
         );
       }
+    }
+
+    // Sticky limits are bounded: the dashboard's max attributes are UI-only.
+    for (const [key, max] of STICKY_LIMIT_BOUNDS) {
+      if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
+      const value = Number(body[key]);
+      if (!Number.isFinite(value)) {
+        return NextResponse.json(
+          { error: `${key} must be a number from 1 to ${max}.` },
+          { status: 400, headers: SETTINGS_RESPONSE_HEADERS }
+        );
+      }
+      body[key] = Math.min(max, Math.max(1, Math.round(value)));
     }
 
     if (Object.prototype.hasOwnProperty.call(body, "providerStrategies")) {

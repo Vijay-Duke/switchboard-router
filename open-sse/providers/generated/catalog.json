@@ -1,17 +1,5 @@
 {
   "capabilities": {
-    "DeepSeek-V4-Flash": {
-      "contextWindow": 32768,
-      "maxOutput": 32768,
-      "reasoning": true,
-      "tools": true
-    },
-    "Kimi-K2.6": {
-      "contextWindow": 32768,
-      "maxOutput": 32768,
-      "reasoning": true,
-      "tools": true
-    },
     "MiniMax-M2.1": {
       "contextWindow": 196608,
       "maxOutput": 16384
@@ -24,13 +12,14 @@
     },
     "MiniMax-M2.7": {
       "contextWindow": 196608,
-      "maxOutput": 131072,
+      "maxOutput": 196608,
       "reasoning": true,
-      "tools": true
+      "tools": true,
+      "vision": false
     },
     "MiniMax-M3": {
-      "contextWindow": 1000000,
-      "maxOutput": 128000,
+      "contextWindow": 524288,
+      "maxOutput": 524288,
       "reasoning": true,
       "tools": true,
       "vision": true
@@ -163,7 +152,7 @@
     },
     "claude-sonnet-4-6": {
       "contextWindow": 1000000,
-      "maxOutput": 64000,
+      "maxOutput": 128000,
       "pdf": true,
       "reasoning": true,
       "tools": true,
@@ -249,13 +238,15 @@
     },
     "deepseek-v4-flash": {
       "contextWindow": 1000000,
-      "maxOutput": 8192,
+      "maxOutput": 393216,
+      "reasoning": true,
       "tools": true,
       "vision": false
     },
     "deepseek-v4-pro": {
       "contextWindow": 1000000,
-      "maxOutput": 8192,
+      "maxOutput": 393216,
+      "reasoning": true,
       "tools": true,
       "vision": false
     },
@@ -272,13 +263,15 @@
     },
     "deepseek/deepseek-v4-flash": {
       "contextWindow": 1000000,
-      "maxOutput": 8192,
+      "maxOutput": 393216,
+      "reasoning": true,
       "tools": true,
       "vision": false
     },
     "deepseek/deepseek-v4-pro": {
       "contextWindow": 1000000,
-      "maxOutput": 8192,
+      "maxOutput": 393216,
+      "reasoning": true,
       "tools": true,
       "vision": false
     },
@@ -433,6 +426,7 @@
     "gemma-4-31b-it": {
       "contextWindow": 262144,
       "maxOutput": 262144,
+      "reasoning": true,
       "tools": true,
       "vision": true
     },
@@ -455,10 +449,11 @@
       "tools": true
     },
     "glm-4.6": {
-      "contextWindow": 204800,
-      "maxOutput": 131072,
+      "contextWindow": 202752,
+      "maxOutput": 202752,
       "reasoning": true,
-      "tools": true
+      "tools": true,
+      "vision": false
     },
     "glm-4.6v": {
       "contextWindow": 131072,
@@ -468,10 +463,11 @@
       "vision": true
     },
     "glm-4.7": {
-      "contextWindow": 204800,
-      "maxOutput": 131072,
+      "contextWindow": 202752,
+      "maxOutput": 202752,
       "reasoning": true,
-      "tools": true
+      "tools": true,
+      "vision": false
     },
     "glm-4.7-flash": {
       "contextWindow": 131072,
@@ -481,13 +477,14 @@
     },
     "glm-5": {
       "contextWindow": 202752,
-      "maxOutput": 128000,
+      "maxOutput": 202752,
       "reasoning": true,
-      "tools": true
+      "tools": true,
+      "vision": false
     },
     "glm-5.1": {
-      "contextWindow": 202752,
-      "maxOutput": 65535,
+      "contextWindow": 202745,
+      "maxOutput": 131072,
       "reasoning": true,
       "tools": true
     },
@@ -496,6 +493,20 @@
       "maxOutput": 262144,
       "reasoning": true,
       "tools": true
+    },
+    "glm-5.3": {
+      "contextWindow": 1048576,
+      "maxOutput": 1048576,
+      "reasoning": true,
+      "tools": true,
+      "vision": false
+    },
+    "glm-5v-turbo": {
+      "contextWindow": 204800,
+      "maxOutput": 131072,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
     },
     "gpt-3.5-turbo": {
       "contextWindow": 16385,
@@ -665,7 +676,7 @@
       "vision": true
     },
     "gpt-5.4-mini": {
-      "contextWindow": 1050000,
+      "contextWindow": 272000,
       "maxOutput": 128000,
       "pdf": true,
       "reasoning": true,
@@ -674,7 +685,7 @@
       "vision": true
     },
     "gpt-5.4-nano": {
-      "contextWindow": 1050000,
+      "contextWindow": 272000,
       "maxOutput": 128000,
       "pdf": true,
       "reasoning": true,
@@ -739,8 +750,16 @@
       "tools": true
     },
     "grok-4.3": {
-      "contextWindow": 1000000,
-      "maxOutput": 1000000,
+      "contextWindow": 200000,
+      "maxOutput": 200000,
+      "reasoning": true,
+      "search": true,
+      "tools": true,
+      "vision": true
+    },
+    "grok-4.5": {
+      "contextWindow": 500000,
+      "maxOutput": 500000,
       "reasoning": true,
       "search": true,
       "tools": true,
@@ -806,7 +825,7 @@
       "tools": true
     },
     "llama-3.3-70b-versatile": {
-      "contextWindow": 128000,
+      "contextWindow": 131072,
       "maxOutput": 32768,
       "tools": true
     },
@@ -823,45 +842,18 @@
       "tools": true
     },
     "mimo-v2.5": {
-      "audioInput": true,
-      "contextWindow": 1048576,
-      "maxOutput": 131072,
+      "contextWindow": 262144,
+      "maxOutput": 262144,
       "reasoning": true,
       "tools": true,
-      "videoInput": true,
       "vision": true
     },
     "mimo-v2.5-pro": {
       "contextWindow": 1048576,
-      "maxOutput": 16384,
+      "maxOutput": 1048576,
       "reasoning": true,
       "tools": true,
       "vision": false
-    },
-    "minimax-m2.1": {
-      "contextWindow": 204800,
-      "maxOutput": 131072,
-      "tools": true
-    },
-    "minimax-m2.5": {
-      "contextWindow": 196608,
-      "maxOutput": 65536,
-      "reasoning": true,
-      "tools": true,
-      "vision": false
-    },
-    "minimax-m2.7": {
-      "contextWindow": 1000192,
-      "maxOutput": 1000192,
-      "reasoning": false,
-      "tools": true
-    },
-    "minimax-m3": {
-      "contextWindow": 512000,
-      "maxOutput": 512000,
-      "reasoning": true,
-      "tools": true,
-      "vision": true
     },
     "mistral-large-latest": {
       "contextWindow": 32000,
@@ -956,6 +948,12 @@
       "reasoning": true,
       "tools": true
     },
+    "qwen3-coder-next": {
+      "contextWindow": 262144,
+      "maxOutput": 65536,
+      "tools": true,
+      "vision": false
+    },
     "qwen3-coder-plus": {
       "contextWindow": 997952,
       "maxOutput": 65536,
@@ -1001,6 +999,19 @@
       "tools": true,
       "vision": true
     },
+    "qwen3.7-max": {
+      "contextWindow": 991808,
+      "maxOutput": 65536,
+      "reasoning": true,
+      "tools": true
+    },
+    "qwen3.7-plus": {
+      "contextWindow": 991808,
+      "maxOutput": 65536,
+      "reasoning": true,
+      "tools": true,
+      "vision": true
+    },
     "recraftv2": {
       "imageOutput": true
     },
@@ -1039,19 +1050,9 @@
       "tools": true
     }
   },
-  "fetchedAt": "2026-07-12T11:43:33.429Z",
+  "fetchedAt": "2026-09-03T12:18:07.124Z",
   "note": "GENERATED FILE — regenerate with `npm run catalog:refresh`. Do not hand-edit.",
   "pricing": {
-    "DeepSeek-V4-Flash": {
-      "cached": 0,
-      "input": 0.14,
-      "output": 0.28
-    },
-    "Kimi-K2.6": {
-      "cached": 0,
-      "input": 0.96,
-      "output": 4
-    },
     "MiniMax-M2.1": {
       "input": 0.3,
       "output": 1.2
@@ -1061,13 +1062,14 @@
       "output": 1.2
     },
     "MiniMax-M2.7": {
-      "input": 0.6,
-      "output": 2.4
+      "cached": 0.05,
+      "input": 0.25,
+      "output": 1
     },
     "MiniMax-M3": {
-      "cached": 0.06,
-      "input": 0.3,
-      "output": 1.2
+      "cached": 0.056,
+      "input": 0.28,
+      "output": 1.1
     },
     "claude-3-5-sonnet-20241022": {
       "cache_creation": 3.75,
@@ -1235,15 +1237,15 @@
     },
     "deepseek-v4-flash": {
       "cache_creation": 0,
-      "cached": 0.0028,
-      "input": 0.14,
-      "output": 0.28
+      "cached": 0.014,
+      "input": 0.44,
+      "output": 1.32
     },
     "deepseek-v4-pro": {
       "cache_creation": 0,
-      "cached": 0.003625,
-      "input": 0.435,
-      "output": 0.87
+      "cached": 0.044,
+      "input": 1.32,
+      "output": 3.96
     },
     "deepseek/deepseek-chat": {
       "cache_creation": 0,
@@ -1258,15 +1260,15 @@
     },
     "deepseek/deepseek-v4-flash": {
       "cache_creation": 0,
-      "cached": 0.0028,
-      "input": 0.14,
-      "output": 0.28
+      "cached": 0.014,
+      "input": 0.44,
+      "output": 1.32
     },
     "deepseek/deepseek-v4-pro": {
       "cache_creation": 0,
-      "cached": 0.003625,
-      "input": 0.435,
-      "output": 0.87
+      "cached": 0.044,
+      "input": 1.32,
+      "output": 3.96
     },
     "flux-kontext-max": {
       "input": 0.08,
@@ -1306,8 +1308,8 @@
     },
     "gemini-2.5-pro-preview-tts": {
       "cached": 0.125,
-      "input": 1.25,
-      "output": 10
+      "input": 1,
+      "output": 20
     },
     "gemini-3-flash-preview": {
       "cached": 0.05,
@@ -1344,14 +1346,15 @@
       "output": 12
     },
     "gemma-4-31b-it": {
-      "input": 0.15,
-      "output": 0.4
+      "input": 0.13,
+      "output": 0.38
     },
     "glm-4-7-251222": {
       "input": 0,
       "output": 0
     },
     "glm-4.5-air": {
+      "cached": 0.025,
       "input": 0.13,
       "output": 0.85
     },
@@ -1377,15 +1380,24 @@
       "output": 3.15
     },
     "glm-5.1": {
-      "cache_creation": 0,
-      "cached": 0.525,
-      "input": 1.05,
-      "output": 3.5
+      "cached": 0.26,
+      "input": 1.4,
+      "output": 4.4
     },
     "glm-5.2": {
       "cached": 0.26,
       "input": 1.4,
       "output": 4.4
+    },
+    "glm-5.3": {
+      "cached": 0.234,
+      "input": 1.26,
+      "output": 3.96
+    },
+    "glm-5v-turbo": {
+      "cached": 0.24,
+      "input": 1.2,
+      "output": 4
     },
     "gpt-3.5-turbo": {
       "input": 0.5,
@@ -1534,6 +1546,11 @@
       "input": 1.25,
       "output": 2.5
     },
+    "grok-4.5": {
+      "cached": 0.3,
+      "input": 2,
+      "output": 6
+    },
     "grok-code-fast-1": {
       "input": 0.2,
       "output": 1.5
@@ -1585,40 +1602,19 @@
       "output": 0.78
     },
     "mimo-v2-flash": {
-      "cached": 0.02,
-      "input": 0.1,
-      "output": 0.3
+      "cached": 0.024,
+      "input": 0.11,
+      "output": 0.33
     },
     "mimo-v2.5": {
-      "cache_creation": 0,
       "cached": 0.08,
       "input": 0.4,
       "output": 2
     },
     "mimo-v2.5-pro": {
-      "cache_creation": 0,
       "cached": 0.2,
       "input": 1,
       "output": 3
-    },
-    "minimax-m2.1": {
-      "cached": 0.03,
-      "input": 0.3,
-      "output": 1.2
-    },
-    "minimax-m2.5": {
-      "cached": 0.15,
-      "input": 0.3,
-      "output": 1.1
-    },
-    "minimax-m2.7": {
-      "input": 0.255,
-      "output": 0.55
-    },
-    "minimax-m3": {
-      "cached": 0.06,
-      "input": 0.3,
-      "output": 1.2
     },
     "mistral-embed": {
       "input": 0.1,
@@ -1629,6 +1625,7 @@
       "output": 24
     },
     "mistral-medium-latest": {
+      "cached": 0.15,
       "input": 1.5,
       "output": 7.5
     },
@@ -1674,24 +1671,39 @@
       "output": 2.9
     },
     "qwen3-32b": {
-      "input": 0.1,
+      "input": 0.08,
       "output": 0.28
     },
     "qwen3-coder-480b-a35b-instruct-turbo": {
-      "input": 0.29,
-      "output": 1.2
+      "cached": 0.1,
+      "input": 0.3,
+      "output": 1
+    },
+    "qwen3-coder-next": {
+      "input": 0.2,
+      "output": 1.5
     },
     "qwen3-coder-plus": {
       "input": 1,
       "output": 5
     },
     "qwen3-max": {
-      "input": 2.11,
-      "output": 8.45
+      "cached": 0.24,
+      "input": 1.2,
+      "output": 6
     },
     "qwen3.6-plus": {
       "input": 0.325,
       "output": 1.95
+    },
+    "qwen3.7-max": {
+      "cached": 0.5,
+      "input": 2.5,
+      "output": 7.5
+    },
+    "qwen3.7-plus": {
+      "input": 0.32,
+      "output": 1.28
     },
     "sonar": {
       "input": 1,

@@ -50,9 +50,15 @@ export function hasValuableContent(chunk, format) {
   // OpenAI format
   if (format === FORMATS.OPENAI && chunk.choices?.[0]?.delta) {
     const delta = chunk.choices[0].delta;
-    return delta.content && delta.content !== "" ||
+    // Content can be a string or a content-block array (image_url parts).
+    const hasContent = typeof delta.content === "string"
+      ? delta.content !== ""
+      : Array.isArray(delta.content) && delta.content.length > 0;
+    return hasContent ||
            delta.reasoning_content && delta.reasoning_content !== "" ||
+           delta.reasoning && delta.reasoning !== "" ||
            delta.tool_calls && delta.tool_calls.length > 0 ||
+           delta.images && delta.images.length > 0 ||
            chunk.choices[0].finish_reason ||
            delta.role;
   }

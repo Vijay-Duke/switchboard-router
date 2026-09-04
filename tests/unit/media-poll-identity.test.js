@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const proxyAwareFetch = vi.hoisted(() => vi.fn());
-vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch }));
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch, proxyOptionsFromCredentials: () => null }));
 
 import blackForestLabs from "../../open-sse/handlers/imageProviders/blackForestLabs.js";
 import falAi from "../../open-sse/handlers/imageProviders/falAi.js";
@@ -19,6 +19,7 @@ async function completePoll(parseResponse, submitResponse, pollResponses) {
   proxyAwareFetch.mockImplementation(async () => pollResponses.shift());
   const pending = parseResponse(submitResponse, {
     headers: { Authorization: "Bearer key", "x-key": "key" },
+    proxyOptions: null,
   });
   await vi.advanceTimersByTimeAsync(1500);
   return pending;
@@ -33,7 +34,7 @@ describe("authenticated image polling identity", () => {
     );
     expect(proxyAwareFetch).toHaveBeenCalledWith(expect.stringContaining("api.bfl.ai"), expect.objectContaining({
       identity: "openai-node", provider: "black-forest-labs", format: "openai",
-    }));
+    }), null);
   });
 
   it("applies the Fal registry profile to status and response fetches", async () => {
@@ -44,10 +45,10 @@ describe("authenticated image polling identity", () => {
     );
     expect(proxyAwareFetch).toHaveBeenNthCalledWith(1, expect.any(String), expect.objectContaining({
       identity: "openai-node", provider: "fal-ai", format: "openai",
-    }));
+    }), null);
     expect(proxyAwareFetch).toHaveBeenNthCalledWith(2, expect.any(String), expect.objectContaining({
       identity: "openai-node", provider: "fal-ai", format: "openai",
-    }));
+    }), null);
   });
 
   it("applies the NanoBanana registry profile to polling", async () => {
@@ -58,7 +59,7 @@ describe("authenticated image polling identity", () => {
     );
     expect(proxyAwareFetch).toHaveBeenCalledWith(expect.stringContaining("record-info"), expect.objectContaining({
       identity: "openai-node", provider: "nanobanana", format: "openai",
-    }));
+    }), null);
   });
 
   it("applies the Runway registry profile to polling", async () => {
@@ -69,6 +70,6 @@ describe("authenticated image polling identity", () => {
     );
     expect(proxyAwareFetch).toHaveBeenCalledWith(expect.stringContaining("/tasks/task-1"), expect.objectContaining({
       identity: "openai-node", provider: "runwayml", format: "openai",
-    }));
+    }), null);
   });
 });

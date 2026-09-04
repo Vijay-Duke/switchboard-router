@@ -43,8 +43,13 @@ export default function EndpointPageClient({ initialData }) {
         try {
           await fetchJson("/api/keys", {
             method: "POST",
-            body: JSON.stringify({ name: "Default Key" }),
+            body: JSON.stringify({ name: "Default Key", findOrCreate: true }),
           });
+        } catch {
+          // O22: findOrCreate is serialized server-side, so two tabs share one
+          // key; on any failure fall through to the re-fetch instead of erroring.
+        }
+        try {
           existing = await fetchKeys();
         } catch { /* fall through to empty render */ }
       }

@@ -9,6 +9,7 @@ import { getApiKeys, getPromotedLearningVersion } from "@/lib/db/index.js";
  */
 export default async function DashboardPage() {
   let providerCount = 0;
+  let connectionCount = 0;
   let readyProviderCount = 0;
   let keyCount = 0;
   let comboCount = 0;
@@ -50,6 +51,7 @@ export default async function DashboardPage() {
       connections.map((c) => c.provider || c.providerId).filter(Boolean)
     );
     providerCount = providerIds.size || connections.length;
+    connectionCount = connections.length;
     readyProviderCount = new Set(
       connections
         .filter((c) => c.isActive !== false && (c.testStatus === "active" || c.testStatus === "success"))
@@ -117,6 +119,7 @@ export default async function DashboardPage() {
     <OverviewClient
       initialData={{
         providerCount,
+        connectionCount,
         readyProviderCount,
         keyCount,
         comboCount,
