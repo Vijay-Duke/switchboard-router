@@ -22,6 +22,9 @@ const moduleDefault = {
     identity: "openai-node",
     baseUrl: "https://opencode.ai/zen/go/v1/chat/completions",
     headers: {},
+    usage: {
+      url: "https://opencode.ai/zen/go/v1/usage",
+    },
   },
   transports: [
     {
@@ -59,6 +62,10 @@ const moduleDefault = {
     { id: "qwen3.7-plus", name: "Qwen 3.7 Plus", targetFormat: "claude", supportedFormats: ["openai", "claude"] },
     { id: "qwen3.6-plus", name: "Qwen 3.6 Plus", targetFormat: "claude", supportedFormats: ["openai", "claude"] },
   ],
+  features: {
+    usage: true,
+    usageApikey: true,
+  },
 };
 
 export default moduleDefault;
