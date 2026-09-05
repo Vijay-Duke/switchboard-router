@@ -1,3 +1,8 @@
+# v0.9.12 (2026-09-06)
+
+## Features
+- **Qwen Code card**: the Qwen Code OAuth provider is no longer hidden from the dashboard provider list. Coding-plan users can sign in via the chat.qwen.ai device flow with automatic token refresh, instead of pasting short-lived `sk-sp-…` access tokens into the Alibaba API-key cards (where they are rejected as invalid keys).
+
 # v0.9.11 (2026-09-04)
 
 Second full-application review: eight exhaustive code reviews (dashboard core, dashboard operations, dashboard tools, API routes, request translators, response translators, engine, library/CLI, stream core) plus a hands-on walkthrough of the live dashboard. Roughly 430 findings were fixed, every fix ticket was independently gate-reviewed, and around 900 tests were added.

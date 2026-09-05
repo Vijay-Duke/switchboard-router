@@ -1,6 +1,5 @@
 const moduleDefault = {
   id: "qwen",
-  hidden: true,
   priority: 130,
   alias: "qw",
   display: {
