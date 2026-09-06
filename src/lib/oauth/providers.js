@@ -724,10 +724,20 @@ const PROVIDERS = {
         ...getOAuthFetchProfile("qwen"),
       });
 
-      return {
-        ok: response.ok,
-        data: await response.json(),
-      };
+      // chat.qwen.ai fronts the token endpoint with the alibaba-ga gateway, which
+      // intermittently answers 504 with an HTML error page. Parsing that as JSON
+      // throws "Unexpected token '<'" and aborts the whole connect dialog. Treat
+      // non-JSON / 5xx / 429 bodies as transient and keep the device-code poll going.
+      const text = await response.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = null; }
+      if (!data) {
+        if (!response.ok && (response.status >= 500 || response.status === 429)) {
+          return { ok: false, data: { error: "authorization_pending" } };
+        }
+        return { ok: false, data: { error: `token_endpoint_http_${response.status}` } };
+      }
+      return { ok: response.ok, data };
     },
     mapTokens: (tokens) => ({
       accessToken: tokens.access_token,
