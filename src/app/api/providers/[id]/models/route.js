@@ -13,7 +13,7 @@ import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
-import { resolveProviderModels } from "open-sse/services/providerModels.js";
+import { resolveProviderModels, parseGoogleAvailableModels } from "open-sse/services/providerModels.js";
 import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
 import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { MODEL_CATALOG_HEADER } from "@/lib/modelCatalogDiscovery";
@@ -27,28 +27,7 @@ const parseOpenAIStyleModels = (data) => {
   return data?.data || data?.models || data?.results || [];
 };
 
-const parseGeminiCliModels = (data) => {
-  if (Array.isArray(data?.models)) {
-    return data.models
-      .map((item) => {
-        const id = item?.id || item?.model || item?.name;
-        if (!id) return null;
-        return { id, name: item?.displayName || item?.name || id };
-      })
-      .filter(Boolean);
-  }
-
-  if (data?.models && typeof data.models === "object") {
-    return Object.entries(data.models)
-      .filter(([, info]) => !info?.isInternal)
-      .map(([id, info]) => ({
-        id,
-        name: info?.displayName || info?.name || id,
-      }));
-  }
-
-  return [];
-};
+const parseGeminiCliModels = parseGoogleAvailableModels;
 
 const appendCodexReviewModels = (models) => models.flatMap((model) => {
   const id = model?.id || model?.slug || model?.model || model?.name;

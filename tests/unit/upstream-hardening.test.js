@@ -91,6 +91,28 @@ describe("openai reasoning_effort max→xhigh (#2466)", () => {
   });
 });
 
+describe("qwen thinking_budget vs max_completion_tokens (DashScope 400)", () => {
+  it("shrinks thinking_budget below max_completion_tokens", () => {
+    const body = { reasoning_effort: "high", max_completion_tokens: 16384 };
+    const out = applyThinking(FORMATS.OPENAI, "qwen3.8-max", body, "alicode");
+    expect(out.enable_thinking).toBe(true);
+    expect(out.thinking_budget).toBeLessThan(16384);
+    expect(out.thinking_budget).toBeGreaterThan(1024);
+  });
+
+  it("shrinks thinking_budget below max_tokens when that is the limit sent", () => {
+    const body = { reasoning_effort: "high", max_tokens: 16384 };
+    const out = applyThinking(FORMATS.OPENAI, "qwen3-max", body, "qwen");
+    expect(out.thinking_budget).toBe(16384 - 1024);
+  });
+
+  it("keeps the full budget when max tokens allow it", () => {
+    const body = { reasoning_effort: "high", max_completion_tokens: 65536 };
+    const out = applyThinking(FORMATS.OPENAI, "qwen3.8-max", body, "alicode");
+    expect(out.thinking_budget).toBe(24576);
+  });
+});
+
 describe("openai→claude bare function tools (#2473 / #2435)", () => {
   it("unwraps tools without parent type:function", () => {
     const out = openaiToClaudeRequest("claude-sonnet", {

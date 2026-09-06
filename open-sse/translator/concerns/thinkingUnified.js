@@ -226,7 +226,15 @@ function applyFormat(fmt, body, cfg, caps) {
       if (none && canDisable) { body.enable_thinking = false; break; }
       body.enable_thinking = true;
       const budget = toBudget(eff, caps.thinkingRange);
-      if (Number.isFinite(budget) && budget > 0) body.thinking_budget = budget;
+      if (Number.isFinite(budget) && budget > 0) {
+        // DashScope rejects thinking_budget >= max_completion_tokens (400), e.g.
+        // effort "high" → 24576 vs a client max_tokens of 16384. Shrink the budget
+        // so tokens remain for the answer; never raise the client's output cap.
+        const limit = body.max_completion_tokens ?? body.max_tokens;
+        body.thinking_budget = Number.isFinite(limit) && limit > 1024 && budget >= limit
+          ? limit - 1024
+          : budget;
+      }
       break;
     }
     case "deepseek": {

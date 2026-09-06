@@ -59,6 +59,7 @@ function getDiscoveryConfig(entry) {
       method: fetcher.method || "GET",
       type: fetcher.type || "openai",
       body: fetcher.body,
+      headers: fetcher.headers,
     };
   }
 
@@ -146,6 +147,24 @@ function parseJsonModels(data) {
   return data?.data || data?.models || data?.results || [];
 }
 
+// Google v1internal:fetchAvailableModels — { models: { "<id>": { displayName, isInternal } } }
+// (object form) or { models: [{ id|name, displayName }] } (array form).
+// Image ids get kind:"image" so /v1/models kind filtering keeps working on live catalogs.
+export function parseGoogleAvailableModels(data) {
+  let rows;
+  if (Array.isArray(data?.models)) {
+    rows = data.models;
+  } else if (data?.models && typeof data.models === "object") {
+    rows = Object.entries(data.models)
+      .filter(([, info]) => !info?.isInternal)
+      .map(([id, info]) => ({ id, name: info?.displayName || info?.name || id }));
+  } else {
+    return [];
+  }
+  return normalizeModels(rows.map((r) =>
+    /image|imagen/i.test(modelId(r)) ? { ...r, kind: "image" } : r));
+}
+
 function parseCursorModels(buffer) {
   const models = [];
   const fields = decodeMessage(buffer);
@@ -191,10 +210,16 @@ async function fetchCatalog(connection, entry, config, options) {
     : options.signal || controller.signal;
 
   try {
+    // google-available-models: POST body carries the per-connection Cloud project id
+    let body = config.body;
+    if (config.type === "google-available-models") {
+      const project = connection?.projectId || connection?.providerSpecificData?.projectId;
+      body = JSON.stringify(project ? { project } : {});
+    }
     const response = await proxyAwareFetch(config.url, {
       method: config.method,
-      headers: buildHeaders(entry, connection, config.type),
-      ...(config.body !== undefined ? { body: config.body } : {}),
+      headers: { ...buildHeaders(entry, connection, config.type), ...(config.headers || {}) },
+      ...(body !== undefined ? { body } : {}),
       cache: "no-store",
       redirect: "error",
       signal,
@@ -214,6 +239,9 @@ async function fetchCatalog(connection, entry, config, options) {
 
     if (config.type === "cursor-unary-protobuf") {
       return parseCursorModels(await readBinaryResponse(response));
+    }
+    if (config.type === "google-available-models") {
+      return parseGoogleAvailableModels(await response.json());
     }
     return normalizeModels(parseJsonModels(await response.json()));
   } finally {

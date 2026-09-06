@@ -1,3 +1,11 @@
+# v0.9.13 (2026-09-06)
+
+## Features
+- **Live Antigravity model catalog**: `/v1/models` now fetches the real catalog from Google's `v1internal:fetchAvailableModels` endpoint for Antigravity connections (5-minute per-connection cache, fail-open to the static registry list), so newly released models appear without a Switchboard update. Discovery goes through the Antigravity identity wrap; internal-only upstream models are filtered and image models keep their `image` kind. The dashboard's per-provider "import models" fetch now shares the same parser.
+
+## Fixes
+- **Qwen/DashScope thinking-budget 400**: requests with an effort level whose budget exceeds the output cap (for example `high` → `thinking_budget 24576` against `max_completion_tokens 16384`) are rejected by DashScope with `max_completion_tokens must be greater than thinking_budget`. The `thinking_budget` is now clamped to the request's output limit minus 1024, for every provider using the Qwen thinking format (Qwen Code, Alibaba, Alibaba Intl).
+
 # v0.9.12 (2026-09-06)
 
 ## Features

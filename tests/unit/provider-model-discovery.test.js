@@ -10,10 +10,12 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
 
 import cursor from "../../open-sse/providers/registry/cursor.js";
 import commandcode from "../../open-sse/providers/registry/commandcode.js";
+import antigravity from "../../open-sse/providers/registry/antigravity.js";
 import {
   clearProviderModelCache,
   modelsUrlFromBase,
   parseCursorModels,
+  parseGoogleAvailableModels,
   resolveProviderModels,
 } from "../../open-sse/services/providerModels.js";
 import { encodeField } from "../../open-sse/utils/cursorProtobuf.js";
@@ -204,5 +206,49 @@ describe("provider model discovery", () => {
     expect(first).toEqual({ models: [{ id: "model-a", name: "model-a" }] });
     expect(second).toEqual(first);
     expect(mocks.proxyAwareFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("discovers the live antigravity catalog via fetchAvailableModels", async () => {
+    mocks.proxyAwareFetch.mockImplementation(() => Promise.resolve(new Response(
+      JSON.stringify({
+        models: {
+          "gemini-3.5-flash-low": { displayName: "Gemini 3.5 Flash (Medium)" },
+          "gemini-3.9-pro-preview": { displayName: "Gemini 3.9 Pro Preview" },
+          "gemini-3.1-flash-image": { displayName: "Gemini 3.1 Flash (Image)" },
+          "internal-only": { displayName: "Internal", isInternal: true },
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    )));
+
+    clearProviderModelCache();
+    const result = await resolveProviderModels({
+      provider: "antigravity",
+      accessToken: "ag-token",
+      projectId: "proj-1",
+    });
+
+    expect(result).toEqual({
+      models: [
+        { id: "gemini-3.5-flash-low", name: "Gemini 3.5 Flash (Medium)" },
+        { id: "gemini-3.9-pro-preview", name: "Gemini 3.9 Pro Preview" },
+        { id: "gemini-3.1-flash-image", name: "Gemini 3.1 Flash (Image)", kind: "image" },
+      ],
+    });
+
+    const [url, init] = mocks.proxyAwareFetch.mock.calls.at(-1);
+    expect(url).toBe(antigravity.modelsFetcher.url);
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ project: "proj-1" }));
+    expect(init.identity).toBe("antigravity");
+    expect(init.headers["X-Client-Name"]).toBe("antigravity");
+    expect(init.headers.Authorization).toBe("Bearer ag-token");
+  });
+
+  it("parses the array form of fetchAvailableModels", () => {
+    const models = parseGoogleAvailableModels({
+      models: [{ id: "gemini-3.5-flash-low", displayName: "Gemini 3.5 Flash" }],
+    });
+    expect(models).toMatchObject([{ id: "gemini-3.5-flash-low", name: "Gemini 3.5 Flash" }]);
   });
 });

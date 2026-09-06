@@ -16,6 +16,15 @@ const moduleDefault = {
   },
   category: "oauth",
   serviceKinds: ["llm", "image"],
+  // Live catalog via v1internal:fetchAvailableModels so newly released models
+  // appear in /v1/models without a registry update. Static `models` below is
+  // the offline fallback. Body project id is injected per-connection at fetch time.
+  modelsFetcher: {
+    url: "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+    method: "POST",
+    type: "google-available-models",
+    headers: { "X-Client-Name": "antigravity" },
+  },
   transport: {
     identity: "antigravity",
     baseUrls: [
