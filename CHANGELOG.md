@@ -1,3 +1,8 @@
+# v0.9.16 (2026-09-07)
+
+## Fixes
+- **Claude Code identity tuple 2.1.263**: recaptured the Claude Code identity against npm latest 2.1.263. The native binary bundles the same runtime (v26.3.0) and sends a byte-identical TLS ClientHello to 2.1.258 (verified by handshake capture of both binaries), so the TLS helper binaries are unchanged — only the committed capture tuple (version, tlsSpecRev, npm release date) and the fallback UA advanced. Harvest now accepts real 2.1.263 traffic again.
+
 # v0.9.15 (2026-09-07)
 
 ## Fixes

@@ -1,11 +1,11 @@
 {
   "claude-cli": {
     "npm": "@anthropic-ai/claude-code",
-    "version": "2.1.258",
+    "version": "2.1.263",
     "latestVersion": "2.1.263",
-    "capturedAt": "2026-09-02T04:39:33.000Z",
-    "releasedAt": "2026-09-01T22:25:07.449Z",
-    "tlsSpecRev": "claude-code-2.1.258",
+    "capturedAt": "2026-09-07T11:33:02.948Z",
+    "releasedAt": "2026-09-06T02:07:58.391Z",
+    "tlsSpecRev": "claude-code-2.1.263",
     "packageVersion": "0.112.1",
     "runtimeVersion": "v26.3.0",
     "entrypoint": "cli",

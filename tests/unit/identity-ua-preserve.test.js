@@ -38,7 +38,7 @@ describe("caller User-Agent vs identity profile (H32)", () => {
       { "User-Agent": "claude-cli/2.1.92 (external, sdk-cli)", Authorization: "Bearer t" },
       { provider: "claude" },
     );
-    expect(userAgent(headers)).toContain("claude-cli/2.1.258");
+    expect(userAgent(headers)).toContain("claude-cli/2.1.263");
     expect(userAgent(headers)).not.toContain("2.1.92");
   });
 });
@@ -95,7 +95,7 @@ describe("identity poller cross-profile guard", () => {
   const registry = async (url) => ({
     ok: true,
     json: async () => ({
-      version: url.includes("claude-code") ? "2.1.258" : url.includes("gemini-cli") ? "0.60.0" : "0.149.0",
+      version: url.includes("claude-code") ? "2.1.263" : url.includes("gemini-cli") ? "0.60.0" : "0.149.0",
     }),
   });
 

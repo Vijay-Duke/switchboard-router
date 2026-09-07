@@ -1,5 +1,6 @@
-// Captured from Claude Code 2.1.258 native darwin-arm64 binary.
-export const CLAUDE_CODE_TLS_SPEC_REV = "2.1.258";
+// Captured from Claude Code 2.1.258 and 2.1.263 native darwin-arm64 binaries
+// (byte-identical ClientHello; bundled runtime v26.3.0 in both).
+export const CLAUDE_CODE_TLS_SPEC_REV = "2.1.263";
 export const CLAUDE_CODE_ALPN = Object.freeze(["http/1.1"]);
 
 export const CLAUDE_CODE_CIPHER_SUITES = Object.freeze([

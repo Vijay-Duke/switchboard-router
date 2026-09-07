@@ -35,7 +35,7 @@ const CLAUDE_COUNT_TOKENS_HEADER_ORDER = CLAUDE_MESSAGES_HEADER_ORDER.filter(
 );
 
 function claudeHeaders(snapshot) {
-  const version = snapshot?.version || "2.1.258";
+  const version = snapshot?.version || "2.1.263";
   const entrypoint = snapshot?.entrypoint || "cli";
   return {
     "Anthropic-Version": ANTHROPIC_API_VERSION,
