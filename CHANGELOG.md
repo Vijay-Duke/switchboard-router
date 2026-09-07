@@ -1,3 +1,8 @@
+# v0.9.17 (2026-09-07)
+
+## Fixes
+- **OpenCode free tier `MissingSessionID` 400**: the v0.9.15 fix taught `DefaultExecutor` to inject `x-opencode-session` on every `opencode.ai` request, but the specialized `OpenCodeExecutor` (zen free tier) overrides `buildHeaders` and never got the header — so every `opencode` (free) request 400'd with "OpenCode's free tier can only be used in OpenCode". This also broke the capacity-adapter fallback pool (`opencode/mimo-v2.5-free`), which shields intermittent zen Go dead-streams (seen with alpha models like `omen-alpha`): when the primary model stalled, the fallback 400'd and the client received a hard empty turn. The executor now derives the same stable session header (client `x-session-id` passes through when present). Verified against the live zen free endpoint: identical request 400s without the header, 200s with it.
+
 # v0.9.16 (2026-09-07)
 
 ## Fixes
