@@ -14,11 +14,11 @@
   "codex-cli": {
     "npm": "@openai/codex",
     "version": "0.153.4",
-    "releasedAt": "2026-09-07T10:20:23.719Z"
+    "releasedAt": "2026-09-04T23:31:18.513Z"
   },
   "gemini-cli": {
     "npm": "@google/gemini-cli",
     "version": "0.58.0",
-    "releasedAt": "2026-09-07T10:20:23.719Z"
+    "releasedAt": "2026-09-01T20:50:39.295Z"
   }
 }

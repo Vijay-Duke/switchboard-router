@@ -19,23 +19,23 @@ describe("identity fallback version refresh", () => {
 
   it("checks stale fallback versions without writing", async () => {
     const file = versionsFile;
-    const staleNow = Date.parse("2026-08-30T00:00:00.000Z");
+    const staleNow = Date.parse("2026-09-15T00:00:00.000Z");
     await expect(refreshIdentityVersions({ file, now: staleNow, fetchImpl: fetchVersion("99.0.0") }))
       .rejects.toThrow("Identity fallback versions exceed 7-day grace");
   });
 
   it("never rewrites Claude's captured wire version", async () => {
     const file = versionsFile;
-    const snapshots = await refreshIdentityVersions({ file, now, fetchImpl: fetchVersion("2.1.259") });
+    const snapshots = await refreshIdentityVersions({ file, now, fetchImpl: fetchVersion("2.1.264") });
     expect(snapshots["claude-cli"].version).toBe("2.1.258");
-    expect(snapshots["claude-cli"].latestVersion).toBe("2.1.258");
+    expect(snapshots["claude-cli"].latestVersion).toBe("2.1.263");
   });
 
   it("requires a new Claude capture even when npm latest is already recorded", async () => {
     const file = versionsFile;
     const staleNow = Date.parse("2026-09-10T00:00:00.000Z");
     const fetchImpl = async (url) => new Response(JSON.stringify({
-      version: url.includes("claude-code") ? "2.1.259" : url.includes("codex") ? "0.149.0" : "0.56.0",
+      version: url.includes("claude-code") ? "2.1.259" : url.includes("codex") ? "0.153.4" : "0.58.0",
     }), { status: 200 });
     await expect(refreshIdentityVersions({ file, now: staleNow, fetchImpl }))
       .rejects.toThrow("claude-cli: captured 2.1.258 → 2.1.259");
@@ -45,7 +45,7 @@ describe("identity fallback version refresh", () => {
     const snapshots = JSON.parse(await (await import("node:fs/promises")).readFile(versionsFile, "utf8"));
     expect(snapshots["claude-cli"]).toMatchObject({
       version: "2.1.258",
-      latestVersion: "2.1.258",
+      latestVersion: "2.1.263",
       tlsSpecRev: "claude-code-2.1.258",
       packageVersion: "0.112.1",
       runtimeVersion: "v26.3.0",
