@@ -1,6 +1,7 @@
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
+import { resolveSessionId } from "../utils/sessionManager.js";
 
 // Models that use /zen/v1/messages (claude format)
 const MESSAGES_MODELS = new Set();
@@ -28,6 +29,17 @@ export class OpenCodeExecutor extends BaseExecutor {
       "Authorization": "Bearer public",
       "x-opencode-client": "desktop",
     };
+    // zen free tier 400s MissingSessionID ("free tier can only be used in
+    // OpenCode") without a stable session header — same contract the
+    // DefaultExecutor enforces for opencode.ai hosts. All our URLs are
+    // opencode.ai, so no hostname check needed here.
+    if (!headers["x-opencode-session"]) {
+      headers["x-opencode-session"] = resolveSessionId({
+        headers: credentials?.rawHeaders,
+        connectionId: credentials?.connectionId,
+        scope: "opencode",
+      });
+    }
     if (stream) headers["Accept"] = "text/event-stream";
     return headers;
   }
