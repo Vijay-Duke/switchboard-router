@@ -2,7 +2,7 @@
   "claude-cli": {
     "npm": "@anthropic-ai/claude-code",
     "version": "2.1.258",
-    "latestVersion": "2.1.258",
+    "latestVersion": "2.1.263",
     "capturedAt": "2026-09-02T04:39:33.000Z",
     "releasedAt": "2026-09-01T22:25:07.449Z",
     "tlsSpecRev": "claude-code-2.1.258",
@@ -13,12 +13,12 @@
   },
   "codex-cli": {
     "npm": "@openai/codex",
-    "version": "0.149.0",
-    "releasedAt": "2026-08-22T00:00:00.000Z"
+    "version": "0.153.4",
+    "releasedAt": "2026-09-07T10:20:23.719Z"
   },
   "gemini-cli": {
     "npm": "@google/gemini-cli",
-    "version": "0.56.0",
-    "releasedAt": "2026-08-22T00:00:00.000Z"
+    "version": "0.58.0",
+    "releasedAt": "2026-09-07T10:20:23.719Z"
   }
 }

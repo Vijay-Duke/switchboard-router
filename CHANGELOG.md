@@ -1,3 +1,10 @@
+# v0.9.14 (2026-09-07)
+
+## Fixes
+- **OpenCode Go `MissingSessionID` 400**: `opencode.ai/zen/go` endpoints reject requests without a stable `x-opencode-session` header ("cannot be routed efficiently"). `DefaultExecutor` now injects one for any `opencode.ai` upstream — client `x-session-id` passes through when present, otherwise a stable per-connection session is derived — covering the built-in `opencode-go` provider and custom OpenAI-compatible nodes in every format. Dashboard provider test/validate requests send the header too.
+- **Availability badge**: disabled connections are skipped when computing model availability, so stale unavailable markers on opted-out connections no longer inflate the badge.
+- **Identity fallbacks**: refreshed Codex CLI (0.153.4) and Gemini CLI (0.58.0) fallback versions; Claude Code `latestVersion` tracks npm 2.1.263 while the captured TLS tuple stays 2.1.258 until the next capture.
+
 # v0.9.13 (2026-09-06)
 
 ## Features

@@ -7,6 +7,7 @@ import { buildClineHeaders } from "../shared/clineAuth.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
+import { resolveSessionId } from "../utils/sessionManager.js";
 
 // Auth header descriptors — derived from registry transport.auth, fallback to hardcoded defaults.
 const BEARER = { combined: true, header: "Authorization", scheme: "bearer" };
@@ -200,6 +201,20 @@ export class DefaultExecutor extends BaseExecutor {
           }
         }
       }
+    }
+
+    // OpenCode zen endpoints 400 with MissingSessionID unless a stable
+    // per-conversation session header is present (opencode.ai/docs/go).
+    if (url && !headers["x-opencode-session"]) {
+      try {
+        if (new URL(url).hostname === "opencode.ai") {
+          headers["x-opencode-session"] = resolveSessionId({
+            headers: credentials?.rawHeaders,
+            connectionId: credentials?.connectionId,
+            scope: "opencode",
+          });
+        }
+      } catch { /* url not parseable — skip */ }
     }
 
     if (stream) headers["Accept"] = "text/event-stream";

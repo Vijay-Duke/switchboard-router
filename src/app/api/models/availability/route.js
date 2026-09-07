@@ -26,6 +26,9 @@ export async function GET() {
     const models = [];
 
     for (const connection of connections) {
+      // Disabled connections opted out of routing; stale unavailable markers on
+      // them inflate the badge without reflecting real routing health.
+      if (connection.isActive === false) continue;
       const locks = getActiveModelLocks(connection);
       for (const lock of locks) {
         models.push({
