@@ -1,3 +1,8 @@
+# v0.9.19 (2026-09-07)
+
+## Fixes
+- **Stalled streams abort in 45s, not 6 minutes**: `STREAM_STALL_TIMEOUT_MS` default 360s → **45s**, `STREAM_FIRST_CHUNK_TIMEOUT_MS` 200s → **120s**. True stalls go byte-silent (live captures on z.ai and zen showed zero bytes — no keep-alives), while healthy streams always trickle deltas or comments, so there is no false-abort risk; slow reasoning models keep emitting and are unaffected. Combined with v0.9.18's abort terminal, a dead upstream now surfaces as a retryable error within ~45s and the client's auto-retry recovers, instead of an indefinite silent hang. Provider overrides (`stallTimeoutMs`) and env vars still win over the defaults.
+
 # v0.9.18 (2026-09-07)
 
 ## Fixes
