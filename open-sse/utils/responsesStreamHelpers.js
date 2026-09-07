@@ -32,6 +32,26 @@ export function buildAbortedResponsesTerminalBytes() {
   return sharedEncoder.encode(`${formatIncompleteOpenAIResponsesStreamFailure()}data: [DONE]\n\n`);
 }
 
+// Encoded terminal chunks for aborted/stalled chat-completions wire streams.
+// finish_reason:"stream_stalled" maps to a retryable error on OpenAI-compat clients
+// (pi: "Provider finish_reason: stream_stalled"); the top-level error object serves
+// clients that surface it instead. Without this, stall aborts close the client stream
+// with no terminal event — the silent-indefinite-hang symptom.
+export function buildAbortedChatCompletionsTerminalBytes() {
+  const chunk = {
+    id: `chatcmpl-${Date.now()}`,
+    object: "chat.completion.chunk",
+    created: Math.floor(Date.now() / 1000),
+    choices: [{ index: 0, delta: {}, finish_reason: "stream_stalled" }],
+    error: {
+      message: "upstream stream stalled or aborted before completion",
+      type: "server_error",
+      code: "stream_stalled",
+    },
+  };
+  return sharedEncoder.encode(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`);
+}
+
 // Synthesize a response.failed event for streams that close without a terminal event
 export function formatIncompleteOpenAIResponsesStreamFailure() {
   return formatSSE({

@@ -1,3 +1,8 @@
+# v0.9.18 (2026-09-07)
+
+## Fixes
+- **Stall aborts no longer close client streams silently**: when an upstream stream stalls (zero bytes for `STREAM_STALL_TIMEOUT_MS`, 360s default — observed live on `glm`/z.ai and `opencode-go`/zen) the gateway aborted the upstream but closed the client's chat-completions stream with a clean EOF and no terminal event, so OpenAI-compat clients (pi, codex) sat silent indefinitely or retried blind. Only the Responses passthrough wire had an abort terminal (`response.failed` + `[DONE]`). The chat-completions wire now synthesizes a final chunk with `finish_reason:"stream_stalled"` (plus a top-level `error` object) followed by `[DONE]` — clients surface a retryable error instead of hanging. Applies to passthrough and translated streams targeting the OpenAI chat-completions format.
+
 # v0.9.17 (2026-09-07)
 
 ## Fixes
