@@ -3,6 +3,11 @@ import { STREAM_STALL_TIMEOUT_MS, STREAM_FIRST_CHUNK_TIMEOUT_MS } from "../confi
 import { dbg, isDebugEnabled } from "./debugLog.js";
 import { nextTag, tagForSession, line, errorLine } from "./logTags.js";
 
+// Terminal SSE markers. A clean upstream EOF that forwarded bytes without any
+// of these is a truncated stream (overloaded provider sent a partial chunk then
+// reset), not a completion — synthesize a stall terminal so clients get a finish.
+const FINISH_MARKERS = ["[DONE]", "finish_reason", "response.completed", "message_stop"];
+
 /**
  * Create stream controller with abort and disconnect detection
  * @param {object} options
@@ -99,6 +104,10 @@ export function createDisconnectAwareStream(transformStream, streamController, o
   const reader = transformStream.readable.getReader();
   const writer = transformStream.writable.getWriter();
   let terminalEmitted = false;
+  let finishSeen = false;
+  let bytesForwarded = 0;
+  let tail = "";
+  const decoder = new TextDecoder();
 
   // Emit a synthesized terminal payload (e.g. Responses response.failed + [DONE]) once
   const emitTerminal = (controller) => {
@@ -123,10 +132,23 @@ export function createDisconnectAwareStream(transformStream, streamController, o
 
         if (done) {
           streamController.handleComplete();
+          // Upstream closed after sending bytes but never emitted a terminal
+          // finish (e.g. an overloaded provider sending a partial chunk then
+          // resetting). Without a synthesized terminal, clients (pi) see a
+          // truncated turn. Emit the stall terminal so they get a clean
+          // finish_reason + [DONE] instead. Only fires where onAbortTerminal
+          // exists (chat-completions wire / Responses passthrough).
+          if (bytesForwarded > 0 && !finishSeen) emitTerminal(controller);
           controller.close();
           return;
         }
         controller.enqueue(value);
+        bytesForwarded += value instanceof Uint8Array ? value.byteLength : 0;
+        if (!finishSeen) {
+          const window = tail + decoder.decode(value, { stream: true });
+          if (FINISH_MARKERS.some((m) => window.includes(m))) finishSeen = true;
+          tail = window.length > 32 ? window.slice(-32) : window;
+        }
       } catch (error) {
         const wasConnected = streamController.isConnected();
         // Controller already closed = downstream ended; not an upstream error, skip noisy log.
