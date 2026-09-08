@@ -1,3 +1,9 @@
+# v0.9.21 (2026-09-08)
+
+## Fixes
+- **Truncated upstream close now gets a stall terminal**: a provider that sends bytes then closes with a clean EOF without a finish marker (an overloaded upstream sending a partial chunk then resetting) reached clients as a truncated turn. The chat-completions wire and Responses passthrough now synthesize `finish_reason:"stream_timeout"` + `[DONE]` so clients (pi) get a clean finish instead of a truncated turn. Empty streams stay owned by the zero-byte re-hit path. Completes the v0.9.20 stall work.
+- **Lockfiles match release version**: bumped lockfiles to the release version so `check:versions` passes in CI.
+
 # v0.9.20 (2026-09-08)
 
 ## Fixes
