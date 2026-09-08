@@ -1,3 +1,9 @@
+# v0.9.20 (2026-09-08)
+
+## Fixes
+- **Stall terminal is actually Pi-retryable**: v0.9.18/19 claimed the abort chunk was retryable. Pi retries `Provider finish_reason: ${reason}` against `/timeout/`, and `stream_stalled` never matched — clients saw a hard error. Chat-completions abort now uses `finish_reason:"stream_timeout"` (message also contains `timeout`). After tokens, still one terminal then `[DONE]`; no silent EOF.
+- **One zero-byte re-hit on any provider**: if upstream sent no bytes (first-chunk timeout or empty EOF), the gateway re-executes once in-stream, then lets the stall terminal fire. After any byte, no replay (unsafe). Gemini empty-guard is unchanged. Stall ceiling stays 45s global — overload is every provider, not a GLM 180s wait.
+
 # v0.9.19 (2026-09-07)
 
 ## Fixes

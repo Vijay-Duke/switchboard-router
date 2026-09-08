@@ -33,18 +33,19 @@ export function buildAbortedResponsesTerminalBytes() {
 }
 
 // Encoded terminal chunks for aborted/stalled chat-completions wire streams.
-// finish_reason:"stream_stalled" maps to a retryable error on OpenAI-compat clients
-// (pi: "Provider finish_reason: stream_stalled"); the top-level error object serves
-// clients that surface it instead. Without this, stall aborts close the client stream
-// with no terminal event — the silent-indefinite-hang symptom.
+// finish_reason:"stream_timeout" so pi retries (isRetryableAssistantError matches
+// /timeout/ on "Provider finish_reason: ${reason}"). Top-level error serves clients
+// that surface chunk.error instead. Without this, stall aborts close with silent EOF.
 export function buildAbortedChatCompletionsTerminalBytes() {
   const chunk = {
     id: `chatcmpl-${Date.now()}`,
     object: "chat.completion.chunk",
     created: Math.floor(Date.now() / 1000),
-    choices: [{ index: 0, delta: {}, finish_reason: "stream_stalled" }],
+    // stream_timeout (not stream_stalled): pi throws "Provider finish_reason: ${reason}"
+    // and only retries if that string matches /timeout/.
+    choices: [{ index: 0, delta: {}, finish_reason: "stream_timeout" }],
     error: {
-      message: "upstream stream stalled or aborted before completion",
+      message: "upstream stream stall timeout: aborted before completion",
       type: "server_error",
       code: "stream_stalled",
     },
@@ -64,7 +65,7 @@ export function formatIncompleteOpenAIResponsesStreamFailure() {
         error: {
           type: "stream_error",
           code: "stream_disconnected",
-          message: "stream closed before response.completed"
+          message: "stream timeout: closed before response.completed"
         }
       }
     }

@@ -22,6 +22,7 @@ import { handleForcedSSEToJson } from "./chatCore/sseToJsonHandler.js";
 import { handleNonStreamingResponse } from "./chatCore/nonStreamingHandler.js";
 import { handleStreamingResponse, buildOnStreamComplete } from "./chatCore/streamingHandler.js";
 import { createEmptyRetryStream } from "./chatCore/emptyStreamGuard.js";
+import { createZeroByteRetryStream } from "./chatCore/zeroByteRetryStream.js";
 import { detectClientTool, harvestDetectedClient, isNativePassthrough } from "../utils/clientDetector.js";
 import { dedupeTools } from "../utils/toolDeduper.js";
 import { stripOrphanedToolResults } from "../translator/concerns/toolCall.js";
@@ -504,24 +505,26 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     return createErrorResult(statusCode, errMsg, resetsAtMs);
   }
 
+  const reexecuteBody = async () => {
+    const retryResult = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions });
+    if (!retryResult.response.ok) {
+      const { statusCode, message } = await parseUpstreamError(retryResult.response, executor);
+      throw new Error(`[${statusCode}] ${message}`);
+    }
+    if (!retryResult.response.body) throw new Error("upstream returned no body");
+    return retryResult.response.body;
+  };
+  const geminiEmptyGuard = provider === "antigravity" || provider === "gemini-cli" || provider === "gemini" || provider === "vertex";
+
   // Antigravity empty-stream guard: Gemini often returns HTTP 200 with no usable
   // output (thought-only, bare STOP, MALFORMED_FUNCTION_CALL). Retry in-stream so
   // the client doesn't hang on a blank turn. Switchboard PR#2462.
   // gemini-cli/gemini/vertex share the same backend failure mode (H26).
-  if ((provider === "antigravity" || provider === "gemini-cli" || provider === "gemini" || provider === "vertex") && stream && providerResponse.body) {
-    const reexecute = async () => {
-      const retryResult = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions });
-      if (!retryResult.response.ok) {
-        const { statusCode, message } = await parseUpstreamError(retryResult.response, executor);
-        throw new Error(`[${statusCode}] ${message}`);
-      }
-      if (!retryResult.response.body) throw new Error("upstream returned no body");
-      return retryResult.response.body;
-    };
+  if (geminiEmptyGuard && stream && providerResponse.body) {
     providerResponse = new Response(
       createEmptyRetryStream({
         body: providerResponse.body,
-        reexecute,
+        reexecute: reexecuteBody,
         signal: streamController.signal,
         log,
         onExhausted: (reason, { upstreamError } = {}) => {
@@ -532,6 +535,17 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
             resetMs ? Date.now() + resetMs : undefined
           );
         },
+      }),
+      { status: providerResponse.status, headers: providerResponse.headers }
+    );
+  } else if (stream && providerResponse.body) {
+    // One re-hit if upstream sent zero bytes. After any byte, replay is unsafe.
+    providerResponse = new Response(
+      createZeroByteRetryStream({
+        body: providerResponse.body,
+        reexecute: reexecuteBody,
+        signal: streamController.signal,
+        log,
       }),
       { status: providerResponse.status, headers: providerResponse.headers }
     );
@@ -561,7 +575,11 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   // Streaming response
   const { onStreamComplete, streamDetailId } = buildOnStreamComplete({ ...sharedCtx });
-  return handleStreamingResponse({ ...sharedCtx, providerResponse, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, streamController, onStreamComplete, streamDetailId });
+  return handleStreamingResponse({
+    ...sharedCtx, providerResponse, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, streamController, onStreamComplete, streamDetailId,
+    // wrap already owns first-byte timeout; skip the outer one so we don't abort mid-retry
+    firstChunkTimeoutMs: geminiEmptyGuard ? undefined : 0,
+  });
 }
 
 export function isTokenExpiringSoon(expiresAt, bufferMs = 5 * 60 * 1000) {

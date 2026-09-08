@@ -4,7 +4,8 @@ import {
   buildAbortedChatCompletionsTerminalBytes,
   buildAbortedResponsesTerminalBytes,
 } from "../../open-sse/utils/responsesStreamHelpers.js";
-import { createDisconnectAwareStream, createStreamController } from "../../open-sse/utils/streamHandler.js";
+import { createZeroByteRetryStream } from "../../open-sse/handlers/chatCore/zeroByteRetryStream.js";
+import { createDisconnectAwareStream, createStreamController, pipeWithDisconnect } from "../../open-sse/utils/streamHandler.js";
 
 function parseSSE(text) {
   return text.split("\n\n").filter(Boolean).map((frame) => {
@@ -14,7 +15,7 @@ function parseSSE(text) {
 }
 
 describe("abort terminal bytes", () => {
-  it("chat-completions terminal emits finish_reason:stream_stalled chunk + [DONE]", () => {
+  it("chat-completions terminal emits finish_reason:stream_timeout chunk + [DONE]", () => {
     const text = new TextDecoder().decode(buildAbortedChatCompletionsTerminalBytes());
     const events = parseSSE(text);
     expect(events).toHaveLength(2);
@@ -22,8 +23,9 @@ describe("abort terminal bytes", () => {
 
     const chunk = JSON.parse(events[0]);
     expect(chunk.object).toBe("chat.completion.chunk");
-    expect(chunk.choices[0].finish_reason).toBe("stream_stalled");
+    expect(chunk.choices[0].finish_reason).toBe("stream_timeout");
     expect(chunk.error.code).toBe("stream_stalled");
+    expect(chunk.error.message).toMatch(/timeout/);
   });
 
   it("responses terminal emits response.failed + [DONE]", () => {
@@ -76,7 +78,38 @@ describe("aborting an openai-wire stream surfaces the terminal to the client", (
 
     const events = parseSSE(text);
     const terminal = JSON.parse(events[events.length - 2]);
-    expect(terminal.choices[0].finish_reason).toBe("stream_stalled");
+    expect(terminal.choices[0].finish_reason).toBe("stream_timeout");
+    expect(terminal.error.message).toMatch(/timeout/);
+    expect(events[events.length - 1]).toBe("[DONE]");
+  });
+
+  it("stall after wrap forwarded a byte still emits stream_timeout + [DONE]", async () => {
+    const encoder = new TextEncoder();
+    const controller = createStreamController({ provider: "glm", model: "glm-5.3" });
+    const hung = new ReadableStream({
+      start(c) {
+        c.enqueue(encoder.encode(`data: {"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}\n\n`));
+      },
+    });
+    const wrapped = createZeroByteRetryStream({
+      body: hung,
+      reexecute: async () => { throw new Error("should not retry after a byte"); },
+      signal: controller.signal,
+      firstChunkTimeoutMs: 50_000,
+    });
+    const clientStream = pipeWithDisconnect(
+      new Response(wrapped, { headers: { "content-type": "text/event-stream" } }),
+      new TransformStream(),
+      controller,
+      buildAbortedChatCompletionsTerminalBytes,
+      50,
+      0,
+    );
+    const text = await new Response(clientStream).text();
+    const events = parseSSE(text);
+    const terminal = JSON.parse(events[events.length - 2]);
+    expect(terminal.choices[0].finish_reason).toBe("stream_timeout");
+    expect(terminal.error.message).toMatch(/timeout/);
     expect(events[events.length - 1]).toBe("[DONE]");
   });
 });

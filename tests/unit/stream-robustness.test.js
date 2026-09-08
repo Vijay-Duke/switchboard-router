@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { dedupRefresh } from "../../open-sse/services/tokenRefresh/dedup.js";
 import { pipeWithDisconnect } from "../../open-sse/utils/streamHandler.js";
 import { createEmptyRetryStream } from "../../open-sse/handlers/chatCore/emptyStreamGuard.js";
+import { createZeroByteRetryStream } from "../../open-sse/handlers/chatCore/zeroByteRetryStream.js";
 
 function makeController() {
   let connected = true;
@@ -223,5 +224,81 @@ describe("stream robustness", () => {
     expect(pulls).toBeLessThan(10);
     signal.abort();
     await reader.cancel();
+  });
+});
+
+describe("zero-byte retry stream", () => {
+  const encoder = new TextEncoder();
+
+  it("retries once on empty EOF then forwards bytes", async () => {
+    const reexecute = vi.fn(async () => new ReadableStream({
+      start(c) { c.enqueue(encoder.encode("ok")); c.close(); },
+    }));
+    const stream = createZeroByteRetryStream({
+      body: new ReadableStream({ start(c) { c.close(); } }),
+      reexecute,
+      signal: new AbortController().signal,
+      firstChunkTimeoutMs: 50,
+    });
+    expect(await new Response(stream).text()).toBe("ok");
+    expect(reexecute).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries once on first-chunk timeout", async () => {
+    const reexecute = vi.fn(async () => new ReadableStream({
+      start(c) { c.enqueue(encoder.encode("ok")); c.close(); },
+    }));
+    const stream = createZeroByteRetryStream({
+      body: new ReadableStream({ start() { /* hung */ } }),
+      reexecute,
+      signal: new AbortController().signal,
+      firstChunkTimeoutMs: 40,
+    });
+    expect(await new Response(stream).text()).toBe("ok");
+    expect(reexecute).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry after a byte", async () => {
+    const reexecute = vi.fn();
+    const stream = createZeroByteRetryStream({
+      body: new ReadableStream({
+        start(c) { c.enqueue(encoder.encode("hi")); c.close(); },
+      }),
+      reexecute,
+      signal: new AbortController().signal,
+      firstChunkTimeoutMs: 40,
+    });
+    expect(await new Response(stream).text()).toBe("hi");
+    expect(reexecute).not.toHaveBeenCalled();
+  });
+
+  it("errors on abort after a byte so the stall terminal can fire", async () => {
+    const ac = new AbortController();
+    const stream = createZeroByteRetryStream({
+      body: new ReadableStream({
+        start(c) { c.enqueue(encoder.encode("hi")); /* hung after byte */ },
+      }),
+      reexecute: vi.fn(),
+      signal: ac.signal,
+      firstChunkTimeoutMs: 50_000,
+    });
+    const reader = stream.getReader();
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toBe("hi");
+    ac.abort();
+    await expect(reader.read()).rejects.toThrow("stream first-chunk timeout");
+  });
+
+  it("errors after a second empty attempt", async () => {
+    const empty = () => new ReadableStream({ start(c) { c.close(); } });
+    const reexecute = vi.fn(async () => empty());
+    const stream = createZeroByteRetryStream({
+      body: empty(),
+      reexecute,
+      signal: new AbortController().signal,
+      firstChunkTimeoutMs: 50,
+    });
+    await expect(new Response(stream).text()).rejects.toThrow("stream first-chunk timeout");
+    expect(reexecute).toHaveBeenCalledTimes(1);
   });
 });
