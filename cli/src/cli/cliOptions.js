@@ -1,5 +1,8 @@
 const DEFAULT_PORT = 20128;
-const DEFAULT_HOST = "127.0.0.1";
+// Remote-accessible by default: the dashboard answers on all interfaces and
+// gates non-local peers behind API-key sign-in (src/dashboardGuard.js); /v1
+// requires an API key off-loopback. Use --host 127.0.0.1 for a local-only bind.
+const DEFAULT_HOST = "0.0.0.0";
 const COMMANDS = new Set(["start", "status", "stop", "restart", "help", "version"]);
 
 function isLoopbackHost(value) {

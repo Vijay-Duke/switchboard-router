@@ -55,7 +55,7 @@ Common options:
 | Option | Purpose |
 |:--|:--|
 | `-p, --port <port>` | Port from 1 to 65535 (default `20128`) |
-| `-H, --host <host>` | Bind address (default `127.0.0.1`) |
+| `-H, --host <host>` | Bind address (default `0.0.0.0` — remote dashboard access; non-local browsers sign in with a gateway API key, non-loopback `/v1` requires an API key. Use `127.0.0.1` for local-only) |
 | `-l, --log` | Stream server output while retaining crash diagnostics |
 | `-t, --tray` | Start with the system-tray control surface |
 | `--skip-update` | Skip the startup update check |

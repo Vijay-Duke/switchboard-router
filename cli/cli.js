@@ -115,7 +115,9 @@ function commandFor(action = "") {
   return `${commandName}${port === DEFAULT_PORT ? "" : ` --port ${port}`}`;
 }
 
-// C1: bind loopback by default — LAN exposure is an explicit opt-in via --host 0.0.0.0
+// C2: bind all interfaces by default — remote dashboard access works out of
+// the box. Non-local peers sign in with a gateway API key (dashboardGuard
+// session); non-loopback /v1 requires an API key. --host 127.0.0.1 opts out.
 const ALL_INTERFACES = "0.0.0.0";
 
 function isNetworkExposed() {
@@ -638,7 +640,7 @@ function startServer(latestVersion) {
   // Surface real network exposure for wildcard and specific non-loopback binds.
   if (isNetworkExposed()) {
     const reachableHost = host === ALL_INTERFACES || host === "::" ? getLanIp() : host;
-    if (reachableHost) console.log(`\x1b[33m⚠ Network-exposed: reachable at http://${reachableHost}:${port} (bound ${host}). Use --host 127.0.0.1 for local-only. Non-loopback /v1 requires an API key by default.\x1b[0m`);
+    if (reachableHost) console.log(`\x1b[33m⚠ Network-exposed: dashboard at http://${reachableHost}:${port} (bound ${host}). Remote browsers sign in with a gateway API key; /v1 needs an API key off-loopback. Use --host 127.0.0.1 for local-only.\x1b[0m`);
   }
 
   let consecutiveCrashes = 0;
