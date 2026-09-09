@@ -87,7 +87,9 @@ function geminiHeaders(snapshot) {
 }
 
 function antigravityHeaders(snapshot) {
-  const version = snapshot?.version || "1.107.0";
+  // Floor 2.9.1: Cloud Code rejects newer models for clients below 2.9.0
+  // (CLIProxyAPI antigravityFallbackVersion keeps the same floor).
+  const version = snapshot?.version || "2.9.1";
   return {
     "User-Agent": `antigravity/${version} ${hostPlatform()}/${hostArch()}`,
   };

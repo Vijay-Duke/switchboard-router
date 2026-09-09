@@ -18,7 +18,7 @@ function fallbackUserAgent(profileId, snapshot) {
     case "codex-cli": return `codex_cli_rs/${version || "0.149.0"}`;
     case "gemini-cli": return `GeminiCLI/${version || "0.56.0"}/unknown (${plat}; ${arch}; terminal)`;
     case "cline": return `Cline/${version || "3.0.0"}`;
-    case "antigravity": return `antigravity/${version || "1.107.0"} ${plat}/${arch}`;
+    case "antigravity": return `antigravity/${version || "2.9.1"} ${plat}/${arch}`; // Cloud Code client floor
     case "copilot": return `GitHubCopilotChat/${version || "0.38.0"}`;
     case "qwen": return `QwenCode/${version || "0.12.3"} (${plat}; ${arch})`;
     case "grok-cli": return `grok-cli/${version || "1.0.0"}`;

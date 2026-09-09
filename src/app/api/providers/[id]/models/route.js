@@ -171,19 +171,38 @@ const PROVIDER_MODELS_CONFIG = {
     customResolver: buildOAuthResolver({
       refreshFn: (conn) => refreshGoogleToken(conn.refreshToken, ANTIGRAVITY_CONFIG.clientId, ANTIGRAVITY_CONFIG.clientSecret),
       fetchFn: (token, conn) => {
+        // Mirror the Antigravity hub client: daily host first (the same base
+        // the chat transport uses), then prod, plain `{}` body, and the
+        // antigravity identity UA via proxyAwareFetch. The old shape posted to
+        // prod only with VS Code gemini-cli headers and got 403 PERMISSION_DENIED.
         const projectId = conn.projectId || conn.providerSpecificData?.projectId;
-        const body = projectId ? { project: projectId } : {};
-        return fetch("https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`,
-            "X-Client-Name": "antigravity",
-            "User-Agent": "google-api-nodejs-client/9.15.1",
-            "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1"
-          },
-          body: JSON.stringify(body)
-        });
+        const hosts = [
+          "https://daily-cloudcode-pa.googleapis.com",
+          "https://cloudcode-pa.googleapis.com",
+        ];
+        return (async () => {
+          let last = null;
+          for (const host of hosts) {
+            try {
+              const response = await proxyAwareFetch(`${host}/v1internal:fetchAvailableModels`, {
+                method: "POST",
+                identity: "antigravity",
+                provider: "antigravity",
+                format: "antigravity",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${token}`,
+                },
+                body: JSON.stringify(projectId ? { project: projectId } : {}),
+              });
+              if (response.ok) return response;
+              last = response;
+            } catch (error) {
+              last = { ok: false, status: 0, text: async () => error.message };
+            }
+          }
+          return last;
+        })();
       },
       parseFn: parseGeminiCliModels,
       errorLabel: "Failed to fetch Antigravity models"

@@ -1,6 +1,6 @@
 {
   "name": "switchboard-app",
-  "version": "0.9.26",
+  "version": "0.9.27",
   "description": "Switchboard \u2014 intelligent model routing dashboard",
   "private": true,
   "engines": {
