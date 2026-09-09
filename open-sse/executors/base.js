@@ -108,8 +108,13 @@ export class BaseExecutor {
   transformRequest(model, body, stream, credentials) {
     // Inject stream_options so OpenAI-format streaming returns usage in the
     // final chunk (forceStream providers + non-stream clients need this for
-    // usage tracking — Switchboard#2382 / PR#346).
-    if (stream && body && Array.isArray(body.messages) && !body.stream_options) {
+    // usage tracking — Switchboard#2382 / PR#346). OpenAI wire only: strict
+    // upstreams (Anthropic: "stream_options: Extra inputs are not permitted")
+    // reject unknown top-level fields, so claude/antigravity/gemini bodies
+    // must stay clean.
+    const wireFormat = this.config?.format || "openai";
+    const supportsStreamOptions = wireFormat === "openai" || wireFormat === "ollama";
+    if (stream && supportsStreamOptions && body && Array.isArray(body.messages) && !body.stream_options) {
       body.stream_options = { include_usage: true };
     }
     // Keep body.stream in sync with the effective stream flag (Accept header

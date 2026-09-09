@@ -80,7 +80,16 @@ export class DefaultExecutor extends BaseExecutor {
       }
       stripUnsupportedParams(this.provider, model, transformed);
       // Ensure stream_options survives applyJsonSchemaFallback (mutates body in place usually)
-      if (stream && Array.isArray(transformed.messages) && !transformed.stream_options) {
+      // Same OpenAI-wire-only gate as BaseExecutor.transformRequest — strict
+      // upstreams (Anthropic: "stream_options: Extra inputs are not permitted")
+      // reject unknown top-level fields.
+      const wireFormat = this.config?.format || "openai";
+      if (
+        stream &&
+        (wireFormat === "openai" || wireFormat === "ollama") &&
+        Array.isArray(transformed.messages) &&
+        !transformed.stream_options
+      ) {
         transformed.stream_options = { include_usage: true };
       }
       if (streamIsTransportControlled(this.config)) {
