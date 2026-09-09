@@ -1,7 +1,7 @@
 import { Readable } from "stream";
 import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
 import { dbg } from "./debugLog.js";
-import { wrapHeaders } from "../identity/wrap.js";
+import { wrapHeaders, withClaudeOAuthCredentialBetas } from "../identity/wrap.js";
 import { getProfile, CLAUDE_MESSAGES_HEADER_ORDER, CLAUDE_COUNT_TOKENS_HEADER_ORDER } from "../identity/catalog.js";
 import { createClaudeCodeFetch } from "../identity/tls/claude-code.js";
 import { CLAUDE_CODE_TLS_SPEC_REV } from "../identity/tls/claude-code-spec.js";
@@ -305,9 +305,22 @@ function applyIdentityWrap(url, options = {}) {
     snapshot: options.snapshot,
     requestPath: new URL(url).pathname,
   });
+  const headers = { ...wrapped.headers };
+  // OAuth (Bearer) claude hops must declare the credential betas the snapshot
+  // cannot carry (harvested from a non-OAuth call) — see wrap.js.
+  if (wrapped.profileId === "claude-cli") {
+    const authKey = Object.keys(headers).find((k) => k.toLowerCase() === "authorization");
+    const auth = authKey ? String(headers[authKey]) : "";
+    if (auth.startsWith("Bearer ")) {
+      const betaKey = Object.keys(headers).find((k) => k.toLowerCase() === "anthropic-beta");
+      if (betaKey && headers[betaKey]) {
+        headers[betaKey] = withClaudeOAuthCredentialBetas(headers[betaKey]);
+      }
+    }
+  }
   return {
     ...options,
-    headers: wrapped.headers,
+    headers,
     _identityTls: wrapped.tls,
     _identityAlpn: wrapped.alpn,
     _identityTlsSpecRev: wrapped.tlsSpecRev,

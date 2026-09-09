@@ -3,6 +3,43 @@ import { applyIdentity, resolveProfileId, getProfile, orderHeaders, CLAUDE_COUNT
 import { claudeSnapshotVersions, getConsistentSnapshot, getDeviceProfile } from "./snapshot.js";
 import { hostArch, hostPlatform } from "./os.js";
 
+const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
+const CLAUDE_CODE_BETA = "claude-code-20250219";
+const CLAUDE_EXTENDED_CACHE_TTL_BETA = "extended-cache-ttl-2025-04-11";
+
+/**
+ * Credential-scoped betas for a Claude OAuth (Bearer) hop — mirrors
+ * CLIProxyAPI's withClaudeOAuthCredentialBetas: every real OAuth client
+ * declares oauth-2025-04-20 (observed wire position: directly after
+ * claude-code-20250219) and extended-cache-ttl-2025-04-11 on normal calls.
+ * The identity snapshot cannot carry them — it is harvested from a
+ * non-OAuth invocation — and Anthropic throttles Bearer requests that omit
+ * the oauth beta (429 rate_limit_error "Error"). Betas already present keep
+ * their caller-chosen position; dedupe preserves order.
+ *
+ * @param {string} betas
+ * @returns {string}
+ */
+export function withClaudeOAuthCredentialBetas(betas) {
+  const parts = [];
+  const seen = new Set();
+  for (const beta of String(betas || "").split(",")) {
+    const trimmed = beta.trim();
+    if (trimmed && !seen.has(trimmed)) {
+      parts.push(trimmed);
+      seen.add(trimmed);
+    }
+  }
+  if (!seen.has(CLAUDE_OAUTH_BETA)) {
+    const insertAt = parts[0] === CLAUDE_CODE_BETA ? 1 : 0;
+    parts.splice(insertAt, 0, CLAUDE_OAUTH_BETA);
+  }
+  if (!seen.has(CLAUDE_EXTENDED_CACHE_TTL_BETA)) {
+    parts.push(CLAUDE_EXTENDED_CACHE_TTL_BETA);
+  }
+  return parts.join(",");
+}
+
 function nodeVersion() {
   return typeof process !== "undefined" && process.version ? process.version.replace(/^v/, "") : "unknown";
 }
