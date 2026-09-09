@@ -9,13 +9,14 @@ const mocks = vi.hoisted(() => ({
   getSettings: vi.fn(),
   validateApiKey: vi.fn(),
   hasValidCliToken: vi.fn(),
+  hasValidDashboardSession: vi.fn(),
 }));
 
 vi.mock("next/server", () => ({
   NextResponse: {
     next: vi.fn(() => mocks.nextResponse),
     json: mocks.jsonResponse,
-    redirect: vi.fn((url) => ({ status: 307, url })),
+    redirect: vi.fn((url) => ({ status: 307, url: String(url) })),
   },
 }));
 
@@ -26,6 +27,10 @@ vi.mock("@/lib/db/index.js", () => ({
 
 vi.mock("@/shared/utils/cliToken.js", () => ({
   hasValidCliToken: mocks.hasValidCliToken,
+}));
+
+vi.mock("@/lib/auth/dashboardSession.js", () => ({
+  hasValidDashboardSession: mocks.hasValidDashboardSession,
 }));
 
 const { proxy, __test__ } = await import("../../src/dashboardGuard.js");
@@ -49,6 +54,7 @@ describe("dashboard guard public LLM API access", () => {
     mocks.hasValidCliToken.mockImplementation(async (request) => (
       request.headers.get("x-switchboard-cli-token") === "cli-token"
     ));
+    mocks.hasValidDashboardSession.mockResolvedValue(false);
     delete process.env.SWITCHBOARD_TRUST_REAL_IP;
     delete process.env.SWITCHBOARD_LOCAL_PEERS;
     process.env.HOSTNAME = "127.0.0.1"; // default: loopback bind (npm scripts)
@@ -294,6 +300,7 @@ describe("dashboard guard local-only access", () => {
     delete process.env.SWITCHBOARD_TRUST_REAL_IP;
     delete process.env.SWITCHBOARD_LOCAL_PEERS;
     process.env.HOSTNAME = "127.0.0.1"; // default: loopback bind (npm scripts)
+    mocks.hasValidDashboardSession.mockResolvedValue(false);
   });
 
   it("rejects local-only route from non-loopback host without CLI token", async () => {
@@ -437,5 +444,122 @@ describe("dashboard guard local-only access", () => {
       "x-goog-api-key": "google-key",
     });
     expect(__test__.extractApiKey(req)).toBe("google-key");
+  });
+});
+
+describe("dashboard guard remote session access", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getSettings.mockResolvedValue({ requireApiKey: true });
+    mocks.validateApiKey.mockResolvedValue(false);
+    mocks.hasValidCliToken.mockImplementation(async (request) => (
+      request.headers.get("x-switchboard-cli-token") === "cli-token"
+    ));
+    mocks.hasValidDashboardSession.mockResolvedValue(false);
+    // Wildcard bind behind custom-server: a genuinely remote LAN peer.
+    process.env.HOSTNAME = "0.0.0.0";
+    process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
+    delete process.env.SWITCHBOARD_LOCAL_PEERS;
+  });
+
+  // Simulates a request from 192.168.1.20 hitting http://192.168.1.10:20128.
+  function remoteRequest(pathname, headers = {}) {
+    return request(pathname, {
+      host: "192.168.1.10:20128",
+      "x-switchboard-real-ip": "192.168.1.20",
+      ...headers,
+    });
+  }
+
+  it("keeps the login route reachable from a remote peer", async () => {
+    const response = await proxy(remoteRequest("/api/auth/login", { accept: "application/json" }));
+    expect(response).toBe(mocks.nextResponse);
+  });
+
+  it("keeps the logout route reachable from a remote peer", async () => {
+    const response = await proxy(remoteRequest("/api/auth/logout", { accept: "application/json" }));
+    expect(response).toBe(mocks.nextResponse);
+  });
+
+  it("rejects dashboard /api/* from a remote peer without a session", async () => {
+    const response = await proxy(remoteRequest("/api/settings"));
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe("Local only");
+  });
+
+  it("allows dashboard /api/* from a remote peer with a valid session", async () => {
+    mocks.hasValidDashboardSession.mockResolvedValue(true);
+    const response = await proxy(remoteRequest("/api/settings"));
+    expect(response).toBe(mocks.nextResponse);
+  });
+
+  it("allows /dashboard pages from a remote peer with a valid session", async () => {
+    mocks.hasValidDashboardSession.mockResolvedValue(true);
+    const response = await proxy(remoteRequest("/dashboard/providers", {
+      accept: "text/html,application/xhtml+xml",
+    }));
+    expect(response).toBe(mocks.nextResponse);
+  });
+
+  it("redirects a remote browser navigation to /login without a session", async () => {
+    const response = await proxy(remoteRequest("/dashboard", {
+      accept: "text/html,application/xhtml+xml",
+      "sec-fetch-dest": "document",
+    }));
+    expect(response.status).toBe(307);
+    expect(String(response.url)).toContain("/login");
+  });
+
+  it("still returns JSON 403 for remote XHR (non-navigation) without a session", async () => {
+    const response = await proxy(remoteRequest("/dashboard/providers", {
+      accept: "*/*",
+    }));
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe("Local only");
+  });
+
+  it("never lets a session unlock spawn-capable LOCAL_ONLY routes", async () => {
+    mocks.hasValidDashboardSession.mockResolvedValue(true);
+    const response = await proxy(remoteRequest("/api/shutdown", { method: "POST" }));
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe("Local only");
+  });
+
+  it("rejects a session request whose Origin does not match the Host (CSRF)", async () => {
+    mocks.hasValidDashboardSession.mockResolvedValue(true);
+    const response = await proxy(remoteRequest("/api/settings", {
+      origin: "http://evil.example",
+    }));
+    expect(response.status).toBe(403);
+  });
+
+  it("allows a session request with a same-origin Origin header", async () => {
+    mocks.hasValidDashboardSession.mockResolvedValue(true);
+    const response = await proxy(remoteRequest("/api/settings", {
+      origin: "http://192.168.1.10:20128",
+    }));
+    expect(response).toBe(mocks.nextResponse);
+  });
+
+  it("serves /login to a remote peer without a session", async () => {
+    const response = await proxy(remoteRequest("/login", {
+      accept: "text/html,application/xhtml+xml",
+    }));
+    expect(response).toBe(mocks.nextResponse);
+  });
+
+  it("redirects /login to /dashboard for a peer that already has access", async () => {
+    mocks.hasValidDashboardSession.mockResolvedValue(true);
+    const response = await proxy(remoteRequest("/login"));
+    expect(response.status).toBe(307);
+    expect(String(response.url)).toContain("/dashboard");
+  });
+
+  it("redirects /login to /dashboard for local peers (unchanged UX)", async () => {
+    process.env.HOSTNAME = "127.0.0.1";
+    delete process.env.SWITCHBOARD_TRUST_REAL_IP;
+    const response = await proxy(request("/login", { host: "localhost:20128" }));
+    expect(response.status).toBe(307);
+    expect(String(response.url)).toContain("/dashboard");
   });
 });

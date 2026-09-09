@@ -3,6 +3,7 @@ import { getSettings, validateApiKey } from "@/lib/db/index.js";
 import { hasValidCliToken } from "@/shared/utils/cliToken.js";
 import { extractGatewayApiKey } from "@/shared/utils/gatewayApiKey.js";
 import { isManagementTokenValid } from "@/lib/mgmt/token.js";
+import { hasValidDashboardSession } from "@/lib/auth/dashboardSession.js";
 
 // Public LLM API prefixes (optional API-key gate for non-local callers).
 const PUBLIC_PREFIXES = ["/v1", "/v1beta", "/api/v1", "/api/v1beta", "/codex"];
@@ -187,6 +188,36 @@ async function canAccessLocalOnlyRoute(request) {
   return false;
 }
 
+/**
+ * Same-origin CSRF guard for session-authenticated remote requests. The
+ * session cookie is SameSite=Lax (no cross-site XHR), but when an Origin
+ * header is present we additionally require it to match the request's own
+ * host — belt and braces, mirroring the loopback Origin rule in isLocalRequest.
+ */
+function hasMatchingOriginHeader(request) {
+  const origin = request.headers.get("origin");
+  if (!origin) return true;
+  try {
+    return normalizeHostname(new URL(origin).hostname) === normalizeHostname(request.headers.get("host"));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Dashboard data access (pages + dashboard /api/*): loopback, CLI token, or a
+ * signed-in remote session. Remote sessions never unlock LOCAL_ONLY_PATHS —
+ * those keep their own stricter gate above.
+ */
+async function canAccessDashboardData(request) {
+  if (await hasValidCliToken(request)) return true;
+  if (isLocalRequest(request)) return true;
+  if (await hasValidDashboardSession(request)) {
+    return hasMatchingOriginHeader(request);
+  }
+  return false;
+}
+
 async function canAccessManagementRoute(request) {
   // Cheap synchronous checks first; the CLI-token lookup hits the DB.
   if (isLocalRequest(request)) return true;
@@ -203,14 +234,19 @@ export const __test__ = {
   extractApiKey,
   canAccessPublicLlmApi,
   canAccessLocalOnlyRoute,
+  canAccessDashboardData,
+  hasMatchingOriginHeader,
   canAccessManagementRoute,
   isManagementTokenValid,
 };
 
 /**
- * Single-user local gateway: no dashboard login / OIDC / JWT.
+ * Single-user local-first gateway: loopback needs no auth; remote peers sign
+ * in once with a gateway API key to get a dashboard session cookie.
  * - Public LLM prefixes: optional API key for non-loopback when requireApiKey.
- * - All other /api/*: loopback or CLI token only (credentials must not hit LAN).
+ * - LOCAL_ONLY paths (spawn/update/MCP): loopback or CLI token only, never remote sessions.
+ * - Other /api/* + /dashboard: loopback, CLI token, or dashboard session.
+ * - A remote operator with MANAGEMENT_TOKEN still has /api/mgmt/*.
  */
 export async function proxy(request) {
   const { pathname } = request.nextUrl;
@@ -219,6 +255,12 @@ export async function proxy(request) {
     if (!(await canAccessLocalOnlyRoute(request))) {
       return NextResponse.json({ error: "Local only" }, { status: 403 });
     }
+  }
+
+  // Sign-in/out must be reachable from remote peers — that is the whole point
+  // of remote dashboard access. Login rate-limits and validates inside the route.
+  if (pathname === "/api/auth/login" || pathname === "/api/auth/logout") {
+    return NextResponse.next();
   }
 
   if (isPublicLlmApi(pathname)) {
@@ -236,25 +278,35 @@ export async function proxy(request) {
     );
   }
 
-  // All other /api/* (settings, keys, providers, combos writes, …) are loopback/CLI only.
-  // Default bind is 0.0.0.0 — without this, LAN peers can mutate credentials.
+  // All other /api/* (settings, keys, providers, combos writes, …): loopback,
+  // CLI token, or a signed-in remote dashboard session.
   if (pathname.startsWith("/api/")) {
-    if (!(await canAccessLocalOnlyRoute(request))) {
+    if (!(await canAccessDashboardData(request))) {
       return NextResponse.json({ error: "Local only" }, { status: 403 });
     }
   }
 
   // Dashboard HTML pages embed DB-backed initialData in the RSC payload,
-  // so they get the same local-only gate as /api/* (peer + Host + Origin).
-  // A remote operator with MANAGEMENT_TOKEN still has /api/mgmt/*.
+  // so they get the same gate as /api/*. Remote browsers without a session
+  // are pointed at the sign-in page instead of a JSON 403.
   if (pathname === "/dashboard" || pathname.startsWith("/dashboard/")) {
-    if (!(await canAccessLocalOnlyRoute(request))) {
+    if (!(await canAccessDashboardData(request))) {
+      const isNavigation =
+        request.headers.get("sec-fetch-dest") === "document" ||
+        (request.headers.get("accept") || "").includes("text/html");
+      if (isNavigation) {
+        return NextResponse.redirect(new URL("/login", request.url));
+      }
       return NextResponse.json({ error: "Local only" }, { status: 403 });
     }
   }
 
+  // The sign-in page exists only for remote peers — anyone who can already
+  // reach the dashboard goes straight there.
   if (pathname === "/login" || pathname.startsWith("/login/")) {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    if (await canAccessDashboardData(request)) {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
   }
 
   if (pathname === "/") {
