@@ -138,6 +138,10 @@ const PROVIDER_MODELS_CONFIG = {
       "Content-Type": "application/json"
     },
     authHeader: "x-api-key",
+    // OAuth (Claude subscription) credentials only authenticate as Bearer on
+    // Anthropic endpoints — x-api-key rejects them with 401. API-key
+    // connections keep the native x-api-key header.
+    oauthBearer: true,
     parseResponse: (data) => data.data || []
   },
   gemini: {
@@ -623,7 +627,15 @@ export async function GET(request, { params }) {
     // Build headers
     const headers = { ...config.headers };
     if (config.authHeader && !config.authQuery) {
-      headers[config.authHeader] = (config.authPrefix || "") + token;
+      // OAuth credentials authenticate as `Authorization: Bearer` (+ oauth beta)
+      // even on providers whose API-key auth lives in a native header. Same
+      // pattern as the Claude usage hop and CLIProxyAPI's claude executor.
+      if (config.oauthBearer === true && connection.authType === "oauth") {
+        headers["Authorization"] = `Bearer ${token}`;
+        headers["anthropic-beta"] = "oauth-2025-04-20";
+      } else {
+        headers[config.authHeader] = (config.authPrefix || "") + token;
+      }
     }
 
     // Make request
