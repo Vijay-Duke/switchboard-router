@@ -90,7 +90,7 @@ const NAV_SECTIONS = [
 export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) {
   const pathname = usePathname();
   const [isDisconnected, setIsDisconnected] = useState(false);
-  const [updateInfo, setUpdateInfo] = useState(null);
+  const [versionInfo, setVersionInfo] = useState(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [shutdownCountdown, setShutdownCountdown] = useState(0);
@@ -111,23 +111,23 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
   useEffect(() => {
     fetchVersionOnce()
       .then((data) => {
-        // Strict gate: only show when API asserts a newer version than current
-        if (
-          data &&
-          data.hasUpdate === true &&
-          data.latestVersion &&
-          data.currentVersion &&
-          data.latestVersion !== data.currentVersion
-        ) {
-          setUpdateInfo(data);
-        } else {
-          setUpdateInfo(null);
-        }
+        setVersionInfo(data || null);
       })
       .catch(() => {
-        setUpdateInfo(null);
+        setVersionInfo(null);
       });
   }, []);
+
+  // Strict gate: only treat as an update when the API asserts a newer version
+  // than current. Otherwise the version chip still shows the installed one.
+  const updateInfo =
+    versionInfo &&
+    versionInfo.hasUpdate === true &&
+    versionInfo.latestVersion &&
+    versionInfo.currentVersion &&
+    versionInfo.latestVersion !== versionInfo.currentVersion
+      ? versionInfo
+      : null;
 
   const handleUpdate = () => {
     setShowUpdateModal(false);
@@ -217,8 +217,13 @@ export default function Sidebar({ onClose, endpointHost: initialEndpointHost }) 
                   color: "var(--color-text-subtle)",
                   fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
                 }}
+                title={
+                  versionInfo?.currentVersion
+                    ? `Switchboard v${versionInfo.currentVersion}${versionInfo.latestVersion ? ` (latest: v${versionInfo.latestVersion})` : ""}`
+                    : undefined
+                }
               >
-                routing gateway
+                {versionInfo?.currentVersion ? `v${versionInfo.currentVersion} · ` : ""}routing gateway
               </span>
             </div>
           </Link>

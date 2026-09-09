@@ -12,7 +12,7 @@ function populate(dir) {
   fs.writeFileSync(path.join(dir, "machine-id"), "abc");
 }
 
-// The CLI's postinstall warms this up before the server ever runs.
+// The CLI warms this up on start (hooks/sqliteRuntime self-heal).
 function warmRuntimeCache(dir) {
   fs.mkdirSync(path.join(dir, "runtime", "node_modules"), { recursive: true });
   fs.writeFileSync(path.join(dir, "runtime", "package.json"), "{}");
