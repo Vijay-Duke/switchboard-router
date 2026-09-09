@@ -141,6 +141,12 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
 
     // Claude shape: translate → OpenAI → compress → translate back.
     if (format === "claude") {
+      // The CCH billing block rides as system[0]; the translate-compress-translate
+      // round-trip rebuilds system without it. Save and re-prepend so the signed
+      // block reaches the wire.
+      const billingBlock = Array.isArray(body.system) && body.system[0]?.text?.startsWith?.("x-anthropic-billing-header:")
+        ? body.system[0]
+        : null;
       const oai = claudeToOpenAIRequest(model, body, false);
       if (!Array.isArray(oai?.messages)) {
         setDiagnostic(diagnostics, "Claude request did not translate to messages[]");
@@ -150,7 +156,11 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
       if (!data) return null;
       const claudeBody = openaiToClaudeRequest(model, { ...oai, messages: data.messages }, false);
       if (Array.isArray(claudeBody?.messages)) body.messages = claudeBody.messages;
-      if (claudeBody?.system !== undefined) body.system = claudeBody.system;
+      if (claudeBody?.system !== undefined) {
+        body.system = billingBlock
+          ? [billingBlock, ...(Array.isArray(claudeBody.system) ? claudeBody.system : [{ type: "text", text: String(claudeBody.system) }])]
+          : claudeBody.system;
+      }
       if (diagnostics) diagnostics.after = captureSizeSnapshot(body);
       return data;
     }

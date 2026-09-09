@@ -1,6 +1,50 @@
 import { createHash, randomUUID } from "crypto";
 import { CLAUDE_TOOL_SUFFIX, CC_DEFAULT_TOOLS } from "../config/appConstants.js";
 import { getConsistentSnapshot, getDeviceProfile } from "../identity/snapshot.js";
+import { proxyAwareFetch } from "./proxyFetch.js";
+
+// Real Anthropic account identity per OAuth credential (CLIProxyAPI parity:
+// their OAuth flow harvests /api/oauth/profile right after token exchange and
+// persists account_uuid with the credential). Anthropic gates premium models
+// (opus/fable) on requests whose metadata.user_id carries the account's real
+// UUID; synthesized values pass for haiku but 429 for premium tiers.
+const OAUTH_PROFILE_URL = "https://api.anthropic.com/api/oauth/profile";
+const profileCache = new Map(); // credentialId -> { accountUuid, at }
+
+const PROFILE_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Fetch (and memoize) the real account UUID for an OAuth credential.
+ * Fail-open: returns null when the profile endpoint is unreachable so callers
+ * keep whatever identity strategy they had.
+ * @param {string} accessToken
+ * @param {string} credentialId
+ * @returns {Promise<string|null>}
+ */
+export async function resolveClaudeAccountUuid(accessToken, credentialId = accessToken) {
+  if (!accessToken || !accessToken.includes("sk-ant-oat")) return null;
+  const cached = profileCache.get(credentialId);
+  if (cached && Date.now() - cached.at < PROFILE_TTL_MS) return cached.accountUuid;
+  try {
+    const response = await proxyAwareFetch(OAUTH_PROFILE_URL, {
+      method: "GET",
+      identity: "claude-cli",
+      provider: "claude",
+      format: "claude",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "anthropic-beta": "oauth-2025-04-20",
+      },
+    });
+    if (!response.ok) return cached?.accountUuid || null;
+    const data = await response.json();
+    const accountUuid = data?.account?.uuid || null;
+    if (accountUuid) profileCache.set(credentialId, { accountUuid, at: Date.now() });
+    return accountUuid;
+  } catch {
+    return cached?.accountUuid || null;
+  }
+}
 
 function generateBillingHeader(payload, snapshot, deviceProfile) {
   const content = JSON.stringify(payload);
@@ -11,10 +55,10 @@ function generateBillingHeader(payload, snapshot, deviceProfile) {
   return `x-anthropic-billing-header: cc_version=${version}.${deviceProfile.buildHash}; cc_entrypoint=${entrypoint}; cch=${cch};`;
 }
 
-function generateFakeUserID(sessionId, deviceProfile) {
+function generateFakeUserID(sessionId, deviceProfile, accountUuid = null) {
   return JSON.stringify({
     device_id: deviceProfile.deviceId,
-    account_uuid: deviceProfile.accountUuid,
+    account_uuid: accountUuid || deviceProfile.accountUuid,
     session_id: sessionId || randomUUID(),
   });
 }
@@ -128,13 +172,14 @@ const CC_DECOY_TOOLS = [
 /**
  * Apply Claude cloaking to request body:
  * 1. Inject billing header as first system block
- * 2. Inject fake user ID into metadata (JSON format, session_id aligned with X-Claude-Code-Session-Id)
+ * 2. Inject user ID into metadata (JSON format, session_id aligned with X-Claude-Code-Session-Id)
  * Only applies when using OAuth token (sk-ant-oat).
  * @param {string} [sessionId] - Session ID to align with X-Claude-Code-Session-Id header
  * @param {string} [credentialId] - Stable credential identifier; defaults to apiKey
+ * @param {object} [options] - { accountUuid?: string|null, includeBilling?: boolean }
  * @returns {object} Modified body
  */
-export function applyCloaking(body, apiKey, sessionId, credentialId = apiKey) {
+export function applyCloaking(body, apiKey, sessionId, credentialId = apiKey, options = {}) {
   if (!apiKey || !apiKey.includes("sk-ant-oat")) return body;
 
   const snapshot = getConsistentSnapshot("claude-cli");
@@ -143,24 +188,48 @@ export function applyCloaking(body, apiKey, sessionId, credentialId = apiKey) {
   const result = { ...body };
 
   // Inject billing header as system[0], preserve existing system blocks
-  const billingText = generateBillingHeader(body, snapshot, deviceProfile);
-  const billingBlock = { type: "text", text: billingText };
+  const includeBilling = options.includeBilling !== false;
+  if (includeBilling) {
+    const billingText = generateBillingHeader(body, snapshot, deviceProfile);
+    const billingBlock = { type: "text", text: billingText };
 
-  if (Array.isArray(result.system)) {
-    // Skip if already injected
-    if (!result.system[0]?.text?.startsWith("x-anthropic-billing-header:")) {
-      result.system = [billingBlock, ...result.system];
+    if (Array.isArray(result.system)) {
+      // Skip if already injected
+      if (!result.system[0]?.text?.startsWith("x-anthropic-billing-header:")) {
+        result.system = [billingBlock, ...result.system];
+      }
+    } else if (typeof result.system === "string") {
+      result.system = [billingBlock, { type: "text", text: result.system }];
+    } else {
+      result.system = [billingBlock];
     }
-  } else if (typeof result.system === "string") {
-    result.system = [billingBlock, { type: "text", text: result.system }];
-  } else {
-    result.system = [billingBlock];
   }
 
   // The generated body identity is authoritative for impersonated OAuth requests.
   // Native Claude Code passthrough skips this function, so an inbound official
-  // metadata value is never rewritten here.
-  result.metadata = { ...result.metadata, user_id: generateFakeUserID(sessionId, deviceProfile) };
+  // metadata value is never rewritten here. When the credential's real account
+  // UUID is known (resolveClaudeAccountUuid), it replaces the synthesized one —
+  // Anthropic gates premium models on the account-scoped identity.
+  result.metadata = {
+    ...result.metadata,
+    user_id: generateFakeUserID(sessionId, deviceProfile, options.accountUuid),
+  };
 
   return result;
+}
+
+/**
+ * Async cloaking: resolves the credential's real account UUID first, then
+ * applies cloaking with it. Falls back to the synthesized identity when the
+ * profile lookup fails (fail-open).
+ * @param {object} body
+ * @param {string} apiKey
+ * @param {string|null} [sessionId]
+ * @param {string} [credentialId]
+ * @param {object} [options] - { includeBilling?: boolean }
+ */
+export async function applyCloakingWithIdentity(body, apiKey, sessionId, credentialId = apiKey, options = {}) {
+  if (!apiKey || !apiKey.includes("sk-ant-oat")) return body;
+  const accountUuid = await resolveClaudeAccountUuid(apiKey, credentialId);
+  return applyCloaking(body, apiKey, sessionId, credentialId, { ...options, accountUuid });
 }

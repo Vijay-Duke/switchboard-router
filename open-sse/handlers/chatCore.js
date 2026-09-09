@@ -29,6 +29,8 @@ import { stripOrphanedToolResults } from "../translator/concerns/toolCall.js";
 import { injectCaveman } from "../rtk/caveman.js";
 import { injectPonytail } from "../rtk/ponytail.js";
 import { compressMessages, formatRtkLog } from "../rtk/index.js";
+import { applyCloakingWithIdentity } from "../utils/claudeCloaking.js";
+import { resolveSessionId } from "../utils/sessionManager.js";
 import { storeToVault, clampVaultThresholdKB } from "../rtk/vault.js";
 import { recordVaultStore } from "../rtk/vaultStats.js";
 import { compressWithHeadroom, formatHeadroomLog, formatHeadroomSizeLog, isHeadroomPhantomSavings } from "../rtk/headroom.js";
@@ -187,6 +189,27 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     toolNameMap = translatedBody._toolNameMap;
     delete translatedBody._toolNameMap;
     translatedBody.model = stripThinkingSuffix(upstreamModel);
+    // Claude OAuth identity: re-bind metadata.user_id to the credential's REAL
+    // account UUID (CLIProxyAPI parity — Anthropic gates premium models on the
+    // account-scoped identity). Async step lives here, not in the sync
+    // translator, because the profile lookup is fetched once and memoized.
+    // Fail-open: on lookup failure the translator-applied identity stands.
+    if ((provider === "claude" || provider?.startsWith("anthropic-compatible")) && typeof translatedBody === "object") {
+      const oauthKey = credentials?.accessToken || credentials?.apiKey || null;
+      if (typeof oauthKey === "string" && oauthKey.includes("sk-ant-oat")) {
+        try {
+          const sid = clientSessionId
+            || resolveSessionId({ headers: clientRawRequest?.headers, body: translatedBody, connectionId, scope: "claude" });
+          translatedBody = await applyCloakingWithIdentity(
+            translatedBody,
+            oauthKey,
+            sid,
+            credentials?.connectionId || oauthKey,
+            {},
+          );
+        } catch { /* keep translator-applied identity */ }
+      }
+    }
   }
 
   // Dedupe duplicate built-in tools when equivalent MCP tools are present (Claude clients only).

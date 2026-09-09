@@ -7,6 +7,7 @@ import { resolveOpenAICompatibleApiType, getTargetFormat } from "../services/pro
 import { assertPublicUrlResolved } from "../utils/ssrfGuard.js";
 import { getOpenSseDeps } from "../runtimeDeps.js";
 import { pickClaudeIdentityHeaders } from "../utils/claudeIdentityHeaders.js";
+import { signClaudeBodyCch } from "../utils/claudeCch.js";
 
 // Google Gemini and Vertex select SSE with their request URL, not a JSON field.
 // Sending the generic OpenAI-style `stream` property makes those APIs reject the
@@ -239,7 +240,21 @@ export class BaseExecutor {
       const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
 
       try {
-        const bodyStr = JSON.stringify(transformedBody);
+        let bodyStr = JSON.stringify(transformedBody);
+        // Claude OAuth requests carry a CCH-signed billing block (Claude Code
+        // 2.1.220+ wire shape). The signature covers the final serialized body,
+        // so it is computed here — after every mutation, before the wire.
+        if (
+          credentials?.accessToken &&
+          String(credentials.accessToken).includes("sk-ant-oat") &&
+          getTargetFormat(this.provider, credentials) === "claude"
+        ) {
+          try {
+            bodyStr = signClaudeBodyCch(bodyStr).toString("utf8");
+          } catch (cchError) {
+            dbg("FETCH", `CCH signing skipped: ${cchError.message}`);
+          }
+        }
         const fetchT0 = Date.now();
         dbg("FETCH", `${this.provider.toUpperCase()} → ${url} | body=${bodyStr.length}B | connectTimeout=${timeoutMs}ms`);
         const response = await proxyAwareFetch(url, {
