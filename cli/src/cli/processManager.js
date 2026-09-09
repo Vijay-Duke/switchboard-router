@@ -103,7 +103,83 @@ function findListeningPids(port) {
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 5000,
     });
-    return output.split(/\s+/).map(Number).filter((pid) => Number.isInteger(pid) && pid > 1);
+    return output.split(/\s+/).filter((pid) => pid).map(Number).filter((pid) => Number.isInteger(pid) && pid > 1);
+  } catch { return []; }
+}
+
+// ── Listener address awareness ─────────────────────────────────────────────
+// A specific-address listener does not prevent binding another address on the
+// same port: SO_REUSEADDR (set by node and Go listeners) lets specific and
+// wildcard listeners coexist, each keeping its own traffic. This is the
+// Tailscale-serve pattern — tailscaled holds 100.x.y.z:PORT and forwards to
+// 127.0.0.1:PORT, so the app must still be able to take loopback/wildcard.
+
+/** Normalize an lsof NAME / Get-NetTCPConnection LocalAddress value. */
+function parseListenerAddress(raw, type) {
+  let name = String(raw || "").trim().toLowerCase();
+  const typeHint = String(type || "").toLowerCase();
+  let family = null;
+  if (typeHint.includes("v6")) family = 6;
+  else if (typeHint.includes("v4")) family = 4;
+  if (name.startsWith("[")) {
+    // lsof prints IPv6 as [addr]:port
+    const end = name.indexOf("]");
+    name = end === -1 ? name.slice(1) : name.slice(1, end);
+    family = 6;
+  } else if (/^[^:\[\]]+:\d+$/.test(name)) {
+    // host:port with exactly one colon is unambiguous IPv4+port; bare IPv6
+    // literals (Windows LocalAddress) have several colons and stay intact.
+    name = name.replace(/:\d+$/, "");
+  }
+  if (family == null) family = name.includes(":") ? 6 : 4;
+  const wildcard = name === "*" || name === "0.0.0.0" || name === "::" || name === "";
+  return { address: name, family, wildcard };
+}
+
+/** True when a listener would actually prevent/claim the app's bind. */
+function listenerConflicts(listener, bindHost) {
+  const bind = String(bindHost || "0.0.0.0").trim().toLowerCase();
+  const bindFamily = bind.includes(":") ? 6 : 4;
+  const bindWildcard = bind === "0.0.0.0" || bind === "::" || bind === "*";
+  if (!listener || typeof listener !== "object") return true; // unknown → conservative
+  if (listener.wildcard) return listener.family === bindFamily;
+  if (bindWildcard) return false; // specific listener coexists with our wildcard
+  return listener.family === bindFamily && listener.address === bind;
+}
+
+/** All listeners on a port with their bound address: [{pid, address, family, wildcard}]. */
+function findPortListeners(port) {
+  const numericPort = Number(port);
+  if (!Number.isInteger(numericPort) || numericPort < 1 || numericPort > 65535) return [];
+  try {
+    if (process.platform === "win32") {
+      const output = execFileSync("powershell", [
+        "-NonInteractive", "-NoProfile", "-Command",
+        `Get-NetTCPConnection -LocalPort ${numericPort} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { "$($_.LocalAddress) $($_.OwningProcess)" }`,
+      ], { encoding: "utf8", windowsHide: true, timeout: 5000 });
+      return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+        const space = line.lastIndexOf(" ");
+        const parsed = parseListenerAddress(line.slice(0, space));
+        return { pid: Number(line.slice(space + 1)), ...parsed };
+      }).filter((entry) => Number.isInteger(entry.pid) && entry.pid > 1);
+    }
+    const output = execFileSync("lsof", [`-nP`, `-iTCP:${numericPort}`, "-sTCP:LISTEN"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
+    });
+    const seen = new Set();
+    const listeners = [];
+    for (const line of output.split(/\r?\n/)) {
+      const tokens = line.trim().split(/\s+/);
+      if (tokens.length < 9 || !/^\d+$/.test(tokens[1])) continue;
+      const entry = { pid: Number(tokens[1]), ...parseListenerAddress(tokens[8], tokens[4]) };
+      const key = `${entry.pid}:${entry.address}:${entry.family}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      listeners.push(entry);
+    }
+    return listeners;
   } catch { return []; }
 }
 
@@ -232,6 +308,9 @@ module.exports = {
   acquireLifecycleLock,
   childIsLive,
   findListeningPids,
+  findPortListeners,
+  listenerConflicts,
+  parseListenerAddress,
   getProcessCommand,
   getProcessCwd,
   isPidAlive,

@@ -577,9 +577,24 @@ async function run() {
         console.log(`Use "${commandFor("restart")}" to replace it.`);
         return 0;
       }
-      console.error(`Port ${port} is already in use by another process (PID: ${remaining.join(", ")}).`);
-      console.error(`Choose another port with --port or stop that process first.`);
-      return 1;
+      // Only listeners that genuinely claim our bind address block startup.
+      // Specific-address listeners (e.g. Tailscale serve holding 100.x.y.z:PORT
+      // and forwarding to loopback) coexist with a wildcard/loopback bind.
+      const portListeners = processTools.findPortListeners(port);
+      const conflictingPids = [
+        ...new Set(portListeners.filter((l) => processTools.listenerConflicts(l, host)).map((l) => l.pid)),
+      ];
+      if (conflictingPids.length > 0) {
+        console.error(`Port ${port} is already in use by another process (PID: ${conflictingPids.join(", ")}).`);
+        console.error(`Choose another port with --port or stop that process first.`);
+        return 1;
+      }
+      const coexisting = portListeners
+        .filter((l) => !processTools.listenerConflicts(l, host))
+        .map((l) => l.address || "unknown");
+      if (coexisting.length > 0) {
+        console.log(`Note: port ${port} also has listeners on other addresses (${[...new Set(coexisting)].join(", ")}) — they will keep their own traffic.`);
+      }
     }
 
     const latestVersion = await checkForUpdate();
