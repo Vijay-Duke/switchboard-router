@@ -3,7 +3,7 @@ import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js"
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
-import { resolveOpenAICompatibleApiType } from "../services/provider.js";
+import { resolveOpenAICompatibleApiType, getTargetFormat } from "../services/provider.js";
 import { assertPublicUrlResolved } from "../utils/ssrfGuard.js";
 import { getOpenSseDeps } from "../runtimeDeps.js";
 import { pickClaudeIdentityHeaders } from "../utils/claudeIdentityHeaders.js";
@@ -111,8 +111,10 @@ export class BaseExecutor {
     // usage tracking — Switchboard#2382 / PR#346). OpenAI wire only: strict
     // upstreams (Anthropic: "stream_options: Extra inputs are not permitted")
     // reject unknown top-level fields, so claude/antigravity/gemini bodies
-    // must stay clean.
-    const wireFormat = this.config?.format || "openai";
+    // must stay clean. Resolve via getTargetFormat — this.config comes from
+    // the static PROVIDERS map, where dynamic anthropic-compatible-* nodes
+    // don't exist and would otherwise fall back to the openai shape.
+    const wireFormat = getTargetFormat(this.provider, credentials);
     const supportsStreamOptions = wireFormat === "openai" || wireFormat === "ollama";
     if (stream && supportsStreamOptions && body && Array.isArray(body.messages) && !body.stream_options) {
       body.stream_options = { include_usage: true };

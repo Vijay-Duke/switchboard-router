@@ -1,7 +1,7 @@
 import { BaseExecutor, streamIsTransportControlled } from "./base.js";
 import { PROVIDERS, PROVIDER_OAUTH } from "../config/providers.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE, selectAnthropicBeta } from "../providers/shared.js";
-import { resolveOpenAICompatibleApiType } from "../services/provider.js";
+import { resolveOpenAICompatibleApiType, getTargetFormat } from "../services/provider.js";
 import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
 import { buildClineHeaders } from "../shared/clineAuth.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
@@ -82,8 +82,10 @@ export class DefaultExecutor extends BaseExecutor {
       // Ensure stream_options survives applyJsonSchemaFallback (mutates body in place usually)
       // Same OpenAI-wire-only gate as BaseExecutor.transformRequest — strict
       // upstreams (Anthropic: "stream_options: Extra inputs are not permitted")
-      // reject unknown top-level fields.
-      const wireFormat = this.config?.format || "openai";
+      // reject unknown top-level fields. getTargetFormat resolves dynamic
+      // anthropic-compatible-* nodes correctly (this.config may be the
+      // openai fallback shape for them).
+      const wireFormat = getTargetFormat(this.provider, credentials);
       if (
         stream &&
         (wireFormat === "openai" || wireFormat === "ollama") &&
