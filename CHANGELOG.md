@@ -1,3 +1,14 @@
+# v0.9.32 (2026-09-10)
+
+## Features
+- **Provider peak/off-peak windows + time-gated combo members**: providers can carry a weekly peak/off-peak schedule (DeepSeek discount preset included); combo members can be restricted to peak-only or off-peak-only hours, gated members are skipped at request time, and a fully gated combo fails closed with a 503 + `Retry-After` pointing at the next eligible window. Provider detail page gained a Peak Hours card and the models/info endpoint annotates live schedule state. Schedule-gate tests now pin the evaluation instant so they pass regardless of wall clock.
+
+## Fixes
+- **Gitbook docs-site dependency audit**: patched the Next.js RCE, sharp, and baseline-browser-mapping advisories flagged by `npm audit`.
+
+## Docs
+- Documented peak/off-peak hours, combo member availability rules, and the per-model reasoning wire-format mapping for OpenAI-compatible providers (import-time capture, static host defaults, precedence) plus the capability-aware pi catalog sync.
+
 # v0.9.21 (2026-09-08)
 
 ## Fixes
