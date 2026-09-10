@@ -4,7 +4,7 @@ import {
   clearAccountError,
   extractApiKey,
 } from "../services/auth.js";
-import { getSettings } from "@/lib/db/index.js";
+import { getSettings, getProviderConnectionById } from "@/lib/db/index.js";
 import { getModelInfo } from "../services/model.js";
 import { handleVideoProxyCore, getVideoConfig, sanitizeSecrets } from "open-sse/handlers/videoCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -190,6 +190,21 @@ export async function handleVideoCreate(request, action) {
 }
 
 /**
+ * Poll requests carry no model, so the provider comes from the pinned
+ * connection (`x-connection-id`, returned on create) or an explicit
+ * `?provider=` — falling back to the historical xAI default.
+ */
+async function resolveGetProvider(request, connectionId) {
+  if (connectionId) {
+    const conn = await getProviderConnectionById(connectionId).catch(() => null);
+    if (conn?.provider && getVideoConfig(conn.provider)) return conn.provider;
+  }
+  const queried = new URL(request.url).searchParams.get("provider");
+  if (queried && getVideoConfig(queried)) return queried;
+  return DEFAULT_VIDEO_PROVIDER;
+}
+
+/**
  * GET /v1/videos/{request_id} — poll job status.
  * Jobs are account-bound upstream, so no cross-account rotation here: the
  * caller pins the creating account via `x-connection-id` (returned on create).
@@ -201,8 +216,8 @@ export async function handleVideoGet(request, requestId) {
   return runWithClientKeyLease(auth.lease, async () => {
     if (!requestId) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing video request id");
 
-    const provider = DEFAULT_VIDEO_PROVIDER;
     const preferredConnectionId = request.headers.get("x-connection-id") || null;
+    const provider = await resolveGetProvider(request, preferredConnectionId);
     const { clientKeyId } = auth;
 
     const credentials = await getProviderCredentials(provider, null, null, {
