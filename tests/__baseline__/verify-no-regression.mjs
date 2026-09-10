@@ -21,12 +21,19 @@ const nowFails = r.testResults.flatMap(f =>
     .map(a => `${relative(repoRoot, f.name).replaceAll("\\", "/")} :: ${a.fullName}`)
 );
 
+// A suite that fails to run (module resolution, syntax error, setup crash) reports
+// no assertionResults, so counting only failed assertions turned a broken build
+// into a green "no regression" — while vitest itself exited 1.
+const failedSuites = r.testResults
+  .filter(f => f.status === "failed" && !f.assertionResults.some(a => a.status === "failed"))
+  .map(f => `${relative(repoRoot, f.name).replaceAll("\\", "/")} :: <suite failed to run>`);
+
 // Regression = fails now but is not in the known-fails baseline.
-const regressions = nowFails.filter(f => !knownFails.has(f));
+const regressions = [...nowFails, ...failedSuites].filter(f => !knownFails.has(f));
 
 if (regressions.length) {
   console.error(`\n❌ REGRESSION: ${regressions.length} test pass→fail:\n`);
   regressions.forEach(f => console.error("  - " + f));
   process.exit(1);
 }
-console.log(`✅ No regression. (now fails=${nowFails.length}, baseline known=${knownFails.size}, all known)`);
+console.log(`✅ No regression. (now fails=${nowFails.length + failedSuites.length}, baseline known=${knownFails.size}, all known)`);
