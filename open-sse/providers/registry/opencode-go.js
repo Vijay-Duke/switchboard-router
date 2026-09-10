@@ -7,13 +7,13 @@ const moduleDefault = {
   ],
   uiAlias: "ocg",
   display: {
-    name: "OpenCode Go",
+    name: "OpenCode",
     icon: "terminal",
     color: "#E87040",
     textIcon: "OC",
     website: "https://opencode.ai/auth",
     notice: {
-      text: "OpenCode Go subscription: $5/mo (then  0/mo). Access to Kimi, GLM, Qwen, MiMo, MiniMax models.",
+      text: "OpenCode subscription (multiple plans). Access to Kimi, GLM, Qwen, MiMo, MiniMax models.",
       apiKeyUrl: "https://opencode.ai/auth",
     },
   },
