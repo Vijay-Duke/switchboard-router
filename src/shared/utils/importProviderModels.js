@@ -2,6 +2,7 @@
 /**
  * Shared helpers for "Import models" from a connection's live /models listing.
  */
+import { normalizeReasoningSupport } from "./reasoningCatalog.js";
 
 // Anthropic / Z.AI /models uses type:"model" as the object type, not a service kind.
 const LLM_TYPE_ALIASES = new Set(["chat", "text", "language", "model"]);
@@ -66,10 +67,12 @@ export function cleanImportedModelId(modelId, providerAlias) {
 }
 
 /**
- * Normalize a raw models API entry into { id, name, type }.
+ * Normalize a raw models API entry into { id, name, type, reasoning? }.
+ * `reasoning` (discovered wire-format descriptor) is present only when the
+ * upstream catalog exposes a reasoning signal — see reasoningCatalog.js.
  * @param {any} model
  * @param {string} [providerAlias]
- * @returns {{ id: string, name: string, type: string }|null}
+ * @returns {{ id: string, name: string, type: string, reasoning?: { supported: boolean, effort: "flat"|"nested"|null } }|null}
  */
 export function normalizeImportedModel(model, providerAlias) {
   if (model == null) return null;
@@ -88,5 +91,11 @@ export function normalizeImportedModel(model, providerAlias) {
     model.name ||
     model.title ||
     id;
-  return { id, name: String(name), type: inferModelType(id, model) };
+  const reasoning = normalizeReasoningSupport(model);
+  return {
+    id,
+    name: String(name),
+    type: inferModelType(id, model),
+    ...(reasoning ? { reasoning } : {}),
+  };
 }

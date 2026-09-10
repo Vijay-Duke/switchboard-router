@@ -49,20 +49,34 @@ export function modelDisplayName(id) {
  * @param {unknown} modelIds
  * @param {Array<Record<string, any>>} [previous]
  * @param {Record<string, string>} [pickerLabels]
+ * @param {(id: string) => { reasoning: boolean, contextWindow?: number|null, vision?: boolean } | null} [capsResolver]
+ *   Optional capability lookup (registry patterns + compatible-node discovery
+ *   + combo member union). Computed reasoning repairs the stale false written
+ *   by the pre-capability sync; hand-set fields (name, contextWindow, …)
+ *   still survive untouched entries.
  */
-export function buildPiModelEntries(modelIds, previous = [], pickerLabels = {}) {
+export function buildPiModelEntries(modelIds, previous = [], pickerLabels = {}, capsResolver = null) {
   const byId = new Map(previous.filter((entry) => entry?.id).map((entry) => [entry.id, entry]));
-  return normalizeModelIds(modelIds).map((id) => ({
-    reasoning: false,
-    input: ["text", "image"],
-    contextWindow: 200000,
-    maxTokens: 16384,
-    ...byId.get(id),
-    id,
-    name: String(pickerLabels[id] || "").trim().slice(0, 48)
-      || byId.get(id)?.name
-      || modelDisplayName(id),
-  }));
+  return normalizeModelIds(modelIds).map((id) => {
+    const prev = byId.get(id) || {};
+    const caps = capsResolver ? capsResolver(id) : null;
+    return {
+      reasoning: false,
+      input: ["text", "image"],
+      contextWindow: 200000,
+      maxTokens: 16384,
+      ...prev,
+      ...(caps ? {
+        reasoning: caps.reasoning === true,
+        ...(caps.contextWindow && !prev.contextWindow ? { contextWindow: caps.contextWindow } : {}),
+        ...(caps.vision === false ? { input: ["text"] } : {}),
+      } : {}),
+      id,
+      name: String(pickerLabels[id] || "").trim().slice(0, 48)
+        || prev.name
+        || modelDisplayName(id),
+    };
+  });
 }
 
 /**

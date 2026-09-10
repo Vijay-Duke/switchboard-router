@@ -9,8 +9,8 @@ import { LEVEL_TO_BUDGET, budgetToLevel, effortToBudget, effortToThinkingLevel }
 // Map a target wire-format to its native thinking format (when capability has none).
 const FORMAT_TO_NATIVE = {
   openai: "openai",
-  "openai-responses": "openai",
-  "openai-response": "openai",
+  "openai-responses": "openai-responses",
+  "openai-response": "openai-responses",
   codex: "openai",
   claude: "claude-budget",
   gemini: "gemini-budget",
@@ -19,6 +19,17 @@ const FORMAT_TO_NATIVE = {
   antigravity: "gemini-budget",
   kiro: "kiro",
 };
+
+// Compatible-node override: maps `${providerId}|${model}` (+ target format) to a
+// thinking format discovered from the gateway's own model catalog at import
+// time. Injected by the app layer (src/sse/services/compatibleReasoning.js);
+// the engine itself stays DB-free. Returns a format string, "none" (model
+// cannot reason on this gateway — strip), or null (no data — fall through).
+let compatibleThinkingResolver = null;
+
+export function setCompatibleThinkingResolver(fn) {
+  compatibleThinkingResolver = typeof fn === "function" ? fn : null;
+}
 
 // Strip a trailing thinking suffix "model(value)" → "model" (no-op when absent).
 export function stripThinkingSuffix(model) {
@@ -189,6 +200,21 @@ function applyFormat(fmt, body, cfg, caps) {
       if (level) body.reasoning_effort = level === "max" ? "xhigh" : level;
       break;
     }
+    case "openai-nested": {
+      // OpenRouter / Surplus Intelligence / ZENMux chat wire: nested reasoning
+      // object. "none" disables via enabled:false (documented on both).
+      if (none && canDisable) { body.reasoning = { enabled: false }; break; }
+      const level = toLevel(eff);
+      body.reasoning = level ? { effort: level === "max" ? "xhigh" : level } : { enabled: true };
+      break;
+    }
+    case "openai-responses": {
+      // OpenAI Responses wire: reasoning.{effort, summary} is the native shape.
+      if (none && canDisable) { body.reasoning = { effort: "none" }; break; }
+      const level = toLevel(eff);
+      body.reasoning = { effort: level === "max" ? "xhigh" : (level || "medium"), summary: "auto" };
+      break;
+    }
     case "claude-adaptive": {
       if (none && canDisable) { body.thinking = { type: "disabled" }; break; }
       const level = toLevel(eff);
@@ -286,6 +312,21 @@ export function applyThinking(targetFormat, model, body, provider = null, intent
   const { cleanModel, override } = parseSuffix(model);
   const cfg = override || intent || extractThinking(body);
   const caps = getCapabilitiesForModel(provider, cleanModel);
+
+  // Compatible-node per-model override (discovered from the gateway's catalog
+  // at import time): the catalog is authoritative there — it outranks both the
+  // static capability patterns and the caps.reasoning gate.
+  if (provider && provider.startsWith("openai-compatible-") && compatibleThinkingResolver) {
+    const compat = compatibleThinkingResolver(provider, cleanModel, targetFormat);
+    if (compat) {
+      // Gateway says this model cannot reason → strip any thinking fields.
+      if (compat === "none") { stripAll(body); return body; }
+      if (!cfg) return body;
+      stripAll(body);
+      applyFormat(compat, body, cfg, caps);
+      return body;
+    }
+  }
 
   // Model cannot reason → strip any stray thinking fields.
   if (!caps.reasoning) {

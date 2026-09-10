@@ -6,6 +6,8 @@ import {
   addCustomModelsBulk,
   deleteCustomModel,
 } from "@/models";
+import { isValidReasoningSupport } from "@/shared/utils/reasoningCatalog.js";
+import { invalidateCompatibleReasoningCache } from "@/sse/services/compatibleReasoning.js";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +32,7 @@ export async function POST(request) {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    // Bulk import: { models: [{ providerAlias, id, type?, name? }, ...] }
+    // Bulk import: { models: [{ providerAlias, id, type?, name?, reasoning? }, ...] }
     if (Array.isArray(body?.models)) {
       if (body.models.length === 0) {
         return NextResponse.json({ success: true, added: 0, skipped: 0 });
@@ -41,17 +43,27 @@ export async function POST(request) {
           id: typeof m?.id === "string" ? m.id.trim() : "",
           type: m?.type || m?.kind || "llm",
           name: m?.name,
+          // Discovered reasoning wire-format descriptor (import-time capture)
+          reasoning: isValidReasoningSupport(m?.reasoning) ? m.reasoning : undefined,
         }))
         .filter((m) => m.providerAlias && m.id);
       const result = await addCustomModelsBulk(cleaned);
+      if (result.added > 0) invalidateCompatibleReasoningCache();
       return NextResponse.json({ success: true, ...result });
     }
 
-    const { providerAlias, id, type, name } = body || {};
+    const { providerAlias, id, type, name, reasoning } = body || {};
     if (!providerAlias || !id) {
       return NextResponse.json({ error: "providerAlias and id required" }, { status: 400 });
     }
-    const added = await addCustomModel({ providerAlias, id, type: type || "llm", name });
+    const added = await addCustomModel({
+      providerAlias,
+      id,
+      type: type || "llm",
+      name,
+      reasoning: isValidReasoningSupport(reasoning) ? reasoning : undefined,
+    });
+    if (added) invalidateCompatibleReasoningCache();
     return NextResponse.json({ success: true, added });
   } catch (error) {
     console.log("Error adding custom model:", error);

@@ -9,6 +9,7 @@ import {
   getProviderCustomModelRows,
   isCanonicalModelDisabled,
 } from "@/shared/utils/providerCustomModels";
+import { normalizeReasoningSupport } from "@/shared/utils/reasoningCatalog";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 function CompatibleModelRow({ modelId, fullModel, copied, onCopy, onDeleteAlias, onTest, testStatus, isTesting }) {
   const borderColor = testStatus === "ok"
@@ -186,11 +187,13 @@ export default function CompatibleModelsSection({
           || seen.has(modelId)
           || isCanonicalModelDisabled(disabledIds, modelId, providerStorageAlias)) continue;
         seen.add(modelId);
+        const reasoning = normalizeReasoningSupport(model);
         toAdd.push({
           providerAlias: providerStorageAlias,
           id: modelId,
           type: "llm",
           name: model.display_name || model.displayName || model.name || modelId,
+          ...(reasoning ? { reasoning } : {}),
         });
       }
 

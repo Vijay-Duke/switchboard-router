@@ -759,6 +759,7 @@ export default function ProviderDetailPage() {
           id,
           type,
           name,
+          ...(normalized.reasoning ? { reasoning: normalized.reasoning } : {}),
         });
       }
 

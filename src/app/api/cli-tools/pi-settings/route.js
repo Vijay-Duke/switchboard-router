@@ -24,6 +24,12 @@ import {
 } from "@/lib/cli/modelCatalog.js";
 import { replaceCliFiles, restoreObjectKeys, snapshotObjectKeys } from "@/lib/cli/fileIo.js";
 import { normalizeClaudeCatalogPickerLabels } from "@/shared/claudeGateway.js";
+import { getCombos } from "@/lib/db/index.js";
+import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
+import {
+  ensureCompatibleReasoning,
+  lookupCompatibleReasoningSupport,
+} from "@/sse/services/compatibleReasoning.js";
 
 const execAsync = promisify(exec);
 
@@ -300,6 +306,47 @@ async function postPiSettings(request) {
     const key = apiKey || "sk_switchboard";
     const activeModel = resolveDefaultModel(defaultModel || model, models);
     const pickerLabels = normalizeClaudeCatalogPickerLabels(requestedPickerLabels, models);
+
+    // Capability resolver for pi's model entries: registry capability patterns,
+    // compatible-node discovery (import-time catalog capture + static host
+    // defaults), and combo member union (a combo can reason when any member
+    // can — the gateway strips thinking per member when routing).
+    await ensureCompatibleReasoning().catch(() => {});
+    const combosForCaps = typeof getCombos === "function"
+      ? await Promise.resolve(getCombos()).catch(() => [])
+      : [];
+    const comboByName = new Map(combosForCaps.map((c) => [c.name, c]));
+    const piCapsResolver = (fullId, visited = new Set()) => {
+      try {
+        const id = String(fullId || "");
+        const slash = id.indexOf("/");
+        if (slash <= 0) {
+          if (visited.has(id)) return null; // nested-combo cycle guard
+          visited.add(id);
+          const combo = comboByName.get(id);
+          if (!combo || !Array.isArray(combo.models) || combo.models.length === 0) return null;
+          let first = null;
+          for (const member of combo.models) {
+            const caps = piCapsResolver(String(member), visited);
+            if (caps?.reasoning) return caps;
+            if (caps && !first) first = caps;
+          }
+          return first;
+        }
+        const prefix = id.slice(0, slash);
+        const base = id.slice(slash + 1);
+        const compat = lookupCompatibleReasoningSupport(prefix, base);
+        if (compat) {
+          const caps = getCapabilitiesForModel(prefix, base);
+          return { reasoning: compat.supported === true, contextWindow: caps.contextWindow || null };
+        }
+        const caps = getCapabilitiesForModel(prefix, base);
+        return { reasoning: caps.reasoning === true, contextWindow: caps.contextWindow || null };
+      } catch {
+        return null;
+      }
+    };
+
     const ensureProviders = (fileData) => {
       if (!fileData.providers || typeof fileData.providers !== "object" || Array.isArray(fileData.providers)) {
         fileData.providers = {};
@@ -318,7 +365,7 @@ async function postPiSettings(request) {
         supportsReasoningEffort: true,
         supportsUsageInStreaming: true,
       },
-      models: buildPiModelEntries(models, previousModels, pickerLabels),
+      models: buildPiModelEntries(models, previousModels, pickerLabels, piCapsResolver),
     };
     // omp: curated entries stay pinned (labels/context), discovery exposes
     // every other live Switchboard model without a dashboard round-trip.

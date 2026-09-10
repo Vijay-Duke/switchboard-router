@@ -11,6 +11,7 @@ import { resolveAffinitySessionId } from "open-sse/utils/sessionManager.js";
 import { getSettings, getProviderRequestCounts } from "@/lib/db/index.js";
 import { getProviderQuotaHeadroom } from "@/lib/db/repos/connectionsRepo.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
+import { ensureCompatibleReasoning } from "../services/compatibleReasoning.js";
 import { applyScheduleGate, attachScheduleSkips, buildScheduleBlockedResponse } from "../services/scheduleGate.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
@@ -569,6 +570,9 @@ export async function handleChat(request, clientRawRequest = null) {
  * @param {boolean} [callOpts.allowNativeClaudeOAuth] - Permit direct request-scoped Claude subscription credentials
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, clientKeyId = null, callOpts = null) {
+  // TTL-cached refresh of the compatible-node reasoning map (no-op when fresh);
+  // must precede getModelInfo so a cold process resolves formats on first request.
+  await ensureCompatibleReasoning();
   const modelInfo = await getModelInfo(modelStr);
   const autoDepth = callOpts?.autoDepth || 0;
   const comboDepth = callOpts?.comboDepth || 0;

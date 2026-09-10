@@ -30,14 +30,20 @@ export async function getCustomModels() {
 }
 
 // Atomic check-then-insert inside transaction to prevent duplicate races
-export async function addCustomModel({ providerAlias, id, type = "llm", name }) {
+export async function addCustomModel({ providerAlias, id, type = "llm", name, reasoning }) {
   const k = customKey(providerAlias, id, type);
   const db = await getAdapter();
   let added = false;
   db.transaction(() => {
     const row = db.get(`SELECT 1 FROM kv WHERE scope = 'customModels' AND key = ?`, [k]);
     if (row) return;
-    const value = stringifyJson({ providerAlias, id, type, name: name || id });
+    const value = stringifyJson({
+      providerAlias,
+      id,
+      type,
+      name: name || id,
+      ...(reasoning ? { reasoning } : {}),
+    });
     db.run(`INSERT INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, value]);
     added = true;
   });
@@ -46,7 +52,7 @@ export async function addCustomModel({ providerAlias, id, type = "llm", name }) 
 
 /**
  * Bulk insert custom models in one transaction.
- * @param {Array<{ providerAlias: string, id: string, type?: string, name?: string }>} models
+ * @param {Array<{ providerAlias: string, id: string, type?: string, name?: string, reasoning?: object }>} models
  * @returns {Promise<{ added: number, skipped: number }>}
  */
 export async function addCustomModelsBulk(models) {
@@ -76,6 +82,7 @@ export async function addCustomModelsBulk(models) {
         id,
         type,
         name: m.name || id,
+        ...(m.reasoning ? { reasoning: m.reasoning } : {}),
       });
       db.run(`INSERT INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, value]);
       added += 1;
