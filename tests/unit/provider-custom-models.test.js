@@ -235,9 +235,21 @@ describe("selectable provider model rows", () => {
     expect(rows.map((row) => [row.fullModel, row.name])).toEqual([["ocg/glm-5.3", "GLM 5.3"]]);
   });
 
-  it("keeps providers isolated when no legacy aliases are passed", () => {
+  it("resolves legacy storage keys from the provider alias alone", () => {
+    // xiaomi-mimo is stored as "mimo" in the UI — imports written under the
+    // registry id must still appear without any caller-supplied hint.
     const customModels = [
-      { providerAlias: "opencode-go", id: "minimax-m2.5", type: "llm", name: "MiniMax M2.5" },
+      { providerAlias: "xiaomi-mimo", id: "mimo-v2", type: "llm", name: "MiMo V2" },
+    ];
+
+    const rows = getProviderCustomModelRows({ customModels, providerAlias: "mimo" });
+
+    expect(rows.map((row) => row.fullModel)).toEqual(["mimo/mimo-v2"]);
+  });
+
+  it("keeps unrelated providers isolated", () => {
+    const customModels = [
+      { providerAlias: "deepseek", id: "deepseek-v4", type: "llm", name: "DeepSeek V4" },
     ];
 
     expect(getProviderCustomModelRows({ customModels, providerAlias: "ocg" })).toEqual([]);

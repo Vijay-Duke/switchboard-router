@@ -7,7 +7,7 @@ import Modal from "./Modal";
 import ProviderIcon from "./ProviderIcon";
 import CapacityBadges from "./CapacityBadges";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
-import { getModelsByProviderId, getModelKind, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
+import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, AI_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 import {
@@ -324,10 +324,6 @@ export default function ModelSelectModal({
           modelAliases,
           liveModels: liveModelsByAlias.get(alias) || EMPTY_ARRAY,
           liveCatalogLoaded: liveModelsQuery.isSuccess,
-          // Older imports stored models under the registry id / registry alias
-          // (e.g. "opencode-go" before the "ocg" uiAlias) — still this
-          // provider's rows, rendered under the current alias.
-          legacyStorageAliases: [providerId, PROVIDER_ID_TO_ALIAS[providerId]],
         }));
 
         // Provider-as-model fallback: providers that support the kind but have no hardcoded models

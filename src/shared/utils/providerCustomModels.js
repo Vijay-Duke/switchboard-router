@@ -1,5 +1,7 @@
 import { canonicalModelId } from "@/lib/model-probe/canonicalId.js";
 import { asServiceKind } from "@/shared/utils/importProviderModels";
+import { ALIAS_TO_ID } from "@/shared/constants/providers";
+import { PROVIDER_ID_TO_ALIAS } from "open-sse/config/providerModels.js";
 
 function modelType(model) {
   return asServiceKind(model?.kind || model?.type || "llm");
@@ -67,6 +69,15 @@ export function getProviderCustomModelRows({
     providerAlias,
     ...legacyStorageAliases.filter((a) => typeof a === "string" && a && a !== providerAlias),
   ]);
+  // Custom models are stored under the provider's UI alias, but imports written
+  // before a uiAlias rename used the registry id/alias ("opencode-go" vs
+  // "ocg", "xiaomi-mimo" vs "mimo"). Derive those keys here so every caller
+  // resolves historical rows without threading the provider id through.
+  const providerId = providerAlias ? ALIAS_TO_ID[providerAlias] : null;
+  if (providerId) {
+    storageKeys.add(providerId);
+    if (PROVIDER_ID_TO_ALIAS[providerId]) storageKeys.add(PROVIDER_ID_TO_ALIAS[providerId]);
+  }
 
   // A stale legacy-alias copy must never shadow the current-alias row for the
   // same model id (stale name/metadata). Iteration order is otherwise kept.
