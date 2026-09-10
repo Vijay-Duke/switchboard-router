@@ -257,6 +257,10 @@ describe("client key repository", () => {
     getSpy.mockRestore();
   });
 
+  // 15 scrypt KDFs at N=16384 (12 creates + 3 auths). Under a fully parallel
+  // suite run the default 5s timeout trips on CPU contention, and a timed-out
+  // body keeps running — its remaining scrypt calls leak into the next tests'
+  // spies. Headroom here keeps that cascade impossible.
   it("authenticates more than eight same-machine modern keys by one digest lookup and one async KDF", async () => {
     const created = [];
     for (let index = 0; index < 12; index += 1) {
@@ -277,7 +281,7 @@ describe("client key repository", () => {
 
     scrypt.mockRestore();
     getSpy.mockRestore();
-  });
+  }, 30_000);
 
   it("performs zero KDFs for an unknown valid modern key and never scans lookup-less v2 rows", async () => {
     await repo.createApiKey("Bounded", "4444444444444444");
