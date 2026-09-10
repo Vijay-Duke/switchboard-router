@@ -1,3 +1,10 @@
+# v0.9.33 (2026-09-10)
+
+## Features
+- **Per-model reasoning wire-format mapping for OpenAI-compatible nodes**: model import now captures each model's reasoning-parameter support from the gateway's own /models catalog (Surplus Intelligence / OpenRouter-style `supported_parameters`, ZENMux `capabilities.reasoning`, CrofAI per-model `reasoning_effort` flags) and persists it per model. The thinking translator consults it ahead of the old model-name pattern guess, so Claude `thinking` / OpenAI `reasoning_effort` / Gemini `thinkingConfig` intents are faithfully converted to the spelling each gateway actually accepts — new `openai-nested` (`reasoning:{effort}`) and Responses-native (`reasoning:{effort,summary}`) wire formats included. Docs-researched static defaults cover gateways without introspection (DashScope compatible-mode → `enable_thinking`+`thinking_budget`, opencode Zen/Go → flat `reasoning_effort` only — also fixing live `thinking:{type}` 400s there, Nous Hermes → stripped). Models that support no reasoning control get thinking params stripped instead of erroring.
+- **Capability-aware pi catalog sync**: the Pi connect/sync now derives `reasoning` (and contextWindow) from registry capability patterns, compatible-node discovery, and combo member union — combos like `cheap_models` get `reasoning:true` when any member supports it — so pi offers its thinking-level selector and `reasoning_effort` flows through the new mapping. Hand-set entry fields are preserved.
+- **OpenCode branding**: the provider under API Key Providers now displays as "OpenCode" (plan-agnostic) with the OpenCode logo; id/alias unchanged.
+
 # v0.9.32 (2026-09-10)
 
 ## Features
