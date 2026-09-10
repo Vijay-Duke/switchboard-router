@@ -17,7 +17,7 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
     : "border-border/60 hover:border-primary/40";
 
   return (
-    <div className={`group relative min-w-0 max-w-full rounded-xl border bg-surface/50 p-3 transition-all hover:bg-surface/80 hover:shadow-soft ${borderColor}`}>
+    <div className={`group relative w-full min-w-0 max-w-full rounded-xl border bg-surface/50 p-3 transition-all hover:bg-surface/80 hover:shadow-soft ${borderColor}`}>
       <div className="flex min-w-0 items-start justify-between gap-2.5">
         <div className="flex min-w-0 flex-1 items-start gap-2.5">
           {/* Status icon / model avatar */}
