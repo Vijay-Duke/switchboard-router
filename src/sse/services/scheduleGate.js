@@ -42,11 +42,12 @@ export function buildScheduleBlockedResponse({ comboName, skipped, log }) {
 
 /**
  * Filter a combo's models by per-model availability rules. Zero-cost when the
- * combo has no rules configured.
- * @param {{ models: string[], comboName: string, settings: object, log?: object }} input
+ * combo has no rules configured. `nowMs` pins the evaluation instant
+ * (tests pass a fixed timestamp; production uses the real clock).
+ * @param {{ models: string[], comboName: string, settings: object, log?: object, nowMs?: number }} input
  * @returns {{ models: string[], skipped: Array<object>, blocked: boolean, response: Response|null }}
  */
-export function applyScheduleGate({ models, comboName, settings, log }) {
+export function applyScheduleGate({ models, comboName, settings, log, nowMs }) {
   const availability = settings?.comboStrategies?.[comboName]?.modelAvailability;
   if (
     !Array.isArray(models) || !models.length ||
@@ -56,7 +57,12 @@ export function applyScheduleGate({ models, comboName, settings, log }) {
     return { models, skipped: [], blocked: false, response: null };
   }
   const schedules = settings?.providerSchedules || {};
-  const { models: kept, skipped } = filterModelsByAvailability(models, schedules, availability);
+  const { models: kept, skipped } = filterModelsByAvailability(
+    models,
+    schedules,
+    availability,
+    nowMs,
+  );
 
   for (const skip of skipped) {
     const until = new Date(skip.untilMs).toISOString();

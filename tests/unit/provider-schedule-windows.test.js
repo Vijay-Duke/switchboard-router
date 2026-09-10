@@ -374,6 +374,9 @@ describe("applyScheduleGate", () => {
       comboName: "cheap_models",
       settings,
       log: noopLog,
+      // Pin the instant to a known weekday peak — without this the test only
+      // passes while DeepSeek's real peak windows happen to be live.
+      nowMs: T("2026-09-10T02:00:00Z"),
     });
     expect(gate.models).toEqual(["openai/gpt-4o-mini"]);
     expect(gate.blocked).toBe(false);
@@ -387,6 +390,7 @@ describe("applyScheduleGate", () => {
       comboName: "cheap_models",
       settings,
       log: noopLog,
+      nowMs: T("2026-09-10T02:00:00Z"),
     });
     expect(gate.blocked).toBe(true);
     expect(gate.models).toEqual([]);
