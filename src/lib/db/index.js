@@ -6,7 +6,7 @@ import { normalizeApiKeyRecordLookup, packApiKeyRecord, unpackApiKeyRecord } fro
 
 // Settings
 export {
-  getSettings, updateSettings, isCloudEnabled, getCloudUrl, exportSettings,
+  getSettings, updateSettings, updateSettingsKeyAtomic, isCloudEnabled, getCloudUrl, exportSettings,
   __resetSettingsCacheForTests,
 } from "./repos/settingsRepo.js";
 import { __resetSettingsCacheForTests as resetSettingsCache } from "./repos/settingsRepo.js";

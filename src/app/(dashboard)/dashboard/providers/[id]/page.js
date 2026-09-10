@@ -28,6 +28,7 @@ import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
 import VerifyModelsPanel from "./VerifyModelsPanel";
+import PeakHoursCard from "./PeakHoursCard";
 import { getProviderModelToolbarActions } from "./providerModelActions";
 import { canonicalModelId } from "@/lib/model-probe/canonicalId.js";
 import { reportClientError } from "@/shared/utils/clientFeedback";
@@ -1810,6 +1811,11 @@ export default function ProviderDetailPage() {
           )}
         </Card>
       )}
+
+      {/* Peak / off-peak hours (optional). Keyed by the model-string prefix —
+          for compatible nodes that's the node prefix, not its internal id.
+          Remounts on provider change so no editor state leaks across pages. */}
+      <PeakHoursCard key={providerId} providerId={providerId} scheduleKey={providerDisplayAlias} />
 
       {/* Models */}
       <Card>

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   rekeyRoutingDataForCombo: vi.fn(),
   updateCombo: vi.fn(),
   updateSettings: vi.fn(),
+  updateSettingsKeyAtomic: vi.fn(),
   validateApiKey: vi.fn(),
   hasValidCliToken: vi.fn(),
   resetComboRotation: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock("@/lib/db/index.js", () => ({
   rekeyRoutingDataForCombo: mocks.rekeyRoutingDataForCombo,
   updateCombo: mocks.updateCombo,
   updateSettings: mocks.updateSettings,
+  updateSettingsKeyAtomic: mocks.updateSettingsKeyAtomic,
   validateApiKey: mocks.validateApiKey,
 }));
 vi.mock("@/shared/utils/cliToken.js", () => ({ hasValidCliToken: mocks.hasValidCliToken }));
@@ -66,6 +68,18 @@ describe("management API combo writes", () => {
     mocks.getCombos.mockResolvedValue([]);
     mocks.getSettings.mockResolvedValue({ comboStrategies: {} });
     mocks.updateSettings.mockResolvedValue(undefined);
+    // Strategies persist through the atomic per-key merge; capture what the
+    // producer writes so assertions can inspect the persisted value.
+    /** @type {any} */
+    let producedStrategies = null;
+    mocks.producedStrategies = null;
+    mocks.updateSettingsKeyAtomic.mockImplementation(async (key, producer) => {
+      if (key === "comboStrategies") {
+        producedStrategies = producer(mocks.getSettings.mock.results.at(-1)?.value?.comboStrategies ?? {});
+        mocks.producedStrategies = producedStrategies;
+      }
+      return {};
+    });
   });
 
   it("returns the required validation message for an invalid create name", async () => {
@@ -107,7 +121,9 @@ describe("management API combo writes", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ v: 1, data: { combo: "auto-combo", strategy } });
-    expect(mocks.updateSettings).toHaveBeenCalledWith({ comboStrategies: { "auto-combo": strategy } });
+    expect(mocks.updateSettingsKeyAtomic).toHaveBeenCalledWith("comboStrategies", expect.any(Function));
+    expect(mocks.producedStrategies).toEqual({ "auto-combo": strategy });
+    expect(mocks.updateSettings).not.toHaveBeenCalled();
   });
 
   it("drops unknown combo fields on update (no mass assignment)", async () => {
@@ -159,15 +175,14 @@ describe("management API combo writes", () => {
       capacityAutoSwitch: true,
       autoTuning: { maxFewShots: 3 },
     });
-    expect(mocks.updateSettings).toHaveBeenCalledWith({
-      comboStrategies: {
-        "auto-combo": {
-          fallbackStrategy: "fallback",
-          capacityAutoSwitch: true,
-          autoTuning: { maxFewShots: 3 },
-        },
+    expect(mocks.producedStrategies).toEqual({
+      "auto-combo": {
+        fallbackStrategy: "fallback",
+        capacityAutoSwitch: true,
+        autoTuning: { maxFewShots: 3 },
       },
     });
+    expect(mocks.updateSettings).not.toHaveBeenCalled();
   });
 
   it("fails closed (503) when a member lookup errors during cycle validation", async () => {

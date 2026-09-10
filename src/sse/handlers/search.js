@@ -11,6 +11,7 @@ import { handleSearchCore } from "open-sse/handlers/search/index.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
+import { applyScheduleGate } from "../services/scheduleGate.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleComboChat, getComboModelsFromData } from "open-sse/services/combo.js";
 import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
@@ -94,13 +95,16 @@ export async function handleSearch(request) {
 
   // Combo expansion: providerInput may be a combo name → run fallback/round-robin across providers
   if (comboModels) {
+    // Peak/off-peak gating — same contract as chat combos.
+    const scheduleGate = applyScheduleGate({ models: comboModels, comboName: providerInput, settings, log });
+    if (scheduleGate.response) return scheduleGate.response;
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[providerInput]?.fallbackStrategy || settings.comboStrategy || "fallback";
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
-    log.info("SEARCH", `Combo "${providerInput}" with ${comboModels.length} providers (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
+    log.info("SEARCH", `Combo "${providerInput}" with ${scheduleGate.models.length} providers (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     return cacheResponse(await handleComboChat({
       body,
-      models: comboModels,
+      models: scheduleGate.models,
       handleSingleModel: (b, m, callOpts) => handleSingleProviderSearch(b, m, request, clientKeyId, settings, callOpts),
       log,
       comboName: providerInput,

@@ -8,9 +8,11 @@ import {
   rekeyRoutingDataForCombo,
   updateCombo as updateComboRecord,
   updateSettings,
+  updateSettingsKeyAtomic,
 } from "@/lib/db/index.js";
 import { MAX_COMBO_DEPTH } from "open-sse/config/runtimeConfig.js";
 import { resetComboRotation } from "open-sse/services/combo.js";
+import { normalizeModelAvailabilityForStorage } from "@/shared/utils/scheduleWindows.js";
 
 /** Combo names are part of the public model identifier. */
 export const VALID_COMBO_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -153,7 +155,7 @@ const STRATEGY_ALLOWED_KEYS = new Set([
   "learningEnabled", "learningWindowDays", "freezeLearning",
   "activeLearningVersionId", "autoLearnIntervalHours",
   "capacityAutoSwitch", "emitAutoRouterHeaders",
-  "fusionTuning", "autoTuning",
+  "fusionTuning", "autoTuning", "modelAvailability",
 ]);
 const AUTO_TUNING_ALLOWED_KEYS = new Set([
   "heuristicFirst", "maxFewShots", "minEventsBeforeLearn",
@@ -187,6 +189,12 @@ export function sanitizeStrategyInput(strategy) {
     throw new ComboWriteError("Strategy must be a JSON object", 400);
   }
   const safe = pickAllowedKeys(/** @type {Record<string, any>} */ (strategy), STRATEGY_ALLOWED_KEYS);
+  if (Object.prototype.hasOwnProperty.call(safe, "modelAvailability")) {
+    const normalized = normalizeModelAvailabilityForStorage(safe.modelAvailability);
+    if (normalized.error) throw new ComboWriteError(normalized.error, 400);
+    if (normalized.value) safe.modelAvailability = normalized.value;
+    else delete safe.modelAvailability;
+  }
   for (const [key, allowed] of /** @type {[string, Set<string>][]} */ ([
     ["autoTuning", AUTO_TUNING_ALLOWED_KEYS],
     ["fusionTuning", FUSION_TUNING_ALLOWED_KEYS],
@@ -203,6 +211,46 @@ export function sanitizeStrategyInput(strategy) {
 }
 
 /**
+ * Keep only availability rules that reference current combo members.
+ * @param {Record<string, string>} rules
+ * @param {string[]} models
+ * @returns {Record<string, string>}
+ */
+function pruneAvailabilityToMembers(rules, models) {
+  return Object.fromEntries(
+    Object.entries(rules || {}).filter(([model]) => models?.includes(model))
+  );
+}
+
+/**
+ * Availability rules only make sense for current combo members — drop keys
+ * that no longer reference a model in the list. Hygiene, not integrity:
+ * fail-open so a prune error never blocks the combo write. The merge into
+ * comboStrategies is atomic so it cannot race a concurrent strategy PATCH.
+ * @param {string} comboName
+ * @returns {Promise<void>}
+ */
+async function pruneModelAvailability(comboName) {
+  try {
+    const combo = await getComboByName(comboName);
+    if (!combo) return;
+    await updateSettingsKeyAtomic("comboStrategies", (stored) => {
+      const strategies = stored || {};
+      const rules = strategies[comboName]?.modelAvailability;
+      if (!rules || !Object.keys(rules).length) return undefined;
+      const kept = pruneAvailabilityToMembers(rules, combo.models);
+      if (Object.keys(kept).length === Object.keys(rules).length) return undefined;
+      const next = { ...strategies, [comboName]: { ...strategies[comboName] } };
+      if (Object.keys(kept).length) next[comboName].modelAvailability = kept;
+      else delete next[comboName].modelAvailability;
+      return next;
+    });
+  } catch (error) {
+    console.warn("prune modelAvailability failed:", error?.message || error);
+  }
+}
+
+/**
  * Merge, validate, and persist one combo's strategy, then reset its rotation.
  * Input is allowlisted to the known strategy schema before persisting.
  * @param {string} comboName
@@ -211,16 +259,25 @@ export function sanitizeStrategyInput(strategy) {
  */
 export async function updateComboStrategyChecked(comboName, strategy) {
   const safeStrategy = sanitizeStrategyInput(strategy);
-  const settings = await getSettings();
-  const merged = { ...(settings.comboStrategies || {}), [comboName]: safeStrategy };
+  if (safeStrategy.modelAvailability) {
+    const combo = await getComboByName(comboName);
+    if (combo) {
+      const kept = pruneAvailabilityToMembers(safeStrategy.modelAvailability, combo.models);
+      if (Object.keys(kept).length) safeStrategy.modelAvailability = kept;
+      else delete safeStrategy.modelAvailability;
+    }
+  }
   const invalidAuto = findAutoComboMissingRouter({ [comboName]: safeStrategy });
   if (invalidAuto) {
     throw new ComboWriteError(AUTO_ROUTER_REQUIRED_ERROR(invalidAuto), 400);
   }
 
-  await updateSettings({ comboStrategies: merged });
+  await updateSettingsKeyAtomic(
+    "comboStrategies",
+    (stored) => ({ ...(stored || {}), [comboName]: safeStrategy })
+  );
   resetComboRotation(comboName);
-  return merged[comboName];
+  return safeStrategy;
 }
 
 /**
@@ -320,6 +377,9 @@ async function updateComboWriteLocked(id, data) {
 
   const combo = await updateComboRecord(id, safeData);
   if (!combo) return null;
+
+  // Removed members must not keep availability rules pinned to the combo name.
+  if (modelsChanged && combo.name) await pruneModelAvailability(combo.name);
 
   if (previous?.name) resetComboRotation(previous.name);
   if (combo.name && combo.name !== previous?.name) {

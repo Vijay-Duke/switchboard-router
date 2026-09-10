@@ -765,6 +765,17 @@ function RoutingInsightsInner() {
                     <tr key={e.id} className="border-t border-border">
                       <td className="py-1.5 pr-2 font-mono text-text-muted whitespace-nowrap">
                         {formatRoutingTimestamp(e.timestamp)}
+                        {e.meta?.scheduleSkips?.length ? (
+                          <span
+                            className="ml-1 text-[9px] text-amber-600 dark:text-amber-400"
+                            title={e.meta.scheduleSkips
+                              .map((/** @type {{model: string, availability: string, status: string, until: string}} */ s) =>
+                                `skipped ${s.model} (${s.availability}; provider ${s.status === "peak" ? "peak" : "off-peak"} until ${s.until})`)
+                              .join("\n")}
+                          >
+                            ⏱{e.meta.scheduleSkips.length}
+                          </span>
+                        ) : null}
                         {e.meta?.exploration ? (
                           <span className="ml-1 text-[9px] text-primary">ε</span>
                         ) : null}

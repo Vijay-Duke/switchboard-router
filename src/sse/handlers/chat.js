@@ -11,6 +11,7 @@ import { resolveAffinitySessionId } from "open-sse/utils/sessionManager.js";
 import { getSettings, getProviderRequestCounts } from "@/lib/db/index.js";
 import { getProviderQuotaHeadroom } from "@/lib/db/repos/connectionsRepo.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
+import { applyScheduleGate, attachScheduleSkips, buildScheduleBlockedResponse } from "../services/scheduleGate.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader";
@@ -235,7 +236,7 @@ export async function handleChat(request, clientRawRequest = null) {
   log.request("POST", `${url.pathname} | ${modelStr} | ${msgCount} msgs${toolCount ? ` | ${toolCount} tools` : ""}${effort ? ` | effort=${effort}` : ""}`);
 
   const settings = await getSettings();
-  const comboModels = modelStr ? await getComboModels(modelStr) : null;
+  let comboModels = modelStr ? await getComboModels(modelStr) : null;
   const auth = await authorizeClientKeyRequest({
     settings,
     rawKey: extractApiKey(request),
@@ -318,6 +319,13 @@ export async function handleChat(request, clientRawRequest = null) {
 
   // Check if model is a combo (has multiple models with fallback)
   if (comboModels) {
+    // Peak/off-peak gating: drop members whose availability rule excludes the
+    // current hour, before any strategy sees the list. Applies to fusion,
+    // auto, fallback and round-robin alike; fail-closed 503 when all are gated.
+    const scheduleGate = applyScheduleGate({ models: comboModels, comboName: modelStr, settings, log });
+    if (scheduleGate.response) return scheduleGate.response;
+    comboModels = scheduleGate.models;
+
     // Check for combo-specific strategy first, fallback to global
     const comboStrategies = settings.comboStrategies || {};
     const comboSpecificStrategy = comboStrategies[modelStr]?.fallbackStrategy;
@@ -386,6 +394,15 @@ export async function handleChat(request, clientRawRequest = null) {
         if (m === routerId) continue;
         workerModels.push(m);
       }
+      // Every worker (but not the router) gated by schedule rules → the
+      // schedule-aware 503 with Retry-After, not handleAutoChat's bare 400.
+      if (!workerModels.length && scheduleGate.skipped.length) {
+        return buildScheduleBlockedResponse({
+          comboName: modelStr,
+          skipped: scheduleGate.skipped.filter((s) => s.model !== routerId),
+          log,
+        });
+      }
       const workerCaps = {};
       for (const m of workerModels) {
         try {
@@ -417,7 +434,7 @@ export async function handleChat(request, clientRawRequest = null) {
         loadProviderLatency,
         loadProviderUsage,
         loadProviderQuota,
-        recordEvent: (ev) => insertRoutingEvent(ev),
+        recordEvent: attachScheduleSkips((ev) => insertRoutingEvent(ev), scheduleGate.skipped),
         applyJudgeScore: (requestId, judgeScore) =>
           applyJudgeScoreByRequestId(requestId, judgeScore),
         autoDepth: 0,
@@ -558,9 +575,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {
-    const comboModels = await getComboModels(modelStr);
+    let comboModels = await getComboModels(modelStr);
     if (comboModels) {
       const chatSettings = await getSettings();
+      // Same peak/off-peak gate as top-level combos (see handleChat).
+      const scheduleGate = applyScheduleGate({ models: comboModels, comboName: modelStr, settings: chatSettings, log });
+      if (scheduleGate.response) return scheduleGate.response;
+      comboModels = scheduleGate.models;
       const nestedRequiredCapabilities = detectRequiredCapabilities(body);
       // Capacity adapter pools: appended only when NO member covers the request's
       // required input modalities; otherwise comboModels is returned untouched.
@@ -649,6 +670,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           if (m === routerId) continue;
           workerModels.push(m);
         }
+        // All workers gated (router excepted) → schedule-aware 503 (see top path).
+        if (!workerModels.length && scheduleGate.skipped.length) {
+          return buildScheduleBlockedResponse({
+            comboName: modelStr,
+            skipped: scheduleGate.skipped.filter((s) => s.model !== routerId),
+            log,
+          });
+        }
         const workerCaps = {};
         for (const m of workerModels) {
           try {
@@ -686,7 +715,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           loadProviderLatency,
           loadProviderUsage,
           loadProviderQuota,
-          recordEvent: (ev) => insertRoutingEvent(ev),
+          recordEvent: attachScheduleSkips((ev) => insertRoutingEvent(ev), scheduleGate.skipped),
           applyJudgeScore: (requestId, judgeScore) =>
             applyJudgeScoreByRequestId(requestId, judgeScore),
           autoDepth,

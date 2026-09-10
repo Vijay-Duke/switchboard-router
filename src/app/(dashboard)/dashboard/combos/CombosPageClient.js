@@ -11,6 +11,22 @@ import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/sha
 import { useNotificationStore } from "@/store/notificationStore";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 import { splitPoolByTier } from "open-sse/routing/objective.js";
+import {
+  AVAILABILITY_VALUES,
+  getScheduleStatus,
+  providerOfModel,
+  dormantAvailabilityModels,
+} from "@/shared/utils/scheduleWindows.js";
+
+const AVAILABILITY_LABELS = {
+  always: "Any time",
+  "peak-only": "Peak only",
+  "off-peak-only": "Off-peak only",
+};
+const AVAILABILITY_OPTIONS = AVAILABILITY_VALUES.map((value) => ({
+  value,
+  label: AVAILABILITY_LABELS[value],
+}));
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -60,6 +76,7 @@ export default function CombosPageClient({ initialData }) {
   const [editingCombo, setEditingCombo] = useState(null);
   const [activeProviders, setActiveProviders] = useState(initialData?.connections || []);
   const [comboStrategies, setComboStrategies] = useState(initialData?.settings?.comboStrategies || {});
+  const [providerSchedules, setProviderSchedules] = useState(initialData?.settings?.providerSchedules || {});
   const [modelCaps, setModelCaps] = useState(initialData?.modelCaps || {});
   const [capacityAdapter, setCapacityAdapter] = useState(() => {
     const raw = initialData?.settings?.capacityAdapter || {};
@@ -97,6 +114,7 @@ export default function CombosPageClient({ initialData }) {
         setModelCaps(map);
       }
       setComboStrategies(settingsData.comboStrategies || {});
+      setProviderSchedules(settingsData.providerSchedules || {});
       const rawAdapter = settingsData.capacityAdapter || {};
       const normalizedAdapter = {};
       for (const cap of ALL_ADAPTER_KEYS) normalizedAdapter[cap] = normalizeCapEntry(rawAdapter[cap]);
@@ -116,9 +134,19 @@ export default function CombosPageClient({ initialData }) {
     fetchData();
   }, [initialData, fetchData]);
 
+  // Keep provider peak/off-peak dots and dormant-rule warnings fresh while the
+  // page is open (only pays the timer once schedules exist).
+  const [, forceScheduleTick] = useState(0);
+  const hasSchedules = Object.keys(providerSchedules).length > 0;
+  useEffect(() => {
+    if (!hasSchedules) return;
+    const timer = setInterval(() => forceScheduleTick((n) => n + 1), 30_000);
+    return () => clearInterval(timer);
+  }, [hasSchedules]);
+
   const handleCreate = async (data) => {
     try {
-      const { strategy, capacityAutoSwitch, routerModel, objective, ...comboFields } = data;
+      const { strategy, capacityAutoSwitch, routerModel, objective, modelAvailability, ...comboFields } = data;
       const res = await fetch("/api/combos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -128,8 +156,8 @@ export default function CombosPageClient({ initialData }) {
         const created = await res.json().catch(() => ({}));
         const name = comboFields.name?.trim() || created?.name;
         // Persist strategy so Create Combo is not “models only”
-        if (name && (strategy || capacityAutoSwitch !== undefined || routerModel || objective)) {
-          await handleSetComboStrategy(name, strategyPatchFromForm(strategy, capacityAutoSwitch, routerModel, objective));
+        if (name && (strategy || capacityAutoSwitch !== undefined || routerModel || objective || modelAvailability)) {
+          await handleSetComboStrategy(name, strategyPatchFromForm(data));
         }
         await fetchData();
         setShowCreateModal(false);
@@ -144,7 +172,7 @@ export default function CombosPageClient({ initialData }) {
 
   const handleUpdate = async (id, data) => {
     try {
-      const { strategy, capacityAutoSwitch, routerModel, objective, ...comboFields } = data;
+      const { strategy, capacityAutoSwitch, routerModel, objective, modelAvailability, ...comboFields } = data;
       const prevName = editingCombo?.name;
       const res = await fetch(`/api/combos/${id}`, {
         method: "PUT",
@@ -166,7 +194,7 @@ export default function CombosPageClient({ initialData }) {
           });
         }
         // Apply form strategy to the current name (merge after rekey)
-        if (name && (strategy || capacityAutoSwitch !== undefined)) {
+        if (name && (strategy || capacityAutoSwitch !== undefined || modelAvailability)) {
           // Use functional merge with post-rename base so we don't clobber router/judge
           const base =
             prevName && prevName !== name
@@ -179,11 +207,7 @@ export default function CombosPageClient({ initialData }) {
                   return m;
                 })()
               : comboStrategies;
-          await handleSetComboStrategy(
-            name,
-            strategyPatchFromForm(strategy, capacityAutoSwitch, routerModel, objective),
-            base
-          );
+          await handleSetComboStrategy(name, strategyPatchFromForm(data), base);
         }
         await fetchData();
         setEditingCombo(null);
@@ -245,6 +269,7 @@ export default function CombosPageClient({ initialData }) {
         !next.judgeModel &&
         !next.routerModel &&
         !next.objective &&
+        !next.modelAvailability &&
         next.learningEnabled === undefined &&
         next.freezeLearning === undefined &&
         next.explorationRate === undefined &&
@@ -374,6 +399,7 @@ export default function CombosPageClient({ initialData }) {
               onDelete={() => handleDelete(combo.id)}
               strategy={comboStrategies[combo.name] || {}}
               onSetStrategy={(patch) => handleSetComboStrategy(combo.name, patch)}
+              providerSchedules={providerSchedules}
             />
           ))}
         </div>
@@ -395,6 +421,7 @@ export default function CombosPageClient({ initialData }) {
         onSave={handleCreate}
         activeProviders={activeProviders}
         modelCaps={modelCaps}
+        providerSchedules={providerSchedules}
         initialStrategy={{ fallbackStrategy: "fallback", capacityAutoSwitch: true }}
       />
 
@@ -407,6 +434,7 @@ export default function CombosPageClient({ initialData }) {
         onSave={(data) => handleUpdate(editingCombo.id, data)}
         activeProviders={activeProviders}
         modelCaps={modelCaps}
+        providerSchedules={providerSchedules}
         initialStrategy={
           editingCombo
             ? comboStrategies[editingCombo.name] || { fallbackStrategy: "fallback" }
@@ -427,13 +455,22 @@ export default function CombosPageClient({ initialData }) {
   );
 }
 
-/** Build strategy patch from Create/Edit form; clear mode-specific fields on switch. */
-function strategyPatchFromForm(strategy, capacityAutoSwitch, routerModel, objective) {
+/** Build strategy patch from the Create/Edit form payload; clear mode-specific fields on switch. */
+function strategyPatchFromForm(form) {
+  const { strategy, capacityAutoSwitch, routerModel, objective, modelAvailability } = form || {};
   const strat = strategy || "fallback";
   const patch = {
     fallbackStrategy: strat,
     ...(capacityAutoSwitch !== undefined ? { capacityAutoSwitch } : {}),
   };
+  if (modelAvailability !== undefined) {
+    // Empty map clears the rules ("" is stripped by handleSetComboStrategy).
+    if (modelAvailability && Object.keys(modelAvailability).length) {
+      patch.modelAvailability = modelAvailability;
+    } else {
+      patch.modelAvailability = "";
+    }
+  }
   if (strat === "auto") {
     if (routerModel) patch.routerModel = routerModel;
     if (objective) patch.objective = objective;
@@ -529,7 +566,7 @@ const OBJECTIVE_OPTIONS = [
   { value: "latency", label: "Latency" },
 ];
 
-export function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy }) {
+export function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy, providerSchedules = {} }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
   const [showRouterSelect, setShowRouterSelect] = useState(false);
   // routerModel is mandatory for Auto — when switching to Auto without one, open
@@ -537,6 +574,10 @@ export function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied,
   const [pendingAutoSwitch, setPendingAutoSwitch] = useState(false);
   const [learnBusy, setLearnBusy] = useState(false);
   const [learnMsg, setLearnMsg] = useState("");
+  const dormantRules = dormantAvailabilityModels(providerSchedules, strategy.modelAvailability);
+  const activeRules = strategy.modelAvailability
+    ? Object.keys(strategy.modelAvailability).filter((m) => !dormantRules.includes(m))
+    : [];
   const current = strategy.fallbackStrategy || "fallback";
   const judge = strategy.judgeModel || "";
   const isFusion = current === "fusion";
@@ -588,6 +629,35 @@ export function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied,
                 <span className="text-[10px] text-text-muted">+{combo.models.length - 3} more</span>
               )}
             </div>
+            {/* Peak/off-peak availability rules */}
+            {(activeRules.length > 0 || dormantRules.length > 0) && (
+              <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+                <span className="material-symbols-outlined text-[13px] text-text-muted" title="Peak/off-peak availability rules">schedule</span>
+                {activeRules.map((m) => {
+                  const status = getScheduleStatus(providerSchedules[providerOfModel(m)]);
+                  return (
+                    <span
+                      key={m}
+                      className="inline-flex items-center gap-1 rounded bg-black/5 px-1.5 py-0.5 font-mono text-[10px] text-text-muted dark:bg-white/5"
+                      title={`${m} — ${strategy.modelAvailability[m]} (${providerOfModel(m)} is currently ${status === "peak" ? "peak" : "off-peak"})`}
+                    >
+                      {m}
+                      <span className="font-sans">{strategy.modelAvailability[m]}</span>
+                    </span>
+                  );
+                })}
+                {dormantRules.length > 0 && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400"
+                    title={`Dormant (no provider schedule): ${dormantRules.join(", ")} — these rules stay inactive until peak hours are configured on the provider page`}
+                  >
+                    <span className="material-symbols-outlined text-[12px]">warning</span>
+                    {dormantRules.length} dormant rule{dormantRules.length > 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* Fusion: judge picker (Auto = first model) */}
             {isFusion && (
               <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
@@ -941,7 +1011,7 @@ export function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied,
   );
 }
 
-function ModelItem({ id, index, model, learned = null, isFirst, isLast, onEdit, onMoveUp, onMoveDown, onRemove }) {
+function ModelItem({ id, index, model, learned = null, isFirst, isLast, onEdit, onMoveUp, onMoveDown, onRemove, availability = "always", providerStatus = null, anySchedules = false, onAvailabilityChange = null }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({ id });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -1016,6 +1086,33 @@ function ModelItem({ id, index, model, learned = null, isFirst, isLast, onEdit, 
         </div>
       )}
 
+      {(anySchedules || availability !== "always") && onAvailabilityChange && (
+        <span className="flex shrink-0 items-center gap-1" title="Peak/off-peak rule for this member (set hours on the provider page)">
+          {providerStatus && (
+            <span
+              className={`size-1.5 rounded-full ${providerStatus === "peak" ? "bg-red-500" : "bg-green-500"}`}
+              title={`Provider is currently ${providerStatus === "peak" ? "peak" : "off-peak"}`}
+            />
+          )}
+          <select
+            value={availability}
+            onChange={(e) => onAvailabilityChange(model, e.target.value)}
+            disabled={!providerStatus}
+            title={
+              providerStatus
+                ? `Provider is currently ${providerStatus === "peak" ? "peak" : "off-peak"}`
+                : `Rule is dormant — configure peak hours for "${providerOfModel(model)}" on its provider page first`
+            }
+            className={`rounded border border-border bg-background px-1 py-0.5 text-[10px] ${availability !== "always" && !providerStatus ? "text-amber-600 dark:text-amber-400" : ""}`}
+            aria-label={`Availability for ${model}`}
+          >
+            {AVAILABILITY_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </span>
+      )}
+
       {learned && learned.n >= 10 && (
         <span
           className="shrink-0 font-mono text-[10px] text-text-subtle"
@@ -1057,7 +1154,7 @@ function ModelItem({ id, index, model, learned = null, isFirst, isLast, onEdit, 
   );
 }
 
-function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, modelCaps = {}, kindFilter = null, initialStrategy = {} }) {
+function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, modelCaps = {}, kindFilter = null, initialStrategy = {}, providerSchedules = {} }) {
   // Initialize state with combo values; reset when modal re-opens (create key is stable)
   const [name, setName] = useState(combo?.name || "");
   const [models, setModels] = useState(combo?.models || []);
@@ -1065,6 +1162,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, model
   const [capacityAutoSwitch, setCapacityAutoSwitch] = useState(
     initialStrategy.capacityAutoSwitch !== false
   );
+  const [modelAvailability, setModelAvailability] = useState(initialStrategy.modelAvailability || {});
   const [showModelSelect, setShowModelSelect] = useState(false);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState("");
@@ -1142,6 +1240,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, model
     setModels(combo?.models || []);
     setStrategy(initialStrategy.fallbackStrategy || "fallback");
     setCapacityAutoSwitch(initialStrategy.capacityAutoSwitch !== false);
+    setModelAvailability(initialStrategy.modelAvailability || {});
     setShowModelSelect(false);
     setSaving(false);
     setNameError("");
@@ -1182,6 +1281,34 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, model
 
   const handleRemoveModel = (index) => {
     setModels(models.filter((_, i) => i !== index));
+    // Drop any availability rule pinned to the removed member.
+    const removed = models[index];
+    if (removed && modelAvailability[removed]) {
+      const next = { ...modelAvailability };
+      delete next[removed];
+      setModelAvailability(next);
+    }
+  };
+
+  const handleAvailabilityChange = (model, value) => {
+    setModelAvailability((prev) => {
+      const next = { ...prev };
+      if (value === "always") delete next[model];
+      else next[model] = value;
+      return next;
+    });
+  };
+
+  // Inline edits rewrite the model id — carry its rule across so renaming a
+  // member doesn't silently drop it (server prune is the backstop).
+  const rekeyAvailability = (oldModel, newModel) => {
+    if (oldModel === newModel || !modelAvailability[oldModel]) return;
+    setModelAvailability((prev) => {
+      const next = { ...prev };
+      next[newModel] = next[oldModel];
+      delete next[oldModel];
+      return next;
+    });
   };
 
   const handleMoveUp = (index) => {
@@ -1214,11 +1341,13 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, model
       models,
       strategy,
       capacityAutoSwitch: strategy === "auto" ? true : capacityAutoSwitch,
+      modelAvailability,
     });
     setSaving(false);
   };
 
   const isEdit = !!combo;
+  const anySchedules = Object.keys(providerSchedules).length > 0;
 
   return (
     <>
@@ -1319,7 +1448,15 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, model
                       learned={learnedStats[model] || null}
                       isFirst={index === 0}
                       isLast={index === modelItems.length - 1}
+                      availability={modelAvailability[model] || "always"}
+                      anySchedules={anySchedules}
+                      providerStatus={(() => {
+                        const status = getScheduleStatus(providerSchedules?.[providerOfModel(model)]);
+                        return status === "unscheduled" ? null : status;
+                      })()}
+                      onAvailabilityChange={handleAvailabilityChange}
                       onEdit={(newVal) => {
+                        rekeyAvailability(model, newVal);
                         const updated = [...models];
                         updated[index] = newVal;
                         setModels(updated);

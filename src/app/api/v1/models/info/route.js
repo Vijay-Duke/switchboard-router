@@ -2,6 +2,8 @@
 import { PROVIDER_MODELS } from "open-sse/config/providerModels.js";
 import { AI_PROVIDERS, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { getModelKind } from "@/shared/constants/models";
+import { getSettings } from "@/lib/db/index.js";
+import { getScheduleStatus, nextTransitionMs } from "@/shared/utils/scheduleWindows.js";
 import { buildModelsList } from "../route.js";
 import { corsPreflightResponse } from "@/shared/utils/cors.js";
 
@@ -120,6 +122,34 @@ export async function OPTIONS(request) {
   return corsPreflightResponse(request, { methods: "GET, OPTIONS" });
 }
 
+/**
+ * Annotate a resolved model with its provider's current peak/off-peak state.
+ * Best-effort: the annotation never fails the endpoint. The schedule key is
+ * the model-string prefix (the same key the request-path gate uses).
+ * @param {string} fullId
+ * @param {object} info
+ * @returns {Promise<void>}
+ */
+async function annotateSchedule(fullId, info) {
+  const slash = fullId.indexOf("/");
+  if (slash <= 0) return;
+  try {
+    const schedule = ((await getSettings()).providerSchedules || {})[fullId.slice(0, slash)];
+    const status = getScheduleStatus(schedule);
+    if (status === "unscheduled") return;
+    const nextChangeMs = nextTransitionMs(schedule);
+    info.schedule = {
+      status,
+      nextChange: nextChangeMs != null ? new Date(nextChangeMs).toISOString() : null,
+      timezone: schedule.timezone || "UTC",
+      defaultState: schedule.defaultState === "peak" ? "peak" : "offPeak",
+      windows: schedule.windows,
+    };
+  } catch {
+    /* annotation is optional */
+  }
+}
+
 // GET /v1/models/info?id={alias}/{modelId} — metadata for a single model
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
@@ -138,5 +168,6 @@ export async function GET(request) {
       { status: 404 },
     );
   }
+  await annotateSchedule(id, info);
   return Response.json(info);
 }

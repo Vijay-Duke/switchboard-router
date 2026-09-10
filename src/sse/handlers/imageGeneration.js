@@ -6,6 +6,7 @@ import {
 } from "../services/auth.js";
 import { getSettings } from "@/lib/db/index.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
+import { applyScheduleGate } from "../services/scheduleGate.js";
 import { handleImageGenerationCore } from "open-sse/handlers/imageGenerationCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
@@ -57,13 +58,17 @@ export async function handleImageGeneration(request) {
 
   // Combo expansion: model may be a combo name → run fallback/round-robin across models
   if (comboModels) {
+    // Peak/off-peak gating — same contract as chat combos (fail-closed 503
+    // when every member is outside its allowed hours).
+    const scheduleGate = applyScheduleGate({ models: comboModels, comboName: modelStr, settings, log });
+    if (scheduleGate.response) return scheduleGate.response;
     const comboStrategies = settings.comboStrategies || {};
     const comboStrategy = comboStrategies[modelStr]?.fallbackStrategy || settings.comboStrategy || "fallback";
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
-    log.info("IMAGE", `Combo "${modelStr}" with ${comboModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
+    log.info("IMAGE", `Combo "${modelStr}" with ${scheduleGate.models.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     return handleComboChat({
       body,
-      models: comboModels,
+      models: scheduleGate.models,
       handleSingleModel: (b, m, callOpts) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, signal: callOpts?.signal }),
       log,
       comboName: modelStr,

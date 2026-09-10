@@ -7,6 +7,10 @@ const DEFAULT_HEADROOM_URL = process.env.HEADROOM_URL || "http://localhost:8787"
 const DEFAULT_SETTINGS = {
   stickyRoundRobinLimit: 3,
   providerStrategies: {},
+  // Per-provider peak/off-peak windows, e.g.
+  // providerSchedules: { deepseek: { timezone: "UTC", defaultState: "offPeak", windows: [...] } }
+  // See src/shared/utils/scheduleWindows.js for the shape and evaluation.
+  providerSchedules: {},
   comboStrategy: "fallback",
   comboStickyRoundRobinLimit: 1,
   comboStrategies: {},
@@ -118,6 +122,35 @@ export async function updateSettings(updates) {
     const row = db.get(`SELECT data FROM settings WHERE id = 1`);
     const current = row ? parseJson(row.data, {}) : {};
     next = { ...current, ...updates };
+    db.run(
+      `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
+      [stringifyJson(next)]
+    );
+  });
+  invalidateSettingsCache();
+  return mergeWithDefaults(next);
+}
+
+/**
+ * Atomic read-modify-write of ONE settings key. Callers that merge into an
+ * object-valued map (providerSchedules, comboStrategies) must use this instead
+ * of reading the base via getSettings() and then updateSettings() — a
+ * concurrent PATCH of the same key would otherwise silently drop one side's
+ * update. The producer is synchronous and receives the CURRENT stored value of
+ * the key; returning undefined skips the write entirely.
+ * @template T
+ * @param {string} key
+ * @param {(stored: T | undefined) => T | undefined} producer
+ * @returns {Promise<object>} merged settings
+ */
+export async function updateSettingsKeyAtomic(key, producer) {
+  const db = await getAdapter();
+  let next;
+  db.transaction(() => {
+    const row = db.get(`SELECT data FROM settings WHERE id = 1`);
+    const current = row ? parseJson(row.data, {}) : {};
+    const updatedValue = producer(current[key]);
+    next = updatedValue === undefined ? current : { ...current, [key]: updatedValue };
     db.run(
       `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
       [stringifyJson(next)]

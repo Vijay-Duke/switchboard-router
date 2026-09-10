@@ -1,11 +1,15 @@
 // @ts-check
 import { NextResponse } from "next/server";
 import { jsonError } from "@/lib/jsonError.js";
-import { getSettings, updateSettings } from "@/lib/db/index.js";
+import { getSettings, updateSettings, updateSettingsKeyAtomic } from "@/lib/db/index.js";
 import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
 import { resetComboRotation } from "open-sse/services/combo.js";
 import { runQuotaAutoPingTick } from "@/shared/services/quotaAutoPing";
 import { findAutoComboMissingRouter } from "@/lib/combos/comboWrites.js";
+import {
+  normalizeModelAvailabilityForStorage,
+  normalizeScheduleConfig,
+} from "@/shared/utils/scheduleWindows.js";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -197,6 +201,65 @@ export async function PATCH(request) {
           { status: 400, headers: SETTINGS_RESPONSE_HEADERS }
         );
       }
+      // Per-combo model availability rules (peak/off-peak gating). Values are
+      // validated and normalized; empty maps are dropped.
+      for (const [name, strat] of Object.entries(body.comboStrategies || {})) {
+        if (!strat || typeof strat !== "object" || Array.isArray(strat)) continue;
+        if (!Object.prototype.hasOwnProperty.call(strat, "modelAvailability")) continue;
+        const normalized = normalizeModelAvailabilityForStorage(strat.modelAvailability);
+        if (normalized.error) {
+          return NextResponse.json(
+            { error: `Combo "${name}" ${normalized.error}` },
+            { status: 400, headers: SETTINGS_RESPONSE_HEADERS }
+          );
+        }
+        if (normalized.value) strat.modelAvailability = normalized.value;
+        else delete strat.modelAvailability;
+      }
+    }
+
+    // Provider peak/off-peak schedules. Validated here, then merged
+    // INCREMENTALLY and ATOMICALLY with the stored map (see
+    // updateSettingsKeyAtomic): incoming keys win, an explicit null deletes
+    // that provider's schedule, absent keys keep their stored value — so a
+    // partial PATCH can neither wipe other providers' schedules nor race a
+    // concurrent save.
+    /** @type {Record<string, any> | null} */
+    let schedulePatch = null;
+    if (Object.prototype.hasOwnProperty.call(body, "providerSchedules")) {
+      const raw = body.providerSchedules;
+      if (raw != null && (typeof raw !== "object" || Array.isArray(raw))) {
+        return NextResponse.json(
+          { error: "providerSchedules must be an object keyed by provider id." },
+          { status: 400, headers: SETTINGS_RESPONSE_HEADERS }
+        );
+      }
+      /** @type {Record<string, any>} */
+      const incoming = {};
+      for (const [providerId, schedule] of Object.entries(raw || {})) {
+        // "__proto__" would assign to the map's prototype instead of an own
+        // key and silently vanish — reject it like any other bad provider id.
+        if (!providerId || providerId === "__proto__" || providerId === "constructor" || providerId === "prototype") {
+          return NextResponse.json(
+            { error: `"${providerId}" is not a valid provider id.` },
+            { status: 400, headers: SETTINGS_RESPONSE_HEADERS }
+          );
+        }
+        if (schedule == null) {
+          incoming[providerId] = null; // explicit delete
+          continue;
+        }
+        const normalized = normalizeScheduleConfig(schedule, providerId);
+        if (normalized.error) {
+          return NextResponse.json(
+            { error: normalized.error },
+            { status: 400, headers: SETTINGS_RESPONSE_HEADERS }
+          );
+        }
+        incoming[providerId] = normalized.value;
+      }
+      schedulePatch = incoming;
+      delete body.providerSchedules;
     }
 
     // Sticky limits are bounded: the dashboard's max attributes are UI-only.
@@ -222,7 +285,19 @@ export async function PATCH(request) {
       }
     }
 
-    const settings = await updateSettings(body);
+    let settings = await updateSettings(body);
+
+    if (schedulePatch) {
+      settings = await updateSettingsKeyAtomic("providerSchedules", (stored) => {
+        /** @type {Record<string, object>} */
+        const next = { ...(stored || {}) };
+        for (const [providerId, value] of Object.entries(/** @type {Record<string, any>} */ (schedulePatch))) {
+          if (value == null) delete next[providerId];
+          else next[providerId] = value;
+        }
+        return next;
+      });
+    }
 
     if (
       Object.prototype.hasOwnProperty.call(body, "outboundProxyEnabled") ||
