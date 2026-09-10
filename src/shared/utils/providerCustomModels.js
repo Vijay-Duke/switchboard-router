@@ -55,13 +55,28 @@ export function getProviderCustomModelRows({
   builtInModels = [],
   type = "llm",
   includeLegacyAliases = true,
+  // Older imports may have stored models under a previous storage key (e.g.
+  // the registry id before a uiAlias rename — "opencode-go" vs "ocg"). Rows
+  // still render under the CURRENT alias.
+  legacyStorageAliases = [],
 }) {
   const builtInIds = new Set(builtInModels.map((model) => model.id));
   const seenFullModels = new Set();
   const rows = [];
+  const storageKeys = new Set([
+    providerAlias,
+    ...legacyStorageAliases.filter((a) => typeof a === "string" && a && a !== providerAlias),
+  ]);
+
+  // A stale legacy-alias copy must never shadow the current-alias row for the
+  // same model id (stale name/metadata). Iteration order is otherwise kept.
+  const currentAliasIds = new Set(
+    customModels.filter((m) => m?.providerAlias === providerAlias).map((m) => m?.id),
+  );
 
   for (const model of customModels) {
-    if (!model?.id || model.providerAlias !== providerAlias) continue;
+    if (!model?.id || !storageKeys.has(model.providerAlias)) continue;
+    if (model.providerAlias !== providerAlias && currentAliasIds.has(model.id)) continue;
     const rowType = modelType(model);
     if (type && rowType !== type) continue;
     if (builtInIds.has(model.id)) continue;
@@ -111,6 +126,7 @@ export function getSelectableProviderModelRows({
   modelAliases = {},
   liveModels = [],
   liveCatalogLoaded = false,
+  legacyStorageAliases = [],
 }) {
   const fallbackRows = [];
   const metadataByValue = new Map();
@@ -135,6 +151,7 @@ export function getSelectableProviderModelRows({
     providerAlias,
     builtInModels,
     type: "llm",
+    legacyStorageAliases,
   });
   for (const model of customRows) {
     addFallback({

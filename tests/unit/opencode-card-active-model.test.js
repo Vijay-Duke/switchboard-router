@@ -66,7 +66,7 @@ function installFetch() {
     if (url === "/api/provider-nodes") return jsonOk([]);
     if (url === "/api/models/custom") return jsonOk([]);
     if (url === "/api/models/disabled") return jsonOk({});
-    if (url === "/api/v1/models") return jsonOk({ data: [] });
+    if (url === "/api/models/routable") return jsonOk({ data: [] });
     return jsonOk({});
   };
   vi.stubGlobal("fetch", vi.fn(impl));

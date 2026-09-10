@@ -67,7 +67,7 @@ function installFetch() {
     if (url === "/api/provider-nodes") return jsonOk([]);
     if (url === "/api/models/custom") return jsonOk([]);
     if (url === "/api/models/disabled") return jsonOk({});
-    if (url === "/api/v1/models") return jsonOk({ data: [{ id: "glm/glm-5.3", name: "glm-5.3" }, { id: "glm/glm-5.2", name: "glm-5.2" }] });
+    if (url === "/api/models/routable") return jsonOk({ data: [{ id: "glm/glm-5.3", name: "glm-5.3" }, { id: "glm/glm-5.2", name: "glm-5.2" }] });
     return jsonOk({});
   };
   vi.stubGlobal("fetch", vi.fn(impl));

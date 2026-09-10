@@ -199,4 +199,77 @@ describe("selectable provider model rows", () => {
       "kr/legacy-model",
     ]);
   });
+
+  it("matches custom models stored under a legacy storage alias (uiAlias rename)", () => {
+    // opencode-go imports predate the "ocg" uiAlias — stored under the id.
+    const customModels = [
+      { providerAlias: "opencode-go", id: "deepseek-flash", type: "llm", name: "DeepSeek Flash" },
+      { providerAlias: "ocg", id: "glm-5.3", type: "llm", name: "GLM 5.3" },
+    ];
+
+    const rows = getProviderCustomModelRows({
+      customModels,
+      providerAlias: "ocg",
+      legacyStorageAliases: ["opencode-go"],
+    });
+
+    expect(rows.map((row) => row.fullModel)).toEqual([
+      "ocg/deepseek-flash",
+      "ocg/glm-5.3",
+    ]);
+  });
+
+  it("prefers the current-alias row when a stale legacy-alias copy shares its id", () => {
+    const customModels = [
+      // Legacy copy first — insertion order must not decide precedence.
+      { providerAlias: "opencode-go", id: "glm-5.3", type: "llm", name: "Stale Name" },
+      { providerAlias: "ocg", id: "glm-5.3", type: "llm", name: "GLM 5.3" },
+    ];
+
+    const rows = getProviderCustomModelRows({
+      customModels,
+      providerAlias: "ocg",
+      legacyStorageAliases: ["opencode-go"],
+    });
+
+    expect(rows.map((row) => [row.fullModel, row.name])).toEqual([["ocg/glm-5.3", "GLM 5.3"]]);
+  });
+
+  it("keeps providers isolated when no legacy aliases are passed", () => {
+    const customModels = [
+      { providerAlias: "opencode-go", id: "minimax-m2.5", type: "llm", name: "MiniMax M2.5" },
+    ];
+
+    expect(getProviderCustomModelRows({ customModels, providerAlias: "ocg" })).toEqual([]);
+  });
+
+  it("selectable rows surface legacy-alias customs under the current alias", () => {
+    const rows = getSelectableProviderModelRows({
+      providerAlias: "ocg",
+      builtInModels: [{ id: "glm-5.2", name: "GLM 5.2" }],
+      customModels: [{ providerAlias: "opencode-go", id: "deepseek-flash", type: "llm", name: "DeepSeek Flash" }],
+      legacyStorageAliases: ["opencode-go"],
+    });
+
+    expect(rows.map((row) => row.value)).toEqual(["ocg/glm-5.2", "ocg/deepseek-flash"]);
+    expect(rows.find((row) => row.value === "ocg/deepseek-flash").isCustom).toBe(true);
+  });
+
+  it("live-loaded rows keep legacy-alias custom metadata under the current alias", () => {
+    const rows = getSelectableProviderModelRows({
+      providerAlias: "ocg",
+      builtInModels: [],
+      customModels: [{ providerAlias: "opencode-go", id: "deepseek-flash", type: "llm", name: "DeepSeek Flash" }],
+      liveModels: [{ id: "ocg/deepseek-flash" }],
+      liveCatalogLoaded: true,
+      legacyStorageAliases: ["opencode-go"],
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual(expect.objectContaining({
+      value: "ocg/deepseek-flash",
+      name: "DeepSeek Flash",
+      isCustom: true,
+    }));
+  });
 });
