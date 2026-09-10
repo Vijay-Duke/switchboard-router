@@ -17,6 +17,25 @@ Create them in **Combos**, then use the combo name as the `model` value in a cli
 
 Capacity auto-switch can move requests such as image or PDF work to a model that supports that input. This works with fallback, round-robin, and fusion combos.
 
+## Peak And Off-Peak Rules
+
+When a provider has peak hours configured (see **Providers**), each model row in the combo editor gets an availability rule:
+
+| Rule | Meaning |
+|---|---|
+| Any time | Always eligible. The default. |
+| Peak only | Used only while its provider is in a peak window. |
+| Off-peak only | Used only while its provider is off-peak. |
+
+The dropdown appears once any provider has a schedule. A member whose own provider has no schedule gets a disabled dropdown with a hint, and any leftover rule stays dormant: treated as Any time at runtime, with a warning on the combo card. Rules are per combo, so the same model can be off-peak-only in one combo and unrestricted in another.
+
+At request time:
+
+- Members outside their allowed hours are skipped before rotation in every strategy, including nested combos, Auto routing, and media combos.
+- A request that names a single model directly is never gated.
+- If every member is gated out, the request fails with `503` and a `Retry-After` header naming each rule and when the next window opens.
+- Auto combos show skips as badges in **Combos → Routing insights**. Other strategies log each skip to the server log.
+
 ## Example
 
 ```text

@@ -26,6 +26,20 @@ Connected providers make their models available through `/v1/models`.
 
 Switchboard includes OpenAI-compatible and Anthropic-compatible provider entries. Use these when a service speaks one of those APIs but is not listed directly.
 
+## Peak Hours
+
+Some providers bill by time of day. DeepSeek, for example, charges about half price outside its peak windows. A provider's page has an optional **Peak hours** card for this:
+
+- Off by default. Routing does not change until you configure it.
+- Pick an IANA timezone for the schedule; window times follow that zone. Default is UTC.
+- Add one or more windows: type (peak or off-peak), start and end times, and days of the week. Time outside every window uses the default state you choose.
+- Presets can seed the editor, including "DeepSeek (current)" and the earlier Feb 2025 off-peak shape. The stored windows stay your own config.
+- A live badge shows peak or off-peak right now, with a countdown to the next change.
+
+For custom OpenAI-compatible and Anthropic-compatible providers, the schedule is keyed by the prefix the node's models use, not its internal id.
+
+Scheduled providers also expose their current state in `/v1/models/info?id=...` as a `schedule` object (`status`, `nextChange`, `timezone`, `defaultState`, `windows`).
+
 ## Model Prefixes
 
 Model IDs usually include a provider prefix:
