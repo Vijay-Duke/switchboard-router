@@ -97,6 +97,12 @@ model: claude-switchboard-v1/cx/gpt-5.6-terra
 
 Legacy manually configured Claude-shaped aliases remain supported, but Full Catalog does not require them. It generates reversible Claude-compatible discovery IDs only for the selected Switchboard models and combos, then resolves those IDs back to their provider model or combo at request time.
 
+## Pi
+
+The Pi connect/sync writes your Switchboard models and combos into `~/.pi/agent/models.yml` with capability-aware `reasoning` flags, so pi shows its thinking-level selector only for models that can actually reason. A combo is flagged as reasoning when any of its members supports it.
+
+Fields you set by hand in existing pi entries (names, context windows) are preserved, and stale `reasoning: false` flags from older syncs are repaired on the next sync. To pick up per-model reasoning on custom OpenAI-compatible providers, re-click **Import models** on the provider's page, then re-apply the Pi sync.
+
 ## Generic Values
 
 Most tools need these values:

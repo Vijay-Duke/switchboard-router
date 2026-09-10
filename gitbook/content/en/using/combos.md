@@ -17,6 +17,10 @@ Create them in **Combos**, then use the combo name as the `model` value in a cli
 
 Capacity auto-switch can move requests such as image or PDF work to a model that supports that input. This works with fallback, round-robin, and fusion combos.
 
+## Thinking Across Members
+
+When a request carries thinking or reasoning controls (Claude `thinking`, OpenAI `reasoning_effort`, Gemini `thinkingConfig`), each member is served in the spelling its own provider accepts. Members with no reasoning support get the thinking parameters stripped instead of failing, so a fallback combo can safely mix reasoning and non-reasoning models. For custom OpenAI-compatible providers, the per-model format is captured by **Import models** (see **Providers**).
+
 ## Peak And Off-Peak Rules
 
 When a provider has peak hours configured (see **Providers**), each model row in the combo editor gets an availability rule:

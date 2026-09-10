@@ -34,6 +34,10 @@ curl http://localhost:20128/v1/models \
 
 Combos are named groups of models. You can route with fallback, round-robin, fusion, or Auto. Use the combo name as the request model.
 
+## How do thinking and reasoning controls work?
+
+Clients send thinking in different shapes: Claude `thinking`, OpenAI `reasoning_effort`, Gemini `thinkingConfig`. Switchboard translates each into the spelling the target model's gateway accepts — including the per-model formats captured from custom OpenAI-compatible providers when you click **Import models** — and strips thinking parameters for models with no reasoning control instead of failing the request (see **Providers**).
+
 ## Does usage tracking include quota?
 
 Switchboard tracks requests and token usage for traffic through its endpoint. Quota details depend on the provider; not every provider exposes quota or reset data.
