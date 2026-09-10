@@ -2,7 +2,7 @@ import {
   QODER_DEVICE_TOKEN_URL,
   QODER_LOGIN_URL,
   QODER_USERINFO_URL,
-} from "../../qoder/constants.js";
+} from "open-sse/shared/qoder/constants.js";
 import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { getOAuthFetchProfile } from "../providerHelpers.js";
@@ -21,8 +21,8 @@ import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
  * returns 403 for our flow). Users re-run login when expired.
  *
  * Mirrors the structure of KiroService — the COSY signing / WAF-bypass body
- * encoding / chat protocol live separately in src/lib/qoder/ because they're
- * used by every signed request, not just OAuth.
+ * encoding / chat protocol live separately in open-sse/shared/qoder/ because
+ * they're used by every signed request, not just OAuth.
  */
 
 // Timeout for OAuth helper calls. The OAuth modal polls every 2s for up to

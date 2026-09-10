@@ -12,14 +12,14 @@
 import { describe, it, expect } from "vitest";
 import crypto from "crypto";
 
-import { qoderEncodeBody } from "../../src/lib/qoder/encoding.js";
-import { buildCosyHeaders } from "../../src/lib/qoder/cosy.js";
+import { qoderEncodeBody } from "../../open-sse/shared/qoder/encoding.js";
+import { buildCosyHeaders } from "../../open-sse/shared/qoder/cosy.js";
 import { QoderService } from "../../src/lib/oauth/services/qoder.js";
 import {
   QODER_CHAT_URL_ENCODED,
   QODER_MODEL_LIST_URL,
   QODER_MODEL_MAP,
-} from "../../src/lib/qoder/constants.js";
+} from "../../open-sse/shared/qoder/constants.js";
 import { PROVIDER_MODELS } from "../../open-sse/config/providerModels.js";
 import { __test__ as qoderExecutorInternals } from "../../open-sse/executors/qoder.js";
 
