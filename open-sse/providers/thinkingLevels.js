@@ -3,6 +3,7 @@
 import { getCapabilitiesForModel } from "./capabilities.js";
 import { matchPattern } from "./pricing.js";
 import { lookupCatalogReasoning } from "./reasoningPriors.js";
+import { getProviderModels } from "../config/providerModels.js";
 
 // Shared level sets (deduped) — verified against provider docs + wire in thinkingUnified.applyFormat.
 const L = {
@@ -75,8 +76,13 @@ export function getThinkingLevels(provider, model) {
   if (!caps.reasoning) return null;
   // Provider-scoped entries (e.g. codebuddy-cn's published supportedEfforts)
   // must not leak onto the same model id served by another provider.
+  // Codex registry entries may pin their own effort vocabulary (GPT-6 Lite).
+  const baseId = String(model || "").replace(/\([^()]+\)\s*$/, "");
+  const modelLevels = provider === "codex"
+    ? getProviderModels("cx").find((entry) => entry.id === baseId)?.thinkingLevels
+    : null;
   const hit = PATTERN_THINKING.find((p) => (!p.provider || p.provider === provider) && matchPattern(p.pattern, model));
-  let levels = hit?.levels || null;
+  let levels = modelLevels || hit?.levels || null;
   let prior = null;
   if (!levels) {
     const formatLevels = FORMAT_LEVELS[caps.thinkingFormat] || L.base;
