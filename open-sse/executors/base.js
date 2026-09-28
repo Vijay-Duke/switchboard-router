@@ -213,7 +213,7 @@ export class BaseExecutor {
       // the URL (e.g. Codex _isCompact → /compact). Wave 13 P0.
       const transformedBody = this.transformRequest(model, body, stream, credentials);
       const url = this.buildUrl(model, stream, urlIndex, credentials);
-      const headers = this.buildHeaders(credentials, stream, url, model);
+      const headers = this.buildHeaders(credentials, stream, url, model, transformedBody);
       if (this.config?.format === "claude" && credentials?._clientSessionId) {
         headers["X-Claude-Code-Session-Id"] = credentials._clientSessionId;
       }

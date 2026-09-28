@@ -180,9 +180,9 @@ export class CodexExecutor extends BaseExecutor {
    * Override headers to add codex-specific identity headers.
    * transformRequest runs BEFORE buildHeaders, sets this._currentSessionId.
    */
-  buildHeaders(credentials, stream = true, _url = null, model = null) {
+  buildHeaders(credentials, stream = true, _url = null, model = null, body = null) {
     const headers = super.buildHeaders(credentials, stream);
-    if (isCodexResponsesLiteModel(model && getModelUpstreamId("cx", model))) {
+    if (isCodexResponsesLiteModel(model && getModelUpstreamId("cx", model)) && !body?.tools?.some?.(tool => tool?.type === "web_search")) {
       headers["x-openai-internal-codex-responses-lite"] = "true";
     }
     headers["session_id"] = this._currentSessionId || credentials?.connectionId || "default";
@@ -288,7 +288,7 @@ export class CodexExecutor extends BaseExecutor {
       breaker = wsBreakerFor(proxyUrl || "direct");
       if (Date.now() < breaker.openUntil) return null;
 
-      const headers = { ...this.buildHeaders(args.credentials, args.stream, url, args.model) };
+      const headers = { ...this.buildHeaders(args.credentials, args.stream, url, args.model, transformedBody) };
       const { headers: wsHeaders } = wrapHeaders(headers, {
         identity: this.resolveIdentity(args.credentials),
         provider: "codex",
@@ -381,7 +381,33 @@ export class CodexExecutor extends BaseExecutor {
     const normalized = normalizeResponsesInput(body.input);
     if (normalized) body.input = normalized;
     const upstreamModel = getModelUpstreamId("cx", body.model || model);
-    const responsesLite = isCodexResponsesLiteModel(upstreamModel);
+    // Register hosted search before choosing transport; Lite cannot execute it.
+    const autoWebSearch = body._autoCodexWebSearch === true;
+    delete body._autoCodexWebSearch;
+    if (autoWebSearch && !body.tools?.some?.(tool => tool?.type === "web_search")) {
+      body.tools = [...(Array.isArray(body.tools) ? body.tools : []), { type: "web_search" }];
+    }
+    // Hosted search cannot run from a Lite input prefix. When switching to
+    // regular Responses, move all prefixed tools without duplicating definitions.
+    let convertedLitePrefix = false;
+    if (isCodexResponsesLiteModel(upstreamModel) && Array.isArray(body.input)
+      && (body.tools?.some?.(tool => tool?.type === "web_search")
+        || body.input.some(item => item?.type === "additional_tools" && item.tools?.some?.(tool => tool?.type === "web_search")))) {
+      const tools = Array.isArray(body.tools) ? [...body.tools] : [];
+      const seen = new Set(tools.map(tool => `${tool?.type}:${tool?.name || tool?.function?.name || ""}`));
+      for (const item of body.input) {
+        if (item?.type !== "additional_tools" || !Array.isArray(item.tools)) continue;
+        for (const tool of item.tools) {
+          const name = `${tool?.type}:${tool?.name || tool?.function?.name || ""}`;
+          if (!seen.has(name)) { tools.push(tool); seen.add(name); }
+        }
+      }
+      body.tools = tools;
+      convertedLitePrefix = body.input.some(item => item?.type === "additional_tools");
+      body.input = body.input.filter(item => item?.type !== "additional_tools");
+    }
+    const responsesLite = isCodexResponsesLiteModel(upstreamModel)
+      && !body.tools?.some?.(tool => tool?.type === "web_search");
 
     // Ensure input is present and non-empty (Codex API rejects empty input)
     if (!body.input || (Array.isArray(body.input) && body.input.length === 0)) {
@@ -399,7 +425,7 @@ export class CodexExecutor extends BaseExecutor {
     body.stream = true;
 
     // If no instructions provided, inject default Codex instructions
-    if (!responsesLite && (!body.instructions || body.instructions.trim() === "")) {
+    if (!responsesLite && !convertedLitePrefix && (!body.instructions || body.instructions.trim() === "")) {
       body.instructions = CODEX_DEFAULT_INSTRUCTIONS;
     }
 
