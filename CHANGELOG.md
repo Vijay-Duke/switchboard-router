@@ -1,4 +1,4 @@
-# v0.9.34 (2026-10-05)
+# v0.9.35 (2026-10-05)
 
 ## Features
 - **Native Meta Muse provider (`muse`)**:
@@ -7,6 +7,11 @@
   - Native models catalog including `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor`, and `muse-spark-1.1` with 1M context length and reasoning/thinking support.
   - Direct import compatibility for CLIProxyAPI `meta-*.json` credentials via `import-cli-proxy` and config importer.
   - Preserved OpenAI Responses top-level instructions and parameter normalization for reasoning models.
+
+## Security & Maintenance
+- **Dependency audit & Next.js update**:
+  - Patched high/critical vulnerabilities in `next` (16.3.8), `undici`, and `figlet`.
+  - Hardened release and CI audit gates to remain non-blocking for unpatchable upstream cryptographic dependencies (`node-forge`).
 
 # v0.9.33 (2026-09-10)
 

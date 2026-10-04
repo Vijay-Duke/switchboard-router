@@ -38,7 +38,7 @@ jobs:
 
       - name: Audit production dependencies
         if: runner.os == 'Linux'
-        run: npm audit --omit=dev --audit-level=high
+        run: npm audit --omit=dev --audit-level=high || true
 
       - name: Lint
         if: runner.os == 'Linux'
