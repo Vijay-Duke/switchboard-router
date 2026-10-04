@@ -156,9 +156,45 @@ const REFRESH_HANDLERS = {
   xai: (c, log) => refreshXaiToken(c.refreshToken, log),
   "grok-cli": (c, log, proxyOptions) => refreshAccessToken("grok-cli", c.refreshToken, c, log, proxyOptions),
   "codebuddy-cn": (c, log) => refreshCodebuddyToken(c.refreshToken, log),
+  muse: (c, log) => refreshMuseToken(c.providerSpecificData?.dcaToken || c.refreshToken, log),
   vertex: (c, log) => vertexRefreshHandler(c, log, "vertex"),
   "vertex-partner": (c, log) => vertexRefreshHandler(c, log, "vertex-partner"),
 };
+
+async function refreshMuseToken(dcaToken, log) {
+  if (!dcaToken) return null;
+  try {
+    const mintUrl = process.env.META_MINT_URL || "https://api.meta.ai/muse-code/key";
+    const res = await proxyAwareFetch(mintUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${dcaToken}`,
+        "User-Agent": "muse-code/1.0.2",
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ dca_token: dcaToken }),
+      identity: "muse-code",
+      provider: "muse",
+    });
+    if (!res.ok) {
+      log?.warn?.("TOKEN_REFRESH", `Failed to re-mint Meta Muse API key: ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    return {
+      accessToken: data.api_key,
+      apiKey: data.api_key,
+      providerSpecificData: {
+        apiKey: data.api_key,
+        baseUrl: data.base_url || "https://api.meta.ai/v1",
+      },
+    };
+  } catch (err) {
+    log?.warn?.("TOKEN_REFRESH", `Error re-minting Meta Muse API key: ${err?.message}`);
+    return null;
+  }
+}
 
 export async function getAccessToken(provider, credentials, log) {
   // Vertex SA / ADC mint from apiKey JSON — no OAuth refreshToken (wave12/13)
@@ -223,9 +259,10 @@ export function formatProviderCredentials(provider, credentials, log) {
     case "openrouter":
     case "xai":
     case "grok-cli":
+    case "muse":
       return {
-        apiKey: credentials.apiKey,
-        accessToken: credentials.accessToken
+        apiKey: credentials.apiKey || credentials.accessToken,
+        accessToken: credentials.accessToken || credentials.apiKey
       };
 
     case "antigravity":

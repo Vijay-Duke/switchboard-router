@@ -115,6 +115,7 @@ export const CODEBUDDY_CONFIG = { ...PROVIDER_OAUTH["codebuddy-cn"] };
 export const KIMCHI_CONFIG = { ...PROVIDER_OAUTH["kimchi"] };
 
 export const GROK_CLI_CONFIG = { ...PROVIDER_OAUTH["grok-cli"] };
+export const MUSE_CONFIG = { ...PROVIDER_OAUTH["muse"] };
 
 // OAuth timeout (5 minutes)
 export const OAUTH_TIMEOUT = 300000;
@@ -140,4 +141,5 @@ export const PROVIDERS = {
   CODEBUDDY: "codebuddy-cn",
   KIMCHI: "kimchi",
   GROK_CLI: "grok-cli",
+  MUSE: "muse",
 };

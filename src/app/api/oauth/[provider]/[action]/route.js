@@ -372,7 +372,7 @@ export async function POST(request, { params }) {
       }
 
       // Providers that don't use PKCE for device code
-      const noPkceProviders = ["github", "kimi-coding", "kilocode", "codebuddy-cn", "grok-cli"];
+      const noPkceProviders = ["github", "kimi-coding", "kilocode", "codebuddy-cn", "grok-cli", "muse"];
       let result;
       if (noPkceProviders.includes(provider)) {
         // kimi-coding threads _kimiDeviceId through extraData; the others
@@ -436,6 +436,45 @@ export async function POST(request, { params }) {
       const { code, state } = body;
       const connection = await completeXaiManualCode(String(code || "").trim(), String(state || "").trim());
       return NextResponse.json({ success: true, connection });
+    }
+
+    if (action === "import-cli-proxy") {
+      const rawAuth = body?.cliProxyAuth ?? body?.auth ?? body?.json ?? body;
+      if (!rawAuth || typeof rawAuth !== "object") {
+        return NextResponse.json({ error: "Invalid auth JSON" }, { status: 400 });
+      }
+
+      if (provider === "muse" || provider === "meta") {
+        const apiKey = rawAuth.api_key || rawAuth.access_token;
+        const dcaToken = rawAuth.dca_token || rawAuth.access_token;
+        const connection = await createProviderConnection({
+          provider: "muse",
+          authType: "oauth",
+          name: rawAuth.email || rawAuth.name || "Meta Muse",
+          email: rawAuth.email || null,
+          apiKey: apiKey || "",
+          accessToken: apiKey || "",
+          refreshToken: dcaToken || "",
+          providerSpecificData: {
+            dcaToken: dcaToken || "",
+            apiKey: rawAuth.api_key || "",
+            baseUrl: rawAuth.base_url || "https://api.meta.ai/v1",
+            subsTierName: rawAuth.subs_tier_name || "",
+            subsTierId: rawAuth.subs_tier_id || "",
+            isSubsActive: rawAuth.is_subs_active !== undefined ? Boolean(rawAuth.is_subs_active) : true,
+          },
+          testStatus: "active",
+        });
+
+        return NextResponse.json({
+          success: true,
+          connection: {
+            id: connection.id,
+            provider: connection.provider,
+            email: connection.email,
+          },
+        });
+      }
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });

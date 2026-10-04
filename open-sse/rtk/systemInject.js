@@ -38,18 +38,16 @@ export function injectSystemPrompt(body, format, prompt) {
 
 // OpenAI-shaped: messages[] (chat) or input[] (responses) or instructions (responses string)
 function injectMessagesSystem(body, prompt) {
-  // OpenAI Responses API: top-level string field
-  if (typeof body.instructions === "string") {
-    if (isPromptAlreadyInjected(body.instructions, prompt)) return;
+  // OpenAI Responses API: top-level instructions string
+  if (Array.isArray(body.input) || typeof body.instructions === "string" || body.instructions !== undefined) {
+    if (isPromptAlreadyInjected(body.instructions || "", prompt)) return;
     body.instructions = body.instructions
       ? `${body.instructions}${SEP}${prompt}`
       : prompt;
     return;
   }
 
-  const arr = Array.isArray(body.messages) ? body.messages
-    : Array.isArray(body.input) ? body.input
-    : null;
+  const arr = Array.isArray(body.messages) ? body.messages : null;
   if (!arr) return;
 
   const idx = arr.findIndex(m => m && (m.role === "system" || m.role === "developer"));

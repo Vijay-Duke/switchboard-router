@@ -1,0 +1,87 @@
+const moduleDefault = {
+  id: "muse",
+  priority: 285,
+  alias: "muse",
+  aliases: ["meta", "meta-ai", "muse-code"],
+  uiAlias: "muse",
+  display: {
+    name: "Meta Muse",
+    icon: "psychology",
+    color: "#0081FB",
+    textIcon: "MU",
+    website: "https://api.meta.ai",
+    notice: {
+      text: "Sign in with your Meta account via device code, or use a Meta Muse API key.",
+      apiKeyUrl: "https://api.meta.ai",
+      signupUrl: "https://auth.meta.com",
+    },
+  },
+  category: "oauth",
+  authModes: ["oauth", "apikey"],
+  hasOAuth: true,
+  thinkingConfig: {
+    options: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+    defaultMode: "high",
+  },
+  transport: {
+    identity: "muse-code",
+    baseUrl: "https://api.meta.ai/v1/chat/completions",
+    format: "openai",
+    validateUrl: "https://api.meta.ai/v1/models",
+    modelsUrl: "https://api.meta.ai/v1/models",
+    retry: {
+      429: { attempts: 3, delayMs: 2000 },
+      502: { attempts: 2, delayMs: 1500 },
+      503: { attempts: 2, delayMs: 1500 },
+    },
+  },
+  models: [
+    {
+      id: "muse-spark-1.3",
+      name: "Muse Spark 1.3",
+      contextLength: 1048576,
+      maxOutputTokens: 65536,
+      thinking: { levels: ["minimal", "low", "medium", "high", "xhigh", "max"] },
+    },
+    {
+      id: "muse-spark-1.3-contributor",
+      name: "Muse Spark 1.3 Contributor",
+      contextLength: 1048576,
+      maxOutputTokens: 65536,
+      thinking: { levels: ["minimal", "low", "medium", "high", "xhigh", "max"] },
+    },
+    {
+      id: "muse-spark-1.2",
+      name: "Muse Spark 1.2",
+      contextLength: 1048576,
+      maxOutputTokens: 65536,
+      thinking: { levels: ["minimal", "low", "medium", "high", "xhigh"] },
+    },
+    {
+      id: "muse-spark-1.2-contributor",
+      name: "Muse Spark 1.2 Contributor",
+      contextLength: 1048576,
+      maxOutputTokens: 65536,
+      thinking: { levels: ["minimal", "low", "medium", "high", "xhigh"] },
+    },
+    {
+      id: "muse-spark-1.1",
+      name: "Muse Spark 1.1",
+      contextLength: 1048576,
+      maxOutputTokens: 65536,
+      thinking: { levels: ["low", "medium", "high", "xhigh"] },
+    },
+  ],
+  serviceKinds: ["llm"],
+  oauth: {
+    clientId: "1031625952748946",
+    deviceCodeUrl: "https://auth.meta.com/oidc/device/authorization/",
+    tokenUrl: "https://auth.meta.com/oidc/device/token/",
+    mintUrl: "https://api.meta.ai/muse-code/key",
+    grantType: "urn:ietf:params:oauth:grant-type:device_code",
+    pollInterval: 5000,
+  },
+  features: { usage: true },
+};
+
+export default moduleDefault;

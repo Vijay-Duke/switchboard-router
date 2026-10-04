@@ -1,3 +1,13 @@
+# v0.9.34 (2026-10-05)
+
+## Features
+- **Native Meta Muse provider (`muse`)**:
+  - Full native support for Meta Muse (`api.meta.ai`) with RFC 8628 Device Authorization Grant (`https://auth.meta.com/oidc/device/authorization/`) and API key minting from DCA tokens via `https://api.meta.ai/muse-code/key`.
+  - Built-in `muse-code` client fingerprinting (`User-Agent: muse-code/1.0.2`) and standard OpenAI chat completions transport.
+  - Native models catalog including `muse-spark-1.3`, `muse-spark-1.3-contributor`, `muse-spark-1.2`, `muse-spark-1.2-contributor`, and `muse-spark-1.1` with 1M context length and reasoning/thinking support.
+  - Direct import compatibility for CLIProxyAPI `meta-*.json` credentials via `import-cli-proxy` and config importer.
+  - Preserved OpenAI Responses top-level instructions and parameter normalization for reasoning models.
+
 # v0.9.33 (2026-09-10)
 
 ## Features

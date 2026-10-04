@@ -29,6 +29,7 @@ import {
   CODEBUDDY_CONFIG,
   KIMCHI_CONFIG,
   GROK_CLI_CONFIG,
+  MUSE_CONFIG,
   getOAuthClientMetadata,
 } from "./constants/oauth";
 import { XAI_CONFIG, XAI_PKCE_VERIFIER_BYTES } from "./constants/xai";
@@ -1486,6 +1487,123 @@ const PROVIDERS = {
         },
       };
     },
+  },
+
+  muse: {
+    config: MUSE_CONFIG,
+    flowType: "device_code",
+    requestDeviceCode: async (config) => {
+      const response = await proxyAwareFetch(config.deviceCodeUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+          "User-Agent": "muse-code/1.0.2",
+        },
+        body: new URLSearchParams({
+          client_id: config.clientId,
+        }),
+        ...getOAuthFetchProfile("muse"),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Meta device code request failed: ${error}`);
+      }
+
+      const data = await response.json();
+      return {
+        device_code: data.device_code,
+        user_code: data.user_code,
+        verification_uri: data.verification_uri,
+        verification_uri_complete: data.verification_uri_complete,
+        expires_in: data.expires_in,
+        interval: data.interval || 5,
+      };
+    },
+    pollToken: async (config, deviceCode) => {
+      const response = await proxyAwareFetch(config.tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+          "User-Agent": "muse-code/1.0.2",
+        },
+        body: new URLSearchParams({
+          grant_type: config.grantType || "urn:ietf:params:oauth:grant-type:device_code",
+          client_id: config.clientId,
+          device_code: deviceCode,
+        }),
+        ...getOAuthFetchProfile("muse"),
+      });
+
+      const bodyText = await response.text();
+      let data;
+      try {
+        data = JSON.parse(bodyText);
+      } catch {
+        return { ok: false, data: { error: `invalid_json: ${bodyText.slice(0, 200)}` } };
+      }
+
+      if (response.ok && data.access_token) {
+        return { ok: true, data };
+      }
+
+      if (data.error === "authorization_pending" || data.error === "slow_down") {
+        return { ok: true, data };
+      }
+
+      return {
+        ok: false,
+        data: {
+          error: data.error || `HTTP ${response.status}`,
+          error_description: data.error_description || data.message || bodyText,
+        },
+      };
+    },
+    postExchange: async (tokenData) => {
+      const dcaToken = tokenData.access_token;
+      if (!dcaToken) return null;
+
+      try {
+        const mintUrl = process.env.META_MINT_URL || "https://api.meta.ai/muse-code/key";
+        const response = await proxyAwareFetch(mintUrl, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${dcaToken}`,
+            "User-Agent": "muse-code/1.0.2",
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ dca_token: dcaToken }),
+          identity: "muse-code",
+          provider: "muse",
+        });
+
+        if (response.ok) {
+          return await response.json();
+        }
+      } catch (err) {
+        console.warn("Failed to mint Meta API key from DCA token:", err?.message);
+      }
+      return null;
+    },
+    mapTokens: (tokens, minted) => ({
+      accessToken: minted?.api_key || tokens.access_token,
+      apiKey: minted?.api_key || tokens.access_token,
+      refreshToken: tokens.access_token,
+      expiresIn: tokens.expires_in,
+      email: minted?.user_email || undefined,
+      displayName: minted?.user_full_name || undefined,
+      providerSpecificData: {
+        dcaToken: tokens.access_token,
+        apiKey: minted?.api_key || "",
+        baseUrl: minted?.base_url || "https://api.meta.ai/v1",
+        subsTierName: minted?.subs_tier_name || "",
+        subsTierId: minted?.subs_tier_id || "",
+        isSubsActive: Boolean(minted?.is_subs_active),
+      },
+    }),
   },
 };
 

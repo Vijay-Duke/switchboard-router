@@ -251,6 +251,10 @@ export const PATTERN_CAPABILITIES = [
   { pattern: "*pplx*",          caps: { search: true, contextWindow: 128000 } },
   { pattern: "*perplexity*",    caps: { search: true, contextWindow: 128000 } },
 
+  // ── Meta Muse (vision + reasoning, 1M ctx) ────────────────────────
+  { pattern: "*muse-spark*",    caps: { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 65536 } },
+  { pattern: "*muse*",          caps: { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 65536 } },
+
   // ── Others ───────────────────────────────────────────────────────
   { pattern: "*hunyuan*",       caps: { reasoning: true, thinkingFormat: "hunyuan", contextWindow: 262144, maxOutput: 262144 } },
   { pattern: "hy3*",            caps: { reasoning: true, thinkingFormat: "hunyuan", contextWindow: 262144, maxOutput: 262144 } },

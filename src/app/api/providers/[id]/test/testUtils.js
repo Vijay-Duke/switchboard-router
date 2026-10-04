@@ -48,6 +48,15 @@ const OAUTH_TEST_CONFIG = {
     acceptStatuses: [402],
     refreshable: true,
   },
+  muse: {
+    url: "https://api.meta.ai/v1/models",
+    method: "GET",
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    extraHeaders: { Accept: "application/json", "User-Agent": "muse-code/1.0.2" },
+    acceptStatuses: [200],
+    refreshable: true,
+  },
   codex: {
     url: "https://chatgpt.com/backend-api/codex/responses",
     method: "POST",

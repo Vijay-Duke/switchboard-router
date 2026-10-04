@@ -65,7 +65,8 @@ export async function importConfig(configOrContent) {
     const existing = await getProviderConnections();
     for (const conn of connections) {
       if (!conn || typeof conn !== "object" || !conn.provider) continue;
-      const provider = String(conn.provider).toLowerCase();
+      let provider = String(conn.provider).toLowerCase();
+      if (provider === "meta") provider = "muse";
       const existingMatch = existing.find(
         (e) => e.provider === provider && (e.name === conn.name || (conn.apiKey && e.apiKey === conn.apiKey))
       );

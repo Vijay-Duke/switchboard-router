@@ -289,6 +289,16 @@ export const PROFILES = {
     source: { capture: "@xai-official/grok 0.2.99" },
     headers: grokBuildHeaders,
   },
+  "muse-code": {
+    id: "muse-code",
+    tls: "node",
+    alpn: ["h2", "http/1.1"],
+    headerOrder: ["Authorization", "Content-Type", "User-Agent", "Accept"],
+    source: { capture: "muse-code" },
+    headers: (snapshot) => ({
+      "User-Agent": `muse-code/${snapshot?.version || "1.0.2"}`,
+    }),
+  },
 };
 
 export function getProfile(profileId) {
@@ -326,6 +336,7 @@ export function resolveProfileId(identity, hint = {}) {
   if (provider === "grok-cli") return "grok-build";
   if (provider === "grok-web") return "chrome";
   if (provider === "cursor" || format === "cursor") return "cursor";
+  if (provider === "muse" || provider === "meta") return "muse-code";
   if (OPENAI_FAMILY.has(format) || format === "openai" || !format) return "openai-node";
   return "openai-node";
 }
