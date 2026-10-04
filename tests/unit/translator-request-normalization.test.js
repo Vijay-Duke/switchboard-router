@@ -65,6 +65,37 @@ describe("request normalization", () => {
     expect(result.messages[0].content).toBe("a\nb");
   });
 
+  it("filterToOpenAIFormat strips client round-trip reasoning_details from messages", () => {
+    const body = {
+      messages: [
+        { role: "system", content: "sys" },
+        { role: "user", content: "hi" },
+        {
+          role: "assistant",
+          content: "ok",
+          reasoning_details: [{ type: "reasoning.encrypted", data: "x" }],
+          reasoning: "hmm",
+          reasoning_content: "keep me",
+        },
+        {
+          role: "assistant",
+          content: "call",
+          tool_calls: [{ id: "1", type: "function", function: { name: "f", arguments: "{}" } }],
+          reasoning_details: [{ text: "t" }],
+        },
+      ],
+    };
+
+    const result = filterToOpenAIFormat(JSON.parse(JSON.stringify(body)));
+    for (const m of result.messages) {
+      expect(m.reasoning_details).toBeUndefined();
+      expect(m.reasoning).toBeUndefined();
+    }
+    // reasoning_content stays: GLM/Qwen/DeepSeek round-trip it natively
+    expect(result.messages[2].reasoning_content).toBe("keep me");
+    expect(result.messages[3].tool_calls).toHaveLength(1);
+  });
+
   it("translateRequest keeps /v1/messages Claude->OpenAI text payloads string-safe", () => {
     const body = {
       model: "ollama/gpt-oss:120b",

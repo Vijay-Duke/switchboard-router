@@ -60,6 +60,16 @@ export function filterToOpenAIFormat(body, opts = {}) {
     // Normalize developer role to system (many providers don't support developer)
     if (msg.role === ROLE.DEVELOPER) msg = { ...msg, role: ROLE.SYSTEM };
 
+    // Strip client round-trip reasoning extensions that are not part of the
+    // OpenAI message schema (pi/OpenRouter echo reasoning_details back on
+    // assistant history). Strict upstreams (pydantic extra=forbid) reject
+    // unknown message fields with 400. Keep reasoning_content — GLM/Qwen/
+    // DeepSeek round-trip it natively.
+    if (msg.reasoning_details !== undefined || msg.reasoning !== undefined) {
+      const { reasoning_details, reasoning, ...rest } = msg;
+      msg = rest;
+    }
+
     // Keep tool messages as-is (OpenAI format)
     if (msg.role === ROLE.TOOL) return msg;
 
