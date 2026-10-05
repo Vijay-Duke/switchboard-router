@@ -1,6 +1,7 @@
 // @ts-check
 import OverviewClient from "./OverviewClient";
 import { getLocalEndpointPort } from "@/lib/appUpdater";
+import { getServerEndpointUrls } from "@/lib/network/endpointUrlsServer";
 import { loadProvidersPage, loadCombosPage } from "@/lib/dashboard/loaders";
 import { getApiKeys, getPromotedLearningVersion } from "@/lib/db/index.js";
 
@@ -127,6 +128,7 @@ export default async function DashboardPage() {
         learningSummary,
         loadError,
         endpointHost: `127.0.0.1:${getLocalEndpointPort()}`,
+        endpointUrls: getServerEndpointUrls(getLocalEndpointPort()),
       }}
     />
   );

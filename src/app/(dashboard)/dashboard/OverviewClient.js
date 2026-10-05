@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import PropTypes from "prop-types";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { buildEndpointList } from "@/lib/network/endpointUrls";
 
 const STRATEGY_LABELS = {
   fallback: "fallback",
@@ -18,7 +19,7 @@ const STRATEGY_LABELS = {
  */
 export default function OverviewClient({ initialData }) {
   const router = useRouter();
-  const [host, setHost] = useState(initialData?.endpointHost || "127.0.0.1:20128");
+  const [browserOrigin, setBrowserOrigin] = useState(null);
   const [stats, setStats] = useState(null);
   const [statsError, setStatsError] = useState(false);
   const { copied, copy } = useCopyToClipboard();
@@ -36,7 +37,7 @@ export default function OverviewClient({ initialData }) {
   const strategy = defaultCombo?.strategy || "fallback";
 
   useEffect(() => {
-    setHost(window.location.host || "127.0.0.1:20128");
+    setBrowserOrigin(window.location.origin || null);
   }, []);
 
   useEffect(() => {
@@ -57,7 +58,15 @@ export default function OverviewClient({ initialData }) {
     };
   }, []);
 
-  const endpointUrl = `http://${host}/v1`;
+  const serverEndpointUrls = initialData?.endpointUrls;
+  const endpointHost = initialData?.endpointHost || "127.0.0.1:20128";
+  const endpointUrls = useMemo(() => {
+    const list = buildEndpointList({ serverUrls: serverEndpointUrls, browserOrigin });
+    // SSR-safe fallback: server list is absent only when initialData is.
+    return list.length > 0
+      ? list
+      : [{ label: "Local", url: `http://${endpointHost}/v1` }];
+  }, [serverEndpointUrls, browserOrigin, endpointHost]);
 
   const homeStats = useMemo(() => {
     // Error or still loading: never render a confident "0" — the 24h stats
@@ -266,28 +275,54 @@ export default function OverviewClient({ initialData }) {
                 {endpointReady ? "online" : providerCount > 0 ? "providers unavailable" : "no providers"}
               </span>
             </div>
-            <div className="flex items-center justify-between gap-2">
-              <div
-                style={{
-                  fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
-                  fontSize: 16,
-                  color: "#E5B454",
-                  wordBreak: "break-all",
-                }}
-              >
-                {endpointUrl}
-              </div>
-              <button
-                type="button"
-                onClick={() => copy(endpointUrl, "overview_endpoint")}
-                className="p-1.5 rounded hover:bg-white/10 text-[#8A7F66] hover:text-[#E5B454] transition-colors shrink-0"
-                title="Copy endpoint URL"
-                aria-label="Copy endpoint URL"
-              >
-                <span className="material-symbols-outlined text-[16px] leading-none">
-                  {copied === "overview_endpoint" ? "check" : "content_copy"}
-                </span>
-              </button>
+            <div className="flex flex-col" style={{ gap: 10 }}>
+              {endpointUrls.map((entry) => {
+                const copyId = `overview_endpoint_${entry.url}`;
+                return (
+                  <div key={entry.url} className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className="shrink-0"
+                        style={{
+                          fontSize: 10,
+                          fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.5px",
+                          color: "#8A7F66",
+                          border: "1px solid #3A3221",
+                          borderRadius: 999,
+                          padding: "2px 8px",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {entry.label}
+                      </span>
+                      <div
+                        className="truncate"
+                        title={entry.url}
+                        style={{
+                          fontFamily: "var(--font-mono), 'IBM Plex Mono', monospace",
+                          fontSize: 13,
+                          color: "#E5B454",
+                        }}
+                      >
+                        {entry.url}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copy(entry.url, copyId)}
+                      className="p-1.5 rounded hover:bg-white/10 text-[#8A7F66] hover:text-[#E5B454] transition-colors shrink-0"
+                      title={`Copy ${entry.label} endpoint URL`}
+                      aria-label={`Copy ${entry.label} endpoint URL`}
+                    >
+                      <span className="material-symbols-outlined text-[16px] leading-none">
+                        {copied === copyId ? "check" : "content_copy"}
+                      </span>
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
           <div
