@@ -29,6 +29,11 @@ const moduleDefault = {
     format: "openai",
     validateUrl: "https://api.meta.ai/v1/models",
     modelsUrl: "https://api.meta.ai/v1/models",
+    // Quota read is the CLI's own startup key-mint call: the response carries
+    // subs_usage (5h window + weekly buckets) alongside the inference key.
+    usage: {
+      url: "https://api.meta.ai/muse-code/key",
+    },
     retry: {
       429: { attempts: 3, delayMs: 2000 },
       502: { attempts: 2, delayMs: 1500 },
