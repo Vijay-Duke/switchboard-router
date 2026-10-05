@@ -1,3 +1,12 @@
+# v0.9.36 (2026-10-05)
+
+## Features
+- **Overview lists every endpoint URL**: the endpoint card now shows all ways to reach `/v1` — the browser's own origin (scheme preserved, so `https` proxies stay `https`), loopback, Tailscale, and LAN addresses enumerated from server NICs — each with its own copy button. Previously it echoed a single hardcoded-`http` URL.
+
+## Fixes
+- **Meta Muse quota on the Quota page**: new usage handler reads subscription quota from the CLI's own startup key-mint call (`POST api.meta.ai/muse-code/key`), which carries `subs_usage` (rolling 5h window + weekly buckets). Quota auth uses the DCA device token; idle windows and inactive subscriptions render without fake bars.
+- **Claude Code identity recaptured at 2.1.289**: fingerprint tuple re-captured from the real 2.1.289/2.1.263 darwin-arm64 binaries (UA + `X-Stainless-Package-Version 0.128.0` changed; runtime, header order, beta assembly, and ClientHello verified identical). Harvest accepts real 2.1.289 traffic again.
+
 # v0.9.35 (2026-10-05)
 
 ## Features
