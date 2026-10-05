@@ -35,7 +35,7 @@ const CLAUDE_COUNT_TOKENS_HEADER_ORDER = CLAUDE_MESSAGES_HEADER_ORDER.filter(
 );
 
 function claudeHeaders(snapshot) {
-  const version = snapshot?.version || "2.1.263";
+  const version = snapshot?.version || "2.1.289";
   const entrypoint = snapshot?.entrypoint || "cli";
   return {
     "Anthropic-Version": ANTHROPIC_API_VERSION,
@@ -44,7 +44,7 @@ function claudeHeaders(snapshot) {
     "User-Agent": snapshot?.userAgent || `claude-cli/${version} (external, ${entrypoint})`,
     "X-App": "cli",
     "X-Stainless-Runtime-Version": snapshot?.runtimeVersion || process.version,
-    "X-Stainless-Package-Version": snapshot?.packageVersion || "0.112.1",
+    "X-Stainless-Package-Version": snapshot?.packageVersion || "0.128.0",
     "X-Stainless-Runtime": "node",
     "X-Stainless-Lang": "js",
     "X-Stainless-Arch": snapshot?.arch || mapStainlessArch(),
