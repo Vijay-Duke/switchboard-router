@@ -126,8 +126,11 @@ export function normalizeClaudePassthrough(body, model = "") {
 
   // 2. Strip effort param for models that don't support it (keep other output_config fields)
   if (ADAPTIVE_THINKING_UNSUPPORTED.test(model) && body.output_config?.effort != null) {
-    delete body.output_config.effort;
-    if (Object.keys(body.output_config).length === 0) delete body.output_config;
+    // Native passthrough starts with a shallow body copy. Keep the shared
+    // request's effort intact for a subsequent model/account fallback.
+    const { effort, ...outputConfig } = body.output_config;
+    if (Object.keys(outputConfig).length > 0) body.output_config = outputConfig;
+    else delete body.output_config;
   }
 
   // 2. Fold mid-conversation system messages into the neighbouring turn.
