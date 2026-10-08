@@ -49,6 +49,53 @@ afterEach(() => {
 });
 
 describe("/v1/models compatible-provider discovery", () => {
+  function savedCompatibleSnapshot() {
+    mocks.getProviderConnections.mockResolvedValueOnce([{
+      id: "compatible-connection",
+      provider: "openai-compatible-responses-5f69ccc9-f1e2-4faa-acf6-d5551eab7cce",
+      apiKey: "secret",
+      isActive: true,
+      providerSpecificData: {
+        baseUrl: "https://litellm.example/v1",
+        prefix: "lite-llm",
+        enabledModels: ["removed-model"],
+      },
+    }]);
+  }
+
+  it.each([[[]], [{ data: [] }], [{ models: [] }], [{ results: [] }]])(
+    "uses a successful empty compatible catalog instead of a stale snapshot (%j)",
+    async (catalog) => {
+      savedCompatibleSnapshot();
+      const fetchMock = vi.fn().mockResolvedValue(Response.json(catalog));
+      global.fetch = fetchMock;
+      const { buildModelsList } = await import("../../src/app/api/v1/models/route.js");
+      expect(await buildModelsList(["llm"])).toEqual([]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    [503, { data: [] }],
+    [200, {}],
+    [200, { data: { invalid: "shape" } }],
+  ])("preserves the stored compatible snapshot for failed or invalid discovery (%i, %j)", async (status, catalog) => {
+    savedCompatibleSnapshot();
+    global.fetch = vi.fn().mockResolvedValue(Response.json(catalog, { status }));
+    const { buildModelsList } = await import("../../src/app/api/v1/models/route.js");
+    const models = await buildModelsList(["llm"]);
+    expect(models.map((model) => model.id)).toEqual(["lite-llm/removed-model"]);
+  });
+
+  it("preserves the stored snapshot without requesting an intentionally skipped compatible catalog", async () => {
+    savedCompatibleSnapshot();
+    global.fetch = vi.fn();
+    const { buildModelsList } = await import("../../src/app/api/v1/models/route.js");
+    const models = await buildModelsList(["llm"], { skipCompatibleDiscovery: true });
+    expect(models.map((model) => model.id)).toEqual(["lite-llm/removed-model"]);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   it("advertises Claude-shaped aliases for Claude Code gateway discovery", { timeout: 20000 }, async () => {
     // Aliases are only advertised while their target provider can route
     // (active connection). Seed both targets so the shaping assertions below

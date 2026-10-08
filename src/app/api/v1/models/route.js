@@ -116,7 +116,10 @@ const LIVE_MODEL_RESOLVERS = {
 
 const parseOpenAIStyleModels = (data) => {
   if (Array.isArray(data)) return data;
-  return data?.data || data?.models || data?.results || [];
+  for (const key of ["data", "models", "results"]) {
+    if (Array.isArray(data?.[key])) return data[key];
+  }
+  return null;
 };
 
 // LLM kind sentinel — combos/models with no explicit kind default to LLM
@@ -150,13 +153,13 @@ function inferKindFromUnknownModelId(modelId) {
 }
 
 async function fetchCompatibleModelIds(connection, externalSignal = null) {
-  if (!connection?.apiKey) return [];
+  if (!connection?.apiKey) return null;
 
   const baseUrl = typeof connection?.providerSpecificData?.baseUrl === "string"
     ? connection.providerSpecificData.baseUrl.trim().replace(/\/$/, "")
     : "";
 
-  if (!baseUrl) return [];
+  if (!baseUrl) return null;
 
   let url = `${baseUrl}/models`;
   const headers = {
@@ -176,7 +179,7 @@ async function fetchCompatibleModelIds(connection, externalSignal = null) {
     headers["anthropic-version"] = "2023-06-01";
     headers.Authorization = `Bearer ${connection.apiKey}`;
   } else {
-    return [];
+    return null;
   }
 
   try {
@@ -200,10 +203,11 @@ async function fetchCompatibleModelIds(connection, externalSignal = null) {
         signal,
       });
 
-      if (!response.ok) return [];
+      if (!response.ok) return null;
 
       const data = await response.json();
       const rawModels = parseOpenAIStyleModels(data);
+      if (!rawModels) return null;
 
       return Array.from(
         new Set(
@@ -216,7 +220,7 @@ async function fetchCompatibleModelIds(connection, externalSignal = null) {
       clearTimeout(timeoutId);
     }
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -486,8 +490,10 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
         : providerModels.map((model) => model.id);
 
       if (isCompatibleProvider && !skipCompatibleDiscovery) {
-        const discoveredIds = compatibleModelIdsByProvider.get(providerId) || [];
-        if (discoveredIds.length > 0) rawModelIds = discoveredIds;
+        const discoveredIds = compatibleModelIdsByProvider.get(providerId);
+        // An empty successful catalog is authoritative. Only unavailable or
+        // invalid discovery retains the saved snapshot.
+        if (Array.isArray(discoveredIds)) rawModelIds = discoveredIds;
       }
 
       // Live catalogs are fetched concurrently above. Dynamic results replace
