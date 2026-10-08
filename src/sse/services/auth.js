@@ -14,21 +14,22 @@ import { selectScheduledConnection } from "./accountScheduler.js";
 
 // M1: per-provider mutex — unrelated providers select credentials in parallel
 const selectionMutexByProvider = new Map();
+const accountStateMutex = new Map();
 
-function withProviderSelectionLock(providerId, fn) {
-  const prev = selectionMutexByProvider.get(providerId) || Promise.resolve();
+function withStateLock(mutex, key, fn) {
+  const prev = mutex.get(key) || Promise.resolve();
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   const chained = prev.then(() => gate, () => gate);
-  selectionMutexByProvider.set(providerId, chained);
+  mutex.set(key, chained);
   return (async () => {
     await prev.catch(() => {});
     try {
       return await fn();
     } finally {
       release();
-      if (selectionMutexByProvider.get(providerId) === chained) {
-        selectionMutexByProvider.delete(providerId);
+      if (mutex.get(key) === chained) {
+        mutex.delete(key);
       }
     }
   })();
@@ -52,7 +53,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
   // Resolve alias early so the lock is keyed by canonical provider id
   const providerId = resolveProviderId(provider);
 
-  return withProviderSelectionLock(providerId, async () => {
+  return withStateLock(selectionMutexByProvider, providerId, async () => {
 
     // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings)
     if (FREE_PROVIDERS[providerId]?.noAuth) {
@@ -308,51 +309,53 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
  */
 export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null) {
   if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
-  const connections = await getProviderConnections({ provider });
-  const conn = connections.find(c => c.id === connectionId);
-  const backoffLevel = conn?.backoffLevel || 0;
+  return withStateLock(accountStateMutex, connectionId, async () => {
+    const connections = await getProviderConnections({ provider });
+    const conn = connections.find(c => c.id === connectionId);
+    const backoffLevel = conn?.backoffLevel || 0;
 
-  // Provider-specific precise cooldown (e.g. codex usage_limit_reached resets_at) overrides backoff
-  const preciseReset = Boolean(resetsAtMs && resetsAtMs > Date.now());
-  let shouldFallback, cooldownMs, newBackoffLevel;
-  if (preciseReset) {
-    shouldFallback = true;
-    cooldownMs = Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
-    newBackoffLevel = 0;
-  } else {
-    ({ shouldFallback, cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel));
-  }
-  if (!shouldFallback) return { shouldFallback: false, cooldownMs: 0 };
+    // Provider-specific precise cooldown (e.g. codex usage_limit_reached resets_at) overrides backoff
+    const preciseReset = Boolean(resetsAtMs && resetsAtMs > Date.now());
+    let shouldFallback, cooldownMs, newBackoffLevel;
+    if (preciseReset) {
+      shouldFallback = true;
+      cooldownMs = Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
+      newBackoffLevel = 0;
+    } else {
+      ({ shouldFallback, cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel));
+    }
+    if (!shouldFallback) return { shouldFallback: false, cooldownMs: 0 };
 
-  const reason = typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";
-  const lockUpdate = buildModelLockUpdate(model, cooldownMs);
-  // The re-auth marker outlives per-request errors: the 401 that follows a
-  // revoked refresh token must not downgrade it to a transient "unavailable".
-  const reauth = conn?.testStatus === REAUTH_REQUIRED_STATUS;
+    const reason = typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";
+    const lockUpdate = buildModelLockUpdate(model, cooldownMs);
+    // The re-auth marker outlives per-request errors: the 401 that follows a
+    // revoked refresh token must not downgrade it to a transient "unavailable".
+    const reauth = conn?.testStatus === REAUTH_REQUIRED_STATUS;
 
-  await updateProviderConnection(connectionId, {
-    ...lockUpdate,
-    testStatus: reauth ? REAUTH_REQUIRED_STATUS : "unavailable",
-    lastError: reauth ? (conn.lastError || reason) : reason,
-    errorCode: status,
-    lastErrorAt: new Date().toISOString(),
-    backoffLevel: newBackoffLevel ?? backoffLevel,
-    // Self-report exhaustion so quota-first routing demotes this account
-    // immediately instead of waiting for the next auto-ping snapshot.
-    ...(preciseReset
-      ? { lastQuota: { remainingPercentage: 0, resetAt: new Date(resetsAtMs).toISOString(), at: Date.now() } }
-      : {}),
+    await updateProviderConnection(connectionId, {
+      ...lockUpdate,
+      testStatus: reauth ? REAUTH_REQUIRED_STATUS : "unavailable",
+      lastError: reauth ? (conn.lastError || reason) : reason,
+      errorCode: status,
+      lastErrorAt: new Date().toISOString(),
+      backoffLevel: newBackoffLevel ?? backoffLevel,
+      // Self-report exhaustion so quota-first routing demotes this account
+      // immediately instead of waiting for the next auto-ping snapshot.
+      ...(preciseReset
+        ? { lastQuota: { remainingPercentage: 0, resetAt: new Date(resetsAtMs).toISOString(), at: Date.now() } }
+        : {}),
+    });
+
+    const lockKey = Object.keys(lockUpdate)[0];
+    const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
+    log.warn("AUTH", `${connName} locked ${lockKey} for ${Math.round(cooldownMs / 1000)}s [${status}]`);
+
+    if (provider && status && reason) {
+      console.error(`❌ ${provider} [${status}]: ${reason}`);
+    }
+
+    return { shouldFallback: true, cooldownMs };
   });
-
-  const lockKey = Object.keys(lockUpdate)[0];
-  const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
-  log.warn("AUTH", `${connName} locked ${lockKey} for ${Math.round(cooldownMs / 1000)}s [${status}]`);
-
-  if (provider && status && reason) {
-    console.error(`❌ ${provider} [${status}]: ${reason}`);
-  }
-
-  return { shouldFallback: true, cooldownMs };
 }
 
 /**
@@ -366,37 +369,47 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
  */
 export async function clearAccountError(connectionId, currentConnection, model = null) {
   if (!connectionId || connectionId === "noauth") return;
-  const conn = currentConnection._connection || currentConnection;
-  const now = Date.now();
-  const allLockKeys = Object.keys(conn).filter(k => k.startsWith("modelLock_"));
+  return withStateLock(accountStateMutex, connectionId, async () => {
+    const selectedConnection = currentConnection._connection || currentConnection;
+    const connections = await getProviderConnections({ provider: selectedConnection.provider });
+    const conn = connections.find(connection => connection.id === connectionId);
+    if (!conn || conn.testStatus === REAUTH_REQUIRED_STATUS) return;
 
-  if (!conn.testStatus && !conn.lastError && allLockKeys.length === 0) return;
+    // A successful request only proves recovery from the state it selected.
+    // Another in-flight request may have since reported a new cooldown.
+    if (conn.lastErrorAt !== selectedConnection.lastErrorAt
+        || conn.lastError !== selectedConnection.lastError) return;
+    const now = Date.now();
+    const allLockKeys = Object.keys(conn).filter(k => k.startsWith("modelLock_"));
 
-  // Keys to clear: current model's lock + all expired locks
-  const keysToClear = allLockKeys.filter(k => {
-    if (model && k === `modelLock_${model}`) return true; // succeeded model
-    if (model && k === "modelLock___all") return true;    // account-level lock
-    const expiry = conn[k];
-    return expiry && new Date(expiry).getTime() <= now;   // expired
+    if (!conn.testStatus && !conn.lastError && allLockKeys.length === 0) return;
+
+    // Keys to clear: current model's lock + all expired locks
+    const keysToClear = allLockKeys.filter(k => {
+      if (model && k === `modelLock_${model}`) return conn[k] === selectedConnection[k]; // succeeded model
+      if (model && k === "modelLock___all") return conn[k] === selectedConnection[k];    // account-level lock
+      const expiry = conn[k];
+      return expiry && new Date(expiry).getTime() <= now;   // expired
+    });
+
+    if (keysToClear.length === 0 && conn.testStatus !== "unavailable" && !conn.lastError) return;
+
+    // Check if any active locks remain after clearing
+    const remainingActiveLocks = allLockKeys.filter(k => {
+      if (keysToClear.includes(k)) return false;
+      const expiry = conn[k];
+      return expiry && new Date(expiry).getTime() > now;
+    });
+
+    const clearObj = Object.fromEntries(keysToClear.map(k => [k, null]));
+
+    // Only reset error state if no active locks remain
+    if (remainingActiveLocks.length === 0) {
+      Object.assign(clearObj, { testStatus: "active", lastError: null, lastErrorAt: null, backoffLevel: 0 });
+    }
+
+    await updateProviderConnection(connectionId, clearObj);
   });
-
-  if (keysToClear.length === 0 && conn.testStatus !== "unavailable" && !conn.lastError) return;
-
-  // Check if any active locks remain after clearing
-  const remainingActiveLocks = allLockKeys.filter(k => {
-    if (keysToClear.includes(k)) return false;
-    const expiry = conn[k];
-    return expiry && new Date(expiry).getTime() > now;
-  });
-
-  const clearObj = Object.fromEntries(keysToClear.map(k => [k, null]));
-
-  // Only reset error state if no active locks remain
-  if (remainingActiveLocks.length === 0) {
-    Object.assign(clearObj, { testStatus: "active", lastError: null, lastErrorAt: null, backoffLevel: 0 });
-  }
-
-  await updateProviderConnection(connectionId, clearObj);
 }
 
 /**
