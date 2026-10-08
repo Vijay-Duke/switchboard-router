@@ -259,6 +259,57 @@ export async function updateProviderConnection(id, data) {
   return result;
 }
 
+const ACCOUNT_STATUS_FIELDS = [
+  "testStatus", "lastError", "lastErrorAt", "errorCode", "backoffLevel", "rateLimitedUntil",
+];
+const ACCOUNT_MODEL_LOCK_PREFIX = "modelLock_";
+
+/**
+ * Apply a recovery patch only while the observed account status is unchanged.
+ * Credential refreshes and unrelated metadata updates are preserved. Status
+ * comparison and persistence share one transaction. Native SQLite protects
+ * against concurrent processes; the sql.js fallback remains single-writer.
+ * Returns null when the account disappeared or its status changed.
+ */
+export async function updateProviderConnectionStatusIfCurrent(id, expected, patch) {
+  if (!expected || typeof expected !== "object" || !patch || typeof patch !== "object") {
+    throw new TypeError("An account status snapshot and patch are required");
+  }
+  if (Object.keys(patch).some(key =>
+    !ACCOUNT_STATUS_FIELDS.includes(key) && !key.startsWith(ACCOUNT_MODEL_LOCK_PREFIX))) {
+    throw new TypeError("Only account status and model locks may be updated conditionally");
+  }
+
+  const db = await getAdapter();
+  let result = null;
+  try {
+    db.transaction(() => {
+      const row = db.get("SELECT * FROM providerConnections WHERE id = ?", [id]);
+      if (!row) return;
+      const current = rowToConn(row);
+      const fields = new Set([
+        ...ACCOUNT_STATUS_FIELDS, "provider", "isActive",
+        ...Object.keys(expected).filter(key => key.startsWith(ACCOUNT_MODEL_LOCK_PREFIX)),
+        ...Object.keys(current).filter(key => key.startsWith(ACCOUNT_MODEL_LOCK_PREFIX)),
+      ]);
+      if ([...fields].some(key => (current[key] ?? null) !== (expected[key] ?? null))) return;
+
+      const updated = { ...current, ...patch, updatedAt: new Date().toISOString() };
+      const replacement = connToRow(updated);
+      const write = db.run(
+        "UPDATE providerConnections SET data = ?, updatedAt = ? WHERE id = ? AND data = ? AND updatedAt = ?",
+        [replacement.data, replacement.updatedAt, id, row.data, row.updatedAt],
+      );
+      if (write.changes > 0) result = updated;
+    });
+  } catch (error) {
+    // A native SQLite WAL reader cannot upgrade its stale snapshot after
+    // another process commits. Treat that conflict like a failed comparison.
+    if (error?.code !== "SQLITE_BUSY_SNAPSHOT" && error?.errcode !== 517) throw error;
+  }
+  return result;
+}
+
 export async function deleteProviderConnection(id) {
   const db = await getAdapter();
   let ok = false;

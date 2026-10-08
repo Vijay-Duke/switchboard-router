@@ -1,6 +1,7 @@
 import {
   getProviderConnections,
   updateProviderConnection,
+  updateProviderConnectionStatusIfCurrent,
   getSettings,
   getConnectionInFlightCount,
 } from "@/lib/db/index.js";
@@ -408,7 +409,7 @@ export async function clearAccountError(connectionId, currentConnection, model =
       Object.assign(clearObj, { testStatus: "active", lastError: null, lastErrorAt: null, backoffLevel: 0 });
     }
 
-    await updateProviderConnection(connectionId, clearObj);
+    await updateProviderConnectionStatusIfCurrent(connectionId, conn, clearObj);
   });
 }
 

@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ getProviderConnections: vi.fn(), updateProviderConnection: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getProviderConnections: vi.fn(), updateProviderConnection: vi.fn(), updateProviderConnectionStatusIfCurrent: vi.fn() }));
 vi.mock("@/lib/db/index.js", () => ({ ...mocks, getSettings: vi.fn(async () => ({})), getConnectionInFlightCount: vi.fn(() => 0) }));
 vi.mock("@/lib/network/connectionProxy", () => ({ resolveConnectionProxyConfig: vi.fn(async () => ({ connectionProxyEnabled: false })) }));
 const { clearAccountError, markAccountUnavailable } = await import("../../src/sse/services/auth.js");
@@ -14,6 +14,7 @@ beforeEach(() => {
   mocks.getProviderConnections.mockImplementation(async () => [structuredClone(current)]);
   mocks.updateProviderConnection.mockImplementation(async (_id, patch) => { Object.assign(current, patch); return structuredClone(current); });
   mocks.updateProviderConnection.mockClear();
+  mocks.updateProviderConnectionStatusIfCurrent.mockImplementation(async (id, expected, patch) => mocks.updateProviderConnection(id, patch));
 });
 afterEach(() => vi.useRealTimers());
 describe("successful request clearing concurrent account errors", () => {
