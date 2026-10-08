@@ -178,7 +178,7 @@ describe("PUT /api/models alias guards (A18)", () => {
     mocks.setModelAlias.mockResolvedValue(undefined);
     const res = await modelsRoute.PUT(put({ model: "openai/gpt-4o", alias: "gpt4" }));
     expect(res.status).toBe(200);
-    expect(mocks.setModelAlias).toHaveBeenCalledWith("openai/gpt-4o", "gpt4");
+    expect(mocks.setModelAlias).toHaveBeenCalledWith("gpt4", "openai/gpt-4o");
   });
 });
 
