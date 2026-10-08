@@ -1,3 +1,5 @@
+export const CREDENTIAL_CONDITIONAL_UPDATE_MAX_ATTEMPTS = 2;
+
 // HTTP status codes
 // Maximum fallback/round-robin/fusion combo nesting before a request is rejected.
 export const MAX_COMBO_DEPTH = 3;
@@ -28,6 +30,7 @@ export const CACHE_TTL = {
 
 // Memory management config
 export const MEMORY_CONFIG = {
+  credentialRefreshResultsMaxSize: 512,
   sessionTtlMs: 2 * 60 * 60 * 1000,
   sessionCleanupIntervalMs: 30 * 60 * 1000,
   dnsCacheTtlMs: 5 * 60 * 1000,

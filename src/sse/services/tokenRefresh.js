@@ -4,7 +4,10 @@
 // here, or refreshTokenByProvider silently returns null for those providers.
 import "../initOpenSseDeps.js";
 import * as log from "../utils/logger.js";
-import { updateProviderConnection } from "../../lib/db/index.js";
+import {
+  updateProviderConnection, updateProviderConnectionCredentialsIfCurrent,
+  updateProviderConnectionStatusIfCurrent, getProviderConnectionById,
+} from "../../lib/db/index.js";
 import { readLocalCursorCredentials } from "../../lib/oauth/cursorLocalCredentials.js";
 import {
   getProjectIdForConnection,
@@ -31,6 +34,7 @@ import {
 import {
   refreshProviderCredentials as _refreshProviderCredentials,
   shouldRefreshCredentials as _shouldRefreshCredentials,
+  getCredentialRefreshReceipt,
 } from "open-sse/services/oauthCredentialManager.js";
 import { REAUTH_REQUIRED_STATUS } from "open-sse/services/accountFallback.js";
 
@@ -223,21 +227,21 @@ function _refreshProjectId(provider, connectionId, accessToken) {
 export async function updateProviderCredentials(connectionId, newCredentials) {
   try {
     const updates = {};
+    const receipt = getCredentialRefreshReceipt(connectionId, newCredentials);
 
     if (newCredentials.accessToken)         updates.accessToken  = newCredentials.accessToken;
     if (newCredentials.refreshToken)        updates.refreshToken = newCredentials.refreshToken;
     if (newCredentials.idToken)             updates.idToken = newCredentials.idToken;
     if (newCredentials.lastRefreshAt)       updates.lastRefreshAt = newCredentials.lastRefreshAt;
     if (newCredentials.expiresAt)           updates.expiresAt = newCredentials.expiresAt;
-    if (newCredentials.expiresIn) {
+    const expiresAt = receipt?.expiresAt
+      ?? (newCredentials.expiresAt ? new Date(newCredentials.expiresAt).getTime() : null);
+    if (Number.isFinite(expiresAt)) {
+      updates.expiresAt = new Date(expiresAt).toISOString();
+      updates.expiresIn = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+    } else if (newCredentials.expiresIn) {
       updates.expiresAt = toExpiresAt(newCredentials.expiresIn);
       updates.expiresIn = newCredentials.expiresIn;
-    } else if (newCredentials.expiresAt) {
-      const expiresAt = normalizeExpiresAt(newCredentials.expiresAt);
-      if (expiresAt) {
-        updates.expiresAt = expiresAt;
-        updates.expiresIn = Math.max(1, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
-      }
     }
     if (newCredentials.providerSpecificData) {
       updates.providerSpecificData = {
@@ -263,7 +267,30 @@ export async function updateProviderCredentials(connectionId, newCredentials) {
     // hooks spread onto every refresh payload.
     if (newCredentials.reauthRequired) updates.testStatus = REAUTH_REQUIRED_STATUS;
 
-    const result = await updateProviderConnection(connectionId, updates);
+    let result;
+    if (receipt) {
+      const credentialUpdates = { ...updates };
+      const statusUpdates = {};
+      for (const field of ["testStatus", "lastError", "lastErrorAt"]) {
+        if (field in credentialUpdates) {
+          statusUpdates[field] = credentialUpdates[field];
+          delete credentialUpdates[field];
+        }
+      }
+      if (newCredentials.providerSpecificData || newCredentials.copilotToken || newCredentials.copilotTokenExpiresAt) {
+        credentialUpdates.providerSpecificData = {
+          ...receipt.providerSpecificUpdates,
+          ...(newCredentials.copilotToken ? { copilotToken: newCredentials.copilotToken } : {}),
+          ...(newCredentials.copilotTokenExpiresAt ? { copilotTokenExpiresAt: newCredentials.copilotTokenExpiresAt } : {}),
+        };
+      }
+      result = await updateProviderConnectionCredentialsIfCurrent(connectionId, receipt.source, credentialUpdates);
+      if (result && Object.keys(statusUpdates).length > 0) {
+        await updateProviderConnectionStatusIfCurrent(connectionId, receipt.source, statusUpdates);
+      }
+    } else {
+      result = await updateProviderConnection(connectionId, updates);
+    }
     log.info("TOKEN_REFRESH", "Credentials updated in localDb", {
       connectionId,
       success: !!result
@@ -331,14 +358,20 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
       };
 
       // Persist to DB (non-blocking path continues below)
-      await updateProviderCredentials(creds.connectionId, mergedCreds);
+      const saved = await updateProviderCredentials(creds.connectionId, mergedCreds);
+      if (!saved) {
+        const latest = await getProviderConnectionById(creds.connectionId);
+        if (latest?.accessToken) return { ...creds, ...latest, connectionId: creds.connectionId };
+      }
 
+      const receipt = getCredentialRefreshReceipt(creds.connectionId, newCreds);
+      const issuedExpiry = Number.isFinite(receipt?.expiresAt)
+        ? new Date(receipt.expiresAt).toISOString()
+        : normalizeExpiresAt(newCreds.expiresAt);
       creds = {
         ...creds,
         ...newCreds,
-        expiresAt: newCreds.expiresIn
-          ? toExpiresAt(newCreds.expiresIn)
-          : normalizeExpiresAt(newCreds.expiresAt) || newCreds.expiresAt || creds.expiresAt,
+        expiresAt: issuedExpiry || (newCreds.expiresIn ? toExpiresAt(newCreds.expiresIn) : creds.expiresAt),
         providerSpecificData: newCreds.providerSpecificData
           ? { ...creds.providerSpecificData, ...newCreds.providerSpecificData }
           : creds.providerSpecificData,

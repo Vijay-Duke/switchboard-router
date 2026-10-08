@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
+import { CREDENTIAL_CONDITIONAL_UPDATE_MAX_ATTEMPTS } from "open-sse/config/runtimeConfig.js";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { encryptSecret, decryptSecret } from "@/lib/crypto/secrets.js";
@@ -308,6 +309,60 @@ export async function updateProviderConnectionStatusIfCurrent(id, expected, patc
     if (error?.code !== "SQLITE_BUSY_SNAPSHOT" && error?.errcode !== 517) throw error;
   }
   return result;
+}
+
+
+const CREDENTIAL_UPDATE_FIELDS = [
+  "accessToken", "refreshToken", "idToken", "expiresAt", "expiresIn",
+  "lastRefreshAt", "providerSpecificData", "updatedAt", "projectId",
+];
+
+/**
+ * Save rotated credentials only if their source token pair is still current.
+ * Merge provider refresh metadata into the latest row rather than replacing
+ * connection/proxy settings from an older caller snapshot.
+ */
+export async function updateProviderConnectionCredentialsIfCurrent(id, expected, patch) {
+  if (!expected || !patch || Object.keys(patch).some(key => !CREDENTIAL_UPDATE_FIELDS.includes(key))) {
+    throw new TypeError("A credential snapshot and credential-only patch are required");
+  }
+  const db = await getAdapter();
+  let result = null;
+  for (let attempt = 0; attempt < CREDENTIAL_CONDITIONAL_UPDATE_MAX_ATTEMPTS; attempt++) {
+    try {
+      db.transaction(() => {
+        const row = db.get("SELECT * FROM providerConnections WHERE id = ?", [id]);
+        if (!row) return;
+        const current = rowToConn(row);
+        const fields = ["provider", "authType", "accessToken", "refreshToken", "idToken", "expiresAt", "lastRefreshAt"];
+        if (fields.some(key => (current[key] ?? null) !== (expected[key] ?? null))) return;
+        // GitHub also rotates its downstream Copilot credential while the
+        // primary OAuth token can remain unchanged.
+        if (["copilotToken", "copilotTokenExpiresAt"].some(key =>
+          (current.providerSpecificData?.[key] ?? null) !== (expected.providerSpecificData?.[key] ?? null))) return;
+
+        const updated = {
+          ...current, ...patch, updatedAt: new Date().toISOString(),
+          ...(patch.providerSpecificData ? {
+            providerSpecificData: { ...current.providerSpecificData, ...patch.providerSpecificData },
+          } : {}),
+        };
+        const replacement = connToRow(updated);
+        const write = db.run(
+          "UPDATE providerConnections SET data = ?, updatedAt = ? WHERE id = ? AND data = ? AND updatedAt = ?",
+          [replacement.data, replacement.updatedAt, id, row.data, row.updatedAt],
+        );
+        if (write.changes > 0) result = updated;
+      });
+    } catch (error) {
+      if (error?.code !== "SQLITE_BUSY_SNAPSHOT" && error?.errcode !== 517) throw error;
+      // Retry the comparison against a new WAL snapshot: an operator metadata
+      // edit need not discard a consumed refresh result, while new tokens reject it.
+      continue;
+    }
+    return result;
+  }
+  return null;
 }
 
 export async function deleteProviderConnection(id) {

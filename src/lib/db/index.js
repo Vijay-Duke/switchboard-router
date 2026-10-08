@@ -14,7 +14,7 @@ import { __resetSettingsCacheForTests as resetSettingsCache } from "./repos/sett
 // Provider connections
 export {
   getProviderConnections, getProviderConnectionById,
-  createProviderConnection, updateProviderConnection, updateProviderConnectionStatusIfCurrent,
+  createProviderConnection, updateProviderConnection, updateProviderConnectionStatusIfCurrent, updateProviderConnectionCredentialsIfCurrent,
   deleteProviderConnection, deleteProviderConnectionsByProvider,
   reorderProviderConnections, cleanupProviderConnections,
   redactSecrets,

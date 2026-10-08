@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getProviderConnections: vi.fn(),
   getProviderConnectionById: vi.fn(),
   updateProviderConnection: vi.fn(),
+  updateProviderConnectionCredentialsIfCurrent: vi.fn(),
   getUsageForProvider: vi.fn(),
   getExecutor: vi.fn(),
   resolveConnectionProxyConfig: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock("@/lib/db/index.js", () => ({
   getProviderConnections: mocks.getProviderConnections,
   getProviderConnectionById: mocks.getProviderConnectionById,
   updateProviderConnection: mocks.updateProviderConnection,
+  updateProviderConnectionCredentialsIfCurrent: mocks.updateProviderConnectionCredentialsIfCurrent,
 }));
 vi.mock("open-sse/services/usage.js", () => ({ getUsageForProvider: mocks.getUsageForProvider }));
 vi.mock("open-sse/executors/index.js", () => ({ getExecutor: mocks.getExecutor }));
