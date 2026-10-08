@@ -6,7 +6,7 @@ import { nextTag, tagForSession, line, errorLine } from "./logTags.js";
 // Terminal SSE markers. A clean upstream EOF that forwarded bytes without any
 // of these is a truncated stream (overloaded provider sent a partial chunk then
 // reset), not a completion — synthesize a stall terminal so clients get a finish.
-const FINISH_MARKERS = ["[DONE]", "finish_reason", "response.completed", "message_stop"];
+const TERMINAL_PATTERN = /data:\s*\[DONE\]|"finish_reason"\s*:\s*"[^"\\]+"|"type"\s*:\s*"(?:message_stop|error|response\.(?:completed|done|failed|incomplete))"/;
 
 /**
  * Create stream controller with abort and disconnect detection
@@ -100,7 +100,7 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
  * for long periods while raw bytes still flow (e.g. Kiro EventStream
  * binary frames buffering, Claude reasoning streams).
  */
-export function createDisconnectAwareStream(transformStream, streamController, onAbortTerminal = null) {
+export function createDisconnectAwareStream(transformStream, streamController, onAbortTerminal = null, onStreamFailure = null) {
   const reader = transformStream.readable.getReader();
   const writer = transformStream.writable.getWriter();
   let terminalEmitted = false;
@@ -108,6 +108,20 @@ export function createDisconnectAwareStream(transformStream, streamController, o
   let bytesForwarded = 0;
   let tail = "";
   const decoder = new TextDecoder();
+  let pendingRead;
+  const abortRead = () => pendingRead?.({ aborted: true });
+  streamController.signal?.addEventListener("abort", abortRead, { once: true });
+  const cleanup = () => streamController.signal?.removeEventListener("abort", abortRead);
+  const read = () => new Promise((resolve, reject) => {
+    pendingRead = resolve;
+    if (streamController.signal?.aborted) abortRead();
+    else reader.read().then(resolve, reject);
+  }).finally(() => { pendingRead = null; });
+  const cancelUpstream = () => {
+    // Cleanup must never block delivery of the terminal error to the client.
+    reader.cancel().catch(() => {});
+    writer.abort().catch(() => {});
+  };
 
   // Emit a synthesized terminal payload (e.g. Responses response.failed + [DONE]) once
   const emitTerminal = (controller) => {
@@ -122,23 +136,34 @@ export function createDisconnectAwareStream(transformStream, streamController, o
   return new ReadableStream({
     async pull(controller) {
       if (!streamController.isConnected()) {
+        cleanup();
+        onStreamFailure?.(new Error("stream interrupted before completion"));
+        streamController.handleDisconnect?.("stream interrupted before completion");
+        cancelUpstream();
         emitTerminal(controller);
         controller.close();
         return;
       }
 
       try {
-        const { done, value } = await reader.read();
+        const result = await read();
+        if (result.aborted) throw streamController.signal?.reason || new DOMException("aborted", "AbortError");
+        const { done, value } = result;
 
         if (done) {
-          streamController.handleComplete();
+          cleanup();
           // Upstream closed after sending bytes but never emitted a terminal
           // finish (e.g. an overloaded provider sending a partial chunk then
           // resetting). Without a synthesized terminal, clients (pi) see a
           // truncated turn. Emit the stall terminal so they get a clean
           // finish_reason + [DONE] instead. Only fires where onAbortTerminal
           // exists (chat-completions wire / Responses passthrough).
-          if (bytesForwarded > 0 && !finishSeen) emitTerminal(controller);
+          if (bytesForwarded > 0 && !finishSeen) {
+            const error = new Error("upstream closed before stream completion");
+            onStreamFailure?.(error);
+            streamController.handleError(error);
+            emitTerminal(controller);
+          } else streamController.handleComplete();
           controller.close();
           return;
         }
@@ -146,17 +171,19 @@ export function createDisconnectAwareStream(transformStream, streamController, o
         bytesForwarded += value instanceof Uint8Array ? value.byteLength : 0;
         if (!finishSeen) {
           const window = tail + decoder.decode(value, { stream: true });
-          if (FINISH_MARKERS.some((m) => window.includes(m))) finishSeen = true;
-          tail = window.length > 32 ? window.slice(-32) : window;
+          // A null finish_reason is present on normal deltas and is not terminal.
+          if (TERMINAL_PATTERN.test(window)) finishSeen = true;
+          tail = window.length > 128 ? window.slice(-128) : window;
         }
       } catch (error) {
+        cleanup();
+        onStreamFailure?.(error);
         const wasConnected = streamController.isConnected();
         // Controller already closed = downstream ended; not an upstream error, skip noisy log.
         const msg0 = error?.message || "";
         const isControllerClosed = msg0.includes("already closed") || msg0.includes("Invalid state");
-        if (!isControllerClosed) streamController.handleError(error);
-        reader.cancel().catch(() => {});
-        writer.abort().catch(() => {});
+        if (!isControllerClosed && wasConnected) streamController.handleError(error);
+        cancelUpstream();
 
         // Treat network resets / socket hang up / abort as graceful close
         const msg = error?.message || "";
@@ -187,6 +214,8 @@ export function createDisconnectAwareStream(transformStream, streamController, o
     },
 
     cancel(reason) {
+      cleanup();
+      onStreamFailure?.(new Error("client disconnected before stream completion"));
       streamController.handleDisconnect(reason || "cancelled");
       // Floating these promises surfaces unhandled rejections when the other
       // end already settled — swallow like every sibling path in this file.
@@ -219,8 +248,11 @@ export function pipeWithDisconnect(
   streamController,
   onAbortTerminal = null,
   stallTimeoutMs = STREAM_STALL_TIMEOUT_MS,
-  firstChunkTimeoutMs = STREAM_FIRST_CHUNK_TIMEOUT_MS
+  firstChunkTimeoutMs = STREAM_FIRST_CHUNK_TIMEOUT_MS,
+  onStreamFailure = null
 ) {
+  // Own the client read deadline even when an upstream adapter ignores abort.
+  const pipeAbort = new AbortController();
   let stallInterval = null;
   let firstChunkTimer = null;
   let chunkCount = 0;
@@ -245,8 +277,8 @@ export function pipeWithDisconnect(
         stallInterval = null;
         if (fired) clearInterval(fired);
         dbg(tag, `STALL TIMEOUT ${stallTimeoutMs}ms | chunks=${chunkCount} | bytes=${totalBytes} | sinceLast=${Date.now() - lastChunkAt}ms`);
-        streamController.handleError?.(new Error("stream stall timeout"));
-        streamController.abort?.();
+        wrappedController.handleError(new Error("stream stall timeout"));
+        wrappedController.abort();
       }
     }, Math.min(stallTimeoutMs, 5000));
   };
@@ -255,13 +287,13 @@ export function pipeWithDisconnect(
   // Without this, abort/cancel/downstream-error paths leave the timer armed
   // and a stale abort could fire after the request has already ended.
   const wrappedController = {
-    signal: streamController.signal,
+    signal: streamController.signal ? AbortSignal.any([streamController.signal, pipeAbort.signal]) : pipeAbort.signal,
     startTime: streamController.startTime,
     isConnected: () => streamController.isConnected(),
     handleComplete: () => { dbg(tag, `complete | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearAllTimers(); streamController.handleComplete(); },
-    handleError: (e) => { dbg(tag, `error: ${e?.message} | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearAllTimers(); streamController.handleError(e); },
+    handleError: (e) => { dbg(tag, `error: ${e?.message} | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearAllTimers(); streamController.handleError(e); pipeAbort.abort(e); },
     handleDisconnect: (r) => { dbg(tag, `disconnect: ${r} | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearAllTimers(); streamController.handleDisconnect(r); },
-    abort: () => { clearAllTimers(); streamController.abort(); }
+    abort: () => { clearAllTimers(); pipeAbort.abort(); streamController.abort(); }
   };
 
   // M4: separate first-byte timer (prefill) vs inter-chunk stall
@@ -270,8 +302,8 @@ export function pipeWithDisconnect(
       firstChunkTimer = null;
       if (chunkCount === 0) {
         dbg(tag, `FIRST-CHUNK TIMEOUT ${firstChunkTimeoutMs}ms`);
-        streamController.handleError?.(new Error("stream first-chunk timeout"));
-        streamController.abort?.();
+        wrappedController.handleError(new Error("stream first-chunk timeout"));
+        wrappedController.abort();
       }
     }, firstChunkTimeoutMs);
   }
@@ -309,7 +341,8 @@ export function pipeWithDisconnect(
     return createDisconnectAwareStream(
       { readable: providerBody, writable: { getWriter: () => ({ abort: () => Promise.resolve() }) } },
       wrappedController,
-      onAbortTerminal
+      onAbortTerminal,
+      onStreamFailure
     );
   }
   const providerBody = providerResponse.body;
@@ -320,6 +353,7 @@ export function pipeWithDisconnect(
   return createDisconnectAwareStream(
     { readable: transformedBody, writable: { getWriter: () => ({ abort: () => Promise.resolve() }) } },
     wrappedController,
-    onAbortTerminal
+    onAbortTerminal,
+    onStreamFailure
   );
 }
