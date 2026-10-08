@@ -77,6 +77,9 @@ describe("GET /v1/models error/contract (A5/A6)", () => {
   });
 
   it("A6: every data[] entry carries a numeric created field", async () => {
+    mocks.getProviderConnections.mockResolvedValue([{
+      id: "configured-anthropic", provider: "anthropic", isActive: true,
+    }]);
     const res = await GET(get("http://localhost:20128/v1/models"));
     expect(res.status).toBe(200);
     const body = await res.json();
