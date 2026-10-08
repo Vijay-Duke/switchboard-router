@@ -1,3 +1,9 @@
+# v0.9.43 (2026-10-08)
+
+## Fixes
+- **Claude streams**: let successful SSE responses continue past the connection/header deadline, including delayed gzip data. Cancelled streams release their native helper; upstream interruptions report a Claude error rather than an empty proxy failure. JSON and authentication deadlines remain bounded.
+- **Release validation**: gate packaging on native Go TLS regressions and run Go-backed HTTP transport tests on Windows, macOS and Linux. Bundle rebuilt helpers for all six supported targets.
+
 # v0.9.42 (2026-10-08)
 
 ## Fixes
