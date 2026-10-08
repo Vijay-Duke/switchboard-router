@@ -6,6 +6,11 @@ import { normalizeReasoningSupport } from "./reasoningCatalog.js";
 
 // Anthropic / Z.AI /models uses type:"model" as the object type, not a service kind.
 const LLM_TYPE_ALIASES = new Set(["chat", "text", "language", "model"]);
+// Service-kind consumers use these canonical camel-case spellings. Recover
+// lowercased rows written by previous imports as well as upstream case variants.
+const CANONICAL_CAMEL_CASE_KINDS = new Map(
+  ["imageToText", "webSearch", "webFetch"].map((kind) => [kind.toLowerCase(), kind]),
+);
 
 /**
  * Map an upstream type/kind string onto Switchboard's service kinds.
@@ -15,7 +20,7 @@ const LLM_TYPE_ALIASES = new Set(["chat", "text", "language", "model"]);
 export function asServiceKind(value) {
   if (typeof value !== "string" || !value) return value;
   const t = value.toLowerCase();
-  return LLM_TYPE_ALIASES.has(t) ? "llm" : t;
+  return LLM_TYPE_ALIASES.has(t) ? "llm" : CANONICAL_CAMEL_CASE_KINDS.get(t) || t;
 }
 
 /**

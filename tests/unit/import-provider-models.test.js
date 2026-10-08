@@ -8,6 +8,22 @@ import { getModelKind } from "@/shared/constants/models.js";
 import { getProviderCustomModelRows } from "@/shared/utils/providerCustomModels.js";
 
 describe("import provider models", () => {
+  it.each([
+    ["imageToText", "imageToText"], ["imagetotext", "imageToText"], ["IMAGETOTEXT", "imageToText"],
+    ["webSearch", "webSearch"], ["websearch", "webSearch"], ["WEBSEARCH", "webSearch"],
+    ["webFetch", "webFetch"], ["webfetch", "webFetch"], ["WEBFETCH", "webFetch"],
+  ])("normalizes %s to the service kind %s", (value, expected) => {
+    expect(asServiceKind(value)).toBe(expected);
+    expect(getModelKind({ type: value })).toBe(expected);
+    expect(normalizeImportedModel({ id: "fixture-model", type: value }).type).toBe(expected);
+  });
+
+  it("retains legacy lowercase normalization for other kinds and unknown inputs", () => {
+    expect(asServiceKind("TTS")).toBe("tts");
+    expect(asServiceKind("CustomKind")).toBe("customkind");
+    expect(asServiceKind(null)).toBeNull();
+  });
+
   it("treats Anthropic/Z.AI catalog type 'model' as llm", () => {
     expect(asServiceKind("model")).toBe("llm");
     expect(inferModelType("glm-5.3", { type: "model" })).toBe("llm");

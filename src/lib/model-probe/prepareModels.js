@@ -18,7 +18,7 @@ function getModelKind(model) {
 }
 
 function getProbeKey(kind, canonicalId) {
-  return `${kind || "llm"}|${canonicalId}`;
+  return `${asServiceKind(kind) || "llm"}|${canonicalId}`;
 }
 
 /**
@@ -35,7 +35,13 @@ export function prepareProbeModels(options) {
   const probeByKey = new Map();
   for (const probe of probes) {
     if (!probe?.modelId) continue;
-    probeByKey.set(getProbeKey(probe.kind || "llm", probe.modelId), probe);
+    const key = getProbeKey(probe.kind || "llm", probe.modelId);
+    const previous = probeByKey.get(key);
+    // Canonical and old lowercase rows may coexist; retain the newest result
+    // rather than reviving an older dead status when their keys converge.
+    const checkedAt = Date.parse(probe.checkedAt || "") || 0;
+    const previousCheckedAt = Date.parse(previous?.checkedAt || "") || 0;
+    if (!previous || checkedAt >= previousCheckedAt) probeByKey.set(key, probe);
   }
 
   const seen = new Set();
