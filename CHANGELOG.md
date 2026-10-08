@@ -1,7 +1,8 @@
-# v0.9.37 (2026-10-08)
+# v0.9.38 (2026-10-08)
 
 ## Fixes
 - **Claude tool-result ordering around system reminders**: native passthrough now keeps existing tool-result blocks first when a mid-conversation system reminder separates a tool call from its result or splits parallel results. Result IDs, content, error flags, and images are preserved; genuinely missing results are not fabricated. Normalization also leaves history shared by account fallback unchanged.
+- **Docs dependency checks**: pin patched sharp 0.35.5 and source-map-js 1.2.2 to clear the newly reported high-severity advisories blocking the docs CI check.
 - Added regression coverage for reminder placement, parallel results, result preservation, retry stability, and ordinary user turns.
 
 # v0.9.36 (2026-10-05)
