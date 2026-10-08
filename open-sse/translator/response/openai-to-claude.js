@@ -106,6 +106,60 @@ function stopTextBlock(state, results) {
 export function openaiToClaudeResponse(chunk, state) {
   const results = [];
 
+  // Emit immutable tool identity only after name and ID are paired.
+  const openToolBlock = (idx, tc) => {
+    stopThinkingBlock(state, results);
+    stopTextBlock(state, results);
+
+    const toolBlockIndex = state.nextBlockIndex++;
+    const toolId = sanitizeToolCallId(tc.id) || `toolu_${Date.now()}_${idx}`;
+    if (!state.toolCalls) state.toolCalls = new Map();
+    state.toolCalls.set(idx, { id: toolId, name: tc.function?.name || "", blockIndex: toolBlockIndex });
+
+    // Strip prefix from tool name for response
+    let toolName = tc.function?.name || "";
+    if (toolName.startsWith(CLAUDE_OAUTH_TOOL_PREFIX)) {
+      toolName = toolName.slice(CLAUDE_OAUTH_TOOL_PREFIX.length);
+    }
+
+    results.push({
+      type: "content_block_start",
+      index: toolBlockIndex,
+      content_block: {
+        type: CLAUDE_BLOCK.TOOL_USE,
+        id: toolId,
+        name: toolName,
+        input: {}
+      }
+    });
+  };
+
+  // At finish, a genuinely named upstream call may need an ID fallback.
+  // A missing name cannot be repaired by inventing an executable tool.
+  const flushPendingTools = () => {
+    const pendingIndices = new Set([
+      ...(state.toolIdentities?.keys() || []),
+      ...(state.toolArgBuffers?.keys() || []),
+    ]);
+    for (const idx of pendingIndices) {
+      if (state.toolCalls?.has(idx)) continue;
+      const identity = state.toolIdentities?.get(idx);
+      if (!identity?.name) {
+        results.push({
+          type: "error",
+          error: { type: "api_error", message: "Upstream tool call ended without a tool name." },
+        });
+        return false;
+      }
+    }
+    for (const idx of pendingIndices) {
+      if (state.toolCalls?.has(idx)) continue;
+      const identity = state.toolIdentities.get(idx);
+      openToolBlock(idx, { id: identity.id, function: { name: identity.name } });
+    }
+    return true;
+  };
+
   // Flush: stream ended without finish_reason. Synthesize terminal events
   // so the client doesn't hang waiting for message_stop.
   if (chunk === null && !state.claudeFinishHandled) {
@@ -119,22 +173,7 @@ export function openaiToClaudeResponse(chunk, state) {
     stopThinkingBlock(state, results);
     stopTextBlock(state, results);
 
-    // Materialize args-only indices whose identity never arrived (nameless
-    // fallback — mirrors the finish arm below).
-    if (state.toolArgBuffers) {
-      for (const idx of state.toolArgBuffers.keys()) {
-        if (!state.toolCalls?.has(idx)) {
-          const toolBlockIndex = state.nextBlockIndex++;
-          if (!state.toolCalls) state.toolCalls = new Map();
-          state.toolCalls.set(idx, { id: `toolu_${Date.now()}_${idx}`, name: "", blockIndex: toolBlockIndex });
-          results.push({
-            type: "content_block_start",
-            index: toolBlockIndex,
-            content_block: { type: CLAUDE_BLOCK.TOOL_USE, id: state.toolCalls.get(idx).id, name: "", input: {} }
-          });
-        }
-      }
-    }
+    if (!flushPendingTools()) return results;
 
     for (const [idx, toolInfo] of state.toolCalls || []) {
       const buffered = state.toolArgBuffers?.get(idx);
@@ -313,57 +352,22 @@ export function openaiToClaudeResponse(chunk, state) {
   emitText(delta?.audio?.transcript);
   emitText(typeof delta?.refusal === "string" ? delta.refusal : "");
 
-  // Open one tool_use block for an index (identity must be known: id or name).
-  const openToolBlock = (idx, tc) => {
-    stopThinkingBlock(state, results);
-    stopTextBlock(state, results);
-
-    const toolBlockIndex = state.nextBlockIndex++;
-    const toolId = sanitizeToolCallId(tc.id) || `toolu_${Date.now()}_${idx}`;
-    state.toolCalls.set(idx, { id: toolId, name: tc.function?.name || "", blockIndex: toolBlockIndex });
-
-    // Strip prefix from tool name for response
-    let toolName = tc.function?.name || "";
-    if (toolName.startsWith(CLAUDE_OAUTH_TOOL_PREFIX)) {
-      toolName = toolName.slice(CLAUDE_OAUTH_TOOL_PREFIX.length);
-    }
-
-    results.push({
-      type: "content_block_start",
-      index: toolBlockIndex,
-      content_block: {
-        type: CLAUDE_BLOCK.TOOL_USE,
-        id: toolId,
-        name: toolName,
-        input: {}
-      }
-    });
-  };
-
   // Tool calls
   if (delta?.tool_calls) {
     for (const tc of delta.tool_calls) {
       const idx = tc.index ?? 0;
 
-      // Defer opening until identity (id or name) is known: args-first chunks
-      // buffer below and the block opens with the real name when it arrives.
-      if (!state.toolCalls.has(idx) && (tc.id || tc.function?.name)) {
-        openToolBlock(idx, tc);
-      } else if (state.toolCalls.has(idx)) {
-        const existing = state.toolCalls.get(idx);
-        if (existing) {
-          // Late-arriving real id after synthetic open: prefer real id in state.
-          // (content_block_start already sent with synthetic — clients pair on that.)
-          const cleanId = sanitizeToolCallId(tc.id);
-          if (cleanId && String(existing.id).startsWith("toolu_")) {
-            existing.id = cleanId;
-          }
-          // Late-arriving name after id-only open: repair stored name (used for
-          // arg sanitization at finish).
-          if (!existing.name && tc.function?.name) {
-            existing.name = tc.function.name;
-          }
-        }
+      // Name and ID may arrive in separate chunks. Neither can be changed
+      // on the Claude wire after content_block_start has been emitted.
+      if (!state.toolIdentities) state.toolIdentities = new Map();
+      const identity = state.toolIdentities.get(idx) || {};
+      if (typeof tc.id === "string" && tc.id && !identity.id) identity.id = tc.id;
+      if (typeof tc.function?.name === "string" && tc.function.name && !identity.name) {
+        identity.name = tc.function.name;
+      }
+      state.toolIdentities.set(idx, identity);
+      if (!state.toolCalls?.has(idx) && identity.id && identity.name) {
+        openToolBlock(idx, { id: identity.id, function: { name: identity.name } });
       }
 
       if (tc.function?.arguments) {
@@ -382,13 +386,7 @@ export function openaiToClaudeResponse(chunk, state) {
     stopThinkingBlock(state, results);
     stopTextBlock(state, results);
 
-    // Materialize args-only indices whose identity never arrived (nameless
-    // fallback — same terminal shape as before the deferred-open change).
-    if (state.toolArgBuffers) {
-      for (const idx of state.toolArgBuffers.keys()) {
-        if (!state.toolCalls.has(idx)) openToolBlock(idx, {});
-      }
-    }
+    if (!flushPendingTools()) return results;
 
     for (const [idx, toolInfo] of state.toolCalls || []) {
       // Emit buffered + sanitized args as single delta before stop
