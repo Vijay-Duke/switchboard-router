@@ -19,7 +19,8 @@ vi.mock("next/server", () => ({
 }));
 
 vi.mock("@/app/api/v1/models/route.js", () => ({ buildModelsList: mocks.buildModelsList }));
-vi.mock("@/shared/constants/models", () => ({
+vi.mock("@/shared/constants/models", async (importOriginal) => ({
+  ...await importOriginal(),
   PROVIDER_MODELS: {
     gemini: [
       { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash" },

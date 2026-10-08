@@ -5,9 +5,23 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const mocks = vi.hoisted(() => ({ buildModelsList: vi.fn() }));
+const mocks = vi.hoisted(() => ({ buildModelsList: vi.fn(), getDisabledModels: vi.fn() }));
 
 vi.mock("@/app/api/v1/models/route.js", () => ({ buildModelsList: mocks.buildModelsList }));
+vi.mock("@/lib/disabledModelsDb", () => ({ getDisabledModels: mocks.getDisabledModels }));
+
+vi.mock("@/shared/constants/models", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    PROVIDER_MODELS: {
+      ...actual.PROVIDER_MODELS,
+      "audit-vision": [{ id: "vision-chat", name: "Vision Chat", kind: "imageToText" }],
+    },
+  };
+});
+
+const { PROVIDER_MODELS, getModelKind } = await import("@/shared/constants/models");
 
 const { GET } = await import("../../src/app/api/v1beta/models/route.js");
 
@@ -18,6 +32,7 @@ function listModels() {
 describe("GET /v1beta/models Gemini discovery (QA-026)", () => {
   beforeEach(() => {
     mocks.buildModelsList.mockReset();
+    mocks.getDisabledModels.mockReset().mockResolvedValue({});
   });
 
   it("includes active provider-node advertised models the generation endpoint serves", async () => {
@@ -47,6 +62,64 @@ describe("GET /v1beta/models Gemini discovery (QA-026)", () => {
     expect(body.models.length).toBeGreaterThan(0);
     const names = body.models.map((m) => m.name);
     expect(new Set(names).size).toBe(names.length);
+  });
+
+  it("never advertises non-chat static models as generateContent-capable", async () => {
+    mocks.buildModelsList.mockResolvedValue([]);
+    const response = await listModels();
+    const names = new Set((await response.json()).models.map((model) => model.name));
+    // One model id can have both chat and media entries (e.g. Gemini2.5 STT).
+    const chatNames = new Set(Object.entries(PROVIDER_MODELS).flatMap(([provider, models]) =>
+      models.filter((model) => ["llm", "imagetotext"].includes(String(getModelKind(model, "llm")).toLowerCase()))
+        .map((model) => `models/${provider}/${model.id}`)));
+    const nonChatModels = Object.entries(PROVIDER_MODELS).flatMap(([provider, models]) =>
+      models.filter((model) => !["llm", "imagetotext"].includes(String(getModelKind(model, "llm")).toLowerCase()))
+        .map((model) => `models/${provider}/${model.id}`))
+      .filter((name) => !chatNames.has(name));
+    expect(nonChatModels.length).toBeGreaterThan(0);
+    expect(nonChatModels.filter((name) => names.has(name))).toEqual([]);
+  });
+
+  it("retains enabled Gemini chat models under both bare and provider-prefixed names", async () => {
+    mocks.buildModelsList.mockResolvedValue([]);
+    const model = PROVIDER_MODELS.gemini.find((entry) => getModelKind(entry, "llm") === "llm");
+    const response = await listModels();
+    const { models } = await response.json();
+    expect(models).toContainEqual(expect.objectContaining({
+      name: `models/gemini/${model.id}`, supportedGenerationMethods: ["generateContent"],
+    }));
+    expect(models).toContainEqual(expect.objectContaining({
+      name: `models/${model.id}`, supportedGenerationMethods: ["generateContent", "streamGenerateContent"],
+    }));
+  });
+
+  it("keeps chat ids that also have speech metadata in the registry", async () => {
+    mocks.buildModelsList.mockResolvedValue([]);
+    const { models } = await (await listModels()).json();
+    const names = models.map((model) => model.name);
+    expect(names).toContain("models/gemini/gemini-2.5-pro");
+    expect(names).toContain("models/gemini-2.5-pro");
+  });
+
+  it("keeps vision-understanding models available for chat generation", async () => {
+    mocks.buildModelsList.mockResolvedValue([]);
+    const { models } = await (await listModels()).json();
+    const names = new Set(models.map((model) => model.name));
+    const vision = Object.entries(PROVIDER_MODELS).flatMap(([provider, entries]) =>
+      entries.filter((entry) => String(getModelKind(entry)).toLowerCase() === "imagetotext")
+        .map((entry) => `models/${provider}/${entry.id}`));
+    expect(vision.length).toBeGreaterThan(0);
+    expect(vision.every((name) => names.has(name))).toBe(true);
+  });
+
+  it("keeps disabled Gemini chat models out of both discovery names", async () => {
+    mocks.buildModelsList.mockResolvedValue([]);
+    const model = PROVIDER_MODELS.gemini.find((entry) => getModelKind(entry, "llm") === "llm");
+    mocks.getDisabledModels.mockResolvedValue({ gemini: [model.id] });
+    const response = await listModels();
+    const names = (await response.json()).models.map((entry) => entry.name);
+    expect(names).not.toContain(`models/gemini/${model.id}`);
+    expect(names).not.toContain(`models/${model.id}`);
   });
 
   it("degrades to the static catalog when advertised-model lookup fails", async () => {

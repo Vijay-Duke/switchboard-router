@@ -1,5 +1,5 @@
 // @ts-check
-import { PROVIDER_MODELS } from "@/shared/constants/models";
+import { PROVIDER_MODELS, getModelKind } from "@/shared/constants/models";
 import { buildModelsList } from "@/app/api/v1/models/route.js";
 import { corsPreflightResponse } from "@/shared/utils/cors.js";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
@@ -10,6 +10,7 @@ import {
 
 // Gemini generateContent serves chat models — same filter as GET /v1/models.
 const LLM_KIND = "llm";
+const CHAT_MODEL_KINDS = new Set([LLM_KIND, "imageToText"].map((kind) => kind.toLowerCase()));
 
 /**
  * Handle CORS preflight — reflect the requesting Origin (gateway serves
@@ -57,6 +58,10 @@ export async function GET(request) {
 
     for (const [provider, providerModels] of Object.entries(PROVIDER_MODELS)) {
       for (const model of providerModels) {
+        const kind = getModelKind(model, LLM_KIND);
+        // Vision understanding is still chat generation; embeddings, speech
+        // and dedicated media models need their own endpoints.
+        if (!CHAT_MODEL_KINDS.has(String(kind).toLowerCase())) continue;
         if (isDisabled(provider, model.id)) continue;
         addModel({
           name: `models/${provider}/${model.id}`,
