@@ -1,3 +1,12 @@
+# v0.9.44 (2026-10-09)
+
+## Fixes
+- **Claude stream completion**: finalize native streams and usage on `message_stop` or an error event instead of waiting for the upstream socket to close. Preserve text and thinking before the client disconnects.
+- **Stalled stream recovery**: gateway cancellation settles pending client reads even when upstream cancellation hangs. Clear watchdog timers and listeners on all exit paths.
+- **Bounded Claude retries**: remove the additional hidden zero-byte replay beneath native Claude requests.
+- **Accurate request status**: stream records begin pending and finish as success or error; incomplete and interrupted streams no longer count as completed requests.
+- Added eight stream liveness and accounting regression cases. Cross-platform CI and native transport tests passed; verified live native Claude and a 451,293-input-token Opus request through the patched gateway.
+
 # v0.9.43 (2026-10-08)
 
 ## Fixes
