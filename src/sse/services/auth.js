@@ -5,7 +5,7 @@ import {
   getConnectionInFlightCount,
 } from "@/lib/db/index.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
-import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, REAUTH_REQUIRED_STATUS } from "open-sse/services/accountFallback.js";
+import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil, getModelLockUntil, REAUTH_REQUIRED_STATUS } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import * as log from "../utils/logger.js";
@@ -132,12 +132,15 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     if (availableConnections.length === 0) {
       const noCandidates = selectNoCandidates();
-      // Find earliest lock expiry across all connections for retry timing
-      const lockedConns = candidateConnections.filter(c => isModelLockActive(c, model));
-      const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
-      const earliest = expiries.sort()[0] || null;
+      // Find the first account that can serve this model after both relevant
+      // locks expire, and report that account's error alongside its reset.
+      const lockedConns = candidateConnections
+        .map(connection => ({ connection, until: getModelLockUntil(connection, model) }))
+        .filter(entry => entry.until)
+        .sort((a, b) => a.until.localeCompare(b.until));
+      const earliest = lockedConns[0]?.until || null;
       if (earliest) {
-        const earliestConn = lockedConns[0];
+        const earliestConn = lockedConns[0].connection;
         log.warn("AUTH", `${provider} | all ${candidateConnections.length} accounts locked for ${model || "all"} (${formatRetryAfter(earliest)}) | lastError=${earliestConn?.lastError?.slice(0, 50)}`);
         return {
           allRateLimited: true,

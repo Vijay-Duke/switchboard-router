@@ -143,6 +143,19 @@ export function isModelLockActive(connection, model) {
 }
 
 /**
+ * When can this connection serve a specific model again?
+ * Both its model lock and account-wide lock must expire. Unrelated model
+ * cooldowns do not affect this request.
+ */
+export function getModelLockUntil(connection, model) {
+  const now = Date.now();
+  const expiries = [connection?.[getModelLockKey(model)], connection?.[MODEL_LOCK_ALL]]
+    .map((expiry) => new Date(expiry).getTime())
+    .filter((expiry) => Number.isFinite(expiry) && expiry > now);
+  return expiries.length > 0 ? new Date(Math.max(...expiries)).toISOString() : null;
+}
+
+/**
  * Get earliest active model lock expiry across all modelLock_* fields.
  * Used for UI cooldown display.
  */
