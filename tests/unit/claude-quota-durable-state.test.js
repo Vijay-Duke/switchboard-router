@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { createProviderQuotaStateStore } from "@/lib/db/repos/providerQuotaStateStore.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createNodeSqliteAdapter } from "@/lib/db/adapters/nodeSqliteAdapter.js";
@@ -64,17 +65,19 @@ describe("Claude quota cold process state", () => {
     }`);
     const root = path.resolve(import.meta.dirname, "../..");
     const code = `
-      import { createNodeSqliteAdapter } from ${JSON.stringify("file://" + path.join(root, "src/lib/db/adapters/nodeSqliteAdapter.js"))};
-      import { createProviderQuotaStateStore } from ${JSON.stringify("file://" + path.join(root, "src/lib/db/repos/providerQuotaStateStore.js"))};
-      import { setOpenSseDeps } from ${JSON.stringify("file://" + path.join(root, "open-sse/runtimeDeps.js"))};
-      import { getClaudeUsage } from ${JSON.stringify("file://" + path.join(root, "open-sse/services/usage/claude.js"))};
+      import { createNodeSqliteAdapter } from ${JSON.stringify(pathToFileURL(path.join(root, "src/lib/db/adapters/nodeSqliteAdapter.js")).href)};
+      import { createProviderQuotaStateStore } from ${JSON.stringify(pathToFileURL(path.join(root, "src/lib/db/repos/providerQuotaStateStore.js")).href)};
+      import { setOpenSseDeps } from ${JSON.stringify(pathToFileURL(path.join(root, "open-sse/runtimeDeps.js")).href)};
+      import { getClaudeUsage } from ${JSON.stringify(pathToFileURL(path.join(root, "open-sse/services/usage/claude.js")).href)};
+      // Use the same clock as the parent so the cooldown fixture never ages out.
+      Date.now = () => Number(process.argv[3]);
       const db = await createNodeSqliteAdapter(process.argv[1]);
       setOpenSseDeps(createProviderQuotaStateStore(async () => db));
       const result = await getClaudeUsage("rotated-synthetic-token", null, JSON.parse(process.argv[2]));
       console.log(JSON.stringify({ result, calls: globalThis.__quotaCalls || 0 }));
       db.close();
     `;
-    const child = spawnSync(process.execPath, ["--no-warnings", "--loader", loader, "--input-type=module", "-e", code, file, JSON.stringify({ ...options, force: true })], { encoding: "utf8", timeout: 15000 });
+    const child = spawnSync(process.execPath, ["--no-warnings", "--loader", pathToFileURL(loader).href, "--input-type=module", "-e", code, file, JSON.stringify({ ...options, force: true }), String(Date.now())], { encoding: "utf8", timeout: 15000 });
     expect(child.status, child.stderr).toBe(0);
     const restarted = JSON.parse(child.stdout.trim());
     expect(restarted).toMatchObject({ calls: 0, result: { stale: true, status: 429, retryAt: limited.retryAt, observedAt: fresh.observedAt, quotas: fresh.quotas } });

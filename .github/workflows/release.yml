@@ -46,7 +46,7 @@ jobs:
           echo "version=$VER" >> "$GITHUB_OUTPUT"
           echo "tag=v$VER" >> "$GITHUB_OUTPUT"
 
-  test:
+  tag-version:
     needs: resolve-version
     runs-on: ubuntu-latest
     steps:
@@ -54,25 +54,16 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            tests/package-lock.json
-      - run: npm ci --no-audit --no-fund
-      - working-directory: tests
-        run: npm ci --no-audit --no-fund
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high || true
-      - name: Lint
-        run: npm run lint
-      - name: Check advertised locale parity
-        run: npm run check:i18n
-      - name: Check generated provider registry
-        run: npm run check:providers
       - name: Verify immutable tag matches committed package versions
         run: node scripts/assert-release-version.mjs "${{ needs.resolve-version.outputs.version }}"
-      - working-directory: tests
-        run: npx vitest run --reporter=default
+
+  # Publication requires the same complete gates as branch/PR CI: all three
+  # test platforms, Windows launch recovery, docs audit/build, and CLI packing.
+  test:
+    needs: [resolve-version, tag-version]
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
 
   publish-npm:
     name: Publish switchboard-router to npm
