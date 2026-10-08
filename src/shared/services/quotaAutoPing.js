@@ -228,7 +228,14 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
     return;
   }
 
-  const usage = await handler.getUsage(connection.accessToken, proxyOptions);
+  const usage = await handler.getUsage(connection.accessToken, proxyOptions, {
+    connectionId: connection.id,
+  });
+  // Last-good quota may be displayed during a polling failure, but it cannot
+  // establish current routing headroom or justify a new warm-up request.
+  if (usage?.stale === true) return;
+  const observedAt = usage?.observedAt ? new Date(usage.observedAt).getTime() : NaN;
+  const snapshotAt = Number.isFinite(observedAt) ? observedAt : Date.now();
   const quotas = usage?.quotas || {};
   const quota = quotas?.[providerConfig.quotaKey];
   // Option A: persist a best-effort remaining-headroom snapshot (0-100) so
@@ -239,7 +246,7 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
   if (snapshotPercentage != null) {
     try {
       await deps.updateProviderConnection(connection.id, {
-        lastQuota: { remainingPercentage: snapshotPercentage, resetAt: quota.resetAt ?? null, at: Date.now() },
+        lastQuota: { remainingPercentage: snapshotPercentage, resetAt: quota.resetAt ?? null, at: snapshotAt },
       });
     } catch {
       /* fail-open: snapshot is best-effort */
