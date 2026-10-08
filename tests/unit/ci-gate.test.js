@@ -39,6 +39,7 @@ function logicalCommands(run) {
   const commands = [];
   let continued = "";
   for (const line of String(run).split(/\r?\n/)) {
+    if (!continued && !line.trim()) continue;
     if (!continued && /^\s*(unit\/.*\.test\.js|--reporter)/.test(line)) {
       throw new Error("Broken vitest line continuation");
     }
@@ -71,8 +72,14 @@ function workflowRuns(file, docs, visiting = []) {
   if (visiting.includes(file)) throw new Error("Reusable workflow cycle");
   const workflow = docs[file];
   if (!workflow?.jobs) throw new Error(`Missing workflow: ${file}`);
+  const prerequisitesRequired = (id, ancestors = []) => {
+    const job = workflow.jobs[id];
+    if (!job || !required(job) || ancestors.includes(id)) return false;
+    return [job.needs || []].flat().every(dependency =>
+      prerequisitesRequired(dependency, [...ancestors, id]));
+  };
   return Object.fromEntries(Object.entries(workflow.jobs).map(([id, job]) => {
-    if (!required(job)) return [id, []];
+    if (!prerequisitesRequired(id)) return [id, []];
     if (job.uses) {
       if (!localWorkflow.test(job.uses)) return [id, []];
       const calledFile = job.uses.slice(2);
@@ -140,6 +147,17 @@ describe("publication waits for actual reusable CI tests", () => {
 
   it("accepts an actual same-commit workflow_call through a transitive gate", () => {
     expect(gated(fixture())).toBe(true);
+  });
+  it("does not count a called CI test job whose prerequisite is skipped", () => {
+    const docs = fixture();
+    docs[".github/workflows/ci.yml"].jobs.setup = { if: false, steps: [] };
+    docs[".github/workflows/ci.yml"].jobs.tests.needs = "setup";
+    expect(gated(docs)).toBe(false);
+  });
+  it("accepts the trailing newline in a normal YAML block scalar", () => {
+    const docs = fixture();
+    docs[".github/workflows/ci.yml"].jobs.tests.steps[0].run = parseYaml("run: |\n  npx vitest run --reporter=default\n").run;
+    expect(gated(docs)).toBe(true);
   });
   it("rejects publication detached from the otherwise-present reusable test job", () => {
     const docs = fixture(); delete docs[".github/workflows/release.yml"].jobs.build.needs;
