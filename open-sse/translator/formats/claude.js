@@ -96,6 +96,15 @@ function handlesThinkingBlocks(provider) {
     || provider === "minimax-cn";
 }
 
+// Redacted thinking carries opaque encrypted data, not a regular thinking
+// signature. Both shapes must survive an ongoing tool-use turn unchanged.
+function isReusableClaudeThinkingBlock(block) {
+  if (block.type === CLAUDE_BLOCK.REDACTED_THINKING) {
+    return typeof block.data === "string" && block.data.length > 0;
+  }
+  return isValidClaudeSignature(block.signature);
+}
+
 function buildThinkingPlaceholder(provider) {
   const block = {
     type: CLAUDE_BLOCK.THINKING,
@@ -213,7 +222,7 @@ export function normalizeClaudePassthrough(body, model = "") {
       const kept = [];
       for (const block of msg.content) {
         if (block.type === CLAUDE_BLOCK.THINKING || block.type === CLAUDE_BLOCK.REDACTED_THINKING) {
-          if (isValidClaudeSignature(block.signature)) {
+          if (isReusableClaudeThinkingBlock(block)) {
             hasKeptThinking = true;
             kept.push(block);
           }
@@ -434,7 +443,7 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
             const isThinking = block.type === CLAUDE_BLOCK.THINKING || block.type === CLAUDE_BLOCK.REDACTED_THINKING;
             if (isThinking) {
               if (isClaudeNative) {
-                if (isValidClaudeSignature(block.signature)) {
+                if (isReusableClaudeThinkingBlock(block)) {
                   hasKeptThinking = true;
                   kept.push(block);
                 }
@@ -442,7 +451,11 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
                 hasKeptThinking = true;
                 kept.push(block);
               } else {
-                block.signature = DEFAULT_THINKING_CLAUDE_SIGNATURE;
+                // The signature fallback applies only to regular thinking.
+                // Redacted blocks must keep their original encrypted data shape.
+                if (block.type === CLAUDE_BLOCK.THINKING) {
+                  block.signature = DEFAULT_THINKING_CLAUDE_SIGNATURE;
+                }
                 hasKeptThinking = true;
                 kept.push(block);
               }
