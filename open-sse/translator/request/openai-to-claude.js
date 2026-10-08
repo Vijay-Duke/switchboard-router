@@ -225,7 +225,33 @@ Respond ONLY with the JSON object, no other text.`);
   return result;
 }
 
-// Convert top-level tool array content (text + images) to Claude blocks.
+// Share file handling between user attachments and tool outputs so the
+// OpenAI pivot cannot erase a PDF or text document returned by a tool.
+function convertFileToClaudeBlock(file) {
+  const fileData = file.file_data;
+  const parsed = typeof fileData === "string" ? parseDataUri(fileData) : null;
+  if (parsed && parsed.mimeType === "application/pdf") {
+    return {
+      type: CLAUDE_BLOCK.DOCUMENT,
+      source: { type: "base64", media_type: parsed.mimeType, data: parsed.base64 }
+    };
+  }
+  if (parsed && parsed.mimeType.startsWith("text/")) {
+    try {
+      return {
+        type: CLAUDE_BLOCK.TEXT,
+        text: Buffer.from(parsed.base64, "base64").toString("utf-8")
+      };
+    } catch {
+      return { type: CLAUDE_BLOCK.TEXT, text: `[file omitted: ${parsed.mimeType}]` };
+    }
+  }
+  if (parsed) return { type: CLAUDE_BLOCK.TEXT, text: `[file omitted: ${parsed.mimeType}]` };
+  if (file.file_id) return { type: CLAUDE_BLOCK.TEXT, text: `[file omitted: ${file.file_id}]` };
+  return null;
+}
+
+// Convert top-level tool array content (text, images and files) to Claude blocks.
 function convertToolArrayContent(content) {
   const out = [];
   for (const part of content) {
@@ -248,6 +274,11 @@ function convertToolArrayContent(content) {
       out.push({ type: CLAUDE_BLOCK.TEXT, text: part.text });
     } else if (part.type === CLAUDE_BLOCK.IMAGE && part.source) {
       out.push({ type: CLAUDE_BLOCK.IMAGE, source: part.source });
+    } else if (part.type === CLAUDE_BLOCK.DOCUMENT && part.source) {
+      out.push({ ...part });
+    } else if (part.type === OPENAI_BLOCK.FILE && part.file) {
+      const converted = convertFileToClaudeBlock(part.file);
+      if (converted) out.push(converted);
     }
   }
   return out;
@@ -303,28 +334,8 @@ function getContentBlocksFromMessage(msg, toolNameMap = new Map(), opts = null) 
         } else if (part.type === OPENAI_BLOCK.IMAGE && part.source) {
           blocks.push({ type: CLAUDE_BLOCK.IMAGE, source: part.source });
         } else if (part.type === OPENAI_BLOCK.FILE && part.file) {
-          // OpenAI file block -> Claude document (PDF) or decoded text / note.
-          const fileData = part.file.file_data;
-          const parsed = typeof fileData === "string" ? parseDataUri(fileData) : null;
-          if (parsed && parsed.mimeType === "application/pdf") {
-            blocks.push({
-              type: CLAUDE_BLOCK.DOCUMENT,
-              source: { type: "base64", media_type: parsed.mimeType, data: parsed.base64 }
-            });
-          } else if (parsed && parsed.mimeType.startsWith("text/")) {
-            try {
-              blocks.push({
-                type: CLAUDE_BLOCK.TEXT,
-                text: Buffer.from(parsed.base64, "base64").toString("utf-8")
-              });
-            } catch {
-              blocks.push({ type: CLAUDE_BLOCK.TEXT, text: `[file omitted: ${parsed.mimeType}]` });
-            }
-          } else if (parsed) {
-            blocks.push({ type: CLAUDE_BLOCK.TEXT, text: `[file omitted: ${parsed.mimeType}]` });
-          } else if (part.file.file_id) {
-            blocks.push({ type: CLAUDE_BLOCK.TEXT, text: `[file omitted: ${part.file.file_id}]` });
-          }
+          const converted = convertFileToClaudeBlock(part.file);
+          if (converted) blocks.push(converted);
         } else if ((part.type === OPENAI_BLOCK.INPUT_AUDIO || part.type === OPENAI_BLOCK.AUDIO_URL) && (part.input_audio || part.audio_url)) {
           // Claude has no audio input — degrade to a text note, never drop the turn.
           const detail = part.input_audio?.format || part.audio_url?.url || "audio";
