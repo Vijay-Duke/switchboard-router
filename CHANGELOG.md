@@ -1,3 +1,13 @@
+# v0.9.39 (2026-10-08)
+
+## Fixes
+- **Claude subscription quotas**: remove the misleading Admin API fallback, honor upstream Retry-After across manual refresh and token rotation, retry genuine expired sessions once, and show retained quota readings with a stale-data notice. Background quota checks share the same cooldown and keep the original observation time.
+- **Claude history and fallback**: preserve requested effort across model fallback and replay encrypted redacted-thinking blocks without rewriting their data, retain image/PDF-only user turns, and preserve document attachments in tool results.
+- **Account cooldowns**: retry timing now follows the requested model and account-wide locks, with the matching account error. Late successful requests cannot clear newer cooldowns or reauthorization flags, including writes from other native-SQLite gateway processes.
+- **Model catalogs and aliases**: disabled targets stay hidden behind aliases, an empty configured-provider state stays empty, and successful empty compatible catalogs no longer resurrect stored rows. Dashboard aliases are stored in the alias-to-model direction used by routing.
+- **Reliable builds**: bundle the existing licensed IBM Plex fonts locally so builds no longer depend on Google font downloads.
+- Added reproducible regression coverage for these fixes.
+
 # v0.9.38 (2026-10-08)
 
 ## Fixes
