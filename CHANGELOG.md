@@ -1,6 +1,7 @@
-# v0.9.41 (2026-10-08)
+# v0.9.42 (2026-10-08)
 
 ## Fixes
+- **Release validation**: publication now waits for the complete reusable CI workflow, including all test platforms, docs audit/build and CLI packaging. Restart verification uses valid file URLs on Windows.
 - **Durable Claude quotas**: preserve account-bound upstream cooldowns and genuine last-known quota readings across restarts and token rotation. API refresh and background checks share state; forced refresh respects Retry-After. Storage contains no credentials.
 - **Request cancellation**: stop provider/account fallback and auth or inference retries after a caller disconnects, close late response bodies, and preserve completed token rotations. Provider connection deadlines remain retryable upstream failures.
 - **Tool history and streams**: preserve typed image/PDF tool output between Responses and Claude, including document URLs and file IDs, while retaining strict Chat Completions behavior. Interrupted streams report an error rather than fabricated successful completion.
