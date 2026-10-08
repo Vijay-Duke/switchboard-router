@@ -168,6 +168,7 @@ export class BaseExecutor {
   }
 
   async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
+    signal?.throwIfAborted();
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
     let lastStatus = 0;
@@ -182,13 +183,14 @@ export class BaseExecutor {
     // Schedule retry via retryConfig[statusKey]. Returns true when caller should `urlIndex--; continue`
     // response (optional) lets a subclass hook compute a dynamic delay (e.g. antigravity Retry-After).
     const tryRetry = async (urlIndex, statusKey, reason, response = null) => {
-      if (signal?.aborted) return false;
+      signal?.throwIfAborted();
       const { attempts, delayMs } = resolveRetryEntry(retryConfig[statusKey]);
       if (attempts <= 0 || retryAttemptsByUrl[urlIndex] >= attempts) return false;
       // Hook: subclass may derive delay from the response (headers/body). null → skip retry, use fallback.
       let waitMs = delayMs;
       if (response && this.computeRetryDelay) {
         const dynamic = await this.computeRetryDelay(response, retryAttemptsByUrl[urlIndex] + 1, delayMs);
+        signal?.throwIfAborted();
         if (dynamic === false) return false; // hook vetoes retry (e.g. Retry-After too long)
         if (dynamic != null) waitMs = dynamic;
       }
@@ -201,10 +203,12 @@ export class BaseExecutor {
       retryAttemptsByUrl[urlIndex]++;
       log?.debug?.("RETRY", `${reason} retry ${retryAttemptsByUrl[urlIndex]}/${attempts} after ${waitMs / 1000}s`);
       await sleepUntilAborted(waitMs, signal);
-      return !signal?.aborted;
+      signal?.throwIfAborted();
+      return true;
     };
 
     for (let urlIndex = 0; urlIndex < fallbackCount; urlIndex++) {
+      signal?.throwIfAborted();
       // transformRequest BEFORE buildUrl so executors can set flags that affect
       // the URL (e.g. Codex _isCompact → /compact). Wave 13 P0.
       const transformedBody = this.transformRequest(model, body, stream, credentials);
@@ -232,6 +236,8 @@ export class BaseExecutor {
           throw new Error(`SSRF blocked: ${ssrfErr.message}`);
         }
       }
+
+      signal?.throwIfAborted();
 
       // Abort if upstream doesn't return response headers within connection timeout
       const connectCtrl = new AbortController();
@@ -272,11 +278,22 @@ export class BaseExecutor {
           retryCount: retryAttemptsByUrl[urlIndex] || 0,
         }, proxyOptions);
         clearTimeout(connectTimer);
+        if (signal?.aborted) {
+          try { await response.body?.cancel?.(); } catch {}
+          signal.throwIfAborted();
+        }
         const ct = response.headers?.get?.("content-type") || "";
         const cl = response.headers?.get?.("content-length") || "?";
         dbg("FETCH", `${this.provider.toUpperCase()} ← ${response.status} | ttft=${Date.now() - fetchT0}ms | ct=${ct} | cl=${cl}`);
 
-        if (await tryRetry(urlIndex, response.status, `status ${response.status}`, response)) {
+        let retry;
+        try {
+          retry = await tryRetry(urlIndex, response.status, `status ${response.status}`, response);
+        } catch (error) {
+          try { await response.body?.cancel?.(); } catch {}
+          throw error;
+        }
+        if (retry) {
           try { await response.body?.cancel?.(); } catch {}
           urlIndex--;
           continue;
@@ -293,6 +310,9 @@ export class BaseExecutor {
         return { response, url, headers, transformedBody };
       } catch (error) {
         clearTimeout(connectTimer);
+        // A transport may reject with a generic close error after cancellation.
+        // The caller signal, not the adapter's error name, is authoritative.
+        signal?.throwIfAborted();
         lastError = error;
         const isConnectTimeout = connectCtrl.signal.aborted && error.name === "AbortError";
         dbg("FETCH", `${this.provider.toUpperCase()} ✖ ${error.name}: ${error.message}${isConnectTimeout ? " (connect timeout)" : ""}`);

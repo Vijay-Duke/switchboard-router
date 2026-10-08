@@ -58,6 +58,7 @@ const URL_CONTROLLED_STREAM_FORMATS = new Set([
  * @param {AbortSignal} [options.abortSignal] - Optional external abort (e.g. router timeout)
  */
 export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, onUpstreamEmptyExhausted, clientRawRequest, connectionId, userAgent, clientKeyId, ccFilterNaming, rtkEnabled, vaultEnabled, vaultThresholdKB, vaultTtlHours, vaultConversationId, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, bypassNativePassthrough, vaultInternal, abortSignal }) {
+  if (abortSignal?.aborted) return createErrorResult(499, "Request aborted");
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
 
@@ -409,9 +410,18 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // identity memo in requestDetailsRepo instead of re-serializing.
   const requestConfig = extractRequestConfig(body, stream);
 
+  const requestAborted = () => abortSignal?.aborted || streamController.signal?.aborted;
+  const abortResult = async () => {
+    try { await providerResponse?.body?.cancel?.(); } catch {}
+    trackPendingRequest(model, provider, connectionId, false);
+    reqLogger?.close?.();
+    return createErrorResult(499, "Request aborted");
+  };
+
   // Execute request
   let providerResponse, providerUrl, providerHeaders, finalBody;
   try {
+    if (requestAborted()) return abortResult();
     // Clone per attempt: executors mutate the body in place (schema fallback,
     // stream_options delete/inject), so retries must not inherit attempt-1 edits.
     const result = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions });
@@ -421,7 +431,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     finalBody = result.transformedBody;
     reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
   } catch (error) {
-    trackPendingRequest(model, provider, connectionId, false, true);
+    const cancelled = requestAborted() || error.name === "AbortError";
+    trackPendingRequest(model, provider, connectionId, false, !cancelled);
     reqLogger?.close?.();
     saveRequestDetail(buildRequestDetail({
       provider, model, connectionId,
@@ -429,14 +440,14 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       tokens: { prompt_tokens: 0, completion_tokens: 0 },
       request: requestConfig,
       providerRequest: translatedBody || null,
-      response: { error: error.message || String(error), status: error.name === "AbortError" ? 499 : 502, thinking: null },
+      response: { error: error.message || String(error), status: cancelled ? 499 : 502, thinking: null },
       status: "error",
       pxpipe: pxpipeSummary || undefined,
       rtk: rtkStats || undefined
     })).catch(() => { });
 
-    if (error.name === "AbortError") {
-      streamController.handleError(error);
+    if (cancelled) {
+      streamController.handleError(new DOMException("Request aborted", "AbortError"));
       return createErrorResult(499, "Request aborted");
     }
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
@@ -444,13 +455,17 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
   }
 
+  if (requestAborted()) return abortResult();
+
   // Handle 401/403 - try token refresh (skip for noAuth providers)
   let reauthMessage = null;
   if (!executor.noAuth && (providerResponse.status === HTTP_STATUS.UNAUTHORIZED || providerResponse.status === HTTP_STATUS.FORBIDDEN)) {
     try {
       // H7: serialize reactive 401 refresh with the same lock as proactive path
       const newCredentials = await refreshWithRetry(async () => {
+        streamController.signal?.throwIfAborted();
         const result = await withCredentialRefreshLock(provider, credentials, () => executor.refreshCredentials(credentials, log, proxyOptions));
+        if (!result) streamController.signal?.throwIfAborted();
         // aa0448f7: rotate refresh_token between retries — a consumed RT must not
         // be replayed on the next attempt or the provider revokes the session.
         if (result?.refreshToken && result.refreshToken !== credentials.refreshToken) {
@@ -465,6 +480,9 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
         if (onCredentialsRefreshed) {
           try { await onCredentialsRefreshed(newCredentials); } catch (e) { log?.warn?.("TOKEN", `onCredentialsRefreshed failed: ${e.message}`); }
         }
+        // A completed token rotation must persist even if its caller left,
+        // but cancellation must never dispatch another inference request.
+        if (requestAborted()) return abortResult();
         try {
           const retryResult = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions });
           // Cancel superseded response body to avoid undici pool pinning
@@ -503,6 +521,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     }
   }
 
+  if (requestAborted()) return abortResult();
+
   // Provider returned error
   if (!providerResponse.ok) {
     trackPendingRequest(model, provider, connectionId, false, true);
@@ -529,7 +549,12 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
 
   const reexecuteBody = async () => {
+    streamController.signal?.throwIfAborted();
     const retryResult = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions });
+    if (requestAborted()) {
+      try { await retryResult.response.body?.cancel?.(); } catch {}
+      throw new DOMException("Request aborted", "AbortError");
+    }
     if (!retryResult.response.ok) {
       const { statusCode, message } = await parseUpstreamError(retryResult.response, executor);
       throw new Error(`[${statusCode}] ${message}`);

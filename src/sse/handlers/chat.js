@@ -570,6 +570,12 @@ export async function handleChat(request, clientRawRequest = null) {
  * @param {boolean} [callOpts.allowNativeClaudeOAuth] - Permit direct request-scoped Claude subscription credentials
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, clientKeyId = null, callOpts = null) {
+  // Router timeouts and client disconnects are both authoritative. This runs
+  // after the management/client-key authorization gate in handleChat.
+  const signals = [request?.signal, callOpts?.signal].filter(Boolean);
+  const abortSignal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+  const abortResponse = () => errorResponse(499, "Request aborted");
+  if (abortSignal?.aborted) return abortResponse();
   // TTL-cached refresh of the compatible-node reasoning map (no-op when fresh);
   // must precede getModelInfo so a cold process resolves formats on first request.
   await ensureCompatibleReasoning();
@@ -626,7 +632,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           comboName: modelStr,
           judgeModel: comboStrategies[modelStr]?.judgeModel,
           tuning: comboStrategies[modelStr]?.fusionTuning,
-          abortSignal: request?.signal || callOpts?.signal || null,
+          abortSignal: abortSignal || null,
           childComboDepth: comboDepth + 1,
           autoDepth,
         });
@@ -751,7 +757,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         comboStickyLimit,
         autoSwitch: capacityAutoSwitch,
         ...(providerPreference || {}),
-        abortSignal: request?.signal || callOpts?.signal || null,
+        abortSignal: abortSignal || null,
         childComboDepth: comboDepth + 1,
         autoDepth,
       });
@@ -790,6 +796,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
 
   while (true) {
+    if (abortSignal?.aborted) return abortResponse();
     const credentials = nativeClaudeCredentials || await getProviderCredentials(
       provider,
       excludeConnectionIds,
@@ -801,6 +808,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         clientKeyId,
       },
     );
+
+    if (abortSignal?.aborted) return abortResponse();
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
@@ -825,6 +834,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       ? credentials
       : await checkAndRefreshToken(provider, credentials);
 
+    if (abortSignal?.aborted) return abortResponse();
+
     // Ensure real project ID is available for providers that need it (P0 fix: cold miss)
     if ((provider === "antigravity" || provider === "gemini-cli") && !refreshedCredentials.projectId) {
       const pid = await getProjectIdForConnection(credentials.connectionId, refreshedCredentials.accessToken, provider);
@@ -838,6 +849,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Use shared chatCore — deep-clone body so account retries don't share
     // modality/tool mutations from a prior attempt (wave12).
     const chatSettings = await getSettings();
+    if (abortSignal?.aborted) return abortResponse();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
     const attemptBody = typeof structuredClone === "function"
       ? structuredClone(body)
@@ -891,7 +903,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       sourceFormatOverride,
       bypassNativePassthrough: !!callOpts?.bypassNativePassthrough,
       vaultInternal: !!callOpts?.vaultInternal,
-      abortSignal: callOpts?.signal || null,
+      abortSignal: abortSignal || null,
       onCredentialsRefreshed: async (newCreds) => {
         if (credentials.ephemeral) return;
         await updateProviderCredentials(credentials.connectionId, {
@@ -907,7 +919,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       // Antigravity empty-stream exhaustion: bench this account so the client's
       // next retry (or outer account loop) can rotate. Switchboard PR#2462.
       onUpstreamEmptyExhausted: async (errMsg, resetsAtMs) => {
-        if (credentials.ephemeral) return;
+        if (credentials.ephemeral || abortSignal?.aborted) return;
         await markAccountUnavailable(
           credentials.connectionId,
           502,
@@ -919,6 +931,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       },
     });
 
+    if (abortSignal?.aborted || result.status === 499) {
+      try { await result.response?.body?.cancel?.(); } catch {}
+      return abortResponse();
+    }
     if (result.success) return result.response;
 
     // A native Claude token belongs to this request only. Never persist error

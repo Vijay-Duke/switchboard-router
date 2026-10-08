@@ -182,6 +182,8 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
         try { controller.error(err); } catch { /* already closed */ }
       };
       const exhaust = async (reason) => {
+        if (downstreamGone) return;
+        if (signal?.aborted) return abortStream();
         // Bench-before-emit: the error event triggers the client's automatic
         // retry, so the observer (account bench) must complete first or the
         // retry can land on the account that just failed.
@@ -225,6 +227,7 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
 
         try {
         readAttempt: while (true) {
+          if (downstreamGone) return;
           if (signal?.aborted) return abortStream();
 
           let readResult;
@@ -234,10 +237,13 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
           } catch {
             // A client abort rejects the pending read — never treat it as an
             // empty attempt or a disconnect turns into a retry/error.
+            if (downstreamGone) return;
             if (signal?.aborted) return abortStream();
             endReason = stallFired ? "stall" : "read_error";
             break readAttempt; // truncated attempt
           }
+          if (downstreamGone) return;
+          if (signal?.aborted) return abortStream();
           if (stallFired) {
             endReason = "stall";
             break readAttempt;
@@ -309,7 +315,13 @@ export function createEmptyRetryStream({ body, reexecute, signal, log, stallTime
         if (signal?.aborted) return abortStream();
 
         try {
-          currentReader = (await reexecute()).getReader();
+          const nextBody = await reexecute();
+          if (downstreamGone || signal?.aborted) {
+            try { await nextBody.cancel(); } catch {}
+            if (!downstreamGone) abortStream();
+            return;
+          }
+          currentReader = nextBody.getReader();
         } catch (error) {
           if (downstreamGone) return;
           if (error?.name === "AbortError" || signal?.aborted) return abortStream();

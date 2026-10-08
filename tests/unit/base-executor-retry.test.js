@@ -75,8 +75,7 @@ describe("BaseExecutor.execute — retry wait budget & cancellation", () => {
       const promise = ex.execute({ model: "m", body: {}, stream: false, credentials: creds, signal: controller.signal });
       await vi.advanceTimersByTimeAsync(1); // enter the first retry sleep
       controller.abort();
-      const out = await promise;
-      expect(out.response.status).toBe(503);
+      await expect(promise).rejects.toMatchObject({ name: "AbortError" });
       expect(fetchMock).toHaveBeenCalledTimes(1); // never re-fetched after abort
     } finally {
       vi.useRealTimers();

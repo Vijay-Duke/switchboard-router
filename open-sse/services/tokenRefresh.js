@@ -318,6 +318,7 @@ export async function refreshWithRetry(refreshFn, maxRetries = 3, log = null) {
       if (isUnrecoverableRefreshError(result)) return result;
       if (result) return result;
     } catch (error) {
+      if (error?.name === "AbortError") throw error;
       log?.warn?.("TOKEN_REFRESH", `Attempt ${attempt + 1}/${maxRetries} failed: ${error.message}`);
     }
   }
