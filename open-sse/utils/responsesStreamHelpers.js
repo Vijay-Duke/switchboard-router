@@ -27,6 +27,14 @@ export function isOpenAIResponsesTerminalEvent(eventName, chunk) {
 
 const sharedEncoder = new TextEncoder();
 
+// Native Claude failures must remain errors, including before message_start.
+export function buildAbortedClaudeTerminalBytes() {
+  return sharedEncoder.encode(`event: error\ndata: ${JSON.stringify({
+    type: "error",
+    error: { type: "api_error", message: "Upstream stream interrupted before completion." },
+  })}\n\n`);
+}
+
 // Encoded response.failed + [DONE] payload for aborted/stalled Responses passthrough streams
 export function buildAbortedResponsesTerminalBytes() {
   return sharedEncoder.encode(`${formatIncompleteOpenAIResponsesStreamFailure()}data: [DONE]\n\n`);

@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tls "github.com/refraction-networking/utls"
@@ -250,6 +252,41 @@ func (b *closingBody) Close() error {
 	return result
 }
 
+// SSE metadata must not wait for the first compressed body byte. The caller
+// owns streaming first-byte/stall deadlines and cancels the one-shot helper.
+type streamingGzipBody struct {
+	source      io.ReadCloser
+	mu          sync.Mutex
+	reader      *gzip.Reader
+	initialized bool
+	initErr     error
+}
+
+func (b *streamingGzipBody) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.initialized {
+		b.initialized = true
+		b.reader, b.initErr = gzip.NewReader(b.source)
+	}
+	if b.initErr != nil {
+		return 0, b.initErr
+	}
+	return b.reader.Read(p)
+}
+
+func (b *streamingGzipBody) Close() error {
+	// Close the connection before taking the decoder lock: this interrupts an
+	// in-progress first read instead of waiting for an unbounded SSE body.
+	err := b.source.Close()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.reader != nil {
+		err = errors.Join(err, b.reader.Close())
+	}
+	return err
+}
+
 func roundTrip(meta requestMeta, body io.Reader) (*http.Response, error) {
 	u, err := url.Parse(meta.URL)
 	if err != nil {
@@ -286,7 +323,26 @@ func roundTrip(meta requestMeta, body io.Reader) (*http.Response, error) {
 		conn.Close()
 		return nil, err
 	}
+	mediaType, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	isSSE := response.StatusCode >= 200 && response.StatusCode < 300 && mediaType == "text/event-stream"
+	if isSSE {
+		// The setup deadline bounds connect/upload/headers, not the SSE lifetime.
+		// JSON/quota/OAuth bodies keep their existing bounded deadline.
+		if err = conn.SetDeadline(time.Time{}); err != nil {
+			conn.Close()
+			response.Body.Close()
+			return nil, err
+		}
+	}
 	if strings.EqualFold(response.Header.Get("Content-Encoding"), "gzip") {
+		if isSSE {
+			response.Body = &streamingGzipBody{source: &closingBody{
+				Reader: response.Body, closers: []io.Closer{conn, response.Body},
+			}}
+			response.Header.Del("Content-Encoding")
+			response.Header.Del("Content-Length")
+			return response, nil
+		}
 		gz, gzipErr := gzip.NewReader(response.Body)
 		if gzipErr != nil {
 			response.Body.Close()
@@ -297,7 +353,11 @@ func roundTrip(meta requestMeta, body io.Reader) (*http.Response, error) {
 		response.Header.Del("Content-Encoding")
 		response.Header.Del("Content-Length")
 	} else {
-		response.Body = &closingBody{Reader: response.Body, closers: []io.Closer{response.Body, conn}}
+		closers := []io.Closer{response.Body, conn}
+		if isSSE {
+			closers = []io.Closer{conn, response.Body}
+		}
+		response.Body = &closingBody{Reader: response.Body, closers: closers}
 	}
 	return response, nil
 }

@@ -94,6 +94,35 @@ it("sends a bounded timeout in helper metadata with init, transport, and default
 });
 
 describe("Claude TLS helper lifecycle", () => {
+  it("terminates the serving helper when response body is canceled without an original signal", async () => {
+    const child = new FakeChild();
+    const spawned = installChild(child);
+    const pending = fetchWith();
+    await spawned;
+    child.stdout.write(`${JSON.stringify({ status: 200, headers: [["content-type", "text/event-stream"]] })}\n`);
+    const response = await pending;
+    await response.body.cancel("discarded retry response");
+    await new Promise(resolve => setImmediate(resolve));
+    expect(child.killed).toBe(true);
+    expect(child.killSignal).toBe("SIGTERM");
+    expect(child.listenerCount("exit")).toBe(0);
+    expect(child.listenerCount("error")).toBe(0);
+    expect(child.stderr.listenerCount("data")).toBe(0);
+  });
+  it("terminates a canceled reader without aborting another owner's signal", async () => {
+    const child = new FakeChild(), controller = new AbortController();
+    const spawned = installChild(child);
+    const pending = fetchWith(controller.signal);
+    await spawned;
+    child.stdout.write(`${JSON.stringify({ status: 200, headers: [] })}\npartial`);
+    const response = await pending, reader = response.body.getReader();
+    await reader.read();
+    await reader.cancel();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(child.killed).toBe(true);
+    expect(controller.signal.aborted).toBe(false);
+    expect(child.listenerCount("exit")).toBe(0);
+  });
   it("rejects with AbortError and terminates the helper when aborted before metadata", async () => {
     const child = new FakeChild();
     const spawned = installChild(child);
@@ -160,6 +189,7 @@ describe("Claude TLS helper lifecycle", () => {
     expect(response.statusText).toBe("Created");
     expect(response.headers.get("x-helper")).toBe("ok");
     expect(await response.text()).toBe("hello world");
+    expect(child.killed).toBe(false);
     expect(child.listenerCount("error")).toBe(0);
     expect(child.listenerCount("exit")).toBe(0);
     expect(child.stderr.listenerCount("data")).toBe(0);

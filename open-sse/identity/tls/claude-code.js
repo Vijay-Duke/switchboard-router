@@ -212,6 +212,7 @@ function parseHelperResponse(stdout, stderr, child, signal) {
       let childExited = false;
       let bodySettled = false;
       const cleanupBody = () => {
+        bodyStream.off("close", onBodyClose);
         stdout.unpipe(bodyStream);
         stdout.off("end", onStdoutEnd);
         stdout.off("error", onBodyError);
@@ -226,6 +227,13 @@ function parseHelperResponse(stdout, stderr, child, signal) {
         cleanupBody();
         if (error) bodyStream.destroy(error);
         else bodyStream.end();
+      };
+      const onBodyClose = () => {
+        if (bodySettled) return;
+        // Readable.toWeb cancellation destroys the destination without
+        // aborting init.signal; the one-shot helper must still release egress.
+        finishBody();
+        child.kill("SIGTERM");
       };
       const destroyBody = (error) => {
         if (!stdout.destroyed) {
@@ -252,6 +260,7 @@ function parseHelperResponse(stdout, stderr, child, signal) {
         destroyBody(error);
         child.kill("SIGTERM");
       };
+      bodyStream.once("close", onBodyClose);
       stdout.once("end", onStdoutEnd);
       stdout.once("error", onBodyError);
       child.once("error", onBodyError);

@@ -4,7 +4,7 @@ import { createSSETransformStreamWithLogger, createPassthroughStreamWithLogger }
 import { pipeWithDisconnect } from "../../utils/streamHandler.js";
 import { PROVIDERS } from "../../config/providers.js";
 import { STREAM_STALL_TIMEOUT_MS, STREAM_FIRST_CHUNK_TIMEOUT_MS } from "../../config/runtimeConfig.js";
-import { buildAbortedResponsesTerminalBytes, buildAbortedChatCompletionsTerminalBytes } from "../../utils/responsesStreamHelpers.js";
+import { buildAbortedResponsesTerminalBytes, buildAbortedChatCompletionsTerminalBytes, buildAbortedClaudeTerminalBytes } from "../../utils/responsesStreamHelpers.js";
 import { buildRequestDetail, extractRequestConfig, settleUsageStats } from "./requestDetail.js";
 import { saveRequestDetail } from "../../runtimeDeps.js";
 import { SSE_HEADERS_CORS as SSE_HEADERS } from "../../utils/sseConstants.js";
@@ -141,9 +141,10 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
   // Responses passthrough: response.failed + [DONE]. Chat-completions wire
   // (passthrough or translated): finish_reason:"stream_timeout" chunk + [DONE].
   const isResponsesPassthrough = sourceFormat === FORMATS.OPENAI_RESPONSES && targetFormat === FORMATS.OPENAI_RESPONSES;
+  const isNativeClaude = sourceFormat === FORMATS.CLAUDE && targetFormat === FORMATS.CLAUDE;
   const onAbortTerminal = isResponsesPassthrough
     ? buildAbortedResponsesTerminalBytes
-    : targetFormat === FORMATS.OPENAI ? buildAbortedChatCompletionsTerminalBytes : null;
+    : isNativeClaude ? buildAbortedClaudeTerminalBytes : targetFormat === FORMATS.OPENAI ? buildAbortedChatCompletionsTerminalBytes : null;
   const stallTimeoutMs = PROVIDERS[provider]?.stallTimeoutMs || STREAM_STALL_TIMEOUT_MS;
   const transformedBody = pipeWithDisconnect(providerResponse, transformStream, streamController, onAbortTerminal, stallTimeoutMs, firstChunkTimeoutMs);
 
