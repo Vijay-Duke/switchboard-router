@@ -9,15 +9,83 @@ import { FORMATS } from "../formats.js";
 import { normalizeResponsesInput } from "../formats/responsesApi.js";
 import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM } from "../schema/index.js";
 import { coerceSchemaNumericConstraints } from "../formats/openai.js";
+import { openaiToClaudeRequest } from "./openai-to-claude.js";
 
 // Responses API enforces max 64 chars on call_id (#393)
 const MAX_CALL_ID_LEN = 64;
 const clampCallId = (id) => (typeof id === "string" && id.length > MAX_CALL_ID_LEN ? id.substring(0, MAX_CALL_ID_LEN) : id);
 
-/**
- * Convert OpenAI Responses API request to OpenAI Chat Completions format
- */
+// Responses messages and function outputs share the same content schema.
+function responsesContentToOpenAI(content) {
+  return Array.isArray(content)
+    ? content.map(c => {
+      if (!c || typeof c !== "object") return null;
+      if (c.type === RESPONSES_ITEM.INPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
+      if (c.type === RESPONSES_ITEM.OUTPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
+      if (c.type === RESPONSES_ITEM.INPUT_IMAGE) {
+        if (c.image_url) {
+          const url = typeof c.image_url === "object" ? c.image_url.url : c.image_url;
+          return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url, detail: c.detail || "auto" } };
+        }
+        if (c.file_id) {
+          return {
+            type: OPENAI_BLOCK.FILE,
+            file: { file_id: c.file_id, ...(c.filename ? { filename: c.filename } : {}) },
+          };
+        }
+        return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url: "", detail: c.detail || "auto" } };
+      }
+      if (c.type === RESPONSES_ITEM.INPUT_FILE) {
+        const fileData = c.file_data || c.data || c.file_url || c.file_id || "";
+        return {
+          type: OPENAI_BLOCK.FILE,
+          file: {
+            ...(fileData ? { file_data: fileData } : {}),
+            ...(c.filename ? { filename: c.filename } : {}),
+            ...(c.file_id && !c.file_data && !c.data ? { file_id: c.file_id } : {}),
+          },
+        };
+      }
+      return c;
+    }).filter(Boolean)
+    : content;
+}
+
+// Keep legacy text-only outputs as strings while carrying media as typed parts.
+function chatToolContentToResponses(content) {
+  const hasMedia = content.some(c => c && [
+    OPENAI_BLOCK.IMAGE_URL, OPENAI_BLOCK.FILE,
+    RESPONSES_ITEM.INPUT_IMAGE, RESPONSES_ITEM.INPUT_FILE,
+  ].includes(c.type));
+  if (!hasMedia) return content.map(c => c.text || JSON.stringify(c)).join("\n");
+  return content.filter(c => c && typeof c === "object").map(c => {
+    if (c.type === OPENAI_BLOCK.TEXT) return { type: RESPONSES_ITEM.INPUT_TEXT, text: c.text };
+    if ([RESPONSES_ITEM.INPUT_TEXT, RESPONSES_ITEM.INPUT_IMAGE, RESPONSES_ITEM.INPUT_FILE].includes(c.type)) return c;
+    if (c.type === OPENAI_BLOCK.IMAGE_URL) {
+      const url = typeof c.image_url === "string" ? c.image_url : c.image_url?.url;
+      return { type: RESPONSES_ITEM.INPUT_IMAGE, image_url: url, detail: c.image_url?.detail || "auto" };
+    }
+    if (c.type === OPENAI_BLOCK.FILE && c.file) {
+      return { type: RESPONSES_ITEM.INPUT_FILE, ...c.file };
+    }
+    return { type: RESPONSES_ITEM.INPUT_TEXT, text: typeof c.text === "string" ? c.text : JSON.stringify(c) };
+  });
+}
+
+// Strict Chat Completions tool messages accept text only. Typed tool media
+// remains on an internal pivot solely for the direct Claude route.
 export function openaiResponsesToOpenAIRequest(model, body, stream, credentials) {
+  return responsesToOpenAIPivot(model, body, stream, credentials);
+}
+
+export function openaiResponsesToClaudeRequest(model, body, stream, credentials) {
+  return openaiToClaudeRequest(model, responsesToOpenAIPivot(model, body, stream, credentials, true), stream, credentials);
+}
+
+/**
+ * Convert Responses input to the shared conversation pivot.
+ */
+function responsesToOpenAIPivot(model, body, stream, credentials, preserveToolMedia = false) {
   if (!body.input) return body;
 
   const result = { ...body };
@@ -71,38 +139,7 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
 
       // Convert content: input_text → text, output_text → text, input_image → image_url,
       // input_file → file (wave15)
-      const content = Array.isArray(item.content)
-        ? item.content.map(c => {
-          if (!c || typeof c !== "object") return null;
-          if (c.type === RESPONSES_ITEM.INPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
-          if (c.type === RESPONSES_ITEM.OUTPUT_TEXT) return { type: OPENAI_BLOCK.TEXT, text: c.text };
-          if (c.type === RESPONSES_ITEM.INPUT_IMAGE) {
-            if (c.image_url) {
-              const url = typeof c.image_url === "object" ? c.image_url.url : c.image_url;
-              return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url, detail: c.detail || "auto" } };
-            }
-            if (c.file_id) {
-              return {
-                type: OPENAI_BLOCK.FILE,
-                file: { file_id: c.file_id, ...(c.filename ? { filename: c.filename } : {}) },
-              };
-            }
-            return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url: "", detail: c.detail || "auto" } };
-          }
-          if (c.type === RESPONSES_ITEM.INPUT_FILE) {
-            const fileData = c.file_data || c.data || c.file_url || c.file_id || "";
-            return {
-              type: OPENAI_BLOCK.FILE,
-              file: {
-                ...(fileData ? { file_data: fileData } : {}),
-                ...(c.filename ? { filename: c.filename } : {}),
-                ...(c.file_id && !c.file_data && !c.data ? { file_id: c.file_id } : {}),
-              },
-            };
-          }
-          return c;
-        }).filter(Boolean)
-        : item.content;
+      const content = responsesContentToOpenAI(item.content);
       const msg = { role: item.role, content };
       // Attach buffered reasoning to assistant turn (required by xiaomi-mimo thinking mode)
       if (item.role === ROLE.ASSISTANT && pendingReasoning) {
@@ -176,7 +213,9 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
       result.messages.push({
         role: ROLE.TOOL,
         tool_call_id: item.call_id,
-        content: typeof item.output === "string" ? item.output : JSON.stringify(item.output)
+        content: preserveToolMedia && Array.isArray(item.output)
+          ? responsesContentToOpenAI(item.output)
+          : typeof item.output === "string" ? item.output : JSON.stringify(item.output)
       });
     }
     else if (itemType === RESPONSES_ITEM.REASONING) {
@@ -381,12 +420,12 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
       }
     }
 
-    // Convert tool results - output must be a string for Responses API
+    // Responses tool outputs accept text or typed text/image/file arrays.
     if (msg.role === ROLE.TOOL) {
       const output = typeof msg.content === "string"
         ? msg.content
         : Array.isArray(msg.content)
-          ? msg.content.map(c => c.text || JSON.stringify(c)).join("\n")
+          ? chatToolContentToResponses(msg.content)
           : JSON.stringify(msg.content);
       result.input.push({
         type: RESPONSES_ITEM.FUNCTION_CALL_OUTPUT,
@@ -466,4 +505,5 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
 
 // Register both directions
 register(FORMATS.OPENAI_RESPONSES, FORMATS.OPENAI, openaiResponsesToOpenAIRequest, null);
+register(FORMATS.OPENAI_RESPONSES, FORMATS.CLAUDE, openaiResponsesToClaudeRequest, null);
 register(FORMATS.OPENAI, FORMATS.OPENAI_RESPONSES, openaiToOpenAIResponsesRequest, null);
