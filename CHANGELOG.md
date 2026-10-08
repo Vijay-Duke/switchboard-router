@@ -1,3 +1,12 @@
+# v0.9.41 (2026-10-08)
+
+## Fixes
+- **Durable Claude quotas**: preserve account-bound upstream cooldowns and genuine last-known quota readings across restarts and token rotation. API refresh and background checks share state; forced refresh respects Retry-After. Storage contains no credentials.
+- **Request cancellation**: stop provider/account fallback and auth or inference retries after a caller disconnects, close late response bodies, and preserve completed token rotations. Provider connection deadlines remain retryable upstream failures.
+- **Tool history and streams**: preserve typed image/PDF tool output between Responses and Claude, including document URLs and file IDs, while retaining strict Chat Completions behavior. Interrupted streams report an error rather than fabricated successful completion.
+- **Model kinds**: retain canonical vision and web service kinds during imports, catalog filtering and probing; read older lowercase records without a migration and use the newest matching probe.
+- Added regression coverage and an offline tool for carrying an existing quota cooldown through the first upgrade.
+
 # v0.9.40 (2026-10-08)
 
 ## Fixes
