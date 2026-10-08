@@ -129,11 +129,11 @@ describe("R2-X35 empty-stream flush (gate ruling: no synthetic empty turn)", () 
   it("null-flush on fresh state emits nothing (no bare message_delta/message_stop either)", () => {
     expect(openaiToClaudeResponse(null, fresh())).toBeNull();
   });
-  it("flush after message_start still terminates once", () => {
+  it("flush after a started turn reports one interruption without fabricating completion", () => {
     const state = fresh();
     feed([chunk({ content: "hi" })], state);
     const out = openaiToClaudeResponse(null, state);
-    expect(out.map((e) => e.type).slice(-2)).toEqual(["message_delta", "message_stop"]);
+    expect(out).toEqual([{ type: "error", error: { type: "api_error", message: "Upstream stream closed before a finish reason." } }]);
     expect(openaiToClaudeResponse(null, state)).toBeNull();
   });
 });

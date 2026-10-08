@@ -10,7 +10,7 @@ function getInputJsonDelta(events) {
 }
 
 describe("openaiToClaudeResponse tool argument sanitization", () => {
-  it("flushes buffered tools and terminates when upstream omits finish_reason", () => {
+  it("reports interrupted tool streams instead of completing buffered calls at EOF", () => {
     const state = createState();
     openaiToClaudeResponse({
       id: "chatcmpl-no-finish",
@@ -19,9 +19,10 @@ describe("openaiToClaudeResponse tool argument sanitization", () => {
     }, state);
 
     const events = openaiToClaudeResponse(null, state);
-    expect(JSON.parse(getInputJsonDelta(events))).toEqual({ file_path: "/tmp/a" });
-    expect(events).toContainEqual({ type: "content_block_stop", index: 0 });
-    expect(events.at(-1)).toEqual({ type: "message_stop" });
+    expect(events).toEqual([{ type: "error", error: {
+      type: "api_error", message: "Upstream stream closed before a finish reason.",
+    } }]);
+    expect(getInputJsonDelta(events)).toBeUndefined();
     expect(openaiToClaudeResponse(null, state)).toBeNull();
   });
 

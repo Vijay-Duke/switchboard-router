@@ -77,7 +77,7 @@ describe("Claude streamed tool identity", () => {
   it.each([finish(), null])("surfaces missing tool names at completion instead of inventing an executable call", (terminal) => {
     const events = feed([toolChunk(0, { id: "call_a", function: { arguments: "{}" } }), terminal]);
     expect(wireTools(events)).toEqual([]);
-    expect(events).toContainEqual({ type: "error", error: { type: "api_error", message: "Upstream tool call ended without a tool name." } });
+    expect(events).toContainEqual({ type: "error", error: { type: "api_error", message: terminal ? "Upstream tool call ended without a tool name." : "Upstream stream closed before a finish reason." } });
     expect(events.some(event => event.type === "message_stop")).toBe(false);
   });
 

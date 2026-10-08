@@ -160,46 +160,15 @@ export function openaiToClaudeResponse(chunk, state) {
     return true;
   };
 
-  // Flush: stream ended without finish_reason. Synthesize terminal events
-  // so the client doesn't hang waiting for message_stop.
+  // EOF without an explicit provider finish is an interrupted turn. Never
+  // flush buffered tool arguments or fabricate successful message_stop.
   if (chunk === null && !state.claudeFinishHandled) {
     state.claudeFinishHandled = true;
-    // A stream that died before message_start is an upstream failure, not an
-    // empty answer: emit nothing (never a bare message_delta/message_stop,
-    // never a synthetic empty turn) so the client SDK surfaces the incomplete
-    // stream and can retry. Same posture as kiro-to-claude and the
-    // antigravity EOF gate.
     if (!state.messageStartSent) return null;
-    stopThinkingBlock(state, results);
-    stopTextBlock(state, results);
-
-    if (!flushPendingTools()) return results;
-
-    for (const [idx, toolInfo] of state.toolCalls || []) {
-      const buffered = state.toolArgBuffers?.get(idx);
-      if (buffered) {
-        const sanitized = sanitizeToolArgs(toolInfo.name, buffered);
-        results.push({
-          type: "content_block_delta",
-          index: toolInfo.blockIndex,
-          delta: { type: "input_json_delta", partial_json: sanitized }
-        });
-      }
-      results.push({
-        type: "content_block_stop",
-        index: toolInfo.blockIndex
-      });
-    }
-
-    state.finishReason = "stop";
-    const finalUsage = state.usage || { input_tokens: 0, output_tokens: 0 };
-    results.push({
-      type: "message_delta",
-      delta: { stop_reason: "end_turn" },
-      usage: finalUsage
-    });
-    results.push({ type: "message_stop" });
-    return results.length > 0 ? results : null;
+    return [{
+      type: "error",
+      error: { type: "api_error", message: "Upstream stream closed before a finish reason." },
+    }];
   }
 
   // Track usage from OpenAI chunk if available (before the choices early
