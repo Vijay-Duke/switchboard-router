@@ -161,7 +161,42 @@ export function normalizeClaudePassthrough(body, model = "") {
       }
       messages.push({ role: ROLE.USER, content: [block] });
     }
-    body.messages = messages;
+    // Anthropic merges adjacent user turns. Keep tool results at the beginning
+    // of that merged turn, even when a folded system reminder precedes them.
+    // Preserve actual results; never invent a successful tool execution.
+    const merged = [];
+    const hasToolUse = (message) => message?.role === ROLE.ASSISTANT
+      && Array.isArray(message.content)
+      && message.content.some(block => block.type === CLAUDE_BLOCK.TOOL_USE);
+    for (const msg of messages) {
+      const previous = merged[merged.length - 1];
+      if (previous?.role === ROLE.USER && msg.role === ROLE.USER
+        && hasToolUse(merged[merged.length - 2])) {
+        const asBlocks = (content) => Array.isArray(content)
+          ? content : [{ type: CLAUDE_BLOCK.TEXT, text: content }];
+        merged[merged.length - 1] = {
+          ...previous,
+          content: [...asBlocks(previous.content), ...asBlocks(msg.content)],
+        };
+      } else {
+        // The original message objects can be reused by account fallback.
+        merged.push({ ...msg });
+      }
+    }
+    for (let i = 1; i < merged.length; i++) {
+      const msg = merged[i];
+      const previous = merged[i - 1];
+      if (msg.role !== ROLE.USER || !Array.isArray(msg.content)
+        || !hasToolUse(previous)) continue;
+      const results = msg.content.filter(block => block.type === CLAUDE_BLOCK.TOOL_RESULT);
+      if (results.length > 0) {
+        msg.content = [
+          ...results,
+          ...msg.content.filter(block => block.type !== CLAUDE_BLOCK.TOOL_RESULT),
+        ];
+      }
+    }
+    body.messages = merged;
   }
 
   // 3. Drop thinking blocks whose signature is not Claude's (combo mixes models,
