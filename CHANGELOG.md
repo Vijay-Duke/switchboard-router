@@ -1,3 +1,11 @@
+# v0.9.40 (2026-10-08)
+
+## Fixes
+- **OAuth refresh safety**: coordinate quota and chat refreshes, reuse successful refresh results while persistence completes, and prevent late credential writes from replacing newer tokens or operator settings.
+- **Streamed tools**: pair tool names with their real IDs before emitting immutable Claude tool blocks; retain named-call ID fallback at completion and report incomplete nameless calls as errors.
+- **Model discovery**: successful empty compatible catalogs stay empty, while failed or malformed discovery retains saved models. Gemini discovery excludes incompatible dedicated-media and embedding models while preserving native Gemini audio, image and transcription generation.
+- Added regression coverage for refresh concurrency, model discovery and reconstructed streaming events.
+
 # v0.9.39 (2026-10-08)
 
 ## Fixes
