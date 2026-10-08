@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse as parseYaml } from "yaml";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -24,26 +25,180 @@ const GATED = [
   "unit/ci-gate.test.js", // this list itself
 ];
 
+// Follow actual job calls rather than scanning comments or unrelated YAML text.
+// Only unconditionally required jobs/steps in the tests directory establish a gate.
+const required = item => item?.if === undefined && !item?.["continue-on-error"];
+const localWorkflow = /^\.\/\.github\/workflows\/[\w.-]+\.ya?ml$/;
+const PUBLISHERS = ["publish-npm", "github-release", "docker-build", "docker"];
+const documents = Object.fromEntries(["ci", "release"].map(name => {
+  const file = `.github/workflows/${name}.yml`;
+  return [file, parseYaml(fs.readFileSync(path.join(repoRoot, file), "utf8"))];
+}));
+
+function logicalCommands(run) {
+  const commands = [];
+  let continued = "";
+  for (const line of String(run).split(/\r?\n/)) {
+    if (!continued && /^\s*(unit\/.*\.test\.js|--reporter)/.test(line)) {
+      throw new Error("Broken vitest line continuation");
+    }
+    const combined = continued + line.trim();
+    if (combined.endsWith("\\")) continued = combined.slice(0, -1) + " ";
+    else { commands.push(combined); continued = ""; }
+  }
+  if (continued) throw new Error("Unfinished vitest line continuation");
+  return commands;
+}
+
+function coversTest(runs, testFile) {
+  return runs.some(run => {
+    const commands = logicalCommands(run);
+    // Mixed shell scripts can reset exit status or disable fail-fast behavior.
+    if (commands.length !== 1) return false;
+    return commands.some(command => {
+    const match = command.match(/^npx\s+vitest\s+run(?:\s+(.*))?$/);
+    if (!match || /[;&|]/.test(command)) return false;
+    const args = (match[1] || "").split(/\s+/).filter(Boolean);
+    // An invocation with a filter must name the invariant explicitly. Unknown
+    // flags (e.g. --exclude) cannot prove that the complete suite is included.
+    const filters = args.filter(arg => arg !== "--reporter=default");
+    return !filters.some(arg => arg.startsWith("-")) && (filters.length === 0 || filters.includes(testFile));
+    });
+  });
+}
+
+function workflowRuns(file, docs, visiting = []) {
+  if (visiting.includes(file)) throw new Error("Reusable workflow cycle");
+  const workflow = docs[file];
+  if (!workflow?.jobs) throw new Error(`Missing workflow: ${file}`);
+  return Object.fromEntries(Object.entries(workflow.jobs).map(([id, job]) => {
+    if (!required(job)) return [id, []];
+    if (job.uses) {
+      if (!localWorkflow.test(job.uses)) return [id, []];
+      const calledFile = job.uses.slice(2);
+      if (!Object.hasOwn(docs[calledFile]?.on || {}, "workflow_call")) {
+        throw new Error(`Not callable with workflow_call: ${calledFile}`);
+      }
+      return [id, Object.values(workflowRuns(calledFile, docs, [...visiting, file])).flat()];
+    }
+    return [id, (job.steps || []).filter(step => {
+      const directory = step["working-directory"] || job.defaults?.run?.["working-directory"]
+        || workflow.defaults?.run?.["working-directory"] || "";
+      return required(step) && step.run && directory.replace(/^\.\//, "") === "tests";
+    }).map(step => step.run)];
+  }));
+}
+
+function publicationRuns(file, publisher, docs, runs = workflowRuns(file, docs)) {
+  const jobs = docs[file]?.jobs || {};
+  if (!jobs[publisher] || !required(jobs[publisher])) return [];
+  const seen = new Set();
+  const visit = id => {
+    if (seen.has(id)) return [];
+    seen.add(id);
+    const job = jobs[id];
+    if (!job) throw new Error(`Missing gate dependency: ${id}`);
+    if (!required(job)) return [];
+    return [...(runs[id] || []), ...[job.needs || []].flat().flatMap(visit)];
+  };
+  return [jobs[publisher].needs || []].flat().flatMap(visit);
+}
+
 describe.each([
   [".github/workflows/ci.yml"],
   [".github/workflows/release.yml"],
-])("%s runs every invariant test", (workflow) => {
-  const yaml = fs.readFileSync(path.join(repoRoot, workflow), "utf8");
-  const runsFullSuite = /npx vitest run --reporter=default/.test(yaml);
+])("%s runs every invariant test", workflow => {
+  const runs = workflowRuns(workflow, documents);
+  it.each(GATED)("gates %s", testFile => {
+    expect(coversTest(Object.values(runs).flat(), testFile)).toBe(true);
+  });
+  it("has no broken line continuations in required test steps", () => {
+    for (const run of Object.values(runs).flat()) expect(() => logicalCommands(run)).not.toThrow();
+  });
+});
 
-  it.each(GATED)("gates %s", (testFile) => {
-    expect(runsFullSuite || yaml.includes(testFile)).toBe(true);
+describe("publication waits for actual reusable CI tests", () => {
+  it.each(PUBLISHERS)("%s waits for every invariant", publisher => {
+    const runs = publicationRuns(".github/workflows/release.yml", publisher, documents);
+    for (const testFile of GATED) expect(coversTest(runs, testFile), `${publisher}: ${testFile}`).toBe(true);
   });
 
-  it("has no broken line continuations in the vitest invocation", () => {
-    // A dropped trailing `\` silently truncates the list to one file.
-    const lines = yaml.split("\n");
-    for (const [i, line] of lines.entries()) {
-      if (!/^\s+unit\/.*\.test\.js/.test(line)) continue;
-      const next = lines[i + 1] ?? "";
-      const continues = /^\s+(unit\/|--reporter)/.test(next);
-      if (continues) expect(line.trimEnd().endsWith("\\"), `${workflow}:${i + 1}`).toBe(true);
-    }
+  const fixture = () => structuredClone({
+    ".github/workflows/ci.yml": {
+      on: { workflow_call: null },
+      jobs: { tests: { steps: [{ "working-directory": "tests", run: "npx vitest run --reporter=default" }] } },
+    },
+    ".github/workflows/release.yml": {
+      jobs: {
+        test: { uses: "./.github/workflows/ci.yml" },
+        build: { needs: "test", steps: [] },
+        publish: { needs: "build", steps: [] },
+      },
+    },
+  });
+  const gated = docs => coversTest(publicationRuns(".github/workflows/release.yml", "publish", docs), GATED[0]);
+
+  it("accepts an actual same-commit workflow_call through a transitive gate", () => {
+    expect(gated(fixture())).toBe(true);
+  });
+  it("rejects publication detached from the otherwise-present reusable test job", () => {
+    const docs = fixture(); delete docs[".github/workflows/release.yml"].jobs.build.needs;
+    expect(gated(docs)).toBe(false);
+  });
+  it("rejects publishing with always() after a failed dependency", () => {
+    const docs = fixture(); docs[".github/workflows/release.yml"].jobs.publish.if = "${{ always() }}";
+    expect(gated(docs)).toBe(false);
+  });
+  it("rejects an always() bridge that lets publication outlive failed tests", () => {
+    const docs = fixture(); docs[".github/workflows/release.yml"].jobs.build.if = "${{ always() }}";
+    expect(gated(docs)).toBe(false);
+  });
+  it("does not count a YAML boolean-false test condition", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs.tests.if = false;
+    expect(gated(docs)).toBe(false);
+  });
+  it("rejects a workflow from an unverified branch or external repository", () => {
+    const docs = fixture(); docs[".github/workflows/release.yml"].jobs.test.uses = "owner/repo/.github/workflows/ci.yml@main";
+    expect(gated(docs)).toBe(false);
+  });
+  it("rejects a local workflow that does not declare workflow_call", () => {
+    const docs = fixture(); delete docs[".github/workflows/ci.yml"].on.workflow_call;
+    expect(() => gated(docs)).toThrow(/workflow_call/);
+  });
+  it("rejects a reusable workflow cycle", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs.tests = { uses: "./.github/workflows/ci.yml" };
+    expect(() => gated(docs)).toThrow(/cycle/);
+  });
+  it.each(["if", "continue-on-error"])("does not count optional test jobs (%s)", flag => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs.tests[flag] = flag === "if" ? "${{ false }}" : true;
+    expect(gated(docs)).toBe(false);
+  });
+  it.each(["if", "continue-on-error"])("does not count optional test steps (%s)", flag => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs.tests.steps[0][flag] = flag === "if" ? "${{ false }}" : true;
+    expect(gated(docs)).toBe(false);
+  });
+  it("does not count a vitest invocation in a different directory", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs.tests.steps[0]["working-directory"] = "gitbook";
+    expect(gated(docs)).toBe(false);
+  });
+  it.each([
+    "npx vitest run unit/another.test.js --reporter=default",
+    "# npx vitest run --reporter=default",
+    "echo npx vitest run --reporter=default",
+    "npx vitest run --reporter=default || true",
+    "set +e\nnpx vitest run --reporter=default",
+    "npx vitest run --reporter=default --exclude unit/dashboard-guard.test.js",
+  ])("does not mistake a bypass or filtered command for the full suite: %s", command => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs.tests.steps[0].run = command;
+    expect(gated(docs)).toBe(false);
+  });
+  it("accepts a required explicitly named invariant", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs.tests.steps[0].run = `npx vitest run ${GATED[0]} --reporter=default`;
+    expect(gated(docs)).toBe(true);
+  });
+  it("rejects a missing continuation in the actual run script", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs.tests.steps[0].run = `npx vitest run ${GATED[0]}\nunit/data-dir.test.js --reporter=default`;
+    expect(() => gated(docs)).toThrow(/continuation/);
   });
 });
 
