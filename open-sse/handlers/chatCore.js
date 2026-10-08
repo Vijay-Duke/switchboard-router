@@ -473,7 +473,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
           credentials.refreshToken = result.refreshToken;
         }
         return result;
-      }, 3, log);
+      }, 3, log, streamController.signal);
       if (newCredentials?.accessToken || newCredentials?.copilotToken) {
         log?.info?.("TOKEN", `${provider.toUpperCase()} | refreshed`);
         Object.assign(credentials, newCredentials);

@@ -313,8 +313,12 @@ export class BaseExecutor {
         // A transport may reject with a generic close error after cancellation.
         // The caller signal, not the adapter's error name, is authoritative.
         signal?.throwIfAborted();
-        lastError = error;
         const isConnectTimeout = connectCtrl.signal.aborted && error.name === "AbortError";
+        if (isConnectTimeout) {
+          error = new Error(`fetch connect timeout after ${timeoutMs}ms`, { cause: error });
+          error.name = "TimeoutError";
+        }
+        lastError = error;
         dbg("FETCH", `${this.provider.toUpperCase()} ✖ ${error.name}: ${error.message}${isConnectTimeout ? " (connect timeout)" : ""}`);
         // Connect timeout is internal — convert to retryable network error, don't propagate AbortError
         if (error.name === "AbortError" && !isConnectTimeout) throw error;

@@ -302,12 +302,23 @@ export async function getAllAccessTokens(userInfo, log) {
   return results;
 }
 
-export async function refreshWithRetry(refreshFn, maxRetries = 3, log = null) {
+export async function refreshWithRetry(refreshFn, maxRetries = 3, log = null, signal = null) {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
+    signal?.throwIfAborted();
     if (attempt > 0) {
       const delay = attempt * 1000;
       log?.debug?.("TOKEN_REFRESH", `Retry ${attempt}/${maxRetries} after ${delay}ms`);
-      await new Promise(r => setTimeout(r, delay));
+      await new Promise(resolve => {
+        const done = () => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", done);
+          resolve();
+        };
+        const timer = setTimeout(done, delay);
+        signal?.addEventListener("abort", done, { once: true });
+        if (signal?.aborted) done();
+      });
+      signal?.throwIfAborted();
     }
 
     try {
@@ -318,7 +329,9 @@ export async function refreshWithRetry(refreshFn, maxRetries = 3, log = null) {
       if (isUnrecoverableRefreshError(result)) return result;
       if (result) return result;
     } catch (error) {
-      if (error?.name === "AbortError") throw error;
+      // Only caller cancellation is final; an upstream's own abort/timeout
+      // remains eligible for the existing credential-refresh retry policy.
+      signal?.throwIfAborted();
       log?.warn?.("TOKEN_REFRESH", `Attempt ${attempt + 1}/${maxRetries} failed: ${error.message}`);
     }
   }
