@@ -1,6 +1,7 @@
 // @ts-check
 // Ensure proxyFetch is loaded to patch globalThis.fetch
 import "open-sse/index.js";
+import "@/sse/initQuotaStateDeps.js";
 
 import { getProviderConnectionById, updateProviderConnectionCredentialsIfCurrent } from "@/lib/db/index.js";
 import { getUsageForProvider } from "open-sse/services/usage.js";

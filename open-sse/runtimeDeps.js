@@ -9,6 +9,8 @@ const NOOP_SYNC = () => {};
 /** @type {Record<string, any>} */
 let deps = {
   getSettings: async () => ({}),
+  loadProviderQuotaState: null,
+  saveProviderQuotaState: null,
   trackPendingRequest: NOOP_SYNC,
   appendRequestLog: NOOP,
   saveRequestDetail: NOOP,

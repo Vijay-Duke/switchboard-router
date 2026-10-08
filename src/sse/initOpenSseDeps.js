@@ -25,6 +25,8 @@ import {
   getVaultEntry, putVaultEntry, searchVault, cleanupExpiredVault,
 } from "@/lib/db/repos/vaultRepo.js";
 
+import { loadProviderQuotaState, saveProviderQuotaState } from "@/lib/db/repos/providerQuotaStateRepo.js";
+
 let wired = false;
 
 export function ensureOpenSseDeps() {
@@ -32,6 +34,8 @@ export function ensureOpenSseDeps() {
   wired = true;
   setOpenSseDeps({
     getSettings,
+    loadProviderQuotaState,
+    saveProviderQuotaState,
     trackPendingRequest,
     appendRequestLog,
     saveRequestDetail,

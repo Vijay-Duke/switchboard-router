@@ -1,5 +1,7 @@
 // Quota auto-ping scheduler: warms 5h windows by sending tiny opt-in requests right after reset.
 import "open-sse/index.js";
+import "@/sse/initQuotaStateDeps.js";
+import { getQuotaStateIdentity } from "open-sse/services/usage/quotaState.js";
 
 import { getSettings, getProviderConnections, updateProviderConnection } from "@/lib/db/index.js";
 import { getClaudeUsage } from "open-sse/services/usage/claude.js";
@@ -230,6 +232,7 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
 
   const usage = await handler.getUsage(connection.accessToken, proxyOptions, {
     connectionId: connection.id,
+    quotaIdentity: getQuotaStateIdentity(connection),
   });
   // Last-good quota may be displayed during a polling failure, but it cannot
   // establish current routing headroom or justify a new warm-up request.
