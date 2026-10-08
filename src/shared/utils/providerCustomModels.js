@@ -261,5 +261,6 @@ export function getCompatibleProviderModelRows({
       isCustom: metadata?.isCustom === true,
     });
   }
-  return rows.length > 0 ? rows : fallbackRows;
+  // A successful empty catalog is authoritative (all models may be disabled).
+  return rows;
 }

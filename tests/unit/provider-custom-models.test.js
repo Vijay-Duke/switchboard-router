@@ -103,6 +103,19 @@ describe("provider custom model rows", () => {
 });
 
 describe("compatible provider model rows", () => {
+  it("does not resurrect stored rows after live discovery succeeds empty", () => {
+    const providerId = "openai-compatible-chat-provider-id";
+    const rows = getCompatibleProviderModelRows({
+      providerId,
+      providerAlias: "custom",
+      customModels: [{ providerAlias: providerId, id: "removed-model" }],
+      modelAliases: { legacy: `${providerId}/removed-alias-target` },
+      liveModels: [],
+      liveCatalogLoaded: true,
+    });
+    expect(rows).toEqual([]);
+  });
+
   it("merges a UUID provider's live catalog into its display-prefix picker group", () => {
     const providerId = "openai-compatible-responses-5f69ccc9-f1e2-4faa-acf6-d5551eab7cce";
     const rows = getCompatibleProviderModelRows({
