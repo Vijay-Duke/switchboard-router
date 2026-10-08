@@ -289,10 +289,21 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
     ]),
   );
   const isDisabled = (alias, modelId) => {
-    const disabledIds = disabledCanonicalByAlias.get(alias);
-    return disabledIds
-      ? isCanonicalModelDisabled(disabledIds, modelId, alias)
-      : false;
+    // Dashboard/probe imports can store flags under either the public alias
+    // or registry id. Consult both without changing nested upstream model ids.
+    const providerId = resolveProviderId(alias);
+    const storageKeys = new Set([
+      alias,
+      providerId,
+      getProviderAlias(providerId),
+      PROVIDER_ID_TO_ALIAS[providerId],
+    ].filter(Boolean));
+    return [...storageKeys].some((key) => {
+      const disabledIds = disabledCanonicalByAlias.get(key);
+      return disabledIds
+        ? isCanonicalModelDisabled(disabledIds, modelId, key)
+        : false;
+    });
   };
 
   const activeConnectionByProvider = new Map();
@@ -389,6 +400,15 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
     for (const [alias, target] of Object.entries(modelAliases || {})) {
       if (!isClaudeGatewayAlias(alias)) continue;
       if (hasConnectionsData && isModelStringUnavailable(target)) continue;
+      if (typeof target === "string" && target.includes("/")) {
+        const slash = target.indexOf("/");
+        const targetPrefix = target.slice(0, slash);
+        const targetModelId = target.slice(slash + 1);
+        const targetConnection = activeConnections.find((connection) =>
+          connection.providerSpecificData?.prefix === targetPrefix);
+        if (isDisabled(targetPrefix, targetModelId)
+          || (targetConnection && isDisabled(targetConnection.provider, targetModelId))) continue;
+      }
       models.push({
         id: alias,
         object: "model",
@@ -398,7 +418,7 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
     }
   }
 
-  if (connections.length === 0) {
+  if (connectionsFetchFailed) {
     // DB unavailable -> return static models, filtered by per-model kind
     for (const [alias, providerModels] of Object.entries(PROVIDER_MODELS)) {
       const providerId = resolveProviderId(alias);
@@ -422,7 +442,7 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
       if (!providerAlias) continue;
 
       const modelId = String(customModel.id).trim();
-      if (!modelId) continue;
+      if (!modelId || isDisabled(providerAlias, modelId)) continue;
 
       models.push({
         id: `${providerAlias}/${modelId}`,
