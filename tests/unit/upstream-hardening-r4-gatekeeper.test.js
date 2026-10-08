@@ -42,22 +42,39 @@ describe("tool_choice none maps to Claude none (scout P0)", () => {
   });
 });
 
-describe("openai→claude opens tool block without id (scout P0)", () => {
-  it("opens tool on name-only first delta", () => {
+describe("openai→claude preserves named tools with missing or late IDs (scout P0)", () => {
+  const firstChunk = {
+    id: "c1",
+    model: "m",
+    choices: [{ delta: { tool_calls: [{ index: 0, function: { name: "lookup", arguments: "" } }] } }],
+  };
+  const finish = { choices: [{ delta: {}, finish_reason: "tool_calls" }] };
+
+  it("assigns a fallback ID at finish when the upstream never supplies one", () => {
     const state = { toolCalls: new Map(), nextBlockIndex: 0 };
-    const events = openaiToClaudeResponse({
-      id: "c1",
-      model: "m",
-      choices: [{
-        delta: {
-          tool_calls: [{ index: 0, function: { name: "lookup", arguments: "" } }],
-        },
-      }],
+    const initial = openaiToClaudeResponse(firstChunk, state);
+    expect(initial).toBeTruthy();
+    expect(initial.some(event => event.content_block?.type === "tool_use")).toBe(false);
+
+    const completed = openaiToClaudeResponse(finish, state);
+    const start = completed.find(event => event.content_block?.type === "tool_use");
+    expect(start.content_block).toEqual({
+      type: "tool_use", name: "lookup", id: expect.stringMatching(/^toolu_[a-zA-Z0-9_-]+$/), input: {},
+    });
+    expect(completed).toContainEqual({ type: "content_block_stop", index: start.index });
+    expect(completed.at(-1)).toEqual({ type: "message_stop" });
+  });
+
+  it("retains a late real ID on the wire instead of prematurely substituting one", () => {
+    const state = { toolCalls: new Map(), nextBlockIndex: 0 };
+    openaiToClaudeResponse(firstChunk, state);
+    const identified = openaiToClaudeResponse({
+      choices: [{ delta: { tool_calls: [{ index: 0, id: "call_lookup", function: { arguments: "{}" } }] } }],
     }, state);
-    expect(events).toBeTruthy();
-    const start = events.find((e) => e.type === "content_block_start");
-    expect(start).toBeTruthy();
-    expect(start.content_block.name).toBe("lookup");
-    expect(start.content_block.id).toBeTruthy();
+    const start = identified.find(event => event.content_block?.type === "tool_use");
+    expect(start.content_block).toEqual({ type: "tool_use", name: "lookup", id: "call_lookup", input: {} });
+    const completed = openaiToClaudeResponse(finish, state);
+    expect(completed.filter(event => event.delta?.type === "input_json_delta").map(event => event.delta.partial_json)).toEqual(["{}"]);
+    expect(completed).toContainEqual({ type: "content_block_stop", index: start.index });
   });
 });
