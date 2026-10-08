@@ -264,7 +264,10 @@ export default function ProviderLimits() {
       const quotaEntry = {
         quotas: parsedQuotas,
         plan: data.plan || null,
-        message: data.message || null,
+        message: data.stale && parsedQuotas.length > 0 ? null : data.message || null,
+        warning: data.stale && parsedQuotas.length > 0
+          ? `Showing last known usage. ${data.message || "Refresh unavailable."}`
+          : null,
         raw: data,
       };
 
@@ -1206,14 +1209,19 @@ export default function ProviderLimits() {
                     <p className="text-xs text-text-muted">{quota.message}</p>
                   </div>
                 ) : (
-                  <QuotaTable
-                    quotas={quota?.quotas}
-                    compact
-                    sortMode="default"
-                    showSortLabel={
-                      conn.provider === "codex" && quotaSortMode !== "default"
-                    }
-                  />
+                  <>
+                    {quota?.warning && (
+                      <p role="status" className="mb-2 text-xs text-text-muted">{quota.warning}</p>
+                    )}
+                    <QuotaTable
+                      quotas={quota?.quotas}
+                      compact
+                      sortMode="default"
+                      showSortLabel={
+                        conn.provider === "codex" && quotaSortMode !== "default"
+                      }
+                    />
+                  </>
                 )}
               </div>
             </Card>

@@ -34,7 +34,7 @@ const USAGE_HANDLERS = {
   github: (c) => getGitHubUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   "gemini-cli": (c) => getGeminiUsage(c.accessToken, c.providerDataWithProjectId, c.proxyOptions),
   antigravity: (c) => getAntigravityUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
-  claude: (c) => getClaudeUsage(c.accessToken, c.proxyOptions, { force: c.force }),
+  claude: (c) => getClaudeUsage(c.accessToken, c.proxyOptions, { force: c.force, connectionId: c.connectionId }),
   codex: (c) => getCodexUsage(c.accessToken, c.proxyOptions),
   kiro: (c) => getKiroUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   qoder: (c) => getQoderUsage(c.accessToken, c.proxyOptions),
@@ -66,6 +66,7 @@ export async function getUsageForProvider(connection, proxyOptions = null, optio
   if (!handler) return { message: `Usage API not implemented for ${provider}` };
   return await handler({
     provider,
+    connectionId: connection.id,
     accessToken,
     apiKey,
     refreshToken,

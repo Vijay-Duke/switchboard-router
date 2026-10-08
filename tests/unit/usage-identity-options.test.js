@@ -26,15 +26,12 @@ const expectIdentity = (options, identity, provider, format) => {
 describe("usage request identities", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("uses Claude CLI identity for OAuth and legacy usage calls", async () => {
-    proxyAwareFetch
-      .mockResolvedValueOnce(jsonResponse({}, 403))
-      .mockResolvedValueOnce(jsonResponse({ organization_id: "org-1", plan: "Max" }))
-      .mockResolvedValueOnce(jsonResponse({ requests: 1 }));
+  it("uses the existing Claude transport only for subscription usage", async () => {
+    proxyAwareFetch.mockResolvedValueOnce(jsonResponse({}, 403));
 
     await getClaudeUsage("claude-token", { enabled: true });
 
-    expect(proxyAwareFetch).toHaveBeenCalledTimes(3);
+    expect(proxyAwareFetch).toHaveBeenCalledTimes(1);
     for (const [, options, proxyOptions] of proxyAwareFetch.mock.calls) {
       expectIdentity(options, "claude-cli", "claude", "claude");
       expect(proxyOptions).toEqual({ enabled: true });

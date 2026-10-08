@@ -9,8 +9,6 @@ import { U, parseResetTime } from "./shared.js";
 // Claude API config (urls from registry, apiVersion is header logic kept here)
 const CLAUDE_CONFIG = {
   oauthUsageUrl: U("claude").oauthUrl,
-  usageUrl: U("claude").orgUrl,
-  settingsUrl: U("claude").settingsUrl,
   apiVersion: ANTHROPIC_API_VERSION,
 };
 
@@ -19,54 +17,72 @@ const CLAUDE_CONFIG = {
 const OAUTH_429_COOLDOWN_MS = 180000;
 const oauthCooldown = new Map();
 
-// Dedup + short TTL cache per access token. Many tabs / many accounts / auto-refresh
+// Dedup + short TTL cache per account (or token for direct callers). Many tabs / many accounts / auto-refresh
 // all funnel through here; without this each call hits Anthropic and triggers 429.
 const USAGE_CACHE_TTL_MS = 300000;
-const usageCache = new Map(); // token -> { promise } | { result, expiresAt }
+const usageCache = new Map(); // account/token -> { promise?, result?, expiresAt }
 
 export async function getClaudeUsage(accessToken, proxyOptions = null, options = {}) {
   const force = options?.force === true;
+  // Account identity is stable when OAuth refresh rotates the token. Route
+  // reads and background quota checks must share that account's cooldown.
+  const cacheKey = options?.connectionId || accessToken;
+  const hit = cacheKey && usageCache.get(cacheKey);
+  if (hit?.promise) return hit.promise;
+  if (!force && hit?.expiresAt > Date.now()) return hit.result;
 
-  // Serve in-flight or fresh cached result (skip on manual force)
-  if (!force && accessToken) {
-    const hit = usageCache.get(accessToken);
-    if (hit?.promise) return hit.promise;
-    if (hit && hit.expiresAt > Date.now()) return hit.result;
-  }
-
-  const stale = (!force && accessToken && usageCache.get(accessToken)?.result) || null;
-
+  const stale = hit?.result || null;
   const promise = (async () => {
-    const result = await fetchClaudeUsageRaw(accessToken, proxyOptions);
-    // Only cache real quota data, not soft-failure {message: ...} payloads
-    if (accessToken && result?.quotas) {
-      usageCache.set(accessToken, {
-        result,
-        expiresAt: Date.now() + USAGE_CACHE_TTL_MS,
-      });
+    const result = await fetchClaudeUsageRaw(accessToken, proxyOptions, cacheKey);
+    if (cacheKey && result?.quotas) {
+      usageCache.set(cacheKey, { result, expiresAt: Date.now() + USAGE_CACHE_TTL_MS });
       return result;
     }
-    // Soft failure (429/error): prefer the last good read over a transient error
-    if (stale) return stale;
+    // Preserve the last successful snapshot through repeated soft failures,
+    // including a manual refresh. Never treat its percentages as a new read.
+    if (stale) return { ...stale, ...result, stale: true };
     return result;
   })();
 
-  if (accessToken) usageCache.set(accessToken, { promise });
-  // A settled soft failure must not pin the token: drop the {promise} placeholder
-  // so the next non-force call refetches instead of replaying the error forever.
+  if (cacheKey) usageCache.set(cacheKey, {
+    promise, result: stale, expiresAt: hit?.expiresAt || 0,
+  });
   void promise.then(() => {
-    const entry = usageCache.get(accessToken);
-    if (accessToken && entry?.promise === promise) usageCache.delete(accessToken);
+    const entry = usageCache.get(cacheKey);
+    if (cacheKey && entry?.promise === promise) {
+      if (stale) usageCache.set(cacheKey, { result: stale, expiresAt: 0 });
+      else usageCache.delete(cacheKey);
+    }
   });
   return promise;
 }
 
-async function fetchClaudeUsageRaw(accessToken, proxyOptions = null) {
+function subscriptionCooldown(until) {
+  const retryAt = new Date(until).toISOString();
+  return {
+    status: 429,
+    code: "rate_limited",
+    retryAt,
+    retryAfterSeconds: Math.max(0, Math.ceil((until - Date.now()) / 1000)),
+    message: `Claude subscription usage is rate-limited. Try again after ${new Date(until).toUTCString()}.`,
+  };
+}
+
+function retryDeadline(response) {
+  const value = response.headers.get("retry-after");
+  const seconds = value?.trim() ? Number(value) : NaN;
+  const date = value ? Date.parse(value) : NaN;
+  if (Number.isFinite(seconds) && seconds >= 0) return Date.now() + Math.max(1000, seconds * 1000);
+  if (Number.isFinite(date) && date > Date.now()) return date;
+  return Date.now() + OAUTH_429_COOLDOWN_MS;
+}
+
+async function fetchClaudeUsageRaw(accessToken, proxyOptions = null, cacheKey = accessToken) {
   try {
     // Skip OAuth usage call while this token is cooling down from a recent 429
-    const cooldownUntil = oauthCooldown.get(accessToken);
+    const cooldownUntil = oauthCooldown.get(cacheKey);
     if (cooldownUntil && Date.now() < cooldownUntil) {
-      return await getClaudeUsageLegacy(accessToken, proxyOptions);
+      return subscriptionCooldown(cooldownUntil);
     }
 
     // Primary: OAuth usage endpoint (Claude Code consumer OAuth tokens)
@@ -121,77 +137,32 @@ async function fetchClaudeUsageRaw(accessToken, proxyOptions = null) {
 
       return {
         plan: "Claude Code",
+        observedAt: new Date().toISOString(),
         extraUsage: data.extra_usage ?? null,
         quotas,
       };
     }
 
-    // Cool down OAuth usage polling after a 429 (quota endpoint only)
+    // This is a subscription OAuth endpoint, not the organization Admin API.
+    // Preserve its real failure and honor provider backoff instead of trying
+    // settings/admin routes that this credential was never intended to access.
     if (oauthResponse.status === 429) {
-      oauthCooldown.set(accessToken, Date.now() + OAUTH_429_COOLDOWN_MS);
+      const until = retryDeadline(oauthResponse);
+      oauthCooldown.set(cacheKey, until);
+      return subscriptionCooldown(until);
     }
-
-    // Fallback: legacy settings + org usage endpoint
-    console.warn(`[Claude Usage] OAuth endpoint returned ${oauthResponse.status}, falling back to legacy`);
-    return await getClaudeUsageLegacy(accessToken, proxyOptions);
-  } catch (error) {
-    return { message: `Claude connected. Unable to fetch usage: ${error.message}` };
-  }
-}
-
-/**
- * Legacy Claude usage for API key / org admin users
- */
-async function getClaudeUsageLegacy(accessToken, proxyOptions = null) {
-  try {
-    const settingsResponse = await proxyAwareFetch(CLAUDE_CONFIG.settingsUrl, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "anthropic-version": CLAUDE_CONFIG.apiVersion,
-      },
-      identity: "claude-cli",
-      provider: "claude",
-      format: "claude",
-    }, proxyOptions);
-
-    if (settingsResponse.ok) {
-      const settings = await settingsResponse.json();
-
-      if (settings.organization_id) {
-        const usageResponse = await proxyAwareFetch(
-          CLAUDE_CONFIG.usageUrl.replace("{org_id}", settings.organization_id),
-          {
-            method: "GET",
-            headers: {
-              "Authorization": `Bearer ${accessToken}`,
-              "anthropic-version": CLAUDE_CONFIG.apiVersion,
-            },
-            identity: "claude-cli",
-            provider: "claude",
-            format: "claude",
-          },
-          proxyOptions
-        );
-
-        if (usageResponse.ok) {
-          const usage = await usageResponse.json();
-          return {
-            plan: settings.plan || "Unknown",
-            organization: settings.organization_name,
-            quotas: usage,
-          };
-        }
-      }
-
+    if (oauthResponse.status === 401) {
       return {
-        plan: settings.plan || "Unknown",
-        organization: settings.organization_name,
-        message: "Claude connected. Usage details require admin access.",
+        status: 401,
+        code: "authentication_error",
+        message: "Claude subscription session expired or is unauthorized. Reconnect Claude if refreshing the session fails.",
       };
     }
-
-    return { message: "Claude connected. Usage API requires admin permissions." };
+    return {
+      status: oauthResponse.status,
+      code: oauthResponse.status === 403 ? "permission_denied" : "usage_unavailable",
+      message: `Claude subscription usage is unavailable (HTTP ${oauthResponse.status}).`,
+    };
   } catch (error) {
     return { message: `Claude connected. Unable to fetch usage: ${error.message}` };
   }

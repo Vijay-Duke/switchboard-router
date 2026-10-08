@@ -412,16 +412,7 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "claude":
-        if (data.message) {
-          // Handle error message case
-          normalizedQuotas.push({
-            name: "error",
-            used: 0,
-            total: 0,
-            resetAt: null,
-            message: data.message,
-          });
-        } else if (data.quotas) {
+        if (data.quotas && Object.keys(data.quotas).length > 0) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
               name,
@@ -429,6 +420,14 @@ export function parseQuotaData(provider, data) {
               total: quota.total || 0,
               resetAt: quota.resetAt || null,
             });
+          });
+        } else if (data.message) {
+          normalizedQuotas.push({
+            name: "error",
+            used: 0,
+            total: 0,
+            resetAt: null,
+            message: data.message,
           });
         }
         break;

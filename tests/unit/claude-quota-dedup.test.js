@@ -91,14 +91,12 @@ describe("getClaudeUsage dedup + cache", () => {
       proxyAwareFetch.mockResolvedValueOnce(jsonResponse(OK_USAGE));
       await getClaudeUsage("tok-c"); // good read → cached (5min TTL)
 
-      // Advance past TTL so the next call refetches; OAuth 500 + legacy refusal
+      // Advance past TTL so the next call refetches; OAuth 500
       // = soft failure, which must serve the last good quotas instead.
       vi.advanceTimersByTime(6 * 60 * 1000);
-      proxyAwareFetch
-        .mockResolvedValueOnce(jsonResponse({ error: "server" }, 500)) // oauth endpoint
-        .mockResolvedValueOnce(jsonResponse({ error: "no admin" }, 403)); // legacy settings
+      proxyAwareFetch.mockResolvedValueOnce(jsonResponse({ error: "server" }, 500));
       const degraded = await getClaudeUsage("tok-c");
-      expect(proxyAwareFetch).toHaveBeenCalledTimes(3);
+      expect(proxyAwareFetch).toHaveBeenCalledTimes(2);
       expect(degraded.quotas["weekly (7d)"].remainingPercentage).toBe(45); // last good served
 
       // Soft failure was NOT cached: next call goes back out and succeeds.
@@ -106,7 +104,7 @@ describe("getClaudeUsage dedup + cache", () => {
         jsonResponse({ five_hour: { utilization: 10, resets_at: null } }),
       );
       const refreshed = await getClaudeUsage("tok-c");
-      expect(proxyAwareFetch).toHaveBeenCalledTimes(4);
+      expect(proxyAwareFetch).toHaveBeenCalledTimes(3);
       expect(refreshed.quotas["session (5h)"].used).toBe(10);
     } finally {
       vi.useRealTimers();
