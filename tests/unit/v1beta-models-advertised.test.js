@@ -64,7 +64,7 @@ describe("GET /v1beta/models Gemini discovery (QA-026)", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
-  it("never advertises non-chat static models as generateContent-capable", async () => {
+  it("does not advertise incompatible static media models as generateContent-capable", async () => {
     mocks.buildModelsList.mockResolvedValue([]);
     const response = await listModels();
     const names = new Set((await response.json()).models.map((model) => model.name));
@@ -77,7 +77,10 @@ describe("GET /v1beta/models Gemini discovery (QA-026)", () => {
         .map((model) => `models/${provider}/${model.id}`))
       .filter((name) => !chatNames.has(name));
     expect(nonChatModels.length).toBeGreaterThan(0);
-    expect(nonChatModels.filter((name) => names.has(name))).toEqual([]);
+    const nativeGeminiMedia = new Set(PROVIDER_MODELS.gemini
+      .filter((model) => ["image", "tts", "stt"].includes(getModelKind(model)))
+      .map((model) => `models/gemini/${model.id}`));
+    expect(nonChatModels.filter((name) => !nativeGeminiMedia.has(name) && names.has(name))).toEqual([]);
   });
 
   it("retains enabled Gemini chat models under both bare and provider-prefixed names", async () => {
@@ -91,6 +94,21 @@ describe("GET /v1beta/models Gemini discovery (QA-026)", () => {
     expect(models).toContainEqual(expect.objectContaining({
       name: `models/${model.id}`, supportedGenerationMethods: ["generateContent", "streamGenerateContent"],
     }));
+  });
+
+  it("preserves native Gemini multimodal aliases and methods without listing OpenAI TTS or embeddings", async () => {
+    mocks.buildModelsList.mockResolvedValue([]);
+    const { models } = await (await listModels()).json();
+    for (const id of ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-image", "gemini-2.0-flash"]) {
+      expect(models).toContainEqual(expect.objectContaining({
+        name: `models/${id}`, supportedGenerationMethods: ["generateContent", "streamGenerateContent"],
+      }));
+      expect(models).toContainEqual(expect.objectContaining({ name: `models/gemini/${id}` }));
+    }
+    const names = models.map((model) => model.name);
+    expect(names).not.toContain("models/openai/tts-1");
+    expect(names).not.toContain("models/gemini/gemini-embedding-001");
+    expect(names).not.toContain("models/gemini-embedding-001");
   });
 
   it("keeps chat ids that also have speech metadata in the registry", async () => {

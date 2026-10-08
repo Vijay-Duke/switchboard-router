@@ -8,9 +8,10 @@ import {
   isCanonicalModelDisabled,
 } from "@/shared/utils/providerCustomModels.js";
 
-// Gemini generateContent serves chat models — same filter as GET /v1/models.
+// Gemini generateContent serves chat plus native Gemini image/audio generation.
 const LLM_KIND = "llm";
 const CHAT_MODEL_KINDS = new Set([LLM_KIND, "imageToText"].map((kind) => kind.toLowerCase()));
+const GEMINI_NATIVE_GENERATION_KINDS = new Set(["image", "tts", "stt"]);
 
 /**
  * Handle CORS preflight — reflect the requesting Origin (gateway serves
@@ -58,10 +59,12 @@ export async function GET(request) {
 
     for (const [provider, providerModels] of Object.entries(PROVIDER_MODELS)) {
       for (const model of providerModels) {
-        const kind = getModelKind(model, LLM_KIND);
-        // Vision understanding is still chat generation; embeddings, speech
-        // and dedicated media models need their own endpoints.
-        if (!CHAT_MODEL_KINDS.has(String(kind).toLowerCase())) continue;
+        const kind = String(getModelKind(model, LLM_KIND)).toLowerCase();
+        // Native Gemini media models use generateContent too. In particular,
+        // the v1beta handler forwards AUDIO/TTS requests without chat conversion.
+        // Other providers' dedicated media and embedding models need separate APIs.
+        const isNativeGeneration = provider === "gemini" && GEMINI_NATIVE_GENERATION_KINDS.has(kind);
+        if (!CHAT_MODEL_KINDS.has(kind) && !isNativeGeneration) continue;
         if (isDisabled(provider, model.id)) continue;
         addModel({
           name: `models/${provider}/${model.id}`,
