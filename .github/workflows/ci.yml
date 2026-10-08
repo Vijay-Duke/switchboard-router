@@ -30,6 +30,11 @@ jobs:
             package-lock.json
             tests/package-lock.json
 
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.25.x
+          cache-dependency-path: open-sse/identity/tls/native/go.sum
+
       - name: Install root deps (src/ imports)
         run: npm ci --no-audit --no-fund
 
@@ -117,6 +122,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: 1.25.x
+          cache-dependency-path: open-sse/identity/tls/native/go.sum
       - name: Run native Claude TLS regressions
         working-directory: open-sse/identity/tls/native
         run: go test ./...

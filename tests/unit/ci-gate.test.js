@@ -23,6 +23,7 @@ const GATED = [
   "unit/droid-managed-models.test.js", // Factory model ownership/default behavior
   "unit/oauth-cursor-auto-import.test.js", // optional-dependency fallback
   "unit/ci-gate.test.js", // this list itself
+  "unit/claude-native-body-wire.test.js", // real Go helper through the Node response wire
 ];
 
 // Follow actual job calls rather than scanning comments or unrelated YAML text.
@@ -284,6 +285,66 @@ describe("native Claude TLS regressions gate publication", () => {
   it("rejects publication detached from the native regression gate", () => {
     const docs = fixture(); docs[".github/workflows/release.yml"].jobs["publish-npm"].needs = ["resolve-version"];
     expect(nativeGated(docs)).toBe(false);
+  });
+});
+
+const GO_BACKED_WIRE_TEST = "unit/claude-native-body-wire.test.js";
+const UNIT_TEST_PLATFORMS = ["ubuntu-latest", "windows-latest", "macos-latest"];
+
+function unitMatrixHasGo(docs, platform) {
+  const file = ".github/workflows/ci.yml";
+  const job = docs[file]?.jobs?.["unit-tests"];
+  const matrix = job?.strategy?.matrix;
+  if (!required(job) || job?.["runs-on"] !== "${{ matrix.os }}" || !matrix?.os?.includes(platform)
+    || matrix.exclude?.some(exclusion => exclusion.os === platform)) return false;
+  const runs = workflowRuns(file, docs);
+  if (!coversTest(runs["unit-tests"] || [], GO_BACKED_WIRE_TEST)) return false;
+  const setup = job.steps.findIndex(step => required(step) && step.uses === "actions/setup-go@v6"
+    && step.with?.["go-version"] === "1.25.x");
+  const suite = job.steps.findIndex(step => required(step) && step["working-directory"] === "tests"
+    && step.run && coversTest([step.run], GO_BACKED_WIRE_TEST));
+  return setup >= 0 && setup < suite;
+}
+
+describe("Go-backed native wire test toolchain", () => {
+  it.each(UNIT_TEST_PLATFORMS)("%s installs Go before running the native wire regression", platform => {
+    expect(unitMatrixHasGo(documents, platform)).toBe(true);
+  });
+  const fixture = () => {
+    const docs = structuredClone(documents);
+    docs[".github/workflows/ci.yml"].jobs["unit-tests"].steps = [
+      { uses: "actions/setup-go@v6", with: { "go-version": "1.25.x" } },
+      { "working-directory": "tests", run: "npx vitest run --reporter=default" },
+    ];
+    return docs;
+  };
+  it("rejects a node-only matrix without the Go toolchain", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs["unit-tests"].steps.shift();
+    expect(unitMatrixHasGo(docs, "windows-latest")).toBe(false);
+  });
+  it("rejects installing Go after the full test suite", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs["unit-tests"].steps.reverse();
+    expect(unitMatrixHasGo(docs, "windows-latest")).toBe(false);
+  });
+  it("rejects a Go setup restricted to Linux", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs["unit-tests"].steps[0].if = "runner.os == 'Linux'";
+    expect(unitMatrixHasGo(docs, "windows-latest")).toBe(false);
+  });
+  it("rejects swallowing a failed Go setup", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs["unit-tests"].steps[0]["continue-on-error"] = true;
+    expect(unitMatrixHasGo(docs, "windows-latest")).toBe(false);
+  });
+  it("requires the Windows platform to remain in the unit matrix", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs["unit-tests"].strategy.matrix.os = ["ubuntu-latest", "macos-latest"];
+    expect(unitMatrixHasGo(docs, "windows-latest")).toBe(false);
+  });
+  it("rejects excluding Windows from the unit matrix", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs["unit-tests"].strategy.matrix.exclude = [{ os: "windows-latest" }];
+    expect(unitMatrixHasGo(docs, "windows-latest")).toBe(false);
+  });
+  it("rejects excluding the Go-backed native wire regression", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs["unit-tests"].steps[1].run += ` --exclude ${GO_BACKED_WIRE_TEST}`;
+    expect(unitMatrixHasGo(docs, "windows-latest")).toBe(false);
   });
 });
 
