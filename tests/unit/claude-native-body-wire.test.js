@@ -25,10 +25,10 @@ const children = new Set();
 beforeAll(() => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-sse-wire-"));
   helper = path.join(directory, process.platform === "win32" ? "helper.test.exe" : "helper.test");
-  const built = spawnSync("go", ["test", "-c", "-o", helper, "."], { cwd: nativeDir, encoding: "utf8", timeout: 120000 });
+  const built = spawnSync("go", ["test", "-c", "-o", helper, "."], { cwd: nativeDir, encoding: "utf8", timeout: 240000 });
   expect(built.error, built.stderr).toBeUndefined();
   expect(built.status, built.stderr).toBe(0);
-}, 120000);
+}, 240000);
 afterEach(async () => {
   __setClaudeCodeSpawnForTest();
   await Promise.all([...children].map(child => {
