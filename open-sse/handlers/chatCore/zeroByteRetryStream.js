@@ -11,6 +11,7 @@ export function createZeroByteRetryStream({
   signal,
   firstChunkTimeoutMs = STREAM_FIRST_CHUNK_TIMEOUT_MS,
   log,
+  maxRetries = 1,
 }) {
   let reader = body.getReader();
   let gotByte = false;
@@ -72,7 +73,7 @@ export function createZeroByteRetryStream({
 
           if (result.aborted || cancelled) {
             cleanup();
-            await reader.cancel().catch(() => {});
+            reader.cancel().catch(() => {});
             // After bytes, abort is the stall watchdog — error so pipe emits terminal.
             // Before bytes, client gone: close, no replay.
             if (gotByte && !cancelled) return fail(controller);
@@ -82,7 +83,7 @@ export function createZeroByteRetryStream({
           if (result.error) throw result.error;
 
           if (result.timeout) {
-            await reader.cancel().catch(() => {});
+            reader.cancel().catch(() => {});
             if (await tryRetry(controller, "first-chunk timeout")) continue;
             cleanup();
             return fail(controller);
@@ -111,7 +112,7 @@ export function createZeroByteRetryStream({
   });
 
   async function tryRetry(controller, reason) {
-    if (retried || cancelled || signal?.aborted) return false;
+    if (maxRetries <= 0 || retried || cancelled || signal?.aborted) return false;
     retried = true;
     log?.warn?.("STREAM", `zero-byte ${reason} | retrying once`);
     const next = await reexecute();

@@ -594,6 +594,9 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
         reexecute: reexecuteBody,
         signal: streamController.signal,
         log,
+        // Native Claude callers already own redispatch policy. Avoid stacking
+        // an invisible zero-byte replay underneath their request deadline.
+        maxRetries: provider === "claude" ? 0 : 1,
       }),
       { status: providerResponse.status, headers: providerResponse.headers }
     );
@@ -622,9 +625,9 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
 
   // Streaming response
-  const { onStreamComplete, streamDetailId } = buildOnStreamComplete({ ...sharedCtx });
+  const { onStreamComplete, onStreamFailure, streamDetailId } = buildOnStreamComplete({ ...sharedCtx });
   return handleStreamingResponse({
-    ...sharedCtx, providerResponse, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, streamController, onStreamComplete, streamDetailId,
+    ...sharedCtx, providerResponse, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, streamController, onStreamComplete, onStreamFailure, streamDetailId,
     // wrap already owns first-byte timeout; skip the outer one so we don't abort mid-retry
     firstChunkTimeoutMs: geminiEmptyGuard ? undefined : 0,
   });

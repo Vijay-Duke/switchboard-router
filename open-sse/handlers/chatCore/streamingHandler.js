@@ -83,7 +83,7 @@ function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent,
 /**
  * Handle streaming response — pipe provider SSE through transform stream to client.
  */
-export async function handleStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, userAgent, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, requestId, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, streamController, onStreamComplete, streamDetailId, pxpipe, firstChunkTimeoutMs = STREAM_FIRST_CHUNK_TIMEOUT_MS }) {
+export async function handleStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, userAgent, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, requestId, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, streamController, onStreamComplete, onStreamFailure, streamDetailId, pxpipe, firstChunkTimeoutMs = STREAM_FIRST_CHUNK_TIMEOUT_MS }) {
   // When upstream returns HTML/text instead of SSE (e.g. Cloudflare 5xx error
   // page), piping it through the SSE transform stream causes Next.js
   // "failed to pipe response" and crashes the chat router. Read the body,
@@ -134,8 +134,30 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
       });
   }
 
+  // Persist the opening record first so a fast terminal cannot be overwritten
+  // later by a stale placeholder. Headers alone never establish success.
+  const pendingSave = saveRequestDetail(buildRequestDetail({
+    provider, model, connectionId,
+    latency: { ttft: 0, total: Date.now() - requestStartTime },
+    tokens: { prompt_tokens: 0, completion_tokens: 0 },
+    request: requestConfig ?? extractRequestConfig(body, stream),
+    providerRequest: finalBody || translatedBody || null,
+    providerResponse: "[Streaming - raw response not captured]",
+    response: { content: "[Streaming in progress...]", thinking: null, type: "streaming" },
+    status: "pending", pxpipe
+  }, { id: streamDetailId })).catch(err => console.error("[RequestDetail] Failed to save streaming request:", err.message));
+  let nativeTerminalObserved = false;
+  const complete = async (...args) => {
+    if (args[0]?.completed !== undefined) nativeTerminalObserved = true;
+    await pendingSave;
+    await onStreamComplete?.(...args);
+  };
+  const fail = (error) => {
+    if (nativeTerminalObserved) return;
+    Promise.resolve(pendingSave).then(() => onStreamFailure?.(error)).catch(() => {});
+  };
   const terminateOnResponsesTerminal = providerResponse.headers.get("x-switchboard-transport") !== "responses-websocket";
-  const transformStream = buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, clientKeyId, terminateOnResponsesTerminal });
+  const transformStream = buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete: complete, clientKeyId, terminateOnResponsesTerminal });
 
   // Abort/stall terminals: never close a client stream without a terminal event.
   // Responses passthrough: response.failed + [DONE]. Chat-completions wire
@@ -146,21 +168,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
     ? buildAbortedResponsesTerminalBytes
     : isNativeClaude ? buildAbortedClaudeTerminalBytes : targetFormat === FORMATS.OPENAI ? buildAbortedChatCompletionsTerminalBytes : null;
   const stallTimeoutMs = PROVIDERS[provider]?.stallTimeoutMs || STREAM_STALL_TIMEOUT_MS;
-  const transformedBody = pipeWithDisconnect(providerResponse, transformStream, streamController, onAbortTerminal, stallTimeoutMs, firstChunkTimeoutMs);
-
-  saveRequestDetail(buildRequestDetail({
-    provider, model, connectionId,
-    latency: { ttft: 0, total: Date.now() - requestStartTime },
-    tokens: { prompt_tokens: 0, completion_tokens: 0 },
-    request: requestConfig ?? extractRequestConfig(body, stream),
-    providerRequest: finalBody || translatedBody || null,
-    providerResponse: "[Streaming - raw response not captured]",
-    response: { content: "[Streaming in progress...]", thinking: null, type: "streaming" },
-    status: "success",
-    pxpipe
-  }, { id: streamDetailId })).catch(err => {
-    console.error("[RequestDetail] Failed to save streaming request:", err.message);
-  });
+  const transformedBody = pipeWithDisconnect(providerResponse, transformStream, streamController, onAbortTerminal, stallTimeoutMs, firstChunkTimeoutMs, fail);
 
   return {
     success: true,
@@ -174,7 +182,23 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
 export function buildOnStreamComplete({ provider, model, connectionId, clientKeyId, requestStartTime, body, stream, requestConfig, finalBody, translatedBody, requestId, clientRawRequest, pxpipe }) {
   const streamDetailId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
+  let finalized = false;
+  const onStreamFailure = async (error) => {
+    if (finalized) return;
+    finalized = true;
+    await saveRequestDetail(buildRequestDetail({
+      provider, model, connectionId,
+      latency: { ttft: 0, total: Date.now() - requestStartTime },
+      request: requestConfig ?? extractRequestConfig(body, stream),
+      providerRequest: finalBody || translatedBody || null,
+      response: { error: error?.message || "stream interrupted", type: "streaming" },
+      status: "error", pxpipe
+    }, { id: streamDetailId }));
+  };
   const onStreamComplete = async (contentObj, usage, ttftAt) => {
+    if (contentObj?.completed === false) return onStreamFailure(new Error(contentObj.error || "stream incomplete"));
+    if (finalized) return;
+    finalized = true;
     const latency = {
       ttft: ttftAt ? ttftAt - requestStartTime : Date.now() - requestStartTime,
       total: Date.now() - requestStartTime
@@ -200,5 +224,5 @@ export function buildOnStreamComplete({ provider, model, connectionId, clientKey
     await settleUsageStats({ provider, model, tokens: usage, connectionId, clientKeyId, requestId, endpoint: clientRawRequest?.endpoint, label: "STREAM USAGE" });
   };
 
-  return { onStreamComplete, streamDetailId };
+  return { onStreamComplete, onStreamFailure, streamDetailId };
 }

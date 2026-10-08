@@ -92,6 +92,20 @@ export function createSSEStream(options = {}) {
   // are forwarded verbatim, so track them here for flush finalization.
   let passthroughResponsesFramingSeen = false;
   let passthroughResponsesTerminalSeen = false;
+  let nativeClaudeSeen = false;
+  let nativeClaudeOutcome = null;
+  let nativeClaudeFinalized = false;
+
+  function finalizeNativeClaude(outcome) {
+    if (nativeClaudeFinalized) return;
+    nativeClaudeFinalized = true;
+    trackPendingRequest(model, provider, connectionId, false, !outcome.completed);
+    if (hasValidUsage(usage)) logUsage(provider, usage, model, connectionId, clientKeyId);
+    // Account on the protocol terminal, not TCP EOF: Claude clients disconnect
+    // immediately after message_stop and an upstream can leave its socket open.
+    Promise.resolve(onStreamComplete?.({ content: accumulatedContent, thinking: accumulatedThinking, ...outcome }, usage, ttftAt)).catch(() => {});
+    reqLogger?.close?.();
+  }
 
   // State for extracting <think>...</think> to reasoning_content across SSE chunks
   // (MiniMax M3 and similar OpenAI-format tiers). See PR#2463.
@@ -151,6 +165,19 @@ export function createSSEStream(options = {}) {
         try {
           const parsed = JSON.parse(dataText.trim());
           consecutiveUnparsable = 0;
+          if (["message_start", "message_delta", "message_stop", "content_block_start", "content_block_delta", "content_block_stop"].includes(parsed.type)) nativeClaudeSeen = true;
+          if (parsed.type === "content_block_delta") {
+            if (typeof parsed.delta?.text === "string") {
+              accumulatedContent += parsed.delta.text;
+              totalContentLength += parsed.delta.text.length;
+            }
+            if (typeof parsed.delta?.thinking === "string") {
+              accumulatedThinking += parsed.delta.thinking;
+              totalContentLength += parsed.delta.thinking.length;
+            }
+          }
+          if (parsed.type === "message_stop") nativeClaudeOutcome = { completed: true };
+          if (parsed.type === "error") nativeClaudeOutcome = { completed: false, error: parsed.error?.message || "upstream stream error" };
 
           const idFixed = fixInvalidId(parsed);
 
@@ -285,13 +312,18 @@ export function createSSEStream(options = {}) {
     }
 
     reqLogger?.appendConvertedChunk?.(output);
+    if (nativeClaudeOutcome) finalizeNativeClaude(nativeClaudeOutcome);
     controller.enqueue(sharedEncoder.encode(output));
+    if (nativeClaudeOutcome) controller.terminate();
   }
 
   function drainPassthroughEvents(controller, force = false) {
     const events = buffer.split(/\r?\n\r?\n/);
     buffer = events.pop() || "";
-    for (const eventText of events) processPassthroughEvent(eventText, controller);
+    for (const eventText of events) {
+      processPassthroughEvent(eventText, controller);
+      if (nativeClaudeFinalized) { buffer = ""; return; }
+    }
     if (force && buffer) {
       processPassthroughEvent(buffer, controller);
       buffer = "";
@@ -523,6 +555,13 @@ export function createSSEStream(options = {}) {
 
         if (mode === STREAM_MODE.PASSTHROUGH) {
           drainPassthroughEvents(controller, true);
+          if (nativeClaudeSeen && !nativeClaudeFinalized) {
+            nativeClaudeOutcome = { completed: false, error: "upstream closed before message_stop" };
+            finalizeNativeClaude(nativeClaudeOutcome);
+            controller.enqueue(sharedEncoder.encode(`event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: nativeClaudeOutcome.error } })}\n\n`));
+            return;
+          }
+          if (nativeClaudeFinalized) return;
 
           if (!hasValidUsage(usage) && totalContentLength > 0) {
             usage = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
