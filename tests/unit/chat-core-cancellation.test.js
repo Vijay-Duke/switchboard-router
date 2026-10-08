@@ -29,6 +29,30 @@ const options = signal => ({
 });
 beforeEach(() => { mocks.execute.mockReset(); mocks.refresh.mockReset(); mocks.fetch.mockReset(); });
 describe("core cancellation classification", () => {
+  it("returns499 when an executor rejects with a caller's valid null abort reason", async () => {
+    const controller = new AbortController();
+    mocks.execute.mockImplementationOnce(async () => {
+      controller.abort(null);
+      throw controller.signal.reason;
+    });
+    const result = await handleChatCore(options(controller.signal));
+    expect(result.status).toBe(499);
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+  it("keeps a late null-reason transport abort final through the actual Base executor", async () => {
+    const controller = new AbortController();
+    const executor = new BaseExecutor("openai", { baseUrls: ["https://first.test/api", "https://second.test/api"] });
+    mocks.fetch.mockImplementationOnce(async () => {
+      controller.abort(null);
+      throw controller.signal.reason;
+    });
+    mocks.execute.mockImplementation(args => executor.execute(args));
+    const result = await handleChatCore(options(controller.signal));
+    expect(result.status).toBe(499);
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    expect(mocks.refresh).not.toHaveBeenCalled();
+  });
   it("persists a completed rotation after cancellation without another inference", async () => {
     const controller = new AbortController(), persisted = vi.fn();
     mocks.execute.mockResolvedValueOnce({ response: new Response("unauthorized", { status: 401 }), headers: {}, url: "https://upstream.test/api", transformedBody: {} });

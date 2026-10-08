@@ -431,7 +431,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     finalBody = result.transformedBody;
     reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
   } catch (error) {
-    const cancelled = requestAborted() || error.name === "AbortError";
+    const cancelled = requestAborted() || error?.name === "AbortError";
     trackPendingRequest(model, provider, connectionId, false, !cancelled);
     reqLogger?.close?.();
     saveRequestDetail(buildRequestDetail({
@@ -440,7 +440,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       tokens: { prompt_tokens: 0, completion_tokens: 0 },
       request: requestConfig,
       providerRequest: translatedBody || null,
-      response: { error: error.message || String(error), status: cancelled ? 499 : 502, thinking: null },
+      response: { error: error?.message || (cancelled ? "Request aborted" : String(error)), status: cancelled ? 499 : 502, thinking: null },
       status: "error",
       pxpipe: pxpipeSummary || undefined,
       rtk: rtkStats || undefined
