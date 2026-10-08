@@ -68,7 +68,7 @@ function coversTest(runs, testFile) {
   });
 }
 
-function workflowRuns(file, docs, visiting = []) {
+function workflowRuns(file, docs, visiting = [], selectRun = (_step, directory) => directory === "tests") {
   if (visiting.includes(file)) throw new Error("Reusable workflow cycle");
   const workflow = docs[file];
   if (!workflow?.jobs) throw new Error(`Missing workflow: ${file}`);
@@ -86,12 +86,12 @@ function workflowRuns(file, docs, visiting = []) {
       if (!Object.hasOwn(docs[calledFile]?.on || {}, "workflow_call")) {
         throw new Error(`Not callable with workflow_call: ${calledFile}`);
       }
-      return [id, Object.values(workflowRuns(calledFile, docs, [...visiting, file])).flat()];
+      return [id, Object.values(workflowRuns(calledFile, docs, [...visiting, file], selectRun)).flat()];
     }
     return [id, (job.steps || []).filter(step => {
       const directory = step["working-directory"] || job.defaults?.run?.["working-directory"]
         || workflow.defaults?.run?.["working-directory"] || "";
-      return required(step) && step.run && directory.replace(/^\.\//, "") === "tests";
+      return required(step) && step.run && selectRun(step, directory.replace(/^\.\//, ""), job);
     }).map(step => step.run)];
   }));
 }
@@ -217,6 +217,73 @@ describe("publication waits for actual reusable CI tests", () => {
   it("rejects a missing continuation in the actual run script", () => {
     const docs = fixture(); docs[".github/workflows/ci.yml"].jobs.tests.steps[0].run = `npx vitest run ${GATED[0]}\nunit/data-dir.test.js --reporter=default`;
     expect(() => gated(docs)).toThrow(/continuation/);
+  });
+});
+
+const NATIVE_GO_DIR = "open-sse/identity/tls/native";
+const NATIVE_GO_COMMAND = "go test ./...";
+
+function nativeGoRun(step, directory, job) {
+  if (directory !== NATIVE_GO_DIR || logicalCommands(step.run).join("\n") !== NATIVE_GO_COMMAND) return false;
+  const index = job.steps.indexOf(step);
+  const setup = job.steps.findIndex(candidate => required(candidate)
+    && candidate.uses === "actions/setup-go@v6" && candidate.with?.["go-version"] === "1.25.x");
+  const pack = job.steps.findIndex(candidate => required(candidate)
+    && candidate["working-directory"] === "cli" && candidate.run === "npm run pack:cli");
+  return setup >= 0 && setup < index && pack > index;
+}
+
+describe("native Claude TLS regressions gate publication", () => {
+  const nativeGated = (docs, publisher = "publish-npm") => {
+    const file = ".github/workflows/release.yml";
+    const runs = workflowRuns(file, docs, [], nativeGoRun);
+    return publicationRuns(file, publisher, docs, runs).includes(NATIVE_GO_COMMAND);
+  };
+
+  it.each(PUBLISHERS)("%s waits for required native Go tests before CLI packaging", publisher => {
+    expect(nativeGated(documents, publisher)).toBe(true);
+  });
+
+  const fixture = () => {
+    const docs = structuredClone(documents);
+    docs[".github/workflows/ci.yml"].jobs["cli-pack"].steps = [
+      { uses: "actions/setup-go@v6", with: { "go-version": "1.25.x" } },
+      { "working-directory": NATIVE_GO_DIR, run: NATIVE_GO_COMMAND },
+      { "working-directory": "cli", run: "npm run pack:cli" },
+    ];
+    return docs;
+  };
+  it("accepts an unconditional native regression step reached through called CI", () => {
+    expect(nativeGated(fixture())).toBe(true);
+  });
+  it("rejects a removed native regression step", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs["cli-pack"].steps.splice(1, 1);
+    expect(nativeGated(docs)).toBe(false);
+  });
+  it.each(["if", "continue-on-error"])("rejects an optional native test step (%s)", flag => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs["cli-pack"].steps[1][flag] = flag === "if" ? false : true;
+    expect(nativeGated(docs)).toBe(false);
+  });
+  it("rejects the native command in a different directory", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs["cli-pack"].steps[1]["working-directory"] = "open-sse/identity/tls";
+    expect(nativeGated(docs)).toBe(false);
+  });
+  it("rejects swallowed native regression failures", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs["cli-pack"].steps[1].run += " || true";
+    expect(nativeGated(docs)).toBe(false);
+  });
+  it("requires native regressions before packaging", () => {
+    const docs = fixture(); const steps = docs[".github/workflows/ci.yml"].jobs["cli-pack"].steps;
+    [steps[1], steps[2]] = [steps[2], steps[1]];
+    expect(nativeGated(docs)).toBe(false);
+  });
+  it("requires the Go toolchain before native regressions", () => {
+    const docs = fixture(); docs[".github/workflows/ci.yml"].jobs["cli-pack"].steps.shift();
+    expect(nativeGated(docs)).toBe(false);
+  });
+  it("rejects publication detached from the native regression gate", () => {
+    const docs = fixture(); docs[".github/workflows/release.yml"].jobs["publish-npm"].needs = ["resolve-version"];
+    expect(nativeGated(docs)).toBe(false);
   });
 });
 
