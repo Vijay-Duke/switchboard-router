@@ -79,6 +79,7 @@ describe("/v1/models compatible-provider discovery", () => {
     [503, { data: [] }],
     [200, {}],
     [200, { data: { invalid: "shape" } }],
+    [200, { data: [{ id: 42 }, {}] }],
   ])("preserves the stored compatible snapshot for failed or invalid discovery (%i, %j)", async (status, catalog) => {
     savedCompatibleSnapshot();
     global.fetch = vi.fn().mockResolvedValue(Response.json(catalog, { status }));

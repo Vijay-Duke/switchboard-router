@@ -209,13 +209,16 @@ async function fetchCompatibleModelIds(connection, externalSignal = null) {
       const rawModels = parseOpenAIStyleModels(data);
       if (!rawModels) return null;
 
-      return Array.from(
+      const modelIds = Array.from(
         new Set(
           rawModels
             .map((model) => model?.id || model?.name || model?.model)
             .filter((modelId) => typeof modelId === "string" && modelId.trim() !== "")
         )
       );
+      // A nonempty payload with no usable model IDs is malformed discovery,
+      // not an authoritative declaration that this provider has no models.
+      return rawModels.length > 0 && modelIds.length === 0 ? null : modelIds;
     } finally {
       clearTimeout(timeoutId);
     }
