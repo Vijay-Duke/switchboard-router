@@ -228,6 +228,9 @@ Respond ONLY with the JSON object, no other text.`);
 // Share file handling between user attachments and tool outputs so the
 // OpenAI pivot cannot erase a PDF or text document returned by a tool.
 function convertFileToClaudeBlock(file) {
+  if (typeof file.file_url === "string" && /^https?:\/\//.test(file.file_url)) {
+    return { type: CLAUDE_BLOCK.DOCUMENT, source: { type: "url", url: file.file_url } };
+  }
   const fileData = file.file_data;
   const parsed = typeof fileData === "string" ? parseDataUri(fileData) : null;
   if (parsed && parsed.mimeType === "application/pdf") {

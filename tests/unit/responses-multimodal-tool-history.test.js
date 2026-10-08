@@ -99,4 +99,33 @@ describe("Responses multimodal tool history full pipeline", () => {
     expect(chat.messages.find(m => m.role === "tool").content).toBe(JSON.stringify(output));
   });
 
+  it("passes a Responses PDF file URL to Claude as a document URL", () => {
+    expect(toolResult(toClaude([{ type: "input_file", file_url: "https://example.com/evidence.pdf" }])).content)
+      .toEqual([{ type: "document", source: { type: "url", url: "https://example.com/evidence.pdf" } }]);
+  });
+  it("round trips an external PDF URL as file_url without disguising it as base64 data", () => {
+    const claude = toClaude([{ type: "input_file", file_url: "https://example.com/evidence.pdf" }]);
+    const responses = translateRequest(FORMATS.CLAUDE, FORMATS.OPENAI_RESPONSES, "gpt-4.1", claude, false);
+    expect(responses.input.find(item => item.type === "function_call_output").output).toEqual([
+      { type: "input_file", file_url: "https://example.com/evidence.pdf" },
+    ]);
+  });
+  it("keeps uploaded IDs distinct from data in the user-message pivot", () => {
+    const chat = translateRequest(FORMATS.OPENAI_RESPONSES, FORMATS.OPENAI, "gpt-4.1", {
+      input: [{ role: "user", content: [{ type: "input_file", file_id: "file_uploaded", filename: "evidence.pdf" }] }],
+    }, false);
+    expect(chat.messages[0].content).toEqual([
+      { type: "file", file: { file_id: "file_uploaded", filename: "evidence.pdf" } },
+    ]);
+  });
+  it("keeps strict chat URL tool results as explanatory text", () => {
+    const chat = translateRequest(FORMATS.CLAUDE, FORMATS.OPENAI, "gpt-4.1", { messages: [
+      { role: "assistant", content: [{ type: "tool_use", id: "call_media", name: "inspect", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "call_media", content: [
+        { type: "document", source: { type: "url", url: "https://example.com/evidence.pdf" } },
+      ] }] },
+    ] }, false);
+    expect(chat.messages.find(m => m.role === "tool").content).toEqual([{ type: "text", text: "[Document: https://example.com/evidence.pdf]" }]);
+  });
+
 });

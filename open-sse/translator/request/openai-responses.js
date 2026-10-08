@@ -10,6 +10,7 @@ import { normalizeResponsesInput } from "../formats/responsesApi.js";
 import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM } from "../schema/index.js";
 import { coerceSchemaNumericConstraints } from "../formats/openai.js";
 import { openaiToClaudeRequest } from "./openai-to-claude.js";
+import { claudeToOpenAIRequest } from "./claude-to-openai.js";
 
 // Responses API enforces max 64 chars on call_id (#393)
 const MAX_CALL_ID_LEN = 64;
@@ -36,13 +37,14 @@ function responsesContentToOpenAI(content) {
         return { type: OPENAI_BLOCK.IMAGE_URL, image_url: { url: "", detail: c.detail || "auto" } };
       }
       if (c.type === RESPONSES_ITEM.INPUT_FILE) {
-        const fileData = c.file_data || c.data || c.file_url || c.file_id || "";
+        const fileData = c.file_data || c.data;
         return {
           type: OPENAI_BLOCK.FILE,
           file: {
             ...(fileData ? { file_data: fileData } : {}),
             ...(c.filename ? { filename: c.filename } : {}),
-            ...(c.file_id && !c.file_data && !c.data ? { file_id: c.file_id } : {}),
+            ...(!fileData && c.file_url ? { file_url: c.file_url } : {}),
+            ...(!fileData && !c.file_url && c.file_id ? { file_id: c.file_id } : {}),
           },
         };
       }
@@ -80,6 +82,11 @@ export function openaiResponsesToOpenAIRequest(model, body, stream, credentials)
 
 export function openaiResponsesToClaudeRequest(model, body, stream, credentials) {
   return openaiToClaudeRequest(model, responsesToOpenAIPivot(model, body, stream, credentials, true), stream, credentials);
+}
+
+// URL document parts are native to Responses tool output, but not strict Chat.
+export function claudeToOpenAIResponsesRequest(model, body, stream, credentials) {
+  return openaiToOpenAIResponsesRequest(model, claudeToOpenAIRequest(model, body, stream, credentials, true), stream, credentials);
 }
 
 /**
@@ -506,4 +513,5 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
 // Register both directions
 register(FORMATS.OPENAI_RESPONSES, FORMATS.OPENAI, openaiResponsesToOpenAIRequest, null);
 register(FORMATS.OPENAI_RESPONSES, FORMATS.CLAUDE, openaiResponsesToClaudeRequest, null);
+register(FORMATS.CLAUDE, FORMATS.OPENAI_RESPONSES, claudeToOpenAIResponsesRequest, null);
 register(FORMATS.OPENAI, FORMATS.OPENAI_RESPONSES, openaiToOpenAIResponsesRequest, null);

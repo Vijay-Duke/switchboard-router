@@ -12,7 +12,7 @@ function stripAnthropicBillingHeader(text) {
 }
 
 // Convert Claude request to OpenAI format
-export function claudeToOpenAIRequest(model, body, stream) {
+export function claudeToOpenAIRequest(model, body, stream, credentials = null, preserveToolDocumentUrls = false) {
   const result = {
     model: model,
     messages: [],
@@ -60,7 +60,7 @@ export function claudeToOpenAIRequest(model, body, stream) {
   if (body.messages && Array.isArray(body.messages)) {
     for (let i = 0; i < body.messages.length; i++) {
       const msg = body.messages[i];
-      const converted = convertClaudeMessage(msg);
+      const converted = convertClaudeMessage(msg, preserveToolDocumentUrls);
       if (converted) {
         // Handle array of messages (multiple tool results)
         if (Array.isArray(converted)) {
@@ -160,7 +160,7 @@ function systemReminderText(content) {
 // Convert a Claude document block to an OpenAI part.
 // Base64 PDFs become file blocks (data-uri); anything else becomes a note so
 // the attachment is never silently erased on the pivot.
-function claudeDocumentToOpenAI(block) {
+function claudeDocumentToOpenAI(block, preserveUrl = false) {
   const source = block.source || {};
   if (source.type === "base64" && source.data) {
     return {
@@ -172,7 +172,9 @@ function claudeDocumentToOpenAI(block) {
     };
   }
   if (source.type === "url" && source.url) {
-    return { type: OPENAI_BLOCK.TEXT, text: `[Document: ${source.url}]` };
+    return preserveUrl
+      ? { type: OPENAI_BLOCK.FILE, file: { file_url: source.url } }
+      : { type: OPENAI_BLOCK.TEXT, text: `[Document: ${source.url}]` };
   }
   if (source.type === "text" && typeof source.data === "string") {
     return { type: OPENAI_BLOCK.TEXT, text: source.data };
@@ -181,7 +183,7 @@ function claudeDocumentToOpenAI(block) {
 }
 
 // Convert single Claude message - returns single message or array of messages
-function convertClaudeMessage(msg) {
+function convertClaudeMessage(msg, preserveToolDocumentUrls = false) {
   // Mid-conversation system message -> user (per Anthropic placement rules)
   if (msg.role === ROLE.SYSTEM) {
     const text = systemReminderText(msg.content);
@@ -280,7 +282,7 @@ function convertClaudeMessage(msg) {
                   });
                 }
               } else if (c.type === CLAUDE_BLOCK.DOCUMENT) {
-                imageParts.push(claudeDocumentToOpenAI(c));
+                imageParts.push(claudeDocumentToOpenAI(c, preserveToolDocumentUrls));
               }
             }
             if (imageParts.length > 0) {
