@@ -1,16 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const state = vi.hoisted(() => ({ pins: new Map(), connections: vi.fn(), set: vi.fn() }));
+const state = vi.hoisted(() => ({ pins: new Map(), connections: vi.fn(), set: vi.fn(), directReject: false }));
 vi.mock("@/lib/db/index.js", () => ({ getProviderConnections: state.connections }));
 vi.mock("@/lib/db/helpers/kvStore.js", () => ({ makeKv: () => ({
   get: async key => state.pins.get(key) || null,
-  set: (...args) => state.set(...args),
+  set: (...args) => state.directReject ? Promise.reject(new Error("synthetic persistence failure after disconnect")) : state.set(...args),
   getAll: async () => Object.fromEntries(state.pins), remove: async key => state.pins.delete(key),
 }) }));
 const context = { provider: "claude", model: "claude-opus-5-5", clientKeyId: "client_a", connectionId: "account_a" };
 const delta = { thread: { type: "continue", previous_message_id: "SECRET_MESSAGE_ID" } };
 const resolveArgs = { body: delta, ...context };
 const encoder = new TextEncoder();
-beforeEach(() => { state.pins.clear(); state.set.mockImplementation(async (key, value) => state.pins.set(key, value)); state.connections.mockResolvedValue([{ id: "account_a" }, { id: "account_b" }]); });
+beforeEach(() => { state.pins.clear(); state.directReject = false; state.set.mockImplementation(async (key, value) => state.pins.set(key, value)); state.connections.mockResolvedValue([{ id: "account_a" }, { id: "account_b" }]); });
 describe("durable native Claude thread ownership", () => {
   it("captures a split SSE message ID without changing a single byte, then pins across threadService reload", async () => {
     let threadService = await import("../../src/sse/services/claudeThreadOwnership.js");
@@ -82,4 +82,13 @@ it("forwards malformed JSON ID bytes without letting the ownership observer abor
   const response = threadService.bindClaudeThreadResponse(new Response(bytes, { headers: { "content-type": "application/json" } }), context);
   expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
   expect(state.pins.size).toBe(0);
+});
+
+it("consumes a rejected KV operation even when the client was already aborted", async () => {
+  const threadService = await import("../../src/sse/services/claudeThreadOwnership.js");
+  state.directReject = true;
+  const response = threadService.bindClaudeThreadResponse(Response.json({ id: "SECRET_MESSAGE_ID", content: [] }), { ...context, signal: AbortSignal.abort() });
+  expect(await response.json()).toEqual({ id: "SECRET_MESSAGE_ID", content: [] });
+  // An unhandled rejection here is a process-level failure caught by Vitest.
+  await new Promise(resolve => setTimeout(resolve, 0));
 });
