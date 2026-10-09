@@ -175,7 +175,7 @@ describe("RTK vault loop", () => {
     expect(response).toBeInstanceOf(Response);
   });
 
-  it("fails open to the first response if a later dispatch throws", async () => {
+  it("reports an explicit failure if a later dispatch throws", async () => {
     let calls = 0;
     const response = await loop.runVaultLoop({
       body: { messages: [{ role: "user", content: "find it" }], tools: [] },
@@ -188,7 +188,8 @@ describe("RTK vault loop", () => {
       },
     });
     expect(response).toBeInstanceOf(Response);
-    await expect(response.json()).resolves.toMatchObject({ choices: expect.any(Array) });
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({ error: { type: "api_error" } });
   });
 
   it("repairs only errored inbound vault results from real vault storage", async () => {
@@ -309,4 +310,23 @@ describe("RTK vault loop", () => {
     expect(plain.kind).toBe("none");
     await expect(plain.replay.text()).resolves.toBe(raw);
   });
+});
+
+it.each(["claude", "openai"])("reports a retryable error after a later %s vault dispatch fails", async wire => {
+  let calls = 0;
+  const raw = wire === "claude"
+    ? 'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call_retry","name":"sb_vault_search","input":{"query":"x"}}}\n\nevent: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n'
+    : 'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_retry","type":"function","function":{"name":"sb_vault_search","arguments":"{\\\"query\\\":\\\"x\\\"}"}}]}}]}\n\ndata: [DONE]\n\n';
+  const response = await loop.runVaultLoop({
+    body: { messages: [{ role: "user", content: "find it" }], tools: [] },
+    wire, conversationId: "conversation-a",
+    dispatch: async () => {
+      if (++calls === 1) return sseResponse([raw]);
+      throw new Error("synthetic later dispatch failure");
+    },
+  });
+  expect(calls).toBe(2);
+  expect(response.bodyUsed).toBe(false);
+  expect(response.status).toBe(502);
+  expect(await response.json()).toMatchObject({ error: { type: "api_error", message: "Vault processing failed." } });
 });

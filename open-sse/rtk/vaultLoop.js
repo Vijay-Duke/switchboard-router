@@ -5,10 +5,18 @@ import { byteSafePrefix } from "../utils/truncate.js";
 
 export const MAX_VAULT_TURNS = 5;
 export const DEFAULT_SEARCH_LIMIT = 5;
-export const STREAM_BUFFER_IDLE_MS = 20_000;
+// Match the native first-progress ceiling; its tighter model-progress watchdog
+// still owns stalled thinking/text. Vault classification must allow healthy
+// long reasoning in tool-enabled conversations before retrieval is known.
+export const STREAM_BUFFER_IDLE_MS = 120_000;
+export const MAX_VAULT_LOOP_MS = 600_000;
+export const MAX_VAULT_INTERNAL_MS = 120_000;
+export const MAX_VAULT_BUFFER_BYTES = 8 * 1024 * 1024;
+export const MAX_VAULT_SEARCHES = 100;
+export const VAULT_SEARCH_TIMEOUT_MS = 5_000;
 
 const UTF8_ENCODER = new TextEncoder();
-const VAULT_ERROR_RE = /unknown tool|no tool named|tool not found|not a (valid|recognized) tool|is not available|error/i;
+const VAULT_ERROR_RE = /^\s*(?:<tool_use_error>\s*)?(?:Error:\s*)?(?:unknown tool|no (?:such )?tool (?:named|available)|tool not found|not a (?:valid|recognized) tool)[^\n]{0,80}sb_vault_search/i;
 const MAX_REPAIR_MESSAGES = 1_000;
 const MAX_REPAIR_CALLS = 100;
 
@@ -61,18 +69,11 @@ function cleanHeaders(headers, stream = false) {
   return next;
 }
 
-function jsonReplay(response, data) {
-  return new Response(JSON.stringify(data), {
-    status: response.status,
-    statusText: response.statusText,
-    headers: cleanHeaders(response.headers),
-  });
-}
-
 function streamReplay(response, text) {
+  if ([204, 205, 304].includes(response.status)) return new Response(null, { status: response.status, statusText: response.statusText, headers: cleanHeaders(response.headers, true) });
   // Vault tool conversations opt into full buffering so classification remains
   // simple and correct; normal streaming requests never take this path.
-  const bytes = UTF8_ENCODER.encode(text);
+  const bytes = typeof text === "string" ? UTF8_ENCODER.encode(text) : text;
   const body = new ReadableStream({
     start(controller) {
       controller.enqueue(bytes);
@@ -89,14 +90,15 @@ function streamReplay(response, text) {
 function parseArgs(value) {
   try {
     const parsed = JSON.parse(value || "{}");
-    return parsed && typeof parsed === "object" ? parsed : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
 function toVaultCall(callId, args) {
-  if (typeof callId !== "string" || !callId) return null;
+  if (typeof callId !== "string" || !callId || typeof args?.query !== "string"
+    || (args.vault_id != null && typeof args.vault_id !== "string")) return null;
   return { callId, query: args?.query, vaultId: args?.vault_id };
 }
 
@@ -108,7 +110,7 @@ function buildCallResult(calls, assistantRaw) {
   // If ANY vault call lacked an id (toVaultCall → null), forward the whole turn
   // untouched rather than intercept a subset — appending results for only some
   // ids would leave the id-less tool_call orphaned on re-dispatch.
-  if (calls.some((call) => !call)) return null;
+  if (calls.some((call) => !call) || new Set(calls.map(call => call.callId)).size !== calls.length) return null;
   const first = calls[0];
   return { kind: "call", callId: first.callId, query: first.query, vaultId: first.vaultId, calls, assistantRaw };
 }
@@ -116,7 +118,8 @@ function buildCallResult(calls, assistantRaw) {
 function classifyOpenAiJson(data, replay) {
   // With n>1 choices, intercepting choice 0 would silently discard the rest.
   if (Array.isArray(data?.choices) && data.choices.length > 1) return { kind: "none", replay };
-  const message = data?.choices?.[0]?.message;
+  const choice = data?.choices?.[0];
+  const message = choice?.message;
   const calls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
   const vaultCalls = [];
   let hasOtherCall = false;
@@ -131,7 +134,14 @@ function classifyOpenAiJson(data, replay) {
   // A turn mixing vault calls with any other tool call (or user-facing text) must
   // be forwarded untouched — consuming it would strand the sibling call. Inbound
   // repair fixes the vault call's client-side error on the next request.
-  if (hasOtherCall) return { kind: "mixed", replay };
+  if (hasOtherCall || data?.error
+    || (choice?.finish_reason != null && !["stop", "tool_calls", "function_call"].includes(choice.finish_reason))
+    || (message && Object.keys(message).some(key => {
+      if (["role", "content", "tool_calls"].includes(key)) return false;
+      if (key === "refusal" && message[key] == null) return false;
+      if (key === "annotations" && Array.isArray(message[key]) && message[key].length === 0) return false;
+      return true;
+    }))) return { kind: "mixed", replay };
   const hasText = typeof message?.content === "string" && !!message.content.trim();
   if (hasText) return { kind: "mixed", replay };
   return buildCallResult(vaultCalls, message) || { kind: "none", replay };
@@ -154,18 +164,19 @@ function classifyClaudeJson(data, replay) {
     if (block?.type === "text" && typeof block.text === "string" && block.text.trim()) hasText = true;
   }
   if (vaultCalls.length === 0) return { kind: "none", replay };
-  if (hasOtherCall || hasText) return { kind: "mixed", replay };
-  return buildCallResult(vaultCalls, blocks) || { kind: "none", replay };
+  if (hasOtherCall || hasText || data?.error || (data?.stop_reason != null && data.stop_reason !== "tool_use")) return { kind: "mixed", replay };
+  return buildCallResult(vaultCalls, blocks.filter(block => block?.type !== "text")) || { kind: "none", replay };
 }
 
 function sseData(text) {
   const values = [];
-  const lines = text.split(/\r?\n/);
-  for (let index = 0; index < lines.length; index += 1) {
-    if (!lines[index].startsWith("data:")) continue;
-    const value = lines[index].slice(5).trim();
-    if (!value || value === "[DONE]") continue;
-    try { values.push(JSON.parse(value)); } catch {}
+  values.hasDone = false;
+  values.invalid = false;
+  for (const frame of text.split(/\r?\n\r?\n/)) {
+    const data = frame.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).trimStart()).join("\n").trim();
+    if (!data) continue;
+    if (data === "[DONE]") { values.hasDone = true; continue; }
+    try { values.push(JSON.parse(data)); } catch { values.invalid = true; }
   }
   return values;
 }
@@ -175,20 +186,39 @@ function classifyOpenAiSse(text, replay) {
   let hasText = false;
   let multiChoice = false;
   const events = sseData(text);
+  let unsafe = events.invalid;
+  let terminal = events.hasDone;
   for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
+    if (events[eventIndex]?.error) unsafe = true;
     const choices = Array.isArray(events[eventIndex]?.choices) ? events[eventIndex].choices : [];
     // n>1 streaming: a chunk carrying multiple choices, or any choice past
     // index 0, means other candidates exist that interception would drop.
     if (choices.length > 1) multiChoice = true;
     const choice = choices[0];
     if (Number.isInteger(choice?.index) && choice.index > 0) multiChoice = true;
+    if (choice?.finish_reason != null) {
+      terminal = true;
+      if (!["stop", "tool_calls", "function_call"].includes(choice.finish_reason)) unsafe = true;
+    }
     const delta = choice?.delta;
     if (!delta) continue;
+    if (Object.keys(delta).some(key => !["role", "content", "tool_calls"].includes(key))) unsafe = true;
     if (typeof delta.content === "string" && delta.content.trim()) hasText = true;
     const toolCalls = Array.isArray(delta.tool_calls) ? delta.tool_calls : [];
     for (let callIndex = 0; callIndex < toolCalls.length; callIndex += 1) {
       const part = toolCalls[callIndex];
-      const index = Number.isInteger(part?.index) ? part.index : callIndex;
+      let index = part?.index;
+      if (!Number.isInteger(index)) {
+        if (!part?.id) { unsafe = true; continue; }
+        index = [...calls.entries()].find(([, value]) => value.id === part.id)?.[0];
+        if (index === undefined) {
+          if (calls.size >= MAX_VAULT_SEARCHES) { unsafe = true; continue; }
+          index = calls.size ? Math.max(...calls.keys()) + 1 : 0;
+        }
+      }
+      if (!calls.has(index) && calls.size >= MAX_VAULT_SEARCHES) { unsafe = true; continue; }
+      const previous = calls.get(index);
+      if (previous?.id && part?.id && previous.id !== part.id) unsafe = true;
       const existing = calls.get(index) || { id: "", name: "", arguments: "" };
       if (typeof part?.id === "string") existing.id = part.id;
       if (typeof part?.function?.name === "string") existing.name = part.function.name;
@@ -211,7 +241,7 @@ function classifyOpenAiSse(text, replay) {
     }
   }
   if (vaultCalls.length === 0) return { kind: "none", replay };
-  if (multiChoice || hasOtherCall || hasText) return { kind: "mixed", replay };
+  if (unsafe || !terminal || multiChoice || hasOtherCall || hasText) return { kind: "mixed", replay };
   const assistantRaw = { role: "assistant", content: null, tool_calls: rawToolCalls };
   return buildCallResult(vaultCalls, assistantRaw) || { kind: "none", replay };
 }
@@ -219,12 +249,17 @@ function classifyOpenAiSse(text, replay) {
 function classifyClaudeSse(text, replay) {
   const blocks = new Map();
   let hasText = false;
-  let unsafe = false;
-  for (const event of sseData(text)) {
+  const parsedEvents = sseData(text);
+  let unsafe = parsedEvents.invalid;
+  let terminal = parsedEvents.hasDone;
+  for (const event of parsedEvents) {
+    if (event?.type === "message_stop") terminal = true;
+    if (event?.type === "message_delta" && event.delta?.stop_reason && event.delta.stop_reason !== "tool_use") unsafe = true;
     if (event?.type === "error") unsafe = true;
     const index = Number.isInteger(event?.index) ? event.index : 0;
     const block = event?.content_block;
     if (event?.type === "content_block_start" && block) {
+      if (blocks.size >= MAX_VAULT_SEARCHES + 20) { unsafe = true; continue; }
       if (!["tool_use", "thinking", "redacted_thinking", "text"].includes(block.type)) unsafe = true;
       blocks.set(index, { ...block, partialInput: "" });
       if (block.type === "text" && block.text?.trim()) hasText = true;
@@ -258,7 +293,7 @@ function classifyClaudeSse(text, replay) {
     rawBlocks.push(raw);
   }
   if (vaultCalls.length === 0) return { kind: "none", replay };
-  if (unsafe || hasText) return { kind: "mixed", replay };
+  if (unsafe || !terminal || hasText) return { kind: "mixed", replay };
   return buildCallResult(vaultCalls, rawBlocks) || { kind: "none", replay };
 }
 
@@ -274,57 +309,85 @@ function classifySse(text, wire, replay) {
   return { kind: "none", replay };
 }
 
-async function readWithIdleTimeout(reader) {
-  let timer = null;
+async function readWithIdleTimeout(reader, signal, timeoutMs) {
+  let timer, onAbort;
   try {
+    if (signal?.aborted) throw new Error("vault operation aborted");
     const timed = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error("vault stream idle")), STREAM_BUFFER_IDLE_MS);
+      timer = setTimeout(() => reject(new Error("vault stream idle or deadline exceeded")), timeoutMs);
+      onAbort = () => reject(new Error("vault operation aborted"));
+      signal?.addEventListener("abort", onAbort, { once: true });
     });
     return await Promise.race([reader.read(), timed]);
   } finally {
-    if (timer) clearTimeout(timer);
+    clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
   }
 }
 
-async function bufferSse(response) {
-  // Consume the SSE body directly and replay buffered bytes. Cancelling only
-  // one branch of Response.clone() waits for its unread tee sibling forever.
+async function bufferBody(response, { signal } = {}) {
+  // Consume once. A cancelled clone waits for its unread tee sibling forever.
   const reader = response.body?.getReader();
-  if (!reader) throw new Error("missing stream body");
-  const decoder = new TextDecoder();
-  let text = "";
+  if (!reader) return { text: "", bytes: new Uint8Array() };
+  const chunks = [];
+  let size = 0;
+  const deadline = Date.now() + MAX_VAULT_LOOP_MS;
   try {
     for (;;) {
-      const next = await readWithIdleTimeout(reader);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error("vault buffer deadline exceeded");
+      const next = await readWithIdleTimeout(reader, signal, Math.min(STREAM_BUFFER_IDLE_MS, remaining));
       if (next.done) break;
-      text += decoder.decode(next.value, { stream: true });
+      size += next.value.byteLength;
+      if (size > MAX_VAULT_BUFFER_BYTES) throw new Error("vault buffer size exceeded");
+      chunks.push(next.value);
     }
-    return text + decoder.decode();
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return { bytes };
   } catch (error) {
     try { Promise.resolve(reader.cancel(error)).catch(() => {}); } catch {}
     throw error;
+  } finally {
+    try { reader.releaseLock(); } catch {}
   }
 }
 
-export async function classifyResponse(response, wire) {
+export async function classifyResponse(response, wire, { signal } = {}) {
+  if (!response.ok) return { kind: "none", replay: response };
   const type = response?.headers?.get("content-type") || "";
-  let bufferedText;
+  let buffered;
   try {
+    buffered = await bufferBody(response, { signal });
+    const replay = streamReplay(response, buffered.bytes);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(buffered.bytes);
     if (!type.toLowerCase().includes("text/event-stream")) {
-      const data = await response.clone().json();
-      return classifyData(data, wire, jsonReplay(response, data));
+      const data = JSON.parse(text);
+      return { ...classifyData(data, wire, replay), replay };
     }
-    bufferedText = await bufferSse(response);
-    return classifySse(bufferedText, wire, streamReplay(response, bufferedText));
+    // Every classification, including pure calls, retains its readable fallback.
+    return { ...classifySse(text, wire, replay), replay };
   } catch {
-    if (type.toLowerCase().includes("text/event-stream")) {
-      if (bufferedText !== undefined) return { kind: "none", replay: streamReplay(response, bufferedText) };
-      // The buffered body is already consumed. Return a real failure instead
-      // of an unreadable/partial successful response; native clients can retry.
-      const error = { type: "api_error", message: "Vault upstream stream did not complete." };
-      return { kind: "none", replay: Response.json(wire === "claude" ? { type: "error", error } : { error }, { status: 502 }) };
-    }
-    return { kind: "none", replay: response };
+    if (buffered) return { kind: "none", replay: streamReplay(response, buffered.bytes) };
+    const error = { type: "api_error", message: "Vault upstream stream did not complete." };
+    return { kind: "none", replay: Response.json(wire === "claude" ? { type: "error", error } : { error }, { status: signal?.aborted ? 499 : 502 }) };
+  }
+}
+
+async function boundedSearch(args, { signal, timeoutMs = VAULT_SEARCH_TIMEOUT_MS } = {}) {
+  let timer, onAbort;
+  try {
+    if (signal?.aborted) throw new Error("vault operation aborted");
+    const timed = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("vault search deadline exceeded")), timeoutMs);
+      onAbort = () => reject(new Error("vault operation aborted"));
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+    return await Promise.race([searchVault(args), timed]);
+  } finally {
+    clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
   }
 }
 
@@ -390,6 +453,7 @@ function errorContent(value) {
 }
 
 function isToolError(result, content) {
+  if (result?.is_error === false || result?.status === "success") return false;
   return result?.is_error === true || result?.status === "error" || VAULT_ERROR_RE.test(errorContent(content));
 }
 
@@ -436,50 +500,96 @@ function findClaudeResult(messages, start, id) {
   return null;
 }
 
-export async function repairInboundVaultResults(body, { conversationId, limit = DEFAULT_SEARCH_LIMIT } = {}) {
+export async function repairInboundVaultResults(body, { conversationId, limit = DEFAULT_SEARCH_LIMIT, signal } = {}) {
   try {
     const messages = Array.isArray(body?.messages) ? body.messages : null;
     if (!messages || !conversationId) return 0;
     const replacements = [];
+    let searches = 0;
+    const deadline = Date.now() + VAULT_SEARCH_TIMEOUT_MS;
     for (let index = 0; index < messages.length && index < MAX_REPAIR_MESSAGES; index += 1) {
+      if (signal?.aborted || searches >= MAX_REPAIR_CALLS || Date.now() >= deadline) break;
       const message = messages[index];
       const calls = [...openAiVaultCalls(message), ...claudeVaultCalls(message)];
       for (let callIndex = 0; callIndex < calls.length; callIndex += 1) {
         const call = calls[callIndex];
+        if (signal?.aborted || searches >= MAX_REPAIR_CALLS || Date.now() >= deadline) break;
+        if (!toVaultCall(call.id, call.args)) continue;
         const found = findOpenAiResult(messages, index + 1, call.id) || findClaudeResult(messages, index + 1, call.id);
         if (!found || !isToolError(found.target, found.content)) continue;
-        const results = await searchVault({ conversationId, query: call.args?.query, vaultId: call.args?.vault_id, limit });
+        searches++;
+        const results = await boundedSearch({ conversationId, query: call.args.query, vaultId: call.args.vault_id, limit }, { signal, timeoutMs: Math.max(1, deadline - Date.now()) });
         replacements.push({ target: found.target, content: renderVaultResult(results) });
       }
     }
-    for (let index = 0; index < replacements.length; index += 1) replacements[index].target.content = replacements[index].content;
+    for (const replacement of replacements) {
+      replacement.target.content = replacement.content;
+      delete replacement.target.is_error;
+      delete replacement.target.status;
+    }
     return replacements.length;
   } catch {
     return 0;
   }
 }
 
-export async function runVaultLoop({ dispatch, body, wire, conversationId, searchLimit = DEFAULT_SEARCH_LIMIT, log = null }) {
-  let firstResponse = null;
-  let firstFallback = null;
+export async function runVaultLoop({ dispatch, body, wire, conversationId, searchLimit = DEFAULT_SEARCH_LIMIT, log = null, signal }) {
   let current = body;
   let vaultCalls = 0;
+  const deadlineController = new AbortController();
+  let timer = setTimeout(() => deadlineController.abort(), MAX_VAULT_LOOP_MS);
+  const requestDeadline = Date.now() + MAX_VAULT_LOOP_MS;
+  let retrievalStarted = false;
+  const loopSignal = signal ? AbortSignal.any([signal, deadlineController.signal]) : deadlineController.signal;
+  const dispatchBounded = async (value, options) => {
+    let onAbort;
+    const pending = Promise.resolve().then(() => {
+      if (loopSignal.aborted) throw new Error("vault operation aborted");
+      return dispatch(value, { ...options, signal: loopSignal });
+    });
+    // A late result from a provider ignoring cancellation must not hold a body.
+    pending.then(response => {
+      if (loopSignal.aborted) {
+        try { Promise.resolve(response?.body?.cancel?.()).catch(() => {}); } catch {}
+      }
+    }, () => {});
+    try {
+      const cancelled = new Promise((_, reject) => {
+        onAbort = () => reject(new Error("vault operation aborted"));
+        if (loopSignal.aborted) onAbort();
+        else loopSignal.addEventListener("abort", onAbort, { once: true });
+      });
+      return await Promise.race([pending, cancelled]);
+    } finally { if (onAbort) loopSignal.removeEventListener("abort", onAbort); }
+  };
+  const failure = (message, status = 502) => {
+    const error = { type: "api_error", message };
+    return Response.json(wire === "claude" ? { type: "error", error } : { error }, { status });
+  };
+  const aborted = () => failure(signal?.aborted ? "Request aborted" : "Vault processing deadline exceeded.", signal?.aborted ? 499 : 502);
   try {
     for (let turn = 0; turn < MAX_VAULT_TURNS; turn += 1) {
-      const response = await dispatch(current, { vaultInternal: turn > 0 });
-      if (!firstResponse) firstResponse = response;
-      const classified = await classifyResponse(response, wire);
-      if (!firstFallback) firstFallback = classified.replay || firstResponse;
+      if (loopSignal.aborted) return aborted();
+      const response = await dispatchBounded(current, { vaultInternal: turn > 0, signal: loopSignal });
+      const classified = await classifyResponse(response, wire, { signal: loopSignal });
+      if (loopSignal.aborted) return aborted();
       if (classified.kind !== "call") {
         if (vaultCalls > 0) log?.info?.("VAULT", `served ${vaultCalls} vault search(es)`);
         return classified.replay || response;
+      }
+      if (!retrievalStarted) {
+        retrievalStarted = true;
+        clearTimeout(timer);
+        timer = setTimeout(() => deadlineController.abort(), Math.max(1, Math.min(MAX_VAULT_INTERNAL_MS, requestDeadline - Date.now())));
       }
       // Execute EVERY vault call in the turn (models emit parallel calls), one
       // capped result each, in order. The 5-turn bound is on turns, not calls.
       const turnCalls = Array.isArray(classified.calls) ? classified.calls : [];
       const resultTexts = [];
       for (let index = 0; index < turnCalls.length; index += 1) {
-        const results = await searchVault({ conversationId, query: turnCalls[index].query, vaultId: turnCalls[index].vaultId, limit: searchLimit });
+        if (loopSignal.aborted) return aborted();
+        if (vaultCalls >= MAX_VAULT_SEARCHES) return failure("Vault search budget exceeded.");
+        const results = await boundedSearch({ conversationId, query: turnCalls[index].query, vaultId: turnCalls[index].vaultId, limit: searchLimit }, { signal: loopSignal });
         resultTexts.push(renderVaultResult(results));
         vaultCalls += 1;
         recordVaultHit();
@@ -487,10 +597,10 @@ export async function runVaultLoop({ dispatch, body, wire, conversationId, searc
       current = appendVaultTurn(current, wire, classified, resultTexts);
     }
     // At the cap, make one final bounded dispatch and forward it as-is.
-    return await dispatch(current, { vaultInternal: false });
+    if (loopSignal.aborted) return aborted();
+    return await dispatchBounded(current, { vaultInternal: false, signal: loopSignal });
   } catch {
-    if (firstFallback) return firstFallback;
-    if (firstResponse) return firstResponse;
-    try { return await dispatch(body, { vaultInternal: false }); } catch { return new Response(null, { status: 502 }); }
-  }
+    if (loopSignal.aborted) return aborted();
+    return failure("Vault processing failed.");
+  } finally { clearTimeout(timer); }
 }

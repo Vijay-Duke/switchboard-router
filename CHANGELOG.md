@@ -1,6 +1,9 @@
-# v0.9.47 (2026-10-09)
+# v0.9.48 (2026-10-09)
 
 - Bound vault-stream idle failures without awaiting a hung cancellation or an unread cloned stream branch. Interrupted buffered responses return an explicit retryable error.
+- Return explicit retryable errors for failed vault searches and internal dispatches, preserving provider error statuses and Retry-After without hidden retries.
+- Bound vault buffering and searches by total time, bytes and call count, allowing healthy long reasoning before the shorter retrieval deadline; stop promptly on client cancellation. Reject malformed/truncated calls and preserve unknown reasoning or tool blocks unchanged.
+- Repair only genuine vault tool errors using validated arguments and stored results; successful log content is retained.
 - Preserve signed and redacted thinking when replaying streamed vault tool turns. Forward provider-managed and unfamiliar mixed tool blocks unchanged instead of intercepting a subset.
 - Rebind translated Claude OAuth requests to verified account identity using the resolved session identifier.
 - Preserve bounded, content-free tool-history diagnostics across request truncation, including inbound, normalization, saver stages, and the actual dispatched body. No tool results are fabricated.

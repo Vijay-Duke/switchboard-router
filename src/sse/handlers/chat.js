@@ -528,7 +528,7 @@ export async function handleChat(request, clientRawRequest = null) {
         allowNativeClaudeOAuth: true,
       });
     }
-    await repairInboundVaultResults(body, { conversationId });
+    await repairInboundVaultResults(body, { conversationId, signal: request?.signal });
     injectVaultTool(body, wire);
     const searchLimit = Number(settings.tokenSaver?.vaultSearchLimit ?? 5);
     return await runVaultLoop({
@@ -538,10 +538,11 @@ export async function handleChat(request, clientRawRequest = null) {
         clientRawRequest,
         request,
         clientKeyId,
-        { signal: request?.signal || null, preferredConnectionId, strictPreferredConnection, allowNativeClaudeOAuth: true, vaultInternal: !!options?.vaultInternal, vaultStore: true, vaultConversationId: conversationId },
+        { signal: options?.signal || request?.signal || null, preferredConnectionId, strictPreferredConnection, allowNativeClaudeOAuth: true, vaultInternal: !!options?.vaultInternal, vaultStore: true, vaultConversationId: conversationId },
       ),
       body,
       wire,
+      signal: request?.signal,
       conversationId,
       searchLimit,
       log,
