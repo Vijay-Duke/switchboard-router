@@ -117,3 +117,78 @@ it("finalizes an already-disconnected request instead of retaining a pending rec
   expect(failed).toHaveBeenCalledTimes(1);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it.each([false, true])("bounds a native Claude stream kept alive only by pings (content started: %s)", async (started) => {
+  vi.useFakeTimers();
+  const records = [];
+  setOpenSseDeps({ saveRequestDetail: async (d) => { records.push(d); } });
+  let source;
+  const cancel = vi.fn();
+  const upstream = new ReadableStream({ start(c) {
+    source = c;
+    c.enqueue(enc.encode(frame({ type: "message_start", message: { usage: { input_tokens: 1 } } })));
+    if (started) c.enqueue(enc.encode(frame({ type: "content_block_delta", delta: { type: "text_delta", text: "partial" } })));
+  }, cancel });
+  const ctx = { provider: "claude", model: "test", body: { messages: [] }, stream: true, requestStartTime: Date.now(), sourceFormat: "claude", targetFormat: "claude", firstProgressTimeoutMs: 50, progressStallTimeoutMs: 50 };
+  const result = await handleStreamingResponse({ ...ctx, ...buildOnStreamComplete(ctx), streamController: createStreamController({ provider: "claude" }), providerResponse: new Response(upstream, { headers: { "content-type": "text/event-stream" } }) });
+  let text;
+  result.response.text().then(value => { text = value; });
+  for (let i = 0; i < 6; i++) {
+    source.enqueue(enc.encode(frame({ type: "ping" })));
+    await vi.advanceTimersByTimeAsync(10);
+    if (text !== undefined) break;
+  }
+  expect(text, "pings must not extend a model progress deadline").toBeDefined();
+  expect(text).toContain("event: error");
+  expect(text).not.toContain("event: message_stop");
+  expect(records.map(r => r.status)).toEqual(["pending", "error"]);
+  expect(records[1].response.error).toMatch(/progress timeout/);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(cancel).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+  setOpenSseDeps({ saveRequestDetail: async () => {} });
+});
+
+it("lets continuing native Claude thinking pass the progress deadline and complete", async () => {
+  vi.useFakeTimers();
+  const records = [];
+  setOpenSseDeps({ saveRequestDetail: async d => { records.push(d); } });
+  let source;
+  const upstream = new ReadableStream({ start(c) { source = c; c.enqueue(enc.encode(frame({ type: "message_start" }))); } });
+  const ctx = { provider: "claude", model: "test", body: { messages: [] }, stream: true, requestStartTime: Date.now(), sourceFormat: "claude", targetFormat: "claude", firstProgressTimeoutMs: 50, progressStallTimeoutMs: 50 };
+  const result = await handleStreamingResponse({ ...ctx, ...buildOnStreamComplete(ctx), streamController: createStreamController({ provider: "claude" }), providerResponse: new Response(upstream, { headers: { "content-type": "text/event-stream" } }) });
+  const text = result.response.text();
+  for (let i = 0; i < 5; i++) {
+    source.enqueue(enc.encode(frame({ type: "content_block_delta", delta: { type: "thinking_delta", thinking: "reasoning" } })));
+    await vi.advanceTimersByTimeAsync(40);
+  }
+  source.enqueue(enc.encode(frame({ type: "message_delta", usage: { output_tokens: 1 } }) + frame({ type: "message_stop" })));
+  expect(await text).not.toContain("event: error");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(records.map(r => r.status)).toEqual(["pending", "success"]);
+  expect(vi.getTimerCount()).toBe(0);
+  setOpenSseDeps({ saveRequestDetail: async () => {} });
+});
+
+it("finalizes caller cancellation while downstream is not reading and upstream cleanup hangs", async () => {
+  vi.useFakeTimers();
+  const records = [];
+  setOpenSseDeps({ saveRequestDetail: async d => { records.push(d); } });
+  const upstream = new ReadableStream({ start(c) {
+    c.enqueue(enc.encode(frame({ type: "message_start" })));
+    c.enqueue(enc.encode(frame({ type: "content_block_delta", delta: { type: "text_delta", text: "partial" } })));
+  }, cancel() { return new Promise(() => {}); } });
+  const ctrl = createStreamController({ provider: "claude" });
+  const ctx = { provider: "claude", model: "test", body: { messages: [] }, stream: true, requestStartTime: Date.now(), sourceFormat: "claude", targetFormat: "claude" };
+  const result = await handleStreamingResponse({ ...ctx, ...buildOnStreamComplete(ctx), streamController: ctrl, providerResponse: new Response(upstream, { headers: { "content-type": "text/event-stream" } }) });
+  const reader = result.response.body.getReader();
+  await reader.read();
+  await vi.advanceTimersByTimeAsync(0);
+  ctrl.abort();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(records.map(r => r.status)).toEqual(["pending", "error"]);
+  expect(ctrl.isConnected()).toBe(false);
+  expect(vi.getTimerCount()).toBe(0);
+  await reader.cancel();
+  setOpenSseDeps({ saveRequestDetail: async () => {} });
+});

@@ -109,7 +109,15 @@ export function createDisconnectAwareStream(transformStream, streamController, o
   let tail = "";
   const decoder = new TextDecoder();
   let pendingRead;
-  const abortRead = () => pendingRead?.({ aborted: true });
+  const abortRead = () => {
+    // Persist cancellation even if the downstream is no longer reading. It
+    // must not leave a request pending until the next pull happens to arrive.
+    const error = streamController.signal?.reason || new Error("stream aborted before completion");
+    onStreamFailure?.(error);
+    if (streamController.isConnected()) streamController.handleError?.(error);
+    pendingRead?.({ aborted: true });
+    cancelUpstream();
+  };
   streamController.signal?.addEventListener("abort", abortRead, { once: true });
   const cleanup = () => streamController.signal?.removeEventListener("abort", abortRead);
   const read = () => new Promise((resolve, reject) => {
@@ -249,12 +257,22 @@ export function pipeWithDisconnect(
   onAbortTerminal = null,
   stallTimeoutMs = STREAM_STALL_TIMEOUT_MS,
   firstChunkTimeoutMs = STREAM_FIRST_CHUNK_TIMEOUT_MS,
-  onStreamFailure = null
+  onStreamFailure = null,
+  progressWatchdog = null
 ) {
   // Own the client read deadline even when an upstream adapter ignores abort.
   const pipeAbort = new AbortController();
+  let failureReported = false;
+  const reportFailure = error => {
+    if (failureReported) return;
+    failureReported = true;
+    onStreamFailure?.(error);
+  };
   let stallInterval = null;
   let firstChunkTimer = null;
+  let progressInterval = null;
+  let progressSeen = false;
+  let lastProgressAt = Date.now();
   let chunkCount = 0;
   let totalBytes = 0;
   let lastChunkAt = Date.now();
@@ -266,7 +284,11 @@ export function pipeWithDisconnect(
   const clearFirstChunk = () => {
     if (firstChunkTimer) { clearTimeout(firstChunkTimer); firstChunkTimer = null; }
   };
-  const clearAllTimers = () => { clearStall(); clearFirstChunk(); };
+  const clearProgress = () => {
+    if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+    if (progressWatchdog) progressWatchdog.record = null;
+  };
+  const clearAllTimers = () => { clearStall(); clearFirstChunk(); clearProgress(); };
   // One interval per stream: transform only refreshes lastChunkAt, so hot
   // chunks cost no timer ops. The interval disarms itself when it fires.
   const armStall = () => {
@@ -291,10 +313,29 @@ export function pipeWithDisconnect(
     startTime: streamController.startTime,
     isConnected: () => streamController.isConnected(),
     handleComplete: () => { dbg(tag, `complete | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearAllTimers(); streamController.handleComplete(); },
-    handleError: (e) => { dbg(tag, `error: ${e?.message} | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearAllTimers(); streamController.handleError(e); pipeAbort.abort(e); },
+    handleError: (e) => { dbg(tag, `error: ${e?.message} | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearAllTimers(); reportFailure(e); streamController.handleError(e); pipeAbort.abort(e); },
     handleDisconnect: (r) => { dbg(tag, `disconnect: ${r} | chunks=${chunkCount} | bytes=${totalBytes} | dur=${Date.now() - t0}ms`); clearAllTimers(); streamController.handleDisconnect(r); },
     abort: () => { clearAllTimers(); pipeAbort.abort(); streamController.abort(); }
   };
+
+  if (progressWatchdog) {
+    const firstTimeout = progressWatchdog.firstProgressTimeoutMs;
+    const progressTimeout = progressWatchdog.stallTimeoutMs;
+    progressWatchdog.record = type => {
+      if (type === "message_stop" || type === "error") return clearProgress();
+      if (!["content_block_start", "content_block_delta", "content_block_stop", "message_delta"].includes(type)) return;
+      progressSeen = true;
+      lastProgressAt = Date.now();
+    };
+    const intervals = [firstTimeout, progressTimeout, 5000].filter(value => value > 0);
+    progressInterval = setInterval(() => {
+      const timeout = progressSeen ? progressTimeout : firstTimeout;
+      if (timeout > 0 && Date.now() - lastProgressAt >= timeout) {
+        wrappedController.handleError(new Error(progressSeen ? "stream model progress timeout" : "stream first model progress timeout"));
+        wrappedController.abort();
+      }
+    }, Math.min(...intervals));
+  }
 
   // M4: separate first-byte timer (prefill) vs inter-chunk stall
   if (firstChunkTimeoutMs > 0) {
@@ -342,7 +383,7 @@ export function pipeWithDisconnect(
       { readable: providerBody, writable: { getWriter: () => ({ abort: () => Promise.resolve() }) } },
       wrappedController,
       onAbortTerminal,
-      onStreamFailure
+      reportFailure
     );
   }
   const providerBody = providerResponse.body;
@@ -354,6 +395,6 @@ export function pipeWithDisconnect(
     { readable: transformedBody, writable: { getWriter: () => ({ abort: () => Promise.resolve() }) } },
     wrappedController,
     onAbortTerminal,
-    onStreamFailure
+    reportFailure
   );
 }

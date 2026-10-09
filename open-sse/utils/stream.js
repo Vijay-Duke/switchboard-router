@@ -63,6 +63,7 @@ export function createSSEStream(options = {}) {
     connectionId = null,
     body = null,
     onStreamComplete = null,
+    onStreamProgress = null,
     clientKeyId = null,
     terminateOnResponsesTerminal = true,
   } = options;
@@ -165,6 +166,7 @@ export function createSSEStream(options = {}) {
         try {
           const parsed = JSON.parse(dataText.trim());
           consecutiveUnparsable = 0;
+          onStreamProgress?.(parsed.type);
           if (["message_start", "message_delta", "message_stop", "content_block_start", "content_block_delta", "content_block_stop"].includes(parsed.type)) nativeClaudeSeen = true;
           if (parsed.type === "content_block_delta") {
             if (typeof parsed.delta?.text === "string") {
@@ -712,7 +714,7 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, clientKeyId = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, clientKeyId = null, onStreamProgress = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
     provider,
@@ -722,6 +724,7 @@ export function createPassthroughStreamWithLogger(provider = null, reqLogger = n
     connectionId,
     body,
     onStreamComplete,
-    clientKeyId
+    clientKeyId,
+    onStreamProgress,
   });
 }

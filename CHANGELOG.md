@@ -1,3 +1,9 @@
+# v0.9.45 (2026-10-09)
+
+Native Claude streams now enforce model progress deadlines: keep-alive pings and message-start frames cannot keep a stalled request open indefinitely. Continuing thinking, text and tool events reset the progress deadline. Cancellation records the stream failure immediately, including when the downstream stops reading or upstream cleanup hangs.
+
+Validation adds regressions for ping-only streams before and after output, healthy long reasoning, and cancellation without a further client read.
+
 # v0.9.44 (2026-10-09)
 
 ## Fixes

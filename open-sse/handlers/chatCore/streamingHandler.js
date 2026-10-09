@@ -62,7 +62,7 @@ const CODEX_SOURCE_TO_TARGET = {
 /**
  * Determine which SSE transform stream to use based on provider/format.
  */
-function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, clientKeyId, terminateOnResponsesTerminal }) {
+function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, clientKeyId, terminateOnResponsesTerminal, onStreamProgress }) {
   const isDroidCLI = userAgent?.toLowerCase().includes("droid") || userAgent?.toLowerCase().includes("codex-cli");
   // Responses-API providers (e.g. codex) emit Responses SSE → translate into client format
   const isResponsesProvider = PROVIDERS[provider]?.format === FORMATS.OPENAI_RESPONSES;
@@ -77,13 +77,13 @@ function buildTransformStream({ provider, sourceFormat, targetFormat, userAgent,
     return createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, clientKeyId);
   }
 
-  return createPassthroughStreamWithLogger(provider, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, clientKeyId);
+  return createPassthroughStreamWithLogger(provider, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete, clientKeyId, onStreamProgress);
 }
 
 /**
  * Handle streaming response — pipe provider SSE through transform stream to client.
  */
-export async function handleStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, userAgent, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, requestId, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, streamController, onStreamComplete, onStreamFailure, streamDetailId, pxpipe, firstChunkTimeoutMs = STREAM_FIRST_CHUNK_TIMEOUT_MS }) {
+export async function handleStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, userAgent, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, requestId, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, streamController, onStreamComplete, onStreamFailure, streamDetailId, pxpipe, firstChunkTimeoutMs = STREAM_FIRST_CHUNK_TIMEOUT_MS, firstProgressTimeoutMs = STREAM_FIRST_CHUNK_TIMEOUT_MS, progressStallTimeoutMs = STREAM_STALL_TIMEOUT_MS }) {
   // When upstream returns HTML/text instead of SSE (e.g. Cloudflare 5xx error
   // page), piping it through the SSE transform stream causes Next.js
   // "failed to pipe response" and crashes the chat router. Read the body,
@@ -157,18 +157,22 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
     Promise.resolve(pendingSave).then(() => onStreamFailure?.(error)).catch(() => {});
   };
   const terminateOnResponsesTerminal = providerResponse.headers.get("x-switchboard-transport") !== "responses-websocket";
-  const transformStream = buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete: complete, clientKeyId, terminateOnResponsesTerminal });
+  const isNativeClaude = sourceFormat === FORMATS.CLAUDE && targetFormat === FORMATS.CLAUDE;
+  // The native parser owns event classification. Pings and message_start are
+  // transport activity, but cannot extend the deadline for model progress.
+  const progressWatchdog = isNativeClaude ? { firstProgressTimeoutMs, stallTimeoutMs: progressStallTimeoutMs } : null;
+  const onStreamProgress = progressWatchdog ? type => progressWatchdog.record?.(type) : undefined;
+  const transformStream = buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete: complete, clientKeyId, terminateOnResponsesTerminal, onStreamProgress });
 
   // Abort/stall terminals: never close a client stream without a terminal event.
   // Responses passthrough: response.failed + [DONE]. Chat-completions wire
   // (passthrough or translated): finish_reason:"stream_timeout" chunk + [DONE].
   const isResponsesPassthrough = sourceFormat === FORMATS.OPENAI_RESPONSES && targetFormat === FORMATS.OPENAI_RESPONSES;
-  const isNativeClaude = sourceFormat === FORMATS.CLAUDE && targetFormat === FORMATS.CLAUDE;
   const onAbortTerminal = isResponsesPassthrough
     ? buildAbortedResponsesTerminalBytes
     : isNativeClaude ? buildAbortedClaudeTerminalBytes : targetFormat === FORMATS.OPENAI ? buildAbortedChatCompletionsTerminalBytes : null;
   const stallTimeoutMs = PROVIDERS[provider]?.stallTimeoutMs || STREAM_STALL_TIMEOUT_MS;
-  const transformedBody = pipeWithDisconnect(providerResponse, transformStream, streamController, onAbortTerminal, stallTimeoutMs, firstChunkTimeoutMs, fail);
+  const transformedBody = pipeWithDisconnect(providerResponse, transformStream, streamController, onAbortTerminal, stallTimeoutMs, firstChunkTimeoutMs, fail, progressWatchdog);
 
   return {
     success: true,
