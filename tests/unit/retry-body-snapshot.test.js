@@ -20,9 +20,9 @@ vi.mock("../../open-sse/utils/requestLogger.js", () => ({
   })),
 }));
 vi.mock("../../open-sse/utils/clientDetector.js", () => ({
-  detectClientTool: vi.fn(() => null),
+  detectClientTool: vi.fn((_headers, body) => body?.thread ? "claude" : null),
   harvestDetectedClient: vi.fn(() => false),
-  isNativePassthrough: vi.fn(() => false),
+  isNativePassthrough: vi.fn((client, provider) => client === "claude" && provider === "claude"),
 }));
 vi.mock("../../open-sse/utils/bypassHandler.js", () => ({ handleBypassRequest: vi.fn(() => null) }));
 vi.mock("../../open-sse/utils/streamHandler.js", () => ({
@@ -40,9 +40,10 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch: vi.fn(),
   proxyOptionsFromCredentials: vi.fn(() => ({})),
 }));
-vi.mock("../../open-sse/translator/formats/claude.js", async importOriginal => ({ ...await importOriginal(), normalizeClaudePassthrough: vi.fn() }));
+vi.mock("../../open-sse/translator/formats/claude.js", async importOriginal => ({ ...await importOriginal(), normalizeClaudePassthrough: vi.fn((await importOriginal()).normalizeClaudePassthrough) }));
 vi.mock("../../open-sse/utils/claudeCloaking.js", async importOriginal => ({ ...await importOriginal(), applyCloakingWithIdentity: identityMock }));
 vi.mock("../../open-sse/utils/toolDeduper.js", () => ({ dedupeTools: vi.fn((tools) => ({ tools, stripped: [] })) }));
+vi.mock("../../open-sse/rtk/vault.js", async original => ({ ...await original(), storeToVault: vi.fn() }));
 vi.mock("../../open-sse/rtk/caveman.js", () => ({ injectCaveman: vi.fn() }));
 vi.mock("../../open-sse/rtk/ponytail.js", () => ({ injectPonytail: vi.fn() }));
 vi.mock("../../open-sse/rtk/index.js", () => ({ compressMessages: vi.fn(() => null), formatRtkLog: vi.fn(() => "") }));
@@ -149,4 +150,51 @@ it("marks non-Claude translated stages as inapplicable instead of reporting dele
   expect(stages[0]).toMatchObject({ stage: "inbound", toolCalls: 1, toolResults: 1 });
   expect(stages.find(x => x.stage === "normalized")).toMatchObject({ notApplicable: true, format: "openai" });
   expect(stages.filter(x => x.notApplicable).every(x => x.toolCalls === undefined)).toBe(true);
+});
+
+it("dispatches provider-owned Claude delta tool results unchanged with all token savers enabled", async () => {
+  executeMock.mockReset();
+  executeMock.mockImplementation(async ({ body }) => ({ ...attempt(new Response("fixture rejection", { status: 400 }), "https://upstream.test/messages"), transformedBody: body }));
+  const options = requestOptions();
+  options.modelInfo = { provider: "claude", model: "claude-opus-5-5" };
+  options.sourceFormatOverride = "claude";
+  options.body = {
+    model: "claude/claude-opus-5-5", stream: true,
+    thread: { type: "continue", previous_message_id: "msg_provider_prior" },
+    safeguards: { opaque: "preserve" }, tools: [{ name: "Read", input_schema: { type: "object" } }],
+    messages: [
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_provider_prior", content: "actual successful tool output" }] },
+      { role: "system", content: [{ type: "text", text: "concise reminder" }] },
+    ],
+  };
+  Object.assign(options, { vaultEnabled: true, vaultConversationId: "synthetic-scope", rtkEnabled: true, headroomEnabled: true, cavemanEnabled: true, cavemanLevel: "full", ponytailEnabled: true, ponytailLevel: "full", pxpipeEnabled: true, providerThinking: { mode: "off" } });
+  const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
+  const { storeToVault } = await import("../../open-sse/rtk/vault.js");
+  const { compressMessages } = await import("../../open-sse/rtk/index.js");
+  const { compressWithHeadroom } = await import("../../open-sse/rtk/headroom.js");
+  const { injectCaveman } = await import("../../open-sse/rtk/caveman.js");
+  const { injectPonytail } = await import("../../open-sse/rtk/ponytail.js");
+  [storeToVault, compressMessages, compressWithHeadroom, injectCaveman, injectPonytail].forEach(mock => mock.mockClear());
+  await handleChatCore(options);
+  const dispatched = executeMock.mock.calls[0][0].body;
+  expect(dispatched.thread).toEqual(options.body.thread);
+  expect(dispatched.safeguards).toEqual(options.body.safeguards);
+  expect(dispatched.messages[0].content).toEqual([
+    options.body.messages[0].content[0], { type: "text", text: "concise reminder" },
+  ]);
+  expect(dispatched.messages).toHaveLength(1);
+  expect(dispatched.thinking).toBeUndefined();
+  expect(storeToVault).not.toHaveBeenCalled();
+  expect(compressMessages.mock.calls[0][1]).toBe(false);
+  expect(compressWithHeadroom.mock.calls[0][1].enabled).toBe(false);
+  expect(injectCaveman).not.toHaveBeenCalled(); expect(injectPonytail).not.toHaveBeenCalled();
+});
+
+it("rejects cross-format stateful Claude routing before dispatch", async () => {
+  executeMock.mockReset();
+  const options = requestOptions(); options.sourceFormatOverride = "claude";
+  options.body.thread = { type: "continue", previous_message_id: "msg_prior" };
+  const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
+  const out = await handleChatCore(options);
+  expect(out.status).toBe(400); expect(executeMock).not.toHaveBeenCalled();
 });

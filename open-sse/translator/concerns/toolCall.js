@@ -1,3 +1,4 @@
+import { isClaudeThreadContinuation } from "../../utils/claudeThread.js";
 // Tool call helper functions for translator
 
 // Anthropic tool_use.id must match: ^[a-zA-Z0-9_-]+$
@@ -251,7 +252,7 @@ export function stripOrphanedToolResults(body) {
   if (!body || typeof body !== "object") return 0;
   let stripped = 0;
 
-  if (Array.isArray(body.messages)) {
+  if (Array.isArray(body.messages) && !isClaudeThreadContinuation(body)) {
     const liveIds = new Set();
     for (const msg of body.messages) {
       if (msg.role === "assistant" && Array.isArray(msg.tool_calls)) {

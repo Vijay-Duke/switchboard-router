@@ -1,3 +1,4 @@
+import { hasClaudeThread } from "open-sse/utils/claudeThread.js";
 // @ts-check
 import { parseModel } from "open-sse/services/model.js";
 import { PROVIDERS } from "open-sse/config/providers.js";
@@ -218,6 +219,13 @@ export async function POST(request) {
     return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
       status: 400,
       headers: { "Content-Type": "application/json", ...CORS_HEADERS }
+    });
+  }
+
+  // A delta omits provider-owned context, so a local estimate would be false.
+  if (hasClaudeThread(body)) {
+    return new Response(JSON.stringify({ error: "Token counting requires full history for provider-managed Claude threads." }), {
+      status: 400, headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     });
   }
 

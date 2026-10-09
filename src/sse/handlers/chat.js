@@ -7,6 +7,8 @@ import {
   clearAccountError,
   extractApiKey,
 } from "../services/auth.js";
+import { bindClaudeThreadResponse, resolveClaudeThreadOwner } from "../services/claudeThreadOwnership.js";
+import { hasClaudeThread, isClaudeThreadContinuation } from "open-sse/utils/claudeThread.js";
 import { resolveAffinitySessionId } from "open-sse/utils/sessionManager.js";
 import { getSettings, getProviderRequestCounts } from "@/lib/db/index.js";
 import { getProviderQuotaHeadroom } from "@/lib/db/repos/connectionsRepo.js";
@@ -319,6 +321,9 @@ export async function handleChat(request, clientRawRequest = null) {
   const requiredCapabilities = detectRequiredCapabilities(body);
 
   // Check if model is a combo (has multiple models with fallback)
+  if (hasClaudeThread(body) && comboModels) {
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Claude provider-managed threads require a single native Claude model.");
+  }
   if (comboModels) {
     // Peak/off-peak gating: drop members whose availability rule excludes the
     // current hour, before any strategy sees the list. Applies to fusion,
@@ -477,7 +482,7 @@ export async function handleChat(request, clientRawRequest = null) {
 
   // Single model request — may still switch to a capacity-adapter model when the
   // target lacks an input modality the request needs (e.g. no vision, image attached).
-  const soloAugmented = augmentModelsWithCapacityAdapter([modelStr], requiredCapabilities, settings);
+  const soloAugmented = hasClaudeThread(body) ? [modelStr] : augmentModelsWithCapacityAdapter([modelStr], requiredCapabilities, settings);
   if (soloAugmented.length > 1) {
     const adapterAdded = soloAugmented.filter((m) => m !== modelStr);
     log.info("CHAT", `Capacity adapter for [${[...requiredCapabilities].join(",")}] on "${modelStr}" → trying ${soloAugmented.join(", ")}`);
@@ -508,7 +513,7 @@ export async function handleChat(request, clientRawRequest = null) {
   try {
     wire = detectFormatByEndpoint(new URL(request.url).pathname, body);
   } catch {}
-  const vaultActive = !!(settings.tokenSaver?.vault) && Array.isArray(body.tools) && body.tools.length > 0 && (wire === "openai" || wire === "claude");
+  const vaultActive = !hasClaudeThread(body) && !!(settings.tokenSaver?.vault) && Array.isArray(body.tools) && body.tools.length > 0 && (wire === "openai" || wire === "claude");
   if (!vaultActive) {
     return handleSingleModelChat(body, modelStr, clientRawRequest, request, clientKeyId, {
       signal: request?.signal || null,
@@ -587,6 +592,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {
     let comboModels = await getComboModels(modelStr);
+    if (hasClaudeThread(body) && comboModels) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Claude provider-managed threads require a single native Claude model.");
     if (comboModels) {
       const chatSettings = await getSettings();
       // Same peak/off-peak gate as top-level combos (see handleChat).
@@ -788,6 +794,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     provider,
     allowNativeOAuth: callOpts?.allowNativeClaudeOAuth === true,
   });
+  const threadContinuation = isClaudeThreadContinuation(body);
+  let threadOwner = null;
+  if (threadContinuation && !nativeClaudeCredentials) {
+    if (!["claude", "anthropic"].includes(provider)) {
+      return errorResponse(HTTP_STATUS.BAD_REQUEST, "Claude provider-managed threads require a native Claude provider.");
+    }
+    try { threadOwner = await resolveClaudeThreadOwner({ body, provider, model, clientKeyId, signal: abortSignal }); }
+    catch { return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, "Claude thread account ownership is unavailable."); }
+    if (threadOwner.error) return errorResponse(409, threadOwner.error);
+    if (callOpts?.preferredConnectionId && callOpts.preferredConnectionId !== threadOwner.connectionId) {
+      return errorResponse(409, "Claude thread belongs to a different account.");
+    }
+  }
   const sessionKey = resolveAffinitySessionId({
     headers: request?.headers,
     body,
@@ -803,8 +822,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       excludeConnectionIds,
       model,
       {
-        preferredConnectionId: callOpts?.preferredConnectionId || null,
-        strictPreferredConnection: callOpts?.strictPreferredConnection === true,
+        preferredConnectionId: threadOwner?.connectionId || callOpts?.preferredConnectionId || null,
+        strictPreferredConnection: !!threadOwner || callOpts?.strictPreferredConnection === true,
         sessionKey,
         clientKeyId,
       },
@@ -936,12 +955,22 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       try { await result.response?.body?.cancel?.(); } catch {}
       return abortResponse();
     }
-    if (result.success) return result.response;
+    if (result.success) {
+      const wire = callOpts?.sourceFormatOverride || (request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null);
+      if (wire === "claude" && ["claude", "anthropic"].includes(provider) && !credentials.ephemeral) {
+        return bindClaudeThreadResponse(result.response, { provider, model, clientKeyId, connectionId: credentials.connectionId, log, signal: abortSignal });
+      }
+      return result.response;
+    }
 
     // A native Claude token belongs to this request only. Never persist error
     // state or fall back to a stored/replayed Claude account behind the user's
     // back after Anthropic rejects it.
     if (credentials.ephemeral) return result.response;
+    if (threadContinuation) {
+      await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs);
+      return result.response;
+    }
 
     // Mark account unavailable (auto-calculates cooldown with exponential backoff, or precise resetsAtMs)
     const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs);

@@ -31,3 +31,12 @@ describe("private structural tool-history diagnostics", () => {
     expect(JSON.stringify(summary).length).toBeLessThan(2000);
   });
 });
+
+it("marks delta results as external context without exposing the prior message ID", () => {
+  const summary = summarizeClaudeToolHistory({
+    thread: { type: "continue", previous_message_id: "SECRET_MESSAGE_ID" },
+    messages: [{ role: "user", content: [result("SECRET_CALL")] }],
+  });
+  expect(summary).toMatchObject({ threadContinuation: true, toolResults: 1, orphanResults: 0, externalContextResults: 1 });
+  expect(JSON.stringify(summary)).not.toContain("SECRET");
+});

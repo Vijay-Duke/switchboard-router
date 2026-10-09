@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  threadOwner: vi.fn(),
+  bindThread: vi.fn(response => response),
   applyJudgeScoreByRequestId: vi.fn(),
   authorizeClientKeyRequest: vi.fn(),
   checkAndRefreshToken: vi.fn(),
@@ -16,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   runWithClientKeyLease: vi.fn(),
   updateProviderCredentials: vi.fn(),
 }));
+
+vi.mock("../../src/sse/services/claudeThreadOwnership.js", () => ({ resolveClaudeThreadOwner: mocks.threadOwner, bindClaudeThreadResponse: mocks.bindThread }));
 
 vi.mock("@/lib/db/index.js", () => ({
   getSettings: mocks.getSettings,
@@ -271,4 +275,34 @@ describe("Claude handler credential isolation", () => {
     expect(retryOptions.sessionKey).toBe(firstOptions.sessionKey);
     expect(retryOptions.clientKeyId).toBe(firstOptions.clientKeyId);
   });
+});
+
+it("pins continued Claude requests and returns429 without account fallback or vault rewriting", async () => {
+  vi.clearAllMocks();
+  mocks.authorizeClientKeyRequest.mockResolvedValue({ ok: true, clientKeyId: "client_a", lease: null });
+  mocks.runWithClientKeyLease.mockImplementation(async (_lease, work) => work());
+  mocks.getSettings.mockResolvedValue({ requireApiKey: false, comboStrategies: {}, tokenSaver: { vault: true } });
+  mocks.getComboModels.mockResolvedValue(null);
+  mocks.getModelInfo.mockResolvedValue({ provider: "claude", model: "claude-opus-5-5" });
+  mocks.threadOwner.mockResolvedValue({ connectionId: "owner-account" });
+  mocks.getProviderCredentials.mockResolvedValue({ apiKey: "stored", connectionId: "owner-account", connectionName: "Owner" });
+  mocks.checkAndRefreshToken.mockImplementation(async (_provider, credentials) => credentials);
+  const limited = Response.json({ error: "limited" }, { status: 429, headers: { "retry-after": "60" } });
+  mocks.handleChatCore.mockResolvedValue({ success: false, status: 429, error: "limited", response: limited });
+  const response = await handleChat(new Request("http://localhost/v1/messages", {
+    method: "POST", headers: { "content-type": "application/json", "user-agent": "claude-code/2.1.289" },
+    body: JSON.stringify({ model: "cc/claude-opus-5-5", thread: { type: "continue", previous_message_id: "msg_prior" }, tools: [{ name: "Read" }], messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "tu_prior", content: "real output" }] }] }),
+  }));
+  expect(response).toBe(limited); expect(response.headers.get("retry-after")).toBe("60");
+  expect(mocks.getProviderCredentials).toHaveBeenCalledOnce(); expect(mocks.markAccountUnavailable).toHaveBeenCalledOnce();
+  expect(mocks.getProviderCredentials.mock.calls[0][3]).toMatchObject({ preferredConnectionId: "owner-account", strictPreferredConnection: true });
+  expect(mocks.handleChatCore.mock.calls[0][0]).toMatchObject({ vaultEnabled: false, vaultInternal: false });
+  expect(mocks.handleChatCore.mock.calls[0][0].body.tools).toEqual([{ name: "Read" }]);
+});
+
+it("fails explicitly when a continued Claude thread has unknown account ownership", async () => {
+  mocks.getProviderCredentials.mockClear(); mocks.handleChatCore.mockClear();
+  mocks.threadOwner.mockResolvedValue({ error: "Unknown thread owner" });
+  const response = await handleChat(new Request("http://localhost/v1/messages", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "cc/claude-opus-5-5", thread: { type: "continue", previous_message_id: "unknown" }, messages: [{ role: "user", content: "continue" }] }) }));
+  expect(response.status).toBe(409); expect(mocks.getProviderCredentials).not.toHaveBeenCalled(); expect(mocks.handleChatCore).not.toHaveBeenCalled();
 });

@@ -3,6 +3,7 @@ import { translateRequest } from "../translator/index.js";
 import { stripThinkingSuffix } from "../translator/concerns/thinkingUnified.js";
 import { FORMATS } from "../translator/formats.js";
 import { normalizeClaudePassthrough, anchorClaudeCache } from "../translator/formats/claude.js";
+import { hasClaudeThread, isClaudeThreadContinuation } from "../utils/claudeThread.js";
 import { summarizeClaudeToolHistory } from "../utils/toolHistoryDiagnostics.js";
 import { COLORS } from "../utils/stream.js";
 import { createStreamController } from "../utils/streamHandler.js";
@@ -98,12 +99,19 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const targetFormat = skipTranslation
     ? sourceFormat
     : (runtimeTransport?.format || fallbackTargetFormat);
+  const statefulClaude = sourceFormat === FORMATS.CLAUDE && hasClaudeThread(body);
+  if (statefulClaude && targetFormat !== FORMATS.CLAUDE) {
+    return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Claude provider-managed threads require a native Claude route; send full history to change providers.");
+  }
+  if (statefulClaude && body.thread.type === "continue" && !isClaudeThreadContinuation(body)) {
+    return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Claude thread continuation requires a previous_message_id.");
+  }
   const stripList = getModelStrip(alias, model);
   const upstreamModel = getModelUpstreamId(alias, model);
 
   // Inject provider-level thinking config override (only if client hasn't set)
   // on/off → extended type (body.thinking), none/low/medium/high → effort type (body.reasoning_effort)
-  if (providerThinking?.mode && providerThinking.mode !== "auto") {
+  if (!statefulClaude && providerThinking?.mode && providerThinking.mode !== "auto") {
     const mode = providerThinking.mode;
     if (mode === "on" && !body.thinking) {
       console.log("Injecting provider-level thinking config override: on");
@@ -161,7 +169,11 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Skip all translation/normalization — only model and Bearer are swapped
   const clientTool = detectClientTool(clientRawRequest?.headers || {}, body);
   harvestDetectedClient(clientTool, clientRawRequest?.headers || {}, body);
-  const passthrough = !bypassNativePassthrough && isNativePassthrough(clientTool, provider);
+  const passthrough = !bypassNativePassthrough && (isNativePassthrough(clientTool, provider)
+    || (statefulClaude && ["claude", "anthropic"].includes(provider)));
+  if (statefulClaude && !passthrough) {
+    return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Claude provider-managed threads require a native Claude provider.");
+  }
 
   // Expose raw client headers to translators/executors for session-id resolution
   if (credentials) credentials.rawHeaders = clientRawRequest?.headers || {};
@@ -193,7 +205,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     log?.debug?.("PASSTHROUGH", `${clientTool} → ${provider} | native lossless`);
     translatedBody = { ...body, model: stripThinkingSuffix(upstreamModel) };
     // Normalize newer Cowork/CC beta shapes (adaptive thinking, mid-conversation system) the API rejects
-    if (clientTool === "claude") normalizeClaudePassthrough(translatedBody, translatedBody.model);
+    if (clientTool === "claude" || statefulClaude) normalizeClaudePassthrough(translatedBody, translatedBody.model);
   } else {
     translatedBody = translateRequest(sourceFormat, targetFormat, upstreamModel, body, stream, credentials, provider, reqLogger, stripList, connectionId, clientTool);
     if (!translatedBody) {
@@ -229,7 +241,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   noteToolHistory("normalized", translatedBody, passthrough ? sourceFormat : targetFormat);
 
   // Dedupe duplicate built-in tools when equivalent MCP tools are present (Claude clients only).
-  if (clientTool === "claude" && Array.isArray(translatedBody.tools)) {
+  if (!statefulClaude && clientTool === "claude" && Array.isArray(translatedBody.tools)) {
     const { tools: deduped, stripped } = dedupeTools(translatedBody.tools);
     if (stripped.length > 0) {
       translatedBody.tools = deduped;
@@ -254,7 +266,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     // chatCore must never re-derive it: translators can rewrite tool-call ids, so a
     // key computed here (post-translation) could diverge from the search/repair key
     // and strand stored entries. No key → skip vaulting.
-    const vaultOn = vaultEnabled && vaultConversationId && Array.isArray(translatedBody?.tools) && translatedBody.tools.length > 0
+    const vaultOn = !statefulClaude && vaultEnabled && vaultConversationId && Array.isArray(translatedBody?.tools) && translatedBody.tools.length > 0
       && (sourceFormat === FORMATS.OPENAI || sourceFormat === FORMATS.CLAUDE);
     if (vaultOn) {
       const thresholdBytes = clampVaultThresholdKB(vaultThresholdKB ?? 8) * 1024;
@@ -266,7 +278,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
 
   // Per-request opt-out: client can bypass all token savers via header
-  const tokenSaverEnabled = clientRawRequest?.headers?.[TOKEN_SAVER_HEADER]?.toLowerCase() !== "off";
+  const tokenSaverEnabled = !statefulClaude && clientRawRequest?.headers?.[TOKEN_SAVER_HEADER]?.toLowerCase() !== "off";
 
   noteToolHistory("vault", translatedBody, finalFormat);
 
@@ -357,7 +369,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
   // Pin cache breakpoints to the final body — every saver above can reshape
   // system/tools/messages, and a stale anchor costs a full prefix rewrite.
-  if (passthrough && clientTool === "claude") anchorClaudeCache(translatedBody);
+  if (!statefulClaude && passthrough && clientTool === "claude") anchorClaudeCache(translatedBody);
 
   const executor = getExecutor(provider);
   trackPendingRequest(model, provider, connectionId, true);

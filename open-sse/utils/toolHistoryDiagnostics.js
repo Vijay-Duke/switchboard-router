@@ -1,3 +1,4 @@
+import { isClaudeThreadContinuation } from "./claudeThread.js";
 // Structural summaries only: never persist prompt text, arguments, tool names,
 // call IDs, signatures, images, or credentials. Counts survive body truncation.
 export function summarizeClaudeToolHistory(body) {
@@ -54,10 +55,13 @@ export function summarizeClaudeToolHistory(body) {
     }
     i--;
   }
+  const externalResults = [...results].filter(id => !calls.has(id)).length;
+  const threadContinuation = isClaudeThreadContinuation(body);
   return {
+    ...(threadContinuation ? { threadContinuation: true, externalContextResults: externalResults } : {}),
     messageCount: messages.length, toolCalls, toolResults, emptyMessages,
     missingResults, misplacedResults,
-    orphanResults: [...results].filter(id => !calls.has(id)).length,
+    orphanResults: threadContinuation ? 0 : externalResults,
     invalidTurnCount, invalidTurns,
   };
 }

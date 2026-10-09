@@ -63,6 +63,23 @@ describe("stripOrphanedToolResults (#2298 / #2236)", () => {
     expect(body.messages[0].content[0].type).toBe("text");
   });
 
+  it("preserves Claude thread continuation results whose calls live on the provider", () => {
+    const body = {
+      thread: { type: "continue", previous_message_id: "msg_prior" },
+      messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "tu_prior", content: "actual output" }] }],
+    };
+    const original = structuredClone(body);
+    expect(stripOrphanedToolResults(body)).toBe(0);
+    expect(body).toEqual(original);
+  });
+
+  it.each([{}, { type: "continue" }, { type: "continue", previous_message_id: " " }, { type: "start" }])(
+    "still strips stateless orphan results for invalid/non-continuation descriptor %j", thread => {
+      const body = { thread, messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "missing", content: "stale" }] }] };
+      expect(stripOrphanedToolResults(body)).toBe(1);
+    },
+  );
+
   it("strips orphaned Responses function_call_output", () => {
     const body = {
       input: [
