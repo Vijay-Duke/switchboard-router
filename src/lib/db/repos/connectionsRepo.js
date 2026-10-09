@@ -1,3 +1,5 @@
+import { getQuotaStateIdentity } from "open-sse/services/usage/quotaState.js";
+import { quotaNumber } from "open-sse/services/usage/quotaValidity.js";
 import { v4 as uuidv4 } from "uuid";
 import { CREDENTIAL_CONDITIONAL_UPDATE_MAX_ATTEMPTS } from "open-sse/config/runtimeConfig.js";
 import { getAdapter } from "../driver.js";
@@ -134,10 +136,13 @@ export async function getProviderQuotaHeadroom(freshMs = DEFAULT_QUOTA_FRESH_MS)
     const connections = await getProviderConnections();
     for (const connection of connections) {
       const snapshot = connection.lastQuota;
-      const snapshotAt = Number(snapshot?.at);
-      const remainingPercentage = Number(snapshot?.remainingPercentage);
-      if (!Number.isFinite(snapshotAt) || now - snapshotAt > maxAgeMs) continue;
-      if (!Number.isFinite(remainingPercentage)) continue;
+      if (connection.isActive === false) continue;
+      const snapshotAt = quotaNumber(snapshot?.at);
+      const remainingPercentage = quotaNumber(snapshot?.remainingPercentage);
+      const resetAt = snapshot?.resetAt ? Date.parse(snapshot.resetAt) : NaN;
+      if (Number.isFinite(resetAt) && resetAt <= now) continue;
+      if (snapshotAt === null || snapshotAt > now || now - snapshotAt > maxAgeMs) continue;
+      if (remainingPercentage === null || remainingPercentage < 0 || remainingPercentage > 100) continue;
       const previous = headroom[connection.provider];
       if (!Number.isFinite(previous) || remainingPercentage > previous) {
         headroom[connection.provider] = remainingPercentage;
@@ -250,6 +255,9 @@ export async function updateProviderConnection(id, data) {
     if (!row) { result = null; return; }
     const existing = rowToConn(row);
     const merged = { ...existing, ...data, updatedAt: new Date().toISOString() };
+    const identityChanged = JSON.stringify(getQuotaStateIdentity(existing)) !== JSON.stringify(getQuotaStateIdentity(merged));
+    const credentialReplaced = ["accessToken", "apiKey", "refreshToken"].some(key => data[key] !== undefined && data[key] !== existing[key]);
+    if (identityChanged || credentialReplaced) merged.lastQuota = null;
     upsert(db, merged);
     if (existing.provider !== merged.provider) {
       retirePrometheusProviderInTx(db, existing.provider);
@@ -347,6 +355,7 @@ export async function updateProviderConnectionCredentialsIfCurrent(id, expected,
             providerSpecificData: { ...current.providerSpecificData, ...patch.providerSpecificData },
           } : {}),
         };
+        if (JSON.stringify(getQuotaStateIdentity(current)) !== JSON.stringify(getQuotaStateIdentity(updated))) updated.lastQuota = null;
         const replacement = connToRow(updated);
         const write = db.run(
           "UPDATE providerConnections SET data = ?, updatedAt = ? WHERE id = ? AND data = ? AND updatedAt = ?",

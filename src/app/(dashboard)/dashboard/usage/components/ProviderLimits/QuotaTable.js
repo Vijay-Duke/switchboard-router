@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { formatResetTime, getRemainingPercentage } from "./utils";
+import { quotaUnavailableReason } from "open-sse/services/usage/quotaValidity.js";
 
 const PAGE_SIZE = 10;
 
@@ -15,6 +16,7 @@ function formatResetTimeDisplay(resetTime) {
   try {
     const date = new Date(resetTime);
     const now = new Date();
+    if (!Number.isFinite(date.getTime()) || date <= now) return null;
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -44,6 +46,7 @@ function formatResetTimeDisplay(resetTime) {
  * Get color classes based on remaining percentage
  */
 function getColorClasses(remainingPercentage) {
+  if (remainingPercentage === null) return { text: "text-text-muted", bg: "bg-gray-400", bgLight: "bg-gray-400/10", emoji: "⚪" };
   if (remainingPercentage > 70) {
     return {
       text: "text-green-600 dark:text-green-400",
@@ -92,14 +95,20 @@ export default function QuotaTable({
   showSortLabel = false,
 }) {
   const [page, setPage] = useState(1);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, []);
 
+  const receivedAt = useMemo(() => new Date().toISOString(), [quotas]);
   const normalizedQuotas = useMemo(
     () => quotas.map((quota, index) => ({
       ...quota,
       index,
-      remaining: getRemainingPercentage(quota),
+      remaining: getRemainingPercentage({ ...quota, observedAt: quota.observedAt || receivedAt }),
     })),
-    [quotas],
+    [quotas, now, receivedAt],
   );
 
   const sortedQuotas = useMemo(
@@ -156,6 +165,9 @@ export default function QuotaTable({
           <tbody>
             {currentPageRows.map((quota) => {
               const colors = getColorClasses(quota.remaining);
+              const unavailable = quotaUnavailableReason(quota, now);
+              const unknown = quota.remaining === null;
+              const balanceKnown = quota.kind === "balance" && !unavailable && typeof quota.balance === "number";
               const countdown = formatResetTime(quota.resetAt);
               const resetDisplay = formatResetTimeDisplay(quota.resetAt);
               // recurring defaults true: a missing flag means the quota
@@ -185,16 +197,19 @@ export default function QuotaTable({
                       }`}>
                         <div
                           className={`h-full transition-all duration-300 ${colors.bg}`}
-                          style={{ width: `${Math.min(quota.remaining, 100)}%` }}
+                          style={{ width: `${unknown ? 0 : Math.min(quota.remaining, 100)}%` }}
                         />
                       </div>
 
                       <div className={`flex items-center justify-between ${compact ? "text-[10px]" : "text-xs"}`}>
                         <span className="text-text-muted">
-                          {quota.used.toLocaleString()} / {quota.total > 0 ? quota.total.toLocaleString() : "∞"}
+                          {balanceKnown ? `${quota.balance.toLocaleString()} ${quota.unit || "credits"} available`
+                            : unavailable ? "Current usage unknown"
+                            : quota.unlimited === true ? "Unlimited (provider reported)"
+                            : `${quota.used === null ? "Unknown" : quota.used.toLocaleString()} / ${quota.total > 0 ? quota.total.toLocaleString() : "Unknown"}${quota.unit ? ` ${quota.unit}` : ""}`}
                         </span>
                         <span className={`font-medium ${colors.text}`}>
-                          {quota.remaining}%
+                          {balanceKnown ? "Balance" : quota.available === false && !unavailable ? "No allowance" : quota.unlimited === true && !unavailable ? "Unlimited" : unknown ? "Unknown" : `${quota.remaining}% remaining`}
                         </span>
                       </div>
                     </div>
@@ -224,7 +239,7 @@ export default function QuotaTable({
                         </div>
                       )
                     ) : (
-                      <div className={`${resetPrimary} text-text-muted italic`}>N/A</div>
+                      <div className={`${resetPrimary} text-text-muted italic`}>{unavailable || "Not reported"}</div>
                     )}
                   </td>
                 </tr>

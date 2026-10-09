@@ -36,7 +36,7 @@ const USAGE_HANDLERS = {
   "gemini-cli": (c) => getGeminiUsage(c.accessToken, c.providerDataWithProjectId, c.proxyOptions),
   antigravity: (c) => getAntigravityUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   claude: (c) => getClaudeUsage(c.accessToken, c.proxyOptions, { force: c.force, connectionId: c.connectionId, quotaIdentity: c.quotaIdentity }),
-  codex: (c) => getCodexUsage(c.accessToken, c.proxyOptions),
+  codex: (c) => getCodexUsage(c.accessToken, c.proxyOptions, c.providerSpecificData),
   kiro: (c) => getKiroUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   qoder: (c) => getQoderUsage(c.accessToken, c.proxyOptions),
   qwen: (c) => getQwenUsage(c.accessToken, c.providerSpecificData),
@@ -65,7 +65,7 @@ export async function getUsageForProvider(connection, proxyOptions = null, optio
 
   const handler = USAGE_HANDLERS[provider];
   if (!handler) return { message: `Usage API not implemented for ${provider}` };
-  return await handler({
+  const result = await handler({
     provider,
     connectionId: connection.id,
     quotaIdentity: getQuotaStateIdentity(connection),
@@ -77,4 +77,7 @@ export async function getUsageForProvider(connection, proxyOptions = null, optio
     proxyOptions,
     force: options.force === true,
   });
+  return result?.quotas && !result.stale
+    ? { ...result, observedAt: result.observedAt || new Date().toISOString() }
+    : result;
 }

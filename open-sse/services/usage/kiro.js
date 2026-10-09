@@ -2,6 +2,7 @@
  * Kiro (AWS CodeWhisperer) usage handler
  */
 
+import { quotaNumber } from "./quotaValidity.js";
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { resolveDefaultProfileArn } from "../../config/kiroConstants.js";
 import { U, parseResetTime } from "./shared.js";
@@ -16,26 +17,27 @@ function parseKiroQuotaData(data) {
 
   usageList.forEach((breakdown) => {
     const resourceType = breakdown.resourceType?.toLowerCase() || "unknown";
-    const used = breakdown.currentUsageWithPrecision || 0;
-    const total = breakdown.usageLimitWithPrecision || 0;
+    const used = quotaNumber(breakdown.currentUsageWithPrecision);
+    const total = quotaNumber(breakdown.usageLimitWithPrecision);
 
     quotaInfo[resourceType] = {
       used,
       total,
-      remaining: total - used,
+      remaining: total !== null && used !== null ? Math.max(0, total - used) : null,
       resetAt,
       unlimited: false,
     };
 
     // Add free trial if available
     if (breakdown.freeTrialInfo) {
-      const freeUsed = breakdown.freeTrialInfo.currentUsageWithPrecision || 0;
-      const freeTotal = breakdown.freeTrialInfo.usageLimitWithPrecision || 0;
+      const freeUsed = quotaNumber(breakdown.freeTrialInfo.currentUsageWithPrecision);
+      const freeTotal = quotaNumber(breakdown.freeTrialInfo.usageLimitWithPrecision);
 
       quotaInfo[`${resourceType}_freetrial`] = {
         used: freeUsed,
         total: freeTotal,
-        remaining: freeTotal - freeUsed,
+        remaining: freeTotal !== null && freeUsed !== null ? Math.max(0, freeTotal - freeUsed) : null,
+        recurring: false,
         resetAt: parseResetTime(breakdown.freeTrialInfo.freeTrialExpiry || resetAt),
         unlimited: false,
       };

@@ -9,7 +9,7 @@ export function getQuotaStateIdentity(connection) {
     authType: text(connection?.authType),
     createdAt: text(connection?.createdAt),
     email: text(connection?.email),
-    accountId: text(data.accountUuid || data.accountId || data.userId || data.chatgptAccountId),
+    accountId: text(data.workspaceId || data.accountUuid || data.accountId || data.userId || data.chatgptAccountId),
     organizationId: text(data.organizationUuid || data.organizationId),
   };
 }

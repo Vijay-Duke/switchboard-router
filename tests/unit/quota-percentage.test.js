@@ -16,12 +16,11 @@ describe("getRemainingPercentage (O11)", () => {
   it.each([
     [{ remainingPercentage: 96, used: 95.5, total: 100 }, 96],
     [{ remainingPercentage: 50, used: 0, total: 0 }, 50],
-    [{ used: 0, total: 0 }, 0],
+    [{ used: 0, total: 0 }, null],
     [{ used: 25, total: 100 }, 75],
-    [{ remaining: -3 }, 0],
+    [{ remaining: -3 }, null],
   ])("%j -> %i", (quota, expected) => {
     const value = getRemainingPercentage(quota);
-    expect(Number.isFinite(value)).toBe(true);
     expect(value).toBe(expected);
   });
 
@@ -36,11 +35,11 @@ describe("QuotaProgressBar clamp (O29)", () => {
     [-5, "0%"],
     [348, "100%"],
     [42.4, "42%"],
-    ["abc", "0%"],
+    ["abc", "Unknown"],
   ])("percentage %s renders %s", async (percentage, label) => {
     const container = await harness.mount(h(QuotaProgressBar, { name: "q", used: 0, total: 0, percentage }));
     const bar = container.querySelector('[style*="width"]');
-    expect(bar.style.width).toBe(label);
+    expect(bar.style.width).toBe(label === "Unknown" ? "0%" : label);
     expect(container.textContent).toContain(label);
     harness.unmount();
   });

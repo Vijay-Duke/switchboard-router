@@ -1,4 +1,5 @@
 // @ts-check
+import { quotaNumber, quotaRemainingPercent } from "open-sse/services/usage/quotaValidity.js";
 import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -33,7 +34,8 @@ export function getConnectionLabel(connection) {
 export function getConnectionQuotaRemaining(connection, quotaData) {
   const quota = quotaData[connection.id]?.quotas?.[0];
   if (!quota) return Number.POSITIVE_INFINITY;
-  if (typeof quota.remaining === "number") return quota.remaining;
+  const remaining = getRemainingPercentage(quota);
+  if (remaining !== null) return remaining;
   return Number.POSITIVE_INFINITY;
 }
 
@@ -239,7 +241,7 @@ export function formatResetTime(date) {
     const now = new Date();
     const diffMs = resetDate - now;
 
-    if (diffMs <= 0) return "-";
+    if (!Number.isFinite(diffMs) || diffMs <= 0) return "-";
 
     const totalMinutes = Math.ceil(diffMs / (1000 * 60));
     
@@ -294,28 +296,13 @@ export function getStatusEmoji(percentage) {
  * @returns {number} Remaining percentage (0-100)
  */
 export function calculatePercentage(used, total) {
-  if (!total || total === 0) return 0;
-  if (!used || used < 0) return 100;
-  if (used >= total) return 0;
-
-  return Math.round(((total - used) / total) * 100);
+  const value = quotaRemainingPercent({ used, total });
+  return value === null ? null : Math.round(value);
 }
 
-/**
- * Get remaining percentage from a normalized quota row
- * @param {Object} quota - Normalized quota object
- * @returns {number} Remaining percentage (0-100)
- */
 export function getRemainingPercentage(quota) {
-  if (quota?.remaining !== undefined) {
-    return Math.max(0, Math.round(quota.remaining));
-  }
-
-  if (quota?.remainingPercentage !== undefined) {
-    return Math.round(quota.remainingPercentage);
-  }
-
-  return calculatePercentage(quota?.used, quota?.total);
+  const value = quotaRemainingPercent(quota);
+  return value === null ? null : Math.round(value);
 }
 
 /**
@@ -329,207 +316,25 @@ export function parseQuotaData(provider, data) {
 
   const normalizedQuotas = [];
 
-  try {
-    switch (provider.toLowerCase()) {
-      case "github":
-        if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
-            normalizedQuotas.push({
-              name,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-            });
-          });
-        }
-        break;
-
-      case "antigravity":
-        if (data.quotas) {
-          Object.entries(data.quotas).forEach(([modelKey, quota]) => {
-            normalizedQuotas.push({
-              name: quota.displayName || modelKey,
-              modelKey: modelKey, // Keep modelKey for sorting
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-              remainingPercentage: quota.remainingPercentage,
-            });
-          });
-        }
-        break;
-
-      case "codex":
-        if (data.quotas) {
-          Object.entries(data.quotas).forEach(([quotaType, quota]) => {
-            normalizedQuotas.push({
-              name: quotaType,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              remaining: quota.remaining,
-              resetAt: quota.resetAt || null,
-            });
-          });
-        }
-        break;
-
-      case "kiro":
-        if (data.quotas) {
-          Object.entries(data.quotas).forEach(([quotaType, quota]) => {
-            normalizedQuotas.push({
-              name: quotaType,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-            });
-          });
-        }
-        break;
-
-      case "qoder":
-        // Qoder ships a `user` quota and (optionally) an `organization`
-        // quota, both with same shape: {total, used, remaining, unit, resetAt}.
-        // Skip an organization bucket when its total is 0 — most personal
-        // Qoder accounts won't have one and rendering "0/0" is misleading.
-        // Don't forward Qoder's `remaining` field: it's an absolute credit
-        // count, but getRemainingPercentage / QuotaTable interpret
-        // `remaining` as a 0-100 percentage and would render 348 credits
-        // as "348%". The percentage is computed from used/total instead.
-        if (data.quotas) {
-          Object.entries(data.quotas).forEach(([quotaType, quota]) => {
-            if (quotaType === "organization" && (!quota || (Number(quota.total) || 0) === 0)) {
-              return;
-            }
-            normalizedQuotas.push({
-              name: quotaType === "user" ? "Personal" : quotaType === "organization" ? "Organization" : quotaType,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              unit: quota.unit,
-              resetAt: quota.resetAt || null,
-            });
-          });
-        }
-        break;
-
-      case "claude":
-        if (data.quotas && Object.keys(data.quotas).length > 0) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
-            normalizedQuotas.push({
-              name,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-            });
-          });
-        } else if (data.message) {
-          normalizedQuotas.push({
-            name: "error",
-            used: 0,
-            total: 0,
-            resetAt: null,
-            message: data.message,
-          });
-        }
-        break;
-
-      case "vercel-ai-gateway":
-        // Vercel returns currency credit balance, not request quotas.
-        // The 'Remaining (USD)' row needs explicit remainingPercentage because
-        // its used/total values would otherwise compute the wrong direction
-        // (e.g. used=95.5 / total=100 → 4% instead of 96%).
-        if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
-            normalizedQuotas.push({
-              name,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-              remainingPercentage: quota.remainingPercentage,
-            });
-          });
-        }
-        break;
-
-      case "codebuddy-cn":
-        // CodeBuddy CN mixes recurring refill packs ("Monthly"/"Weekly"/...)
-        // with one-shot bonus packs ("Bonus Pack N"). Forward `recurring`
-        // so the UI can show "Expires in" for bonus packs (whose resetAt is
-        // a hard expiry, not a refresh) instead of "Reset in".
-        if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
-            normalizedQuotas.push({
-              name,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-              recurring: quota.recurring !== false,
-            });
-          });
-        }
-        break;
-
-      case "kimi":
-      case "kimi-coding":
-        // Weekly / Ratelimit from /v1/usages. remainingPercentage only.
-        if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
-            normalizedQuotas.push({
-              name,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-              remainingPercentage: quota.remainingPercentage,
-            });
-          });
-        }
-        break;
-
-      case "deepseek":
-        // Credit balance — remainingPercentage only (no absolute remaining).
-        if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
-            normalizedQuotas.push({
-              name,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-              remainingPercentage: quota.remainingPercentage,
-            });
-          });
-        }
-        break;
-
-      case "ollama":
-        // Session (5h) / Weekly (7d) ratio bars — remainingPercentage only.
-        if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
-            normalizedQuotas.push({
-              name,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-              remainingPercentage: quota.remainingPercentage,
-            });
-          });
-        }
-        break;
-
-      default:
-        // Generic fallback for unknown providers
-        if (data.quotas) {
-          Object.entries(data.quotas).forEach(([name, quota]) => {
-            normalizedQuotas.push({
-              name,
-              used: quota.used || 0,
-              total: quota.total || 0,
-              resetAt: quota.resetAt || null,
-            });
-          });
-        }
+  if (data.quotas && typeof data.quotas === "object") {
+    for (const [key, quota] of Object.entries(data.quotas)) {
+      if (!quota || typeof quota !== "object") continue;
+      if (provider === "qoder" && key === "organization" && !(quotaNumber(quota.total) > 0)) continue;
+      const name = provider === "qoder" ? key === "user" ? "Personal" : key === "organization" ? "Organization" : key : quota.displayName || key;
+      normalizedQuotas.push({
+        ...quota,
+        name,
+        modelKey: key,
+        used: quotaNumber(quota.used),
+        total: quotaNumber(quota.total),
+        remaining: quotaNumber(quota.remaining),
+        remainingPercentage: quotaNumber(quota.remainingPercentage),
+        resetAt: quota.resetAt || null,
+        observedAt: data.observedAt || null,
+        stale: data.stale === true,
+        recurring: quota.recurring !== false,
+      });
     }
-  } catch (error) {
-    console.error(`Error parsing quota data for ${provider}:`, error);
-    return [];
   }
 
   // Sort quotas according to PROVIDER_MODELS order

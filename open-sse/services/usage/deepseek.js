@@ -3,6 +3,7 @@
  * Auth: Bearer <apiKey>
  */
 
+import { quotaNumber } from "./quotaValidity.js";
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { toFiniteNumber } from "./shared.js";
 
@@ -16,10 +17,8 @@ function parseBalanceInfos(data) {
     const currency =
       typeof item.currency === "string" ? item.currency.toUpperCase() : "";
     if (!currency) continue;
-    const totalBalance = toFiniteNumber(
-      item.total_balance ?? item.totalBalance,
-      0,
-    );
+    const totalBalance = quotaNumber(item.total_balance ?? item.totalBalance);
+    if (totalBalance === null || totalBalance < 0) continue;
     results.push({
       currency,
       totalBalance,
@@ -94,11 +93,14 @@ export async function getDeepseekUsage(apiKey = null, proxyOptions = null) {
       // Credit pot: show full remaining against current balance; never set absolute
       // `remaining` — QuotaTable treats it as a 0–100 percentage.
       quotas[`Balance (${b.currency})`] = {
-        used: 0,
-        total,
-        remainingPercentage: total > 0 ? 100 : 0,
+        kind: "balance",
+        balance: total,
+        unit: b.currency,
+        used: null,
+        total: null,
+        remainingPercentage: null,
         resetAt: null,
-        unlimited: total > 0,
+        unlimited: false,
       };
     }
 

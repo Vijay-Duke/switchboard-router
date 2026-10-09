@@ -1,6 +1,7 @@
 "use client";
 // @ts-check
 
+import { quotaUnavailableReason } from "open-sse/services/usage/quotaValidity.js";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import QuotaTable from "./QuotaTable";
@@ -8,7 +9,7 @@ import Toggle from "@/shared/components/Toggle";
 import Tooltip from "@/shared/components/Tooltip";
 import {
   parseQuotaData,
-  calculatePercentage,
+  getRemainingPercentage,
   getConnectionLabel,
   getConnectionQuotaRemaining,
   sortVisibleConnections,
@@ -232,6 +233,7 @@ export default function ProviderLimits() {
           reportClientError(
             `[ProviderLimits] Connection not found for ${provider}, skipping`,
           );
+          setErrors((prev) => ({ ...prev, [connectionId]: "Connection no longer available." }));
           return;
         }
 
@@ -264,11 +266,12 @@ export default function ProviderLimits() {
       const quotaEntry = {
         quotas: parsedQuotas,
         plan: data.plan || null,
-        message: data.stale && parsedQuotas.length > 0 ? null : data.message || null,
+        message: data.stale && parsedQuotas.length > 0 ? null : data.message || (parsedQuotas.length ? null : "Current quota unavailable: the provider did not report usage."),
         warning: data.stale && parsedQuotas.length > 0
-          ? `Showing last known usage. ${data.message || "Refresh unavailable."}`
+          ? `Current quota is unknown. ${data.observedAt ? `Last successful check: ${new Date(data.observedAt).toLocaleString()}. ` : ""}${data.message || "Refresh unavailable."}`
           : null,
         raw: data,
+        observedAt: data.observedAt || null,
       };
 
       setQuotaData((prev) => ({
@@ -468,7 +471,7 @@ export default function ProviderLimits() {
     try {
       const visibleConnections = await fetchConnections(page);
 
-      setLoading(buildLoadingState(visibleConnections));
+      setLoading(buildLoadingState(visibleConnections.filter(shouldFetch)));
       setErrors((prev) =>
         filterQuotaStateByConnections(prev, visibleConnections),
       );
@@ -642,8 +645,10 @@ export default function ProviderLimits() {
     const quotas = quotaData[conn.id]?.quotas;
     if (!quotas?.length) return false;
     return quotas.some((q) => {
-      if (!q.total || q.total <= 0) return false;
-      return calculatePercentage(q.used, q.total) <= DEPLETED_QUOTA_THRESHOLD;
+      if (q.kind === "balance") return !quotaUnavailableReason(q) && q.balance === 0;
+      if (q.available === false) return !quotaUnavailableReason(q);
+      const remaining = getRemainingPercentage(q);
+      return remaining !== null && remaining <= DEPLETED_QUOTA_THRESHOLD;
     });
   };
 

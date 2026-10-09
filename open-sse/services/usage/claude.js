@@ -156,7 +156,7 @@ async function fetchClaudeUsageRaw(accessToken, proxyOptions = null, cacheKey = 
 
       // utilization = % USED (e.g. 87 means 87% used, 13% remaining)
       const hasUtilization = (window) =>
-        window && typeof window === "object" && typeof window.utilization === "number";
+        window && typeof window === "object" && Number.isFinite(window.utilization) && window.utilization >= 0;
 
       const createQuotaObject = (window) => {
         const used = window.utilization;

@@ -2,6 +2,7 @@
  * MiniMax usage handler
  */
 
+import { quotaNumber } from "./quotaValidity.js";
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { U, parseResetTime } from "./shared.js";
 
@@ -45,8 +46,8 @@ function getMiniMaxProvidedPercent(model, snakeKey, camelKey) {
   if (!model || typeof model !== "object") return null;
   const raw = model[snakeKey] ?? model[camelKey];
   if (raw === null || raw === undefined) return null;
-  const num = Number(raw);
-  if (!Number.isFinite(num)) return null;
+  const num = quotaNumber(raw);
+  if (num === null) return null;
   return Math.max(0, Math.min(100, num));
 }
 
@@ -104,7 +105,12 @@ function addMiniMaxQuota(quotas, key, model, getTotal, countSnake, countCamel, p
   const providedPercent = getMiniMaxProvidedPercent(model, percentSnake, percentCamel);
   if (total <= 0 && providedPercent === null) return;
 
-  const count = Math.max(0, Number(getMiniMaxField(model, countSnake, countCamel)) || 0);
+  const reportedCount = quotaNumber(getMiniMaxField(model, countSnake, countCamel));
+  if (reportedCount === null && providedPercent === null) {
+    quotas[key] = { used: null, total, remainingPercentage: null, resetAt: getMiniMaxResetAt(model, ...resetArgs), unlimited: false };
+    return;
+  }
+  const count = Math.max(0, reportedCount ?? (countMeansRemaining ? total * providedPercent / 100 : total * (1 - providedPercent / 100)));
   let effectiveTotal = total;
   let effectiveCount = count;
   if (total <= 0) {

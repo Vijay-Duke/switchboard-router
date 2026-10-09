@@ -6,6 +6,16 @@ Validation adds regressions for ping-only streams before and after output, healt
 
 # v0.9.44 (2026-10-09)
 
+## [0.9.46] - 2026-10-09
+
+### Fixed
+- Quota rows now show unknown current usage after refresh failures, observation expiry, or a passed reset, without stale green availability bars.
+- Missing provider values remain unknown; remaining credits and percentages are normalized consistently across every supported quota provider.
+- Codex window labels follow actual durations and usage requests carry the selected account identity. GitHub free quotas use remaining counts and current paid snapshot fields.
+- DeepSeek, Grok prepaid, and Vercel cash balances are displayed as balances without invented allowances or unlimited claims; GLM tool quotas and multiple Kimi limits are retained.
+- Quota-based routing ignores disabled, expired, unknown, and replaced-account observations and uses the limiting core quota window.
+
+
 ## Fixes
 - **Claude stream completion**: finalize native streams and usage on `message_stop` or an error event instead of waiting for the upstream socket to close. Preserve text and thinking before the client disconnects.
 - **Stalled stream recovery**: gateway cancellation settles pending client reads even when upstream cancellation hangs. Clear watchdog timers and listeners on all exit paths.

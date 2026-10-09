@@ -28,8 +28,8 @@ import { U, parseResetTime, toFiniteNumber } from "./shared.js";
 const MUSE_API_VERSION = "1.0.0";
 
 function formatSessionLabel(windowDurationMins) {
-  const mins = toFiniteNumber(windowDurationMins, 300);
-  if (!Number.isFinite(mins) || mins <= 0) return "Session (5h)";
+  const mins = toFiniteNumber(windowDurationMins, NaN);
+  if (!Number.isFinite(mins) || mins <= 0) return "Session";
   if (mins % 60 === 0) return `Session (${mins / 60}h)`;
   return `Session (${mins}m)`;
 }

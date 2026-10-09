@@ -57,12 +57,11 @@ describe("getOllamaUsage", () => {
     expect(res.quotas["Weekly (7d)"]).not.toHaveProperty("remaining");
   });
 
-  it("clamps out-of-range ratios into 0..100", async () => {
+  it("does not display invalid upstream ratios as valid availability", async () => {
     mockUsageAndMe({ limits: { session: { usage: 2.5 }, weekly: { usage: -3 } } });
 
     const res = await getOllamaUsage("k");
-    expect(res.quotas["Session (5h)"].used).toBe(100);
-    expect(res.quotas["Weekly (7d)"].used).toBe(0);
+    expect(res.quotas).toEqual({});
   });
 
   it("fails open on /api/me errors and still returns quotas", async () => {

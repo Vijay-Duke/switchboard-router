@@ -21,7 +21,7 @@ describe("sortVisibleConnections (O10)", () => {
   });
 
   it("orders cards with quota ahead of quota-less ones, then by name", () => {
-    const quotaData = { c: { quotas: [{ remaining: 40 }] } };
+    const quotaData = { c: { quotas: [{ remainingPercentage: 40 }] } };
     const asc = sortVisibleConnections(conns, quotaData, false, "codex", "remaining-asc");
     expect(asc.map((c) => c.id)).toEqual(["c", "a", "b"]);
     const desc = sortVisibleConnections(conns, quotaData, false, "codex", "remaining-desc");

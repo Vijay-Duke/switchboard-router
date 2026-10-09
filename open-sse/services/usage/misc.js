@@ -3,7 +3,8 @@
  */
 
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
-import { U } from "./shared.js";
+import { U, parseResetTime } from "./shared.js";
+import { quotaNumber } from "./quotaValidity.js";
 
 // GLM quota endpoints (region-aware) — url from registry transport.usage
 const GLM_QUOTA_URLS = {
@@ -106,10 +107,10 @@ export async function getOllamaUsage(apiKey, providerSpecificData, proxyOptions 
 
     const sessionRaw = limits.session?.usage;
     const weeklyRaw = limits.weekly?.usage;
-    const sessionNum = Number(sessionRaw);
-    const weeklyNum = Number(weeklyRaw);
-    const hasSession = sessionRaw !== undefined && sessionRaw !== null && !Number.isNaN(sessionNum);
-    const hasWeekly = weeklyRaw !== undefined && weeklyRaw !== null && !Number.isNaN(weeklyNum);
+    const sessionNum = quotaNumber(sessionRaw);
+    const weeklyNum = quotaNumber(weeklyRaw);
+    const hasSession = sessionNum !== null && sessionNum >= 0 && sessionNum <= 1;
+    const hasWeekly = weeklyNum !== null && weeklyNum >= 0 && weeklyNum <= 1;
 
     if (!hasSession && !hasWeekly) {
       return {
@@ -161,17 +162,23 @@ export async function getGlmUsage(apiKey, provider, proxyOptions = null) {
     const quotas = {};
 
     for (const limit of limits) {
-      if (!limit || limit.type !== "TOKENS_LIMIT") continue;
-      const usedPercent = Number(limit.percentage) || 0;
-      const resetMs = Number(limit.nextResetTime) || 0;
-      const remaining = Math.max(0, 100 - usedPercent);
+      if (!limit || !["TOKENS_LIMIT", "TIME_LIMIT"].includes(limit.type)) continue;
+      if (limit.type === "TIME_LIMIT") {
+        quotas["Tools"] = { used: quotaNumber(limit.currentValue), total: quotaNumber(limit.usage), remaining: quotaNumber(limit.remaining), resetAt: parseResetTime(limit.nextResetTime), unlimited: false };
+        continue;
+      }
+      const usedPercent = quotaNumber(limit.percentage);
 
-      quotas["session"] = {
+      const resetMs = Number(limit.nextResetTime) || 0;
+      const remaining = usedPercent === null || usedPercent < 0 ? null : Math.max(0, 100 - usedPercent);
+
+      const name = quotas.session ? `session ${Object.keys(quotas).length + 1}` : "session";
+      quotas[name] = {
         used: usedPercent,
         total: 100,
         remaining,
         remainingPercentage: remaining,
-        resetAt: resetMs > 0 ? new Date(resetMs).toISOString() : null,
+        resetAt: parseResetTime(resetMs),
         unlimited: false,
       };
     }
@@ -226,41 +233,18 @@ export async function getVercelAiGatewayUsage(apiKey, proxyOptions = null) {
 
     const data = await response.json();
 
-    // Vercel returns numeric strings; coerce safely.
-    const balance = Number(data?.balance) || 0;
-    const totalUsed = Number(data?.total_used) || 0;
-
-    // Vercel gives $5/month free credit. The API doesn't return the
-    // monthly allocation so we use the known constant as the denominator.
-    const MONTHLY_CREDIT = 5;
-    const remainingPercentage = (balance / MONTHLY_CREDIT) * 100;
-
-    if (balance <= 0 && totalUsed <= 0) {
-      return {
-        plan: "Pay-as-you-go",
-        message: "Vercel AI Gateway connected. No credit allocation found (BYOK or unfunded account).",
-        quotas: {},
-      };
+    const balance = quotaNumber(data?.balance);
+    const totalUsed = quotaNumber(data?.total_used);
+    if (balance === null || balance < 0) {
+      return { plan: "Pay-as-you-go", message: "Credit balance unavailable.", quotas: {} };
     }
-
-    // "Used (USD)": how much has been spent this month (no fixed cap → unlimited).
-    // "Remaining (USD)": balance remaining out of the $5 monthly allocation.
+    // The endpoint reports a cash balance, not the account's credit allowance.
     return {
       plan: "Pay-as-you-go",
       quotas: {
-        "Used (USD)": {
-          used: totalUsed,
-          total: 0,
-          remaining: 0,
-          remainingPercentage: 100,
-          unlimited: true,
-        },
-        "Remaining (USD)": {
-          used: balance,
-          total: MONTHLY_CREDIT,
-          remaining: balance,
-          remainingPercentage,
-          unlimited: false,
+        "Balance (USD)": {
+          kind: "balance", balance, unit: "USD", used: totalUsed,
+          total: null, remainingPercentage: null, unlimited: false, resetAt: null,
         },
       },
     };
@@ -303,19 +287,19 @@ export async function getQoderUsage(accessToken, proxyOptions = null) {
     const expiresAtMs = Number.isFinite(Number(body.expiresAt)) && Number(body.expiresAt) > 0
       ? Number(body.expiresAt)
       : null;
-    const resetAt = expiresAtMs ? new Date(expiresAtMs).toISOString() : null;
+    const resetAt = expiresAtMs ? parseResetTime(expiresAtMs) : null;
     const quotas = {
       user: {
-        total: Number(userQuota.total) || 0,
-        used: Number(userQuota.used) || 0,
-        remaining: Number(userQuota.remaining) || 0,
+        total: quotaNumber(userQuota.total),
+        used: quotaNumber(userQuota.used),
+        remaining: quotaNumber(userQuota.remaining),
         unit: userQuota.unit || "credits",
         resetAt,
       },
       organization: {
-        total: Number(orgQuota.total) || 0,
-        used: Number(orgQuota.used) || 0,
-        remaining: Number(orgQuota.remaining) || 0,
+        total: quotaNumber(orgQuota.total),
+        used: quotaNumber(orgQuota.used),
+        remaining: quotaNumber(orgQuota.remaining),
         unit: orgQuota.unit || "credits",
         resetAt,
       },

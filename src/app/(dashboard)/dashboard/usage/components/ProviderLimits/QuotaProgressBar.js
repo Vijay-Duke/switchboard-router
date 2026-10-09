@@ -6,6 +6,7 @@ import { formatResetTime } from "./utils";
 
 // Calculate color based on remaining percentage
 const getColorClasses = (remainingPercentage) => {
+  if (remainingPercentage === null) return { text: "text-text-muted", bg: "bg-gray-400", bgLight: "bg-gray-400/10", emoji: "⚪" };
   if (remainingPercentage > 70) {
     return {
       text: "text-green-500",
@@ -40,6 +41,7 @@ const formatResetTimeDisplay = (resetTime) => {
   try {
     const resetDate = new Date(resetTime);
     const now = new Date();
+    if (!Number.isFinite(resetDate.getTime()) || resetDate <= now) return null;
     const isToday = resetDate.toDateString() === now.toDateString();
     const isTomorrow = resetDate.toDateString() === new Date(now.getTime() + 86400000).toDateString();
     
@@ -65,17 +67,18 @@ const formatResetTimeDisplay = (resetTime) => {
 };
 
 export default function QuotaProgressBar({
-  percentage = 0,
+  percentage = null,
   label = "",
-  used = 0,
-  total = 0,
+  used = null,
+  total = null,
   unlimited = false,
   resetTime = null,
   recurring = true,
 }) {
   // O29: percentage is already the remaining percentage; clamp it to 0-100 so
   // width, label and color never see negative or >100 values.
-  const remaining = Math.min(100, Math.max(0, Math.round(Number(percentage) || 0)));
+  const remaining = typeof percentage === "number" && Number.isFinite(percentage)
+    ? Math.min(100, Math.max(0, Math.round(percentage))) : null;
   const colors = getColorClasses(remaining);
   const countdown = formatResetTime(resetTime);
   const resetDisplay = formatResetTimeDisplay(resetTime);
@@ -95,7 +98,7 @@ export default function QuotaProgressBar({
         <div className="flex items-center gap-1.5">
           <span className="text-xs">{colors.emoji}</span>
           <span className={cn("font-medium", colors.text)}>
-            {remaining}%
+            {remaining === null ? "Unknown" : `${remaining}% remaining`}
           </span>
         </div>
       </div>
@@ -105,7 +108,7 @@ export default function QuotaProgressBar({
         <div className={cn("h-2 rounded-full overflow-hidden", colors.bgLight)}>
           <div
             className={cn("h-full transition-all duration-300", colors.bg)}
-            style={{ width: `${remaining}%` }}
+            style={{ width: `${remaining ?? 0}%` }}
           />
         </div>
       )}
@@ -113,7 +116,7 @@ export default function QuotaProgressBar({
       {/* Usage details and countdown */}
       <div className="flex items-center justify-between text-xs text-text-muted">
         <span>
-          {used.toLocaleString()} / {total.toLocaleString()} requests
+          {used === null ? "Unknown" : used.toLocaleString()} / {total > 0 ? total.toLocaleString() : unlimited ? "Unlimited" : "Unknown"}
         </span>
         {countdown !== "-" && (
           <div className="flex items-center gap-1">

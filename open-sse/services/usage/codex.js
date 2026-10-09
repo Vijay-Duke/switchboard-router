@@ -2,6 +2,7 @@
  * Codex (OpenAI) usage handler
  */
 
+import { quotaNumber } from "./quotaValidity.js";
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { U, parseResetTime, toFiniteNumber } from "./shared.js";
 
@@ -33,12 +34,16 @@ function getCodexRateLimitBody(snapshot) {
 }
 
 function formatCodexWindow(window) {
-  const used = Math.max(0, Math.min(100, toFiniteNumber(window?.used_percent ?? window?.percent_used, 0)));
+  const reported = quotaNumber(window?.used_percent ?? window?.percent_used);
+  const used = reported !== null && reported >= 0 ? reported : null;
+  const windowSeconds = quotaNumber(window?.limit_window_seconds);
   return {
     used,
     total: 100,
-    remaining: Math.max(0, 100 - used),
-    resetAt: parseResetTime(window?.reset_at ?? window?.resets_at ?? window?.resetAt ?? null),
+    remaining: used === null ? null : Math.max(0, 100 - used),
+    ...(windowSeconds > 0 ? { windowSeconds, displayName: windowSeconds === 18000 ? "Session (5h)" : windowSeconds === 604800 ? "Weekly (7d)" : `Window (${windowSeconds / 3600}h)` } : {}),
+    resetAt: parseResetTime(window?.reset_at ?? window?.resets_at ?? window?.resetAt ?? null)
+      || (quotaNumber(window?.reset_after_seconds) > 0 ? new Date(Date.now() + quotaNumber(window.reset_after_seconds) * 1000).toISOString() : null),
     unlimited: false,
   };
 }
@@ -53,10 +58,12 @@ function appendCodexQuotaWindows(quotas, prefix, snapshot) {
 
   if (primary) {
     quotas[prefix ? `${prefix}_session` : "session"] = formatCodexWindow(primary);
+    if (rateLimit.limit_reached === true) quotas[prefix ? `${prefix}_session` : "session"].blocked = true;
     added = true;
   }
   if (secondary) {
     quotas[prefix ? `${prefix}_weekly` : "weekly"] = formatCodexWindow(secondary);
+    if (rateLimit.limit_reached === true) quotas[prefix ? `${prefix}_weekly` : "weekly"].blocked = true;
     added = true;
   }
 
@@ -80,13 +87,14 @@ function getCodexReviewRateLimit(data) {
   }) || null;
 }
 
-export async function getCodexUsage(accessToken, proxyOptions = null) {
+export async function getCodexUsage(accessToken, proxyOptions = null, providerSpecificData = null) {
   try {
     const response = await proxyAwareFetch(CODEX_CONFIG.usageUrl, {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${accessToken}`,
         "Accept": "application/json",
+        ...(getCodexAccountId(providerSpecificData) ? { "ChatGPT-Account-ID": getCodexAccountId(providerSpecificData) } : {}),
       },
       identity: "codex-cli",
       provider: "codex",
@@ -105,6 +113,21 @@ export async function getCodexUsage(accessToken, proxyOptions = null) {
 
     appendCodexQuotaWindows(quotas, "", normalRateLimit);
     appendCodexQuotaWindows(quotas, "review", reviewRateLimit);
+    const additional = Array.isArray(data.additional_rate_limits) ? data.additional_rate_limits : [];
+    for (const entry of additional) {
+      if (entry === reviewRateLimit) continue;
+      const name = entry.limit_name || entry.metered_feature || entry.id;
+      if (typeof name === "string" && name) appendCodexQuotaWindows(quotas, name, entry);
+    }
+    for (const [name, entry] of Object.entries(data.rate_limits_by_limit_id || {})) {
+      if (name === "codex" || entry === reviewRateLimit) continue;
+      appendCodexQuotaWindows(quotas, name, entry);
+    }
+    for (const [name, quota] of Object.entries(quotas)) {
+      if (quota.displayName && name !== "session" && name !== "weekly") {
+        quota.displayName = `${name.replace(/_(session|weekly)$/, "")} · ${quota.displayName}`;
+      }
+    }
 
     return {
       plan: data.plan_type || data.summary?.plan || "unknown",

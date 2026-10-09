@@ -203,7 +203,7 @@ export async function GET(request, { params }) {
       }
     }
 
-    return Response.json(usage);
+    return Response.json(usage, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const provider = connection?.provider ?? "unknown";
     console.warn(`[Usage] ${provider}: ${error.message}`);

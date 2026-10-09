@@ -19,6 +19,7 @@
  * for refill packs, "Bonus Pack N" for bonus packs (soonest-expiring first).
  */
 
+import { quotaNumber } from "./quotaValidity.js";
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { PROVIDERS } from "../../providers/index.js";
 import { U, parseResetTime } from "./shared.js";
@@ -27,8 +28,7 @@ const PROVIDER_ID = "codebuddy-cn";
 
 // Prefer the *Precise string fields (exact), fall back to the numeric ones.
 function num(precise, plain) {
-  const n = Number(precise ?? plain);
-  return Number.isFinite(n) ? n : 0;
+  return quotaNumber(precise ?? plain);
 }
 
 // Label a refill pack by its cycle length (Monthly is the common CodeBuddy case).
@@ -88,7 +88,8 @@ export async function getCodeBuddyCnUsage(accessToken, apiKey, providerSpecificD
     const REFILL_GAP_MS = 2 * 24 * 60 * 60 * 1000;
     const isRefill = (acc) => {
       const ce = cycleEndMs(acc);
-      const de = Number(acc.DeductionEndTime);
+      const parsed = parseResetTime(acc.DeductionEndTime);
+      const de = parsed ? Date.parse(parsed) : NaN;
       return Number.isFinite(ce) && Number.isFinite(de) && de - ce > REFILL_GAP_MS;
     };
     const byExpiry = (a, b) => cycleEndMs(a) - cycleEndMs(b);

@@ -24,6 +24,26 @@ beforeEach(async () => {
 });
 afterEach(()=>vi.useRealTimers());
 describe("auto-ping quota observation freshness",()=>{
+  it("routes using the limiting core window, while keeping model-specific limits separate", async () => {
+    mocks.fetch.mockResolvedValueOnce(response({
+      five_hour: { utilization: 10, resets_at: new Date(NOW + 360_000).toISOString() },
+      seven_day: { utilization: 97, resets_at: new Date(NOW + 86400_000).toISOString() },
+      seven_day_sonnet: { utilization: 100, resets_at: new Date(NOW + 86400_000).toISOString() },
+    }));
+    await run(deps, state);
+    expect(deps.updateProviderConnection).toHaveBeenCalledWith("account", {
+      lastQuota: { remainingPercentage: 3, resetAt: new Date(NOW + 86400_000).toISOString(), at: NOW },
+    });
+  });
+  it("clears an old routing snapshot when the current provider observation fails", async () => {
+    deps.getProviderConnections.mockResolvedValue([{ id: "account", provider: "claude", authType: "oauth", accessToken: "synthetic-token", lastQuota: { at: NOW, remainingPercentage: 90 } }]);
+    mocks.fetch.mockResolvedValueOnce(response({ five_hour: { utilization: 10, resets_at: new Date(NOW + 360_000).toISOString() } }));
+    await run(deps, state);
+    vi.setSystemTime(NOW + 361_000);
+    mocks.fetch.mockResolvedValueOnce(response({}, 429));
+    await run(deps, state);
+    expect(deps.updateProviderConnection).toHaveBeenLastCalledWith("account", { lastQuota: null });
+  });
   it("does not re-stamp a cached headroom read as a fresh routing snapshot",async()=>{
     mocks.fetch.mockResolvedValueOnce(response({five_hour:{utilization:0,resets_at:new Date(NOW+360_000).toISOString()}}));
     await run(deps,state);

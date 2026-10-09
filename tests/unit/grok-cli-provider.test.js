@@ -264,9 +264,10 @@ describe("grok-cli provider", () => {
       prepaidBalance: { val: 0 },
     } });
     expect(parsed.quotas["On-demand"]).toMatchObject({
-      used: 1,
-      total: 1,
-      remainingPercentage: 0,
+      used: 0,
+      total: 0,
+      remainingPercentage: null,
+      available: false,
       unlimited: false,
     });
   });

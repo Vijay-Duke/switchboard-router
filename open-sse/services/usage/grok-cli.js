@@ -13,11 +13,11 @@ const unwrap = (value, fallback = 0) => value && typeof value === "object" && "v
 
 function quota(used, total, resetAt = null) {
   const safeTotal = Math.max(0, total);
-  const safeUsed = Math.max(0, used);
+  const safeUsed = used === null ? null : Math.max(0, used);
   return {
     used: safeUsed,
     total: safeTotal,
-    remainingPercentage: safeTotal ? Math.max(0, ((safeTotal - safeUsed) / safeTotal) * 100) : 0,
+    remainingPercentage: safeUsed === null ? null : safeTotal ? Math.max(0, ((safeTotal - safeUsed) / safeTotal) * 100) : 0,
     resetAt,
     unlimited: false,
   };
@@ -32,18 +32,20 @@ export function parseGrokCliBilling(billing, user = null) {
   const quotas = {};
 
   const monthlyLimit = unwrap(config.monthlyLimit ?? root.monthlyLimit, NaN);
-  const includedUsed = unwrap(config.includedUsed ?? root.includedUsed ?? config.totalUsed ?? root.totalUsed, 0);
+  const includedUsed = unwrap(config.includedUsed ?? root.includedUsed ?? config.totalUsed ?? root.totalUsed, null);
   if (Number.isFinite(monthlyLimit) && monthlyLimit > 0) {
     quotas["Monthly included"] = quota(includedUsed, monthlyLimit, resetAt);
   }
 
   const cap = unwrap(config.onDemandCap ?? root.onDemandCap, NaN);
-  const used = unwrap(config.onDemandUsed ?? root.onDemandUsed, 0);
+  const used = unwrap(config.onDemandUsed ?? root.onDemandUsed, null);
   if (Number.isFinite(cap) && cap > 0) quotas["On-demand"] = quota(used, cap, resetAt);
-  else if (!subscriptionAccess && cap === 0) quotas["On-demand"] = quota(1, 1, resetAt);
+
+
+  if (cap === 0) quotas["On-demand"] = { used, total: 0, remainingPercentage: null, unlimited: false, available: false, resetAt };
 
   const prepaid = unwrap(config.prepaidBalance ?? root.prepaidBalance, NaN);
-  if (Number.isFinite(prepaid) && prepaid > 0) quotas.Prepaid = quota(0, prepaid);
+  if (Number.isFinite(prepaid) && prepaid >= 0) quotas.Prepaid = { kind: "balance", balance: prepaid, unit: "credits", used: null, total: null, unlimited: false };
 
   const plan = tier
     ? String(tier).replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())

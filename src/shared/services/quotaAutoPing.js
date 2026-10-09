@@ -1,6 +1,7 @@
 // Quota auto-ping scheduler: warms 5h windows by sending tiny opt-in requests right after reset.
 import "open-sse/index.js";
 import "@/sse/initQuotaStateDeps.js";
+import { quotaRemainingPercent } from "open-sse/services/usage/quotaValidity.js";
 import { getQuotaStateIdentity } from "open-sse/services/usage/quotaState.js";
 
 import { getSettings, getProviderConnections, updateProviderConnection } from "@/lib/db/index.js";
@@ -22,7 +23,7 @@ const providerHandlers = {
     sendPing: sendClaudePing,
   },
   codex: {
-    getUsage: getCodexUsage,
+    getUsage: (token, proxy, options) => getCodexUsage(token, proxy, options?.providerSpecificData),
     sendPing: sendCodexPing,
   },
 };
@@ -63,17 +64,7 @@ function toFiniteNumber(value, fallback = null) {
 
 /** Remaining headroom as a 0-100 percentage, or null when not derivable. */
 function quotaRemainingPercentage(quota) {
-  if (!quota || typeof quota !== "object") return null;
-  if (quota.unlimited === true) return 100;
-  const pct = Number(quota.remainingPercentage);
-  if (Number.isFinite(pct)) return Math.max(0, Math.min(100, pct));
-  const remaining = Number(quota.remaining);
-  const total = Number(quota.total);
-  if (Number.isFinite(remaining) && Number.isFinite(total) && total > 0) {
-    return Math.max(0, Math.min(100, (remaining / total) * 100));
-  }
-  if (Number.isFinite(remaining)) return Math.max(0, remaining);
-  return null;
+  return quotaRemainingPercent(quota);
 }
 
 function isQuotaExhausted(quota) {
@@ -233,10 +224,14 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
   const usage = await handler.getUsage(connection.accessToken, proxyOptions, {
     connectionId: connection.id,
     quotaIdentity: getQuotaStateIdentity(connection),
+    providerSpecificData: connection.providerSpecificData,
   });
   // Last-good quota may be displayed during a polling failure, but it cannot
   // establish current routing headroom or justify a new warm-up request.
-  if (usage?.stale === true) return;
+  if (usage?.stale === true) {
+    if (connection.lastQuota) await deps.updateProviderConnection(connection.id, { lastQuota: null });
+    return;
+  }
   const observedAt = usage?.observedAt ? new Date(usage.observedAt).getTime() : NaN;
   const snapshotAt = Number.isFinite(observedAt) ? observedAt : Date.now();
   const quotas = usage?.quotas || {};
@@ -245,16 +240,25 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
   // quota-first routing can read it synchronously from the connection row.
   // Normalize to a percentage: claude reports remainingPercentage directly;
   // codex reports remaining/total counts → divide; unlimited = 100.
-  const snapshotPercentage = quotaRemainingPercentage(quota);
+  const coreNames = provider === "claude" ? [providerConfig.quotaKey, "weekly (7d)"] : ["session", "weekly"];
+  const relevant = Object.entries(quotas).filter(([name]) => coreNames.includes(name));
+  const percentages = relevant.map(([, item]) => item.blocked ? 0 : quotaRemainingPercentage(item));
+  const snapshotPercentage = quota && percentages.length && percentages.every(value => value !== null)
+    ? Math.min(...percentages) : null;
+  const limiting = relevant[percentages.indexOf(snapshotPercentage)]?.[1];
+  if (snapshotPercentage === null && connection.lastQuota) {
+    await deps.updateProviderConnection(connection.id, { lastQuota: null });
+  }
   if (snapshotPercentage != null) {
     try {
       await deps.updateProviderConnection(connection.id, {
-        lastQuota: { remainingPercentage: snapshotPercentage, resetAt: quota.resetAt ?? null, at: snapshotAt },
+        lastQuota: { remainingPercentage: snapshotPercentage, resetAt: limiting?.resetAt || null, at: snapshotAt },
       });
     } catch {
       /* fail-open: snapshot is best-effort */
     }
   }
+  if (provider === "codex" && quota?.windowSeconds && quota.windowSeconds !== 18000) return;
   const resetAt = quota?.resetAt;
   if (!resetAt) return;
 

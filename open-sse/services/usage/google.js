@@ -2,6 +2,7 @@
  * Google usage handlers (Gemini CLI + Antigravity)
  */
 
+import { quotaNumber } from "./quotaValidity.js";
 import { CLIENT_METADATA } from "../../config/appConstants.js";
 import { U, parseResetTime, normalizeCloudCodeProjectId, fetchWithTimeout } from "./shared.js";
 
@@ -14,14 +15,14 @@ const ANTIGRAVITY_CONFIG = U("antigravity");
  */
 export async function getGeminiUsage(accessToken, providerSpecificData, proxyOptions = null) {
   if (!accessToken) {
-    return { plan: "Free", message: "Gemini CLI access token not available." };
+    return { plan: "Unknown", message: "Gemini CLI access token not available." };
   }
 
   try {
     // Resolve project id: prefer connection-stored id, else loadCodeAssist lookup.
     // #1271: OAuth save stores projectId on the connection, not providerSpecificData.
     let projectId = normalizeCloudCodeProjectId(providerSpecificData?.projectId);
-    let plan = "Free";
+    let plan = "Unknown";
 
     if (!projectId) {
       const subInfo = await getGeminiSubscriptionInfo(accessToken, proxyOptions);
@@ -64,9 +65,10 @@ export async function getGeminiUsage(accessToken, providerSpecificData, proxyOpt
       for (const bucket of data.buckets) {
         if (!bucket.modelId || bucket.remainingFraction == null) continue;
 
-        const remainingFraction = Number(bucket.remainingFraction) || 0;
-        const total = 1000; // Normalized base, matches antigravity convention
-        const remaining = Math.round(total * remainingFraction);
+        const remainingFraction = quotaNumber(bucket.remainingFraction);
+        if (remainingFraction === null || remainingFraction < 0 || remainingFraction > 1) continue;
+        const total = 100; // Percentage scale, not an invented request allowance
+        const remaining = total * remainingFraction;
         const used = Math.max(0, total - remaining);
 
         quotas[bucket.modelId] = {
@@ -75,6 +77,7 @@ export async function getGeminiUsage(accessToken, providerSpecificData, proxyOpt
           resetAt: parseResetTime(bucket.resetTime),
           remainingPercentage: remainingFraction * 100,
           unlimited: false,
+          unit: "%",
         };
       }
     }
@@ -187,12 +190,13 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
           continue;
         }
 
-        const remainingFraction = info.quotaInfo.remainingFraction || 0;
+        const remainingFraction = quotaNumber(info.quotaInfo.remainingFraction);
+        if (remainingFraction === null || remainingFraction < 0 || remainingFraction > 1) continue;
         const remainingPercentage = remainingFraction * 100;
 
         // Convert percentage to used/total for UI compatibility
-        const total = 1000; // Normalized base
-        const remaining = Math.round(total * remainingFraction);
+        const total = 100; // Percentage scale
+        const remaining = total * remainingFraction;
         const used = total - remaining;
 
         // Use modelKey as key (matches PROVIDER_MODELS id)
@@ -202,6 +206,7 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
           resetAt: parseResetTime(info.quotaInfo.resetTime),
           remainingPercentage,
           unlimited: false,
+          unit: "%",
           displayName: info.displayName || modelKey,
         };
       }
