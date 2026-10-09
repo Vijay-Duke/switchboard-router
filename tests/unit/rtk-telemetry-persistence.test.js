@@ -67,3 +67,21 @@ describe("RTK telemetry persistence", () => {
     expect(details[0].rtk).toBeUndefined();
   }, 15000);
 });
+
+it("preserves structural history evidence even when request bodies are truncated", async () => {
+  const { saveRequestDetail, getRequestDetails, flushPendingRequestDetails } = await import("@/lib/db/repos/requestDetailsRepo.js");
+  const { buildRequestDetail } = await import("open-sse/handlers/chatCore/requestDetail.js");
+  const stage = { stage: "inbound", missingResults: 1, toolCalls: 1, toolResults: 0 };
+  await saveRequestDetail(buildRequestDetail({
+    provider: "claude", model: "m1", status: "error",
+    request: { messages: [{ role: "user", content: "x".repeat(10000) }], toolHistoryDiagnostics: [stage] },
+    providerRequest: { messages: [{ role: "assistant", content: [{ type: "tool_use", id: "PRIVATE_ID", name: "PRIVATE_NAME", input: {} }] }, { role: "user", content: "x".repeat(10000) }] },
+  }));
+  await flushPendingRequestDetails();
+  const { details } = await getRequestDetails({ provider: "claude" });
+  expect(details[0].request._truncated).toBe(true);
+  expect(details[0].providerRequest._truncated).toBe(true);
+  expect(details[0].toolHistory.stages).toEqual([stage]);
+  expect(details[0].toolHistory.dispatched.missingResults).toBe(1);
+  expect(JSON.stringify(details[0].toolHistory)).not.toContain("PRIVATE");
+}, 15000);

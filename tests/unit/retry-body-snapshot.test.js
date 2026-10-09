@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { executeMock, refreshCredentialsMock, logTargetRequest } = vi.hoisted(() => ({
+const { executeMock, refreshCredentialsMock, logTargetRequest, identityMock } = vi.hoisted(() => ({
+  identityMock: vi.fn(async (body) => ({ ...body, metadata: { user_id: "verified-account-identity" } })),
   executeMock: vi.fn(),
   refreshCredentialsMock: vi.fn(),
   logTargetRequest: vi.fn(),
@@ -39,7 +40,8 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch: vi.fn(),
   proxyOptionsFromCredentials: vi.fn(() => ({})),
 }));
-vi.mock("../../open-sse/translator/formats/claude.js", () => ({ normalizeClaudePassthrough: vi.fn() }));
+vi.mock("../../open-sse/translator/formats/claude.js", async importOriginal => ({ ...await importOriginal(), normalizeClaudePassthrough: vi.fn() }));
+vi.mock("../../open-sse/utils/claudeCloaking.js", async importOriginal => ({ ...await importOriginal(), applyCloakingWithIdentity: identityMock }));
 vi.mock("../../open-sse/utils/toolDeduper.js", () => ({ dedupeTools: vi.fn((tools) => ({ tools, stripped: [] })) }));
 vi.mock("../../open-sse/rtk/caveman.js", () => ({ injectCaveman: vi.fn() }));
 vi.mock("../../open-sse/rtk/ponytail.js", () => ({ injectPonytail: vi.fn() }));
@@ -114,4 +116,37 @@ describe("per-attempt body snapshot and retry logging (H16/H18)", () => {
     expect(logTargetRequest.mock.calls[1][0]).toBe("https://upstream.test/attempt-2");
     expect(logTargetRequest.mock.calls[1][1]).toEqual({ "x-attempt-url": "https://upstream.test/attempt-2" });
   });
+});
+
+it("rebinds translated Claude OAuth identity using a declared session identifier", async () => {
+  executeMock.mockReset(); identityMock.mockClear();
+  executeMock.mockResolvedValue(attempt(new Response("bad fixture", { status: 400 }), "https://upstream.test/messages"));
+  const options = requestOptions();
+  options.modelInfo = { provider: "claude", model: "claude-sonnet-5-5" };
+  options.body.model = "claude/claude-sonnet-5-5";
+  options.credentials = { accessToken: "sk-ant-oat-synthetic-token", connectionId: "synthetic-account" };
+  const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
+  await handleChatCore(options);
+  expect(identityMock).toHaveBeenCalledOnce();
+  expect(identityMock.mock.calls[0][2]).toEqual(expect.any(String));
+  expect(executeMock.mock.calls[0][0].body.metadata.user_id).toBe("verified-account-identity");
+});
+
+it("marks non-Claude translated stages as inapplicable instead of reporting deleted tool history", async () => {
+  executeMock.mockReset();
+  executeMock.mockResolvedValue(attempt(new Response("fixture rejection", { status: 400 }), "https://upstream.test/chat"));
+  const options = requestOptions();
+  options.body.messages = [
+    { role: "assistant", content: [{ type: "tool_use", id: "call_a", name: "Read", input: {} }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "call_a", content: "actual result" }] },
+  ];
+  options.sourceFormatOverride = "claude";
+  const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
+  const { buildRequestDetail } = await import("../../open-sse/handlers/chatCore/requestDetail.js");
+  buildRequestDetail.mockClear();
+  await handleChatCore(options);
+  const stages = buildRequestDetail.mock.calls[0][0].request.toolHistoryDiagnostics;
+  expect(stages[0]).toMatchObject({ stage: "inbound", toolCalls: 1, toolResults: 1 });
+  expect(stages.find(x => x.stage === "normalized")).toMatchObject({ notApplicable: true, format: "openai" });
+  expect(stages.filter(x => x.notApplicable).every(x => x.toolCalls === undefined)).toBe(true);
 });

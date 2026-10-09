@@ -1,4 +1,5 @@
 import { saveRequestUsage, appendRequestLog, saveRequestDetail } from "../../runtimeDeps.js";
+import { summarizeClaudeToolHistory } from "../../utils/toolHistoryDiagnostics.js";
 import { COLORS } from "../../utils/stream.js";
 import { canonicalizeUsage } from "../../utils/usageTracking.js";
 
@@ -68,6 +69,10 @@ export function buildRequestDetail(base, overrides = {}) {
     request: base.request,
     providerRequest: base.providerRequest || null,
     providerResponse: base.providerResponse || null,
+    toolHistory: base.request?.toolHistoryDiagnostics ? {
+      stages: base.request.toolHistoryDiagnostics,
+      dispatched: summarizeClaudeToolHistory(base.providerRequest),
+    } : undefined,
     response: base.response || {},
     pxpipe: base.pxpipe || undefined,
     rtk: base.rtk || undefined,

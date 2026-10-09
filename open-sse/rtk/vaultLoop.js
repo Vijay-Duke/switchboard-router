@@ -147,6 +147,9 @@ function classifyClaudeJson(data, replay) {
     if (block?.type === "tool_use") {
       if (block.name === VAULT_TOOL_NAME) vaultCalls.push(toVaultCall(block.id, block.input || {}));
       else hasOtherCall = true;
+    } else if (block?.type !== "text" && block?.type !== "thinking" && block?.type !== "redacted_thinking") {
+      // Provider-managed tools and unfamiliar blocks must reach the client intact.
+      hasOtherCall = true;
     }
     if (block?.type === "text" && typeof block.text === "string" && block.text.trim()) hasText = true;
   }
@@ -216,37 +219,46 @@ function classifyOpenAiSse(text, replay) {
 function classifyClaudeSse(text, replay) {
   const blocks = new Map();
   let hasText = false;
-  const events = sseData(text);
-  for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
-    const event = events[eventIndex];
+  let unsafe = false;
+  for (const event of sseData(text)) {
+    if (event?.type === "error") unsafe = true;
     const index = Number.isInteger(event?.index) ? event.index : 0;
     const block = event?.content_block;
-    if (event?.type === "content_block_start" && block?.type === "tool_use") {
-      blocks.set(index, { id: block.id || "", name: block.name || "", input: "" });
+    if (event?.type === "content_block_start" && block) {
+      if (!["tool_use", "thinking", "redacted_thinking", "text"].includes(block.type)) unsafe = true;
+      blocks.set(index, { ...block, partialInput: "" });
+      if (block.type === "text" && block.text?.trim()) hasText = true;
     }
-    if (event?.type === "content_block_start" && block?.type === "text" && typeof block.text === "string" && block.text.trim()) hasText = true;
-    if (event?.delta?.type === "text_delta" && typeof event.delta.text === "string" && event.delta.text.trim()) hasText = true;
-    if (event?.delta?.type === "input_json_delta") {
-      const existing = blocks.get(index);
-      if (existing && typeof event.delta.partial_json === "string") existing.input += event.delta.partial_json;
+    const current = blocks.get(index);
+    const delta = event?.type === "content_block_delta" ? event.delta : undefined;
+    if (delta?.type === "text_delta" && delta.text?.trim()) hasText = true;
+    if (!current) {
+      if (event?.type === "content_block_delta") unsafe = true;
+      continue;
     }
+    if (delta?.type === "input_json_delta" && current.type === "tool_use") current.partialInput += delta.partial_json || "";
+    else if (delta?.type === "thinking_delta" && current.type === "thinking") current.thinking = (current.thinking || "") + (delta.thinking || "");
+    else if (delta?.type === "signature_delta" && current.type === "thinking") current.signature = (current.signature || "") + (delta.signature || "");
+    else if (delta && delta.type !== "text_delta") unsafe = true;
   }
-  const ordered = [...blocks.entries()].sort((a, b) => a[0] - b[0]).map(([, block]) => block);
   const vaultCalls = [];
   const rawBlocks = [];
-  let hasOtherCall = false;
-  for (const block of ordered) {
-    if (block.name === VAULT_TOOL_NAME) {
-      const input = parseArgs(block.input);
-      vaultCalls.push(toVaultCall(block.id, input));
-      rawBlocks.push({ type: "tool_use", id: block.id, name: VAULT_TOOL_NAME, input });
-    } else {
-      // Any non-vault tool_use, including an unnamed/unparsed one, forces a forward.
-      hasOtherCall = true;
+  for (const [, block] of [...blocks.entries()].sort((a, b) => a[0] - b[0])) {
+    const { partialInput, ...raw } = block;
+    if (block.type === "text") continue;
+    if (block.type === "tool_use") {
+      if (block.name !== VAULT_TOOL_NAME) unsafe = true;
+      else {
+        // Preserve initial input when a stream sends no JSON deltas.
+        const input = partialInput ? parseArgs(partialInput) : block.input || {};
+        vaultCalls.push(toVaultCall(block.id, input));
+        raw.input = input;
+      }
     }
+    rawBlocks.push(raw);
   }
   if (vaultCalls.length === 0) return { kind: "none", replay };
-  if (hasOtherCall || hasText) return { kind: "mixed", replay };
+  if (unsafe || hasText) return { kind: "mixed", replay };
   return buildCallResult(vaultCalls, rawBlocks) || { kind: "none", replay };
 }
 
@@ -275,7 +287,9 @@ async function readWithIdleTimeout(reader) {
 }
 
 async function bufferSse(response) {
-  const reader = response.clone().body?.getReader();
+  // Consume the SSE body directly and replay buffered bytes. Cancelling only
+  // one branch of Response.clone() waits for its unread tee sibling forever.
+  const reader = response.body?.getReader();
   if (!reader) throw new Error("missing stream body");
   const decoder = new TextDecoder();
   let text = "";
@@ -287,21 +301,29 @@ async function bufferSse(response) {
     }
     return text + decoder.decode();
   } catch (error) {
-    try { await reader.cancel(); } catch {}
+    try { Promise.resolve(reader.cancel(error)).catch(() => {}); } catch {}
     throw error;
   }
 }
 
 export async function classifyResponse(response, wire) {
+  const type = response?.headers?.get("content-type") || "";
+  let bufferedText;
   try {
-    const type = response?.headers?.get("content-type") || "";
     if (!type.toLowerCase().includes("text/event-stream")) {
       const data = await response.clone().json();
       return classifyData(data, wire, jsonReplay(response, data));
     }
-    const text = await bufferSse(response);
-    return classifySse(text, wire, streamReplay(response, text));
+    bufferedText = await bufferSse(response);
+    return classifySse(bufferedText, wire, streamReplay(response, bufferedText));
   } catch {
+    if (type.toLowerCase().includes("text/event-stream")) {
+      if (bufferedText !== undefined) return { kind: "none", replay: streamReplay(response, bufferedText) };
+      // The buffered body is already consumed. Return a real failure instead
+      // of an unreadable/partial successful response; native clients can retry.
+      const error = { type: "api_error", message: "Vault upstream stream did not complete." };
+      return { kind: "none", replay: Response.json(wire === "claude" ? { type: "error", error } : { error }, { status: 502 }) };
+    }
     return { kind: "none", replay: response };
   }
 }

@@ -1,12 +1,11 @@
-# v0.9.45 (2026-10-09)
+# v0.9.47 (2026-10-09)
 
-Native Claude streams now enforce model progress deadlines: keep-alive pings and message-start frames cannot keep a stalled request open indefinitely. Continuing thinking, text and tool events reset the progress deadline. Cancellation records the stream failure immediately, including when the downstream stops reading or upstream cleanup hangs.
+- Bound vault-stream idle failures without awaiting a hung cancellation or an unread cloned stream branch. Interrupted buffered responses return an explicit retryable error.
+- Preserve signed and redacted thinking when replaying streamed vault tool turns. Forward provider-managed and unfamiliar mixed tool blocks unchanged instead of intercepting a subset.
+- Rebind translated Claude OAuth requests to verified account identity using the resolved session identifier.
+- Preserve bounded, content-free tool-history diagnostics across request truncation, including inbound, normalization, saver stages, and the actual dispatched body. No tool results are fabricated.
 
-Validation adds regressions for ping-only streams before and after output, healthy long reasoning, and cancellation without a further client read.
-
-# v0.9.44 (2026-10-09)
-
-## [0.9.46] - 2026-10-09
+# v0.9.46 (2026-10-09)
 
 ### Fixed
 - Quota rows now show unknown current usage after refresh failures, observation expiry, or a passed reset, without stale green availability bars.
@@ -15,6 +14,13 @@ Validation adds regressions for ping-only streams before and after output, healt
 - DeepSeek, Grok prepaid, and Vercel cash balances are displayed as balances without invented allowances or unlimited claims; GLM tool quotas and multiple Kimi limits are retained.
 - Quota-based routing ignores disabled, expired, unknown, and replaced-account observations and uses the limiting core quota window.
 
+# v0.9.45 (2026-10-09)
+
+Native Claude streams now enforce model progress deadlines: keep-alive pings and message-start frames cannot keep a stalled request open indefinitely. Continuing thinking, text and tool events reset the progress deadline. Cancellation records the stream failure immediately, including when the downstream stops reading or upstream cleanup hangs.
+
+Validation adds regressions for ping-only streams before and after output, healthy long reasoning, and cancellation without a further client read.
+
+# v0.9.44 (2026-10-09)
 
 ## Fixes
 - **Claude stream completion**: finalize native streams and usage on `message_stop` or an error event instead of waiting for the upstream socket to close. Preserve text and thinking before the client disconnects.

@@ -216,6 +216,7 @@ function buildDetailRecord(item, config) {
     providerResponse: truncateField(item.providerResponse, config.maxJsonSize),
     response: truncateField(item.response, config.maxJsonSize),
     pxpipe: item.pxpipe || undefined,
+    toolHistory: item.toolHistory || undefined,
     // Cap hits: one entry per compressed tool_result; pathological histories stay bounded.
     rtk: item.rtk ? { ...item.rtk, hits: item.rtk.hits?.slice(0, 50) } : undefined,
   };

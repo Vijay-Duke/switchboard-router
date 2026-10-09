@@ -3,6 +3,7 @@ import { translateRequest } from "../translator/index.js";
 import { stripThinkingSuffix } from "../translator/concerns/thinkingUnified.js";
 import { FORMATS } from "../translator/formats.js";
 import { normalizeClaudePassthrough, anchorClaudeCache } from "../translator/formats/claude.js";
+import { summarizeClaudeToolHistory } from "../utils/toolHistoryDiagnostics.js";
 import { COLORS } from "../utils/stream.js";
 import { createStreamController } from "../utils/streamHandler.js";
 import { isUnrecoverableRefreshError, refreshWithRetry } from "../services/tokenRefresh.js";
@@ -63,6 +64,18 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   const requestStartTime = Date.now();
 
   const sourceFormat = sourceFormatOverride || detectFormat(body);
+  const toolHistoryDiagnostics = [];
+  const noteToolHistory = (stage, value, format = sourceFormat) => {
+    if (sourceFormat !== FORMATS.CLAUDE) return;
+    if (format !== FORMATS.CLAUDE) {
+      toolHistoryDiagnostics.push({ stage, format, notApplicable: true });
+      return;
+    }
+    const summary = summarizeClaudeToolHistory(value);
+    if (summary) toolHistoryDiagnostics.push({ stage, format, ...summary });
+    else if (toolHistoryDiagnostics.length) toolHistoryDiagnostics.push({ stage, format, messageCount: value?.messages?.length || 0, toolCalls: 0, toolResults: 0 });
+  };
+  noteToolHistory("inbound", body);
 
   // Check for bypass patterns (warmup, skip, cc naming)
   const bypassResponse = handleBypassRequest(body, model, userAgent, ccFilterNaming);
@@ -199,7 +212,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       const oauthKey = credentials?.accessToken || credentials?.apiKey || null;
       if (typeof oauthKey === "string" && oauthKey.includes("sk-ant-oat")) {
         try {
-          const sid = clientSessionId
+          const sid = credentials?._clientSessionId
             || resolveSessionId({ headers: clientRawRequest?.headers, body: translatedBody, connectionId, scope: "claude" });
           translatedBody = await applyCloakingWithIdentity(
             translatedBody,
@@ -212,6 +225,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       }
     }
   }
+
+  noteToolHistory("normalized", translatedBody, passthrough ? sourceFormat : targetFormat);
 
   // Dedupe duplicate built-in tools when equivalent MCP tools are present (Claude clients only).
   if (clientTool === "claude" && Array.isArray(translatedBody.tools)) {
@@ -253,6 +268,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Per-request opt-out: client can bypass all token savers via header
   const tokenSaverEnabled = clientRawRequest?.headers?.[TOKEN_SAVER_HEADER]?.toLowerCase() !== "off";
 
+  noteToolHistory("vault", translatedBody, finalFormat);
+
   // RTK: compress tool_result content
   const rtkStats = compressMessages(translatedBody, tokenSaverEnabled && rtkEnabled);
   const rtkLine = formatRtkLog(rtkStats);
@@ -262,6 +279,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     recordVaultStore(vaultStats.vaulted, saved);
     log?.info?.("VAULT", `externalized ${vaultStats.vaulted} tool result(s), saved ${saved}B`);
   }
+
+  noteToolHistory("rtk", translatedBody, finalFormat);
 
   // Headroom: optional external proxy compression; fail open if proxy is absent.
   const headroomDiagnostics = {};
@@ -275,6 +294,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     }
   } else if (tokenSaverEnabled && headroomEnabled) log?.warn?.("HEADROOM", `skipped: ${headroomDiagnostics.reason || "compression unavailable"}${headroomDiagnostics.endpoint ? ` (${headroomDiagnostics.endpoint})` : ""}`);
 
+  noteToolHistory("headroom", translatedBody, finalFormat);
+
   // Strip orphaned tool results again after RTK/Headroom — compressors can remove
   // assistant turns containing tool_calls, leaving dangling results that strict
   // providers reject with 400.
@@ -282,6 +303,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (postStripped > 0) {
     log?.debug?.("TOOLCLEAN", `post-compression: stripped ${postStripped} orphaned tool result(s)`);
   }
+
+  noteToolHistory("post-strip", translatedBody, finalFormat);
 
   // Caveman: inject terse-style system prompt
   if (tokenSaverEnabled && cavemanEnabled && cavemanLevel) {
@@ -408,7 +431,9 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // body.messages) and before dispatch. Every completion/error path shares
   // this one object so the start- and end-of-stream detail saves hit the
   // identity memo in requestDetailsRepo instead of re-serializing.
+  noteToolHistory("final", translatedBody, finalFormat);
   const requestConfig = extractRequestConfig(body, stream);
+  if (toolHistoryDiagnostics.length) requestConfig.toolHistoryDiagnostics = toolHistoryDiagnostics;
 
   const requestAborted = () => abortSignal?.aborted || streamController.signal?.aborted;
   const abortResult = async () => {
