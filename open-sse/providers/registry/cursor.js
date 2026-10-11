@@ -25,6 +25,11 @@ const moduleDefault = {
       "User-Agent": "connect-es/1.6.1",
     },
     clientVersion: "3.1.0",
+    usage: {
+      url: "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+      planInfoUrl: "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo",
+      authUsageUrl: "https://api2.cursor.sh/auth/usage",
+    },
   },
   models: [
     { id: "default", name: "Auto (Server Picks)" },
@@ -57,6 +62,9 @@ const moduleDefault = {
       accessToken: "cursorAuth/accessToken",
       machineId: "storage.serviceMachineId",
     },
+  },
+  features: {
+    usage: true,
   },
 };
 
