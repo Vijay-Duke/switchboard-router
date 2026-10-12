@@ -1,3 +1,13 @@
+# v0.9.53 (2026-10-12)
+
+## Features
+- **Thinking-level metadata for CLI harnesses**: Pi/omp catalog entries now carry `thinkingLevelMap` (only levels the model actually supports; `off` maps to `none`, binary on/off models map onto `high`), so level pickers stop offering unsupported efforts. omp additionally gets a per-model `thinking` block (`mode: effort` with `efforts`/`effortMap`). Cline, Kilo, and jcode configs mark reasoning-capable models via `supportsReasoning`/`reasoning`.
+- **Automatic Pi catalog sync**: `~/.pi/agent/models.yml`/`models.json` refresh themselves (3s debounce) whenever custom models are added, imported, or deleted — no manual re-Apply. Only auto-injected entries are pruned; curated picks, combos, and registry ids survive. Sync is a no-op until Pi settings have been Applied, and shared dashboard/sync file mutations under one lock.
+
+## Fixes
+- Gemini CLI settings derive `features.thinking` from actual model capabilities instead of a static guess.
+- Removing unavailable provider models also refreshes the Pi catalog.
+
 # v0.9.52 (2026-10-12)
 
 ## Fixes
