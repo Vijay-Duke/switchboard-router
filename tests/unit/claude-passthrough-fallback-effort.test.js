@@ -14,14 +14,14 @@ describe("Claude passthrough model fallback effort isolation", () => {
   it("strips unsupported Haiku effort without changing the shared request", () => {
     const original = request();
     const snapshot = structuredClone(original);
-    const translated = normalizeClaudePassthrough({ ...original }, "claude-haiku-5-5");
+    const translated = normalizeClaudePassthrough({ ...original }, "claude-haiku-4-5");
     expect(translated.output_config).toEqual({ format: snapshot.output_config.format });
     expect(original).toEqual(snapshot);
   });
 
   it("retains the requested effort on an Opus attempt after Haiku", () => {
     const original = request();
-    normalizeClaudePassthrough({ ...original }, "claude-haiku-5-5");
+    normalizeClaudePassthrough({ ...original }, "claude-haiku-4-5");
     const opus = normalizeClaudePassthrough({ ...original }, "claude-opus-5-5");
     expect(opus.output_config.effort).toBe("high");
     expect(opus.thinking).toEqual({ type: "adaptive" });
@@ -29,8 +29,16 @@ describe("Claude passthrough model fallback effort isolation", () => {
 
   it("removes an empty Haiku output_config without removing effort for retry", () => {
     const original = { ...request(), output_config: { effort: "high" } };
-    const translated = normalizeClaudePassthrough({ ...original }, "claude-haiku-5-5");
+    const translated = normalizeClaudePassthrough({ ...original }, "claude-haiku-4-5");
     expect(translated.output_config).toBeUndefined();
     expect(original.output_config).toEqual({ effort: "high" });
+  });
+
+  it("preserves effort and adaptive thinking for Haiku 5.5", () => {
+    const original = request();
+    const translated = normalizeClaudePassthrough({ ...original }, "claude-haiku-5-5");
+    expect(translated.output_config.effort).toBe("high");
+    expect(translated.thinking).toEqual({ type: "adaptive" });
+    expect(original.output_config.effort).toBe("high");
   });
 });

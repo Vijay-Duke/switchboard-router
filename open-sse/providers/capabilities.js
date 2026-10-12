@@ -301,3 +301,41 @@ export function getCapabilitiesForModel(provider, model) {
   const gen = getGeneratedCapabilities(model);
   return { ...DEFAULT_CAPABILITIES, ...(gen || {}), ...(hand || {}) };
 }
+
+/**
+ * Advertised reasoning-effort levels per model family, served on /v1/models
+ * for connections whose upstream does not relay capabilities (e.g.
+ * Anthropic-compatible nodes facing api.anthropic.com, whose catalog carries
+ * no capability objects). Live upstream capabilities always win (see the
+ * merge in the models route). Levels mirror the vendors' effort enums;
+ * families without evidence stay unlisted (no advertisement).
+ * ORDER MATTERS: specific families before generic ones.
+ */
+export const EFFORT_LEVEL_PATTERNS = [
+  // Claude 5.x / late 4.x: five levels (matches the live Claude Code catalog)
+  { pattern: "*claude*opus-5*",     levels: ["low", "medium", "high", "xhigh", "max"] },
+  { pattern: "*claude*sonnet-5*",   levels: ["low", "medium", "high", "xhigh", "max"] },
+  { pattern: "*claude*haiku-5-5*",  levels: ["low", "medium", "high", "xhigh", "max"] },
+  { pattern: "*claude*fable-5*",    levels: ["low", "medium", "high", "xhigh", "max"] },
+  { pattern: "*claude*opus-4-8*",   levels: ["low", "medium", "high", "xhigh", "max"] },
+  { pattern: "*claude*opus-4-7*",   levels: ["low", "medium", "high", "xhigh", "max"] },
+  // Claude 4.6: no xhigh tier. Opus 4.5: low/medium/high only (per vendor docs).
+  { pattern: "*claude*opus-4-6*",   levels: ["low", "medium", "high", "max"] },
+  { pattern: "*claude*opus-4-5*",   levels: ["low", "medium", "high"] },
+  { pattern: "*claude*sonnet-4-6*", levels: ["low", "medium", "high", "max"] },
+];
+
+/**
+ * Build the advertised `{ effort }` capabilities object for a model id,
+ * or null when the family has no known effort support. Accepts
+ * `alias/model` or bare ids; matching is case-insensitive.
+ */
+export function effortCapabilitiesForModelId(modelId) {
+  if (typeof modelId !== "string" || !modelId) return null;
+  const bare = modelId.includes("/") ? modelId.split("/").pop() : modelId;
+  const hit = EFFORT_LEVEL_PATTERNS.find(({ pattern }) => matchPattern(pattern, bare));
+  if (!hit) return null;
+  const effort = { supported: true };
+  for (const level of hit.levels) effort[level] = { supported: true };
+  return { effort };
+}

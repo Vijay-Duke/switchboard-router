@@ -86,8 +86,10 @@ export function fixToolUseOrdering(messages) {
   return merged;
 }
 
-// Models that reject thinking.type "adaptive" + output_config.effort (Opus 4.5+/Sonnet 4.6+ only)
-const ADAPTIVE_THINKING_UNSUPPORTED = /haiku/i;
+// Models that reject thinking.type "adaptive" + output_config.effort: legacy Haiku
+// only. Haiku 5.5 supports adaptive thinking and all five effort levels, so it
+// must pass through untouched.
+const ADAPTIVE_THINKING_UNSUPPORTED = /haiku(?!-5-5)/i;
 
 function handlesThinkingBlocks(provider) {
   // MiniMax Anthropic-compatible tiers also need thinking-block normalization (wave8).

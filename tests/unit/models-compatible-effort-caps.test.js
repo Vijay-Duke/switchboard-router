@@ -1,0 +1,157 @@
+// Compatible-provider connections (e.g. an Anthropic API node) face upstreams
+// whose /models lists carry no capabilities, so /v1/models must advertise
+// statically-known reasoning-effort levels for those models. Live upstream
+// capabilities always win when present.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+let tempDir;
+const originalDataDir = process.env.DATA_DIR;
+
+beforeEach(() => {
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-effort-caps-"));
+  process.env.DATA_DIR = tempDir;
+  delete global._dbAdapter;
+  vi.resetModules();
+});
+
+afterEach(() => {
+  try { global._dbAdapter?.instance?.close?.(); } catch {}
+  delete global._dbAdapter;
+  if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+  if (originalDataDir === undefined) delete process.env.DATA_DIR;
+  else process.env.DATA_DIR = originalDataDir;
+});
+
+const PROVIDER = "anthropic-compatible-test-uuid-1";
+
+async function seedCompatibleConnection() {
+  const { createProviderConnection } = await import("@/lib/db/index.js");
+  await createProviderConnection({
+    provider: PROVIDER,
+    authType: "apikey",
+    name: "acct-claude-api",
+    isActive: true,
+    apiKey: "sk-test",
+    providerSpecificData: {
+      prefix: "claude-api",
+      baseUrl: "https://api.anthropic.com/v1",
+      enabledModels: ["claude-opus-5-5", "claude-sonnet-4-6", "claude-opus-4-5-20251101", "claude-haiku-5-5", "claude-haiku-4-5", "plain-thing-1"],
+    },
+  });
+}
+
+async function modelsById() {
+  const { buildModelsList } = await import("@/app/api/v1/models/route.js");
+  const models = await buildModelsList(["llm"], { skipCompatibleDiscovery: true, signal: null });
+  return new Map(models.map((m) => [m.id, m]));
+}
+
+function effortLevels(entry) {
+  const eff = entry?.capabilities?.effort;
+  if (!eff || eff.supported !== true) return null;
+  return Object.keys(eff).filter((k) => k !== "supported").sort();
+}
+
+describe("/v1/models static effort advertisement for compatible providers", () => {
+  it("advertises five effort levels for current claude models", { timeout: 20000 }, async () => {
+    await seedCompatibleConnection();
+    const byId = await modelsById();
+    expect(effortLevels(byId.get("claude-api/claude-opus-5-5"))).toEqual(
+      ["high", "low", "max", "medium", "xhigh"],
+    );
+  });
+
+  it("omits xhigh where the family does not support it", async () => {
+    await seedCompatibleConnection();
+    const byId = await modelsById();
+    expect(effortLevels(byId.get("claude-api/claude-sonnet-4-6"))).toEqual(
+      ["high", "low", "max", "medium"],
+    );
+  });
+
+  it("advertises low/medium/high only for Opus 4.5 (no max tier)", async () => {
+    await seedCompatibleConnection();
+    const byId = await modelsById();
+    expect(effortLevels(byId.get("claude-api/claude-opus-4-5-20251101"))).toEqual(
+      ["high", "low", "medium"],
+    );
+  });
+
+  it("advertises five effort levels for Haiku 5.5", async () => {
+    await seedCompatibleConnection();
+    const byId = await modelsById();
+    expect(effortLevels(byId.get("claude-api/claude-haiku-5-5"))).toEqual(
+      ["high", "low", "max", "medium", "xhigh"],
+    );
+  });
+
+  it("advertises no effort for models without known support", async () => {
+    await seedCompatibleConnection();
+    const byId = await modelsById();
+    expect(byId.get("claude-api/plain-thing-1")?.capabilities?.effort).toBeUndefined();
+    expect(byId.get("claude-api/claude-haiku-4-5")?.capabilities?.effort).toBeUndefined();
+  });
+});
+
+describe("/v1/models relayed compatible-upstream capabilities", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  async function modelsViaDiscovery(catalog) {
+    await seedCompatibleConnection();
+    global.fetch = vi.fn().mockResolvedValue(Response.json(catalog));
+    const { buildModelsList } = await import("@/app/api/v1/models/route.js");
+    const models = await buildModelsList(["llm"], { skipCompatibleDiscovery: false, signal: null });
+    return new Map(models.map((m) => [m.id, m]));
+  }
+
+  it("relays fewer upstream levels instead of the static allow-list", async () => {
+    const byId = await modelsViaDiscovery({ data: [{
+      id: "claude-opus-5-5",
+      capabilities: { effort: { supported: true, low: { supported: true }, medium: { supported: true } } },
+    }] });
+    expect(effortLevels(byId.get("claude-api/claude-opus-5-5"))).toEqual(["low", "medium"]);
+  });
+
+  it("respects an upstream effort ban instead of static fill", async () => {
+    const byId = await modelsViaDiscovery({ data: [{
+      id: "claude-opus-5-5",
+      capabilities: { effort: { supported: false } },
+    }] });
+    expect(byId.get("claude-api/claude-opus-5-5")?.capabilities?.effort).toEqual({ supported: false });
+  });
+
+  it("relays caps for models with no static entry", async () => {
+    const byId = await modelsViaDiscovery({ data: [{
+      id: "plain-thing-1",
+      capabilities: { effort: { supported: true, medium: { supported: true } } },
+    }] });
+    expect(effortLevels(byId.get("claude-api/plain-thing-1"))).toEqual(["medium"]);
+  });
+});
+
+describe("effortCapabilitiesForModelId", () => {
+  it("builds the effort payload and strips alias prefixes", async () => {
+    const { effortCapabilitiesForModelId } = await import(
+      "../../open-sse/providers/capabilities.js"
+    );
+    expect(effortCapabilitiesForModelId("claude-api/claude-opus-5-5")).toEqual({
+      effort: {
+        supported: true,
+        low: { supported: true },
+        medium: { supported: true },
+        high: { supported: true },
+        xhigh: { supported: true },
+        max: { supported: true },
+      },
+    });
+    expect(effortCapabilitiesForModelId("gpt-5")).toBeNull();
+    expect(effortCapabilitiesForModelId("")).toBeNull();
+  });
+});

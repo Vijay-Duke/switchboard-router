@@ -25,7 +25,7 @@ import {
   refreshImportedCursorCredentials,
   updateProviderCredentials,
 } from "@/sse/services/tokenRefresh";
-import { capabilitiesFromServiceKind } from "open-sse/providers/capabilities.js";
+import { capabilitiesFromServiceKind, effortCapabilitiesForModelId } from "open-sse/providers/capabilities.js";
 import {
   buildClaudeCatalogDisplayNameMap,
   formatClaudeCatalogDisplayName,
@@ -216,15 +216,38 @@ async function fetchCompatibleModelIds(connection, externalSignal = null) {
             .filter((modelId) => typeof modelId === "string" && modelId.trim() !== "")
         )
       );
+      // Relay per-model capability objects when the upstream provides them so
+      // explicit upstream restrictions (e.g. effort.supported: false) survive
+      // discovery instead of being replaced by static fallbacks downstream.
+      const capsById = new Map();
+      for (const model of rawModels) {
+        const rawId = model?.id || model?.name || model?.model;
+        if (typeof rawId === "string" && rawId.trim() !== ""
+            && model && typeof model === "object"
+            && model.capabilities && typeof model.capabilities === "object") {
+          capsById.set(rawId.trim(), model.capabilities);
+        }
+      }
       // A nonempty payload with no usable model IDs is malformed discovery,
       // not an authoritative declaration that this provider has no models.
-      return rawModels.length > 0 && modelIds.length === 0 ? null : modelIds;
+      return rawModels.length > 0 && modelIds.length === 0 ? null : { ids: modelIds, capsById };
     } finally {
       clearTimeout(timeoutId);
     }
   } catch {
     return null;
   }
+}
+
+// Look up relayed compatible-upstream capabilities by bare or aliased id:
+// upstreams may use either form.
+function compatCapsForModel(capsById, outputAlias, staticAlias, providerId, modelId) {
+  if (!capsById) return null;
+  const keys = [modelId, `${outputAlias}/${modelId}`, `${staticAlias}/${modelId}`, `${providerId}/${modelId}`];
+  for (const key of keys) {
+    if (capsById.has(key)) return capsById.get(key);
+  }
+  return null;
 }
 
 // Provider matches kindFilter when its serviceKinds intersect the requested kinds.
@@ -327,13 +350,13 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
       await refreshImportedCursorCredentials(cursorConnection, { force: true }),
     );
   }
-  const compatibleModelIdsByProvider = new Map();
+  const compatibleCatalogByProvider = new Map();
   if (!skipCompatibleDiscovery) {
     const compatibleConnections = Array.from(activeConnectionByProvider.entries())
       .filter(([providerId]) =>
         isOpenAICompatibleProvider(providerId) || isAnthropicCompatibleProvider(providerId));
     await Promise.all(compatibleConnections.map(async ([providerId, connection]) => {
-      compatibleModelIdsByProvider.set(
+      compatibleCatalogByProvider.set(
         providerId,
         await fetchCompatibleModelIds(connection, signal),
       );
@@ -492,12 +515,15 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
           )
         : providerModels.map((model) => model.id);
 
+      const compatCatalog = compatibleCatalogByProvider.get(providerId);
       if (isCompatibleProvider && !skipCompatibleDiscovery) {
-        const discoveredIds = compatibleModelIdsByProvider.get(providerId);
         // An empty successful catalog is authoritative. Only unavailable or
         // invalid discovery retains the saved snapshot.
-        if (Array.isArray(discoveredIds)) rawModelIds = discoveredIds;
+        if (compatCatalog && Array.isArray(compatCatalog.ids)) rawModelIds = compatCatalog.ids;
       }
+      const compatCapsById = compatCatalog && compatCatalog.capsById instanceof Map
+        ? compatCatalog.capsById
+        : null;
 
       // Live catalogs are fetched concurrently above. Dynamic results replace
       // stored/static snapshots; discovery failure retains the fallback IDs.
@@ -589,7 +615,15 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
           object: "model",
           owned_by: outputAlias,
         };
-        const caps = liveCapabilitiesById.get(modelId) || capabilitiesFromServiceKind(customKind || liveKind);
+        // Precedence: live catalog capabilities > relayed compatible-upstream
+        // capabilities > generic service-kind fallback. Static effort levels
+        // fill in only when none of those advertise an effort block.
+        const relayedCaps = compatCapsForModel(compatCapsById, outputAlias, staticAlias, providerId, modelId);
+        const kindCaps = capabilitiesFromServiceKind(customKind || liveKind);
+        const liveCaps = liveCapabilitiesById.get(modelId)
+          || (relayedCaps || kindCaps ? { ...(kindCaps || {}), ...(relayedCaps || {}) } : null);
+        const staticEffort = !(liveCaps && liveCaps.effort) ? effortCapabilitiesForModelId(modelId) : null;
+        const caps = staticEffort ? { ...liveCaps, ...staticEffort } : liveCaps;
         if (caps) model.capabilities = caps;
         models.push(model);
       }
