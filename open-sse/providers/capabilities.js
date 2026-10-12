@@ -339,3 +339,34 @@ export function effortCapabilitiesForModelId(modelId) {
   for (const level of hit.levels) effort[level] = { supported: true };
   return { effort };
 }
+
+function supportedEffortLevels(effort) {
+  if (!effort || typeof effort !== "object" || effort.supported !== true) return null;
+  const levels = Object.keys(effort).filter((level) => level !== "supported"
+    && effort[level] && effort[level].supported === true);
+  return levels.length > 0 ? levels : null;
+}
+
+/**
+ * Reconcile an upstream-advertised effort block with the statically-known
+ * one. Upstream catalogs may attach one generic block to every model, so
+ * when both sides claim levels only their intersection is advertised
+ * (upstream level objects preserved). An explicit upstream ban wins
+ * outright; with no overlap the upstream claim is kept (static patterns
+ * may predate renamed levels). Returns `{ effort }` or null.
+ */
+export function resolveEffortCapabilities(upstreamCaps, staticCaps) {
+  const upEffort = upstreamCaps && typeof upstreamCaps === "object" ? upstreamCaps.effort : null;
+  if (upEffort && upEffort.supported === false) return { effort: upEffort };
+  const stEffort = staticCaps && typeof staticCaps === "object" ? staticCaps.effort : null;
+  const upLevels = supportedEffortLevels(upEffort);
+  const stLevels = supportedEffortLevels(stEffort);
+  if (!upLevels && !stLevels) return null;
+  if (!upLevels) return { effort: stEffort };
+  if (!stLevels) return { effort: upEffort };
+  const agreed = stLevels.filter((level) => upLevels.includes(level));
+  if (agreed.length === 0) return { effort: upEffort };
+  const effort = { supported: true };
+  for (const level of agreed) effort[level] = { ...upEffort[level] };
+  return { effort };
+}

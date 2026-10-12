@@ -134,6 +134,59 @@ describe("/v1/models relayed compatible-upstream capabilities", () => {
     }] });
     expect(effortLevels(byId.get("claude-api/plain-thing-1"))).toEqual(["medium"]);
   });
+
+  it("intersects overstated upstream levels with the static allow-list", async () => {
+    const byId = await modelsViaDiscovery({ data: [{
+      id: "claude-sonnet-4-6",
+      capabilities: { effort: {
+        supported: true,
+        low: { supported: true }, medium: { supported: true }, high: { supported: true },
+        xhigh: { supported: true }, max: { supported: true },
+      } },
+    }] });
+    expect(effortLevels(byId.get("claude-api/claude-sonnet-4-6"))).toEqual(
+      ["high", "low", "max", "medium"],
+    );
+  });
+});
+
+describe("resolveEffortCapabilities", () => {
+  async function resolve(upstreamEffort, staticEffort) {
+    const { resolveEffortCapabilities } = await import(
+      "../../open-sse/providers/capabilities.js"
+    );
+    const up = upstreamEffort === undefined ? null : { effort: upstreamEffort };
+    const st = staticEffort === undefined ? null : { effort: staticEffort };
+    return resolveEffortCapabilities(up, st);
+  }
+  const on = (supported) => ({ supported });
+
+  it("intersects levels when both sides claim them", async () => {
+    expect(await resolve(
+      { supported: true, low: on(true), medium: on(true), high: on(true), xhigh: on(true), max: on(true) },
+      { supported: true, low: on(true), medium: on(true), high: on(true), max: on(true) },
+    )).toEqual({ effort: {
+      supported: true, low: on(true), medium: on(true), high: on(true), max: on(true),
+    } });
+  });
+
+  it("keeps the upstream claim when there is no overlap", async () => {
+    const up = { supported: true, ultra: on(true) };
+    expect(await resolve(up, { supported: true, low: on(true) })).toEqual({ effort: up });
+  });
+
+  it("respects an explicit upstream ban", async () => {
+    expect(await resolve({ supported: false }, { supported: true, low: on(true) }))
+      .toEqual({ effort: { supported: false } });
+  });
+
+  it("passes single-sided claims through untouched", async () => {
+    const up = { supported: true, low: on(true) };
+    const st = { supported: true, medium: on(true) };
+    expect(await resolve(up, null)).toEqual({ effort: up });
+    expect(await resolve(null, st)).toEqual({ effort: st });
+    expect(await resolve(null, null)).toBeNull();
+  });
 });
 
 describe("effortCapabilitiesForModelId", () => {
