@@ -194,6 +194,7 @@ describe("claude-cli beta by auth type", () => {
     expect(betas).toContain("claude-code-20250219");
     expect(betas).toContain("oauth-2025-04-20");
     expect(init.headers.Authorization).toBe("Bearer [REDACTED]");
+    expect(init.headers["User-Agent"]).toMatch(/^claude-cli\//);
   });
 
   it("x-api-key hops drop claude-code-20250219 but keep feature betas", async () => {
@@ -212,6 +213,9 @@ describe("claude-cli beta by auth type", () => {
     const betas = wireBetas(init);
     expect(betas).not.toContain("claude-code-20250219");
     expect(betas).toContain("interleaved-thinking-2025-05-14");
+    // The claude-cli UA is an independent billing signal: it must be gone
+    // (native helper sends none; verified 200 live) while the key stays.
+    expect(Object.keys(init.headers).some((k) => k.toLowerCase() === "user-agent")).toBe(false);
     expect(init.headers["x-api-key"]).toBe("sk-ant-usr-test");
   });
 });

@@ -330,6 +330,15 @@ function applyIdentityWrap(url, options = {}) {
           if (stripped) headers[betaKey] = stripped;
           else delete headers[betaKey];
         }
+        // The Claude Code User-Agent is a second, independent billing
+        // signal: with it present upstream still 400s "credit balance too
+        // low" for API keys even after the beta is gone (verified live:
+        // UA alone suffices, without any beta). Drop the header; absent
+        // UA (native-helper path) and the undici/Go transport defaults
+        // are all verified 200 live with the remaining set.
+        for (const key of Object.keys(headers)) {
+          if (key.toLowerCase() === "user-agent") delete headers[key];
+        }
       }
     }
   }
