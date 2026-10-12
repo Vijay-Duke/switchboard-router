@@ -12,7 +12,15 @@ import {
   setCompatibleThinkingResolver,
 } from "../../open-sse/translator/concerns/thinkingUnified.js";
 import { normalizeImportedModel } from "../../src/shared/utils/importProviderModels.js";
-import { buildPiModelEntries } from "../../src/lib/cli/modelCatalog.js";
+import {
+  buildClineSettings,
+  buildJcodeProvider,
+  buildKiloConfig,
+  buildOmpThinking,
+  buildPiModelEntries,
+  buildThinkingLevelMap,
+} from "../../src/lib/cli/modelCatalog.js";
+import { planPiSync } from "../../src/lib/cli/piCatalogSync.js";
 
 afterEach(() => {
   setCompatibleThinkingResolver(null);
@@ -251,5 +259,100 @@ describe("buildPiModelEntries caps resolver", () => {
     const [entry] = buildPiModelEntries(["x/y"], [], {});
     expect(entry.reasoning).toBe(false);
     expect(entry.contextWindow).toBe(200000);
+  });
+
+  it("builds thinkingLevelMap from resolver levels (null = unsupported)", () => {
+    const [entry] = buildPiModelEntries(
+      ["openai/gpt-5.2"],
+      [],
+      {},
+      () => ({ reasoning: true, levels: ["none", "low", "medium", "high"] }),
+    );
+    expect(entry.thinkingLevelMap).toEqual({
+      off: "none",
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: null,
+      max: null,
+    });
+  });
+
+  it("maps binary thinking levels onto high; no map without levels", () => {
+    const [zai] = buildPiModelEntries(
+      ["zai/glm-5.3"],
+      [],
+      {},
+      () => ({ reasoning: true, levels: ["none", "thinking"] }),
+    );
+    expect(zai.thinkingLevelMap.high).toBe("thinking");
+    expect(zai.thinkingLevelMap.off).toBe("none");
+    expect(zai.thinkingLevelMap.low).toBe(null);
+    const [bare] = buildPiModelEntries(
+      ["openai/gpt-5.2"],
+      [],
+      {},
+      () => ({ reasoning: true }),
+    );
+    expect(bare.thinkingLevelMap).toBeUndefined();
+  });
+
+  it("planPiSync: appends new custom ids, prunes only auto-injected", () => {
+    const prev = ["glm/glm-5.2", "openai/gpt-5.2", "my_combo"];
+    const current = new Set(["glm/glm-5.2", "zai/glm-5.3"]);
+    // First sync: everything curated survives, new custom model appended + owned.
+    expect(planPiSync(prev, current)).toEqual({
+      merged: ["glm/glm-5.2", "openai/gpt-5.2", "my_combo", "zai/glm-5.3"],
+      injected: ["zai/glm-5.3"],
+    });
+    // Later: injected id gone → pruned; curated custom id stays even when deleted.
+    expect(planPiSync(prev, new Set(["glm/glm-5.2"]), ["zai/glm-5.3"])).toEqual({
+      merged: prev,
+      injected: [],
+    });
+  });
+
+  it("drops stale thinkingLevelMap when authority has no levels", () => {
+    const [entry] = buildPiModelEntries(
+      ["openai/gpt-5.2"],
+      [{ id: "openai/gpt-5.2", reasoning: true, thinkingLevelMap: { off: "none", high: "high" }, thinking: { mode: "effort", efforts: ["high"] } }],
+      {},
+      () => ({ reasoning: true, levels: null }),
+    );
+    expect(entry.thinkingLevelMap).toBeUndefined();
+    expect(entry.thinking).toBeUndefined();
+  });
+
+  it("emits omp thinking block alongside thinkingLevelMap", () => {
+    const [entry] = buildPiModelEntries(
+      ["openai/gpt-5.2"],
+      [],
+      {},
+      () => ({ reasoning: true, levels: ["none", "low", "medium", "high"] }),
+    );
+    expect(entry.thinking).toEqual({
+      mode: "effort",
+      efforts: ["low", "medium", "high"],
+      effortMap: { low: "low", medium: "medium", high: "high" },
+    });
+  });
+
+  it("omits omp thinking for binary on/off models", () => {
+    expect(buildOmpThinking(["none", "thinking"])).toBeUndefined();
+    expect(buildOmpThinking(null)).toBeUndefined();
+  });
+
+  it("cline/kilo/jcode builders mark reasoning from capsResolver", () => {
+    const resolver = (id) => (id === "r1" ? { reasoning: true } : null);
+    const cline = buildClineSettings({}, { baseUrl: "http://x", apiKey: "k", models: ["r1", "r0"], capsResolver: resolver });
+    expect(cline.models.providers.switchboard.models.r1.supportsReasoning).toBe(true);
+    expect(cline.models.providers.switchboard.models.r0.supportsReasoning).toBeUndefined();
+    const kilo = buildKiloConfig({}, { baseUrl: "http://x", apiKey: "k", models: ["r1", "r0"], defaultModel: "r1", capsResolver: resolver });
+    expect(kilo.provider.switchboard.models.r1.reasoning).toBe(true);
+    expect(kilo.provider.switchboard.models.r0.reasoning).toBeUndefined();
+    const jcode = buildJcodeProvider({ baseUrl: "http://x", models: ["r1", "r0"], defaultModel: "r1", capsResolver: resolver });
+    expect(jcode.models[0].reasoning).toBe(true);
+    expect(jcode.models[1].reasoning).toBeUndefined();
   });
 });

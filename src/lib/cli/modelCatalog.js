@@ -45,11 +45,45 @@ export function modelDisplayName(id) {
   return parts[parts.length - 1] || id;
 }
 
+// Pi level keys (off,minimal,low,medium,high,xhigh,max) → our gateway level names.
+// Value = wire string we accept in reasoning_effort; null = level hidden in Pi's picker.
+const PI_LEVEL_KEYS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/** @param {string[] | null | undefined} levels */
+export function buildThinkingLevelMap(levels) {
+  if (!Array.isArray(levels) || levels.length === 0) return undefined;
+  const map = {};
+  for (const key of PI_LEVEL_KEYS) {
+    const ours = key === "off" ? "none" : key;
+    map[key] = levels.includes(ours) ? ours : null;
+  }
+  // ponytail: binary formats (zai/minimax "thinking") collapse to off-only in Pi;
+  // map their "thinking" onto high when present so the model stays selectable.
+  if (levels.includes("thinking")) map.high = map.high ?? "thinking";
+  return map;
+}
+
+// omp (Oh My Pi) per-model `thinking` block — same models.yml file Pi reads.
+// Effort vocabulary has no "off" (that is omp's picker concern) and no
+// binary "thinking", so on/off-only models get no block.
+const OMP_EFFORT_KEYS = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+/** @param {string[] | null | undefined} levels */
+export function buildOmpThinking(levels) {
+  if (!Array.isArray(levels) || levels.length === 0) return undefined;
+  const efforts = OMP_EFFORT_KEYS.filter((k) => levels.includes(k));
+  if (efforts.length === 0) return undefined;
+  // Values are identity: omp sends the mapped string as reasoning_effort,
+  // and our gateway accepts its own level names verbatim.
+  const effortMap = Object.fromEntries(efforts.map((k) => [k, k]));
+  return { mode: "effort", efforts, effortMap };
+}
+
 /**
  * @param {unknown} modelIds
  * @param {Array<Record<string, any>>} [previous]
  * @param {Record<string, string>} [pickerLabels]
- * @param {(id: string) => { reasoning: boolean, contextWindow?: number|null, vision?: boolean } | null} [capsResolver]
+ * @param {(id: string) => { reasoning: boolean, contextWindow?: number|null, vision?: boolean, levels?: string[] | null } | null} [capsResolver]
  *   Optional capability lookup (registry patterns + compatible-node discovery
  *   + combo member union). Computed reasoning repairs the stale false written
  *   by the pre-capability sync; hand-set fields (name, contextWindow, …)
@@ -60,7 +94,7 @@ export function buildPiModelEntries(modelIds, previous = [], pickerLabels = {}, 
   return normalizeModelIds(modelIds).map((id) => {
     const prev = byId.get(id) || {};
     const caps = capsResolver ? capsResolver(id) : null;
-    return {
+    const entry = {
       reasoning: false,
       input: ["text", "image"],
       contextWindow: 200000,
@@ -70,21 +104,34 @@ export function buildPiModelEntries(modelIds, previous = [], pickerLabels = {}, 
         reasoning: caps.reasoning === true,
         ...(caps.contextWindow && !prev.contextWindow ? { contextWindow: caps.contextWindow } : {}),
         ...(caps.vision === false ? { input: ["text"] } : {}),
+        ...(caps.reasoning === true && caps.levels ? {
+          thinkingLevelMap: buildThinkingLevelMap(caps.levels),
+          thinking: buildOmpThinking(caps.levels),
+        } : {}),
       } : {}),
       id,
       name: String(pickerLabels[id] || "").trim().slice(0, 48)
         || prev.name
         || modelDisplayName(id),
     };
+    // Stale generated maps: when the resolver has authority over this model
+    // but no level set anymore, drop the old map instead of restricting
+    // Pi's picker with obsolete levels.
+    if (caps && !(caps.reasoning === true && caps.levels)) {
+      delete entry.thinkingLevelMap;
+      delete entry.thinking;
+    }
+    return entry;
   });
 }
 
 /**
- * @param {{baseUrl: string, models: unknown, defaultModel?: string}} options
+ * @param {{baseUrl: string, models: unknown, defaultModel?: string, capsResolver?: ((id: string) => { reasoning?: boolean } | null) | null}} options
  */
-export function buildJcodeProvider({ baseUrl, models: rawModels, defaultModel }) {
+export function buildJcodeProvider({ baseUrl, models: rawModels, defaultModel, capsResolver = null }) {
   const models = normalizeModelIds(rawModels);
   const activeModel = resolveDefaultModel(defaultModel, models);
+  const capsOf = (id) => (capsResolver ? capsResolver(id) : null);
   return {
     type: "openai-compatible",
     base_url: baseUrl,
@@ -94,7 +141,10 @@ export function buildJcodeProvider({ baseUrl, models: rawModels, defaultModel })
     default_model: activeModel,
     model_catalog: true,
     requires_api_key: true,
-    models: models.map((id) => ({ id })),
+    models: models.map((id) => ({
+      id,
+      ...(capsOf(id)?.reasoning === true ? { reasoning: true, reasoning_effort: "high" } : {}),
+    })),
   };
 }
 
@@ -230,11 +280,12 @@ export function removeHermesYaml(yaml) {
 
 /**
  * @param {Record<string, any>} config
- * @param {{baseUrl: string, apiKey: string, models: unknown, defaultModel?: string}} options
+ * @param {{baseUrl: string, apiKey: string, models: unknown, defaultModel?: string, capsResolver?: ((id: string) => { reasoning?: boolean } | null) | null}} options
  */
-export function buildKiloConfig(config, { baseUrl, apiKey, models: rawModels, defaultModel }) {
+export function buildKiloConfig(config, { baseUrl, apiKey, models: rawModels, defaultModel, capsResolver = null }) {
   const models = normalizeModelIds(rawModels);
   const activeModel = resolveDefaultModel(defaultModel, models);
+  const capsOf = (id) => (capsResolver ? capsResolver(id) : null);
   return {
     ...config,
     model: `switchboard/${activeModel}`,
@@ -244,7 +295,10 @@ export function buildKiloConfig(config, { baseUrl, apiKey, models: rawModels, de
         npm: "@ai-sdk/openai-compatible",
         name: "Switchboard",
         options: { apiKey, baseURL: baseUrl },
-        models: Object.fromEntries(models.map((id) => [id, { name: modelDisplayName(id) }])),
+        models: Object.fromEntries(models.map((id) => [id, {
+          name: modelDisplayName(id),
+          ...(capsOf(id)?.reasoning === true ? { reasoning: true } : {}),
+        }])),
       },
     },
   };
@@ -252,11 +306,12 @@ export function buildKiloConfig(config, { baseUrl, apiKey, models: rawModels, de
 
 /**
  * @param {{providers?: Record<string, any>, models?: Record<string, any>}} current
- * @param {{baseUrl: string, apiKey: string, models: unknown, defaultModel?: string}} options
+ * @param {{baseUrl: string, apiKey: string, models: unknown, defaultModel?: string, capsResolver?: ((id: string) => { reasoning?: boolean } | null) | null}} options
  */
-export function buildClineSettings(current, { baseUrl, apiKey, models: rawModels, defaultModel }) {
+export function buildClineSettings(current, { baseUrl, apiKey, models: rawModels, defaultModel, capsResolver = null }) {
   const models = normalizeModelIds(rawModels);
   const activeModel = resolveDefaultModel(defaultModel, models);
+  const capsOf = (id) => (capsResolver ? capsResolver(id) : null);
   const providersFile = current.providers || {};
   const modelsFile = current.models || {};
   return {
@@ -283,7 +338,11 @@ export function buildClineSettings(current, { baseUrl, apiKey, models: rawModels
             baseUrl,
             defaultModelId: activeModel,
           },
-          models: Object.fromEntries(models.map((id) => [id, { id, name: modelDisplayName(id) }])),
+          models: Object.fromEntries(models.map((id) => [id, {
+            id,
+            name: modelDisplayName(id),
+            ...(capsOf(id)?.reasoning === true ? { supportsReasoning: true } : {}),
+          }])),
         },
       },
     },
@@ -292,11 +351,12 @@ export function buildClineSettings(current, { baseUrl, apiKey, models: rawModels
 
 /**
  * @param {Record<string, any>} settings
- * @param {{models: unknown, defaultModel?: string}} options
+ * @param {{models: unknown, defaultModel?: string, capsResolver?: ((id: string) => { reasoning?: boolean } | null) | null}} options
  */
-export function buildGeminiSettings(settings, { models: rawModels, defaultModel }) {
+export function buildGeminiSettings(settings, { models: rawModels, defaultModel, capsResolver = null }) {
   const models = normalizeModelIds(rawModels);
   const activeModel = resolveDefaultModel(defaultModel, models);
+  const capsOf = (id) => (capsResolver ? capsResolver(id) : null);
   const existingDefinitions = settings?.modelConfigs?.modelDefinitions && typeof settings.modelConfigs.modelDefinitions === "object"
     ? settings.modelConfigs.modelDefinitions
     : {};
@@ -317,7 +377,8 @@ export function buildGeminiSettings(settings, { models: rawModels, defaultModel 
           tier: "custom",
           isPreview: false,
           isVisible: true,
-          features: { thinking: true, multimodalToolUse: true },
+          // Capability-derived — a non-reasoning model must not advertise thinking.
+          features: { thinking: capsOf(id)?.reasoning === true, multimodalToolUse: true },
         }])),
       },
     },

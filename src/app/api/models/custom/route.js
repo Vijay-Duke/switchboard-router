@@ -8,6 +8,7 @@ import {
 } from "@/models";
 import { isValidReasoningSupport } from "@/shared/utils/reasoningCatalog.js";
 import { invalidateCompatibleReasoningCache } from "@/sse/services/compatibleReasoning.js";
+import { schedulePiCatalogSync } from "@/lib/cli/piCatalogSync.js";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +49,10 @@ export async function POST(request) {
         }))
         .filter((m) => m.providerAlias && m.id);
       const result = await addCustomModelsBulk(cleaned);
-      if (result.added > 0) invalidateCompatibleReasoningCache();
+      if (result.added > 0) {
+        invalidateCompatibleReasoningCache();
+        schedulePiCatalogSync(); // Pi picker metadata (reasoning/levels) auto-refresh
+      }
       return NextResponse.json({ success: true, ...result });
     }
 
@@ -63,7 +67,10 @@ export async function POST(request) {
       name,
       reasoning: isValidReasoningSupport(reasoning) ? reasoning : undefined,
     });
-    if (added) invalidateCompatibleReasoningCache();
+    if (added) {
+      invalidateCompatibleReasoningCache();
+      schedulePiCatalogSync();
+    }
     return NextResponse.json({ success: true, added });
   } catch (error) {
     console.log("Error adding custom model:", error);
@@ -82,6 +89,7 @@ export async function DELETE(request) {
       return NextResponse.json({ error: "providerAlias and id required" }, { status: 400 });
     }
     await deleteCustomModel({ providerAlias, id, type });
+    schedulePiCatalogSync();
     return NextResponse.json({ success: true });
   } catch (error) {
     console.log("Error deleting custom model:", error);

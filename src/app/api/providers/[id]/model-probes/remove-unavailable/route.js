@@ -9,6 +9,7 @@ import {
 } from "@/lib/db/index.js";
 import { buildModelProbeScopeKey, canonicalModelId } from "@/lib/model-probe/index.js";
 import { PROVIDER_ID_TO_ALIAS } from "open-sse/config/providerModels.js";
+import { schedulePiCatalogSync } from "@/lib/cli/piCatalogSync.js";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +61,7 @@ export async function POST(request, { params }) {
       const modelKind = model.kind || model.type || "llm";
       await deleteCustomModel({ providerAlias, id: model.id, type: modelKind });
     }));
+    if (removableModels.length > 0) schedulePiCatalogSync();
     const unavailableIds = [...unavailable];
     await disableModels(providerAlias, unavailableIds);
     const removedMetadata = new Map(removableModels.map((model) => [

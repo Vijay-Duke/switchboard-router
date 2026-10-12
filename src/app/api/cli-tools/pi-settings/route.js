@@ -7,69 +7,39 @@
  * model discovery (omp >= v18 reads models.yml; plain pi still reads
  * models.json, so both stay in sync).
  * docs: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/models.md
+ *
+ * Shared catalog core + automatic post-save sync live in
+ * @/lib/cli/piCatalogSync.js.
  */
 import { NextResponse } from "next/server";
 import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
-import path from "path";
 import os from "os";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import {
-  buildPiModelEntries,
-  isNonEmptyString,
-  isOptionalString,
-  normalizeModelIds,
-  resolveDefaultModel,
-} from "@/lib/cli/modelCatalog.js";
-import { replaceCliFiles, restoreObjectKeys, snapshotObjectKeys } from "@/lib/cli/fileIo.js";
+import { buildPiModelEntries, isNonEmptyString, isOptionalString, normalizeModelIds, resolveDefaultModel } from "@/lib/cli/modelCatalog.js";
+import { restoreObjectKeys, snapshotObjectKeys } from "@/lib/cli/fileIo.js";
 import { normalizeClaudeCatalogPickerLabels } from "@/shared/claudeGateway.js";
-import { getCombos } from "@/lib/db/index.js";
-import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 import {
-  ensureCompatibleReasoning,
-  lookupCompatibleReasoningSupport,
-} from "@/sse/services/compatibleReasoning.js";
+  PROVIDER_ID,
+  buildPiCapsResolver,
+  canonicalModelIds,
+  getAgentDir,
+  getModelsYmlPath,
+  getSettingsPath,
+  isLocalBase,
+  mergeEnabledModels,
+  normalizeBaseUrl,
+  readBackup,
+  readModels,
+  readModelsYml,
+  readSettings,
+  sameJson,
+  validateBackup,
+  withPiMutationLock,
+  writePiState,
+} from "@/lib/cli/piCatalogSync.js";
 
 const execAsync = promisify(exec);
-
-const PROVIDER_ID = "switchboard";
-const BACKUP_VERSION = 1;
-
-// Pi stores the provider catalog, settings, and Switchboard backup in three
-// separate files. Serialize mutations in this process so two dashboard clicks
-// cannot read the same snapshot and publish a mixed configuration.
-let mutationTail = Promise.resolve();
-
-const withMutationLock = (operation) => {
-  const next = mutationTail.then(operation, operation);
-  mutationTail = next.catch(() => {});
-  return next;
-};
-
-const getAgentDir = () => path.join(os.homedir(), ".pi", "agent");
-const getModelsPath = () => path.join(getAgentDir(), "models.json");
-const getSettingsPath = () => path.join(getAgentDir(), "settings.json");
-const getBackupPath = () => path.join(getAgentDir(), "switchboard-backup.json");
-// omp (Pi >= v18) reads models.yml and ignores models.json; plain pi still
-// reads models.json. Both are written so every Pi variant sees the provider.
-const getModelsYmlPath = () => path.join(getAgentDir(), "models.yml");
-
-const normalizeBaseUrl = (baseUrl) => {
-  const u = String(baseUrl || "").replace(/\/+$/, "");
-  return u.endsWith("/v1") ? u : `${u}/v1`;
-};
-
-const isLocalBase = (url) => {
-  try {
-    const hostname = new URL(String(url || "")).hostname.toLowerCase();
-    return hostname === "localhost"
-      || hostname === "0.0.0.0"
-      || /^127(?:\.\d{1,3}){3}$/.test(hostname);
-  } catch {
-    return false;
-  }
-};
 
 const checkInstalled = async () => {
   try {
@@ -84,96 +54,6 @@ const checkInstalled = async () => {
       return false;
     }
   }
-};
-
-const readJsonFile = async (filePath, fallback) => {
-  try {
-    const raw = await fs.readFile(filePath, "utf-8");
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new TypeError(`${filePath} must contain a JSON object`);
-    }
-    return parsed;
-  } catch (e) {
-    if (e.code === "ENOENT") return fallback;
-    throw e;
-  }
-};
-
-const readModels = () => readJsonFile(getModelsPath(), { providers: {} });
-const readSettings = () => readJsonFile(getSettingsPath(), {});
-const readBackup = () => readJsonFile(getBackupPath(), null);
-
-const readYamlFile = async (filePath, fallback) => {
-  try {
-    const raw = await fs.readFile(filePath, "utf-8");
-    const parsed = raw.trim() === "" ? {} : parseYaml(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new TypeError(`${filePath} must contain a YAML object`);
-    }
-    return parsed;
-  } catch (e) {
-    if (e.code === "ENOENT") return fallback;
-    throw e;
-  }
-};
-
-const readModelsYml = () => readYamlFile(getModelsYmlPath(), { providers: {} });
-
-const canonicalModelIds = (models) => models.map((model) => `${PROVIDER_ID}/${model}`);
-
-/** Keep other providers visible. A switchboard-only whitelist is lifted. */
-const mergeEnabledModels = (existing, switchboardIds) => {
-  if (!Array.isArray(existing) || existing.length === 0) return undefined;
-  const others = existing.filter((id) => typeof id !== "string" || !id.startsWith(`${PROVIDER_ID}/`));
-  if (others.length === 0) return undefined;
-  return [...others, ...switchboardIds];
-};
-
-const canonicalize = (value) => {
-  if (Array.isArray(value)) return value.map(canonicalize);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]),
-    );
-  }
-  return value;
-};
-
-const sameJson = (left, right) => (
-  JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right))
-);
-
-const isSnapshot = (value) => value && typeof value === "object" && typeof value.exists === "boolean";
-
-const validateBackup = (backup) => {
-  if (backup == null) return null;
-  if (backup.version === BACKUP_VERSION && backup.state === "restored") return backup;
-  const settingKeys = ["defaultProvider", "defaultModel", "enabledModels"];
-  if (backup.version !== BACKUP_VERSION
-    || !isSnapshot(backup.provider)
-    || !settingKeys.every((key) => isSnapshot(backup.settings?.[key]))
-    || !backup.managedProvider
-    || !backup.managedSettings) {
-    throw new Error("Unsupported or invalid Pi Switchboard backup file");
-  }
-  return backup;
-};
-
-const writePiState = async (modelsYml, models, settings, backup) => {
-  await fs.mkdir(getAgentDir(), { recursive: true });
-  await replaceCliFiles([
-    {
-      filePath: getBackupPath(),
-      content: backup ? JSON.stringify(backup, null, 2) : null,
-      secret: true,
-    },
-    // Writing models.yml also bumps its mtime, which makes omp treat its
-    // discovery cache as older than the config and refetch /v1/models.
-    { filePath: getModelsYmlPath(), content: stringifyYaml(modelsYml), secret: true },
-    { filePath: getModelsPath(), content: JSON.stringify(models, null, 2), secret: true },
-    { filePath: getSettingsPath(), content: JSON.stringify(settings, null, 2), secret: true },
-  ]);
 };
 
 const restoreManagedSetting = (settings, backup, key) => {
@@ -250,7 +130,7 @@ async function getPiSettings() {
 }
 
 export async function GET() {
-  return withMutationLock(getPiSettings);
+  return withPiMutationLock(getPiSettings);
 }
 
 async function postPiSettings(request) {
@@ -307,45 +187,7 @@ async function postPiSettings(request) {
     const activeModel = resolveDefaultModel(defaultModel || model, models);
     const pickerLabels = normalizeClaudeCatalogPickerLabels(requestedPickerLabels, models);
 
-    // Capability resolver for pi's model entries: registry capability patterns,
-    // compatible-node discovery (import-time catalog capture + static host
-    // defaults), and combo member union (a combo can reason when any member
-    // can — the gateway strips thinking per member when routing).
-    await ensureCompatibleReasoning().catch(() => {});
-    const combosForCaps = typeof getCombos === "function"
-      ? await Promise.resolve(getCombos()).catch(() => [])
-      : [];
-    const comboByName = new Map(combosForCaps.map((c) => [c.name, c]));
-    const piCapsResolver = (fullId, visited = new Set()) => {
-      try {
-        const id = String(fullId || "");
-        const slash = id.indexOf("/");
-        if (slash <= 0) {
-          if (visited.has(id)) return null; // nested-combo cycle guard
-          visited.add(id);
-          const combo = comboByName.get(id);
-          if (!combo || !Array.isArray(combo.models) || combo.models.length === 0) return null;
-          let first = null;
-          for (const member of combo.models) {
-            const caps = piCapsResolver(String(member), visited);
-            if (caps?.reasoning) return caps;
-            if (caps && !first) first = caps;
-          }
-          return first;
-        }
-        const prefix = id.slice(0, slash);
-        const base = id.slice(slash + 1);
-        const compat = lookupCompatibleReasoningSupport(prefix, base);
-        if (compat) {
-          const caps = getCapabilitiesForModel(prefix, base);
-          return { reasoning: compat.supported === true, contextWindow: caps.contextWindow || null };
-        }
-        const caps = getCapabilitiesForModel(prefix, base);
-        return { reasoning: caps.reasoning === true, contextWindow: caps.contextWindow || null };
-      } catch {
-        return null;
-      }
-    };
+    const piCapsResolver = await buildPiCapsResolver();
 
     const ensureProviders = (fileData) => {
       if (!fileData.providers || typeof fileData.providers !== "object" || Array.isArray(fileData.providers)) {
@@ -373,10 +215,10 @@ async function postPiSettings(request) {
       ...managedProvider,
       discovery: { type: "openai-models-list" },
     };
-    const backup = storedBackup?.version === BACKUP_VERSION
+    const backup = storedBackup?.version === 1
       ? storedBackup
       : {
-          version: BACKUP_VERSION,
+          version: 1,
           state: "active",
           provider: snapshotObjectKeys(ymlData.providers, [PROVIDER_ID])[PROVIDER_ID],
           legacyProvider: snapshotObjectKeys(data.providers, [PROVIDER_ID])[PROVIDER_ID],
@@ -397,6 +239,9 @@ async function postPiSettings(request) {
       defaultModel: activeModel,
       enabledModels: piSettings.enabledModels,
     };
+    // Apply curates the list explicitly — restart auto-sync ownership so
+    // curated ids are never eligible for auto-prune.
+    backup.syncSourceIds = [];
 
     await writePiState(ymlData, data, piSettings, backup);
 
@@ -416,7 +261,7 @@ async function postPiSettings(request) {
 }
 
 export async function POST(request) {
-  return withMutationLock(() => postPiSettings(request));
+  return withPiMutationLock(() => postPiSettings(request));
 }
 
 async function deletePiSettings() {
@@ -448,7 +293,7 @@ async function deletePiSettings() {
     }
     if (ymlProvider
       && (!backup?.managedProvider || sameJson(ymlProvider, backup.managedProvider))) {
-      if (backup?.version === BACKUP_VERSION) {
+      if (backup?.version === 1) {
         restoreObjectKeys(ymlData.providers, { [PROVIDER_ID]: backup.provider });
       } else {
         delete ymlData.providers[PROVIDER_ID];
@@ -456,7 +301,7 @@ async function deletePiSettings() {
     }
     if (jsonProvider
       && (!backup?.managedLegacyProvider || sameJson(jsonProvider, backup.managedLegacyProvider))) {
-      if (backup?.version === BACKUP_VERSION) {
+      if (backup?.version === 1) {
         // Backups written before models.yml was managed only snapshot the
         // models.json provider; reuse it for both files.
         restoreObjectKeys(data.providers, { [PROVIDER_ID]: backup.legacyProvider ?? backup.provider });
@@ -464,7 +309,7 @@ async function deletePiSettings() {
         delete data.providers[PROVIDER_ID];
       }
     }
-    if (backup?.version === BACKUP_VERSION) {
+    if (backup?.version === 1) {
       // Restore the model before the provider: the ownership guard needs to
       // observe the Switchboard provider that was active at delete time.
       restoreManagedSetting(piSettings, backup, "defaultModel");
@@ -481,7 +326,7 @@ async function deletePiSettings() {
       if (piSettings.enabledModels.length === 0) delete piSettings.enabledModels;
     }
     await writePiState(ymlData, data, piSettings, {
-      version: BACKUP_VERSION,
+      version: 1,
       state: "restored",
     });
     return NextResponse.json({
@@ -495,5 +340,5 @@ async function deletePiSettings() {
 }
 
 export async function DELETE() {
-  return withMutationLock(deletePiSettings);
+  return withPiMutationLock(deletePiSettings);
 }

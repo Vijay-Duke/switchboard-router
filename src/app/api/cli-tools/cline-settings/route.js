@@ -8,6 +8,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { buildClineSettings, isNonEmptyString, normalizeModelIds } from "@/lib/cli/modelCatalog.js";
+import { buildPiCapsResolver } from "@/lib/cli/piCatalogSync.js";
 import { restoreObjectKeys, snapshotObjectKeys, writeCliFile } from "@/lib/cli/fileIo.js";
 
 const execAsync = promisify(exec);
@@ -103,6 +104,7 @@ export async function POST(request) {
       apiKey,
       models,
       defaultModel: defaultModel || model,
+      capsResolver: await buildPiCapsResolver(),
     });
     await fs.mkdir(getSettingsDir(), { recursive: true });
     const backup = existingBackup?.version === 1 ? existingBackup : {

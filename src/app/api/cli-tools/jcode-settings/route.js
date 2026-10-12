@@ -10,6 +10,7 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { parseTOML, stringifyTOML } from "confbox";
 import { buildJcodeProvider, isNonEmptyString, normalizeModelIds } from "@/lib/cli/modelCatalog.js";
+import { buildPiCapsResolver } from "@/lib/cli/piCatalogSync.js";
 import { writeCliFile } from "@/lib/cli/fileIo.js";
 
 const execAsync = promisify(exec);
@@ -168,6 +169,7 @@ export async function POST(request) {
       baseUrl: normalizedBaseUrl,
       models,
       defaultModel: defaultModel || model,
+      capsResolver: await buildPiCapsResolver(),
     });
 
     const configDir = getJcodeConfigDir();

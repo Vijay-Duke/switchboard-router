@@ -11,6 +11,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import { buildGeminiSettings, isNonEmptyString, isOptionalString, normalizeModelIds } from "@/lib/cli/modelCatalog.js";
+import { buildPiCapsResolver } from "@/lib/cli/piCatalogSync.js";
 import { restoreObjectKeys, snapshotObjectKeys, writeCliFile } from "@/lib/cli/fileIo.js";
 
 const execAsync = promisify(exec);
@@ -179,7 +180,11 @@ export async function POST(request) {
         Object.entries(definitions).filter(([, entry]) => entry?.family === "switchboard"),
       ),
     };
-    const settings = buildGeminiSettings(currentSettings, { models, defaultModel: activeModel });
+    const settings = buildGeminiSettings(currentSettings, {
+      models,
+      defaultModel: activeModel,
+      capsResolver: await buildPiCapsResolver(),
+    });
     // Validate both inputs before mutating either file. Each replacement is
     // atomic, so a crash cannot leave a truncated environment or catalog.
     await writeCliFile(getBackupPath(), JSON.stringify(backup, null, 2), { secret: true });

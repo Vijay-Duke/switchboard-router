@@ -9,6 +9,7 @@ import path from "path";
 import os from "os";
 import { applyEdits, modify, parse as parseJsonc } from "jsonc-parser";
 import { buildKiloConfig, isNonEmptyString, normalizeModelIds } from "@/lib/cli/modelCatalog.js";
+import { buildPiCapsResolver } from "@/lib/cli/piCatalogSync.js";
 import { snapshotObjectKeys, writeCliFile } from "@/lib/cli/fileIo.js";
 
 const execAsync = promisify(exec);
@@ -104,7 +105,13 @@ export async function POST(request) {
       provider: snapshotObjectKeys(config.provider || {}, ["switchboard"]).switchboard,
     };
     await writeCliFile(getBackupPath(), JSON.stringify(backup, null, 2), { secret: true });
-    const next = buildKiloConfig(config, { baseUrl: normalizedBaseUrl, apiKey, models, defaultModel: defaultModel || model });
+    const next = buildKiloConfig(config, {
+      baseUrl: normalizedBaseUrl,
+      apiKey,
+      models,
+      defaultModel: defaultModel || model,
+      capsResolver: await buildPiCapsResolver(),
+    });
     let nextRaw = updateJsonc(raw, ["provider", "switchboard"], next.provider.switchboard);
     nextRaw = updateJsonc(nextRaw, ["model"], next.model);
     await fs.mkdir(path.dirname(configPath), { recursive: true });
