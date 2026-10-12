@@ -1,3 +1,8 @@
+# v0.9.55 (2026-10-12)
+
+## Fixes
+- **Effort intersection**: when upstream catalogs advertise effort levels, only levels confirmed by the static per-family allow-list are now advertised (live-verified: generic upstream blocks overstated Opus 4.5/4.6). Explicit upstream bans still win outright; with no overlap the upstream claim is kept.
+
 # v0.9.54 (2026-10-12)
 
 ## Features
