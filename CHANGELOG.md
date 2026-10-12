@@ -1,3 +1,8 @@
+# v0.9.52 (2026-10-12)
+
+## Fixes
+- **Anthropic API keys**: also drop the Claude Code `User-Agent` on API-key hops. v0.9.51 removed the subscription beta, but live verification showed the UA is a second, independent billing signal (sufficient alone to trigger 400 "credit balance too low" on funded user-scoped keys, with no beta at all). API-key hops now send neither signal; OAuth/subscription hops are unchanged.
+
 # v0.9.51 (2026-10-12)
 
 ## Fixes
