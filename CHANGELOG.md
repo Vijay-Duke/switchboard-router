@@ -1,3 +1,9 @@
+# v0.9.51 (2026-10-12)
+
+## Fixes
+- **Anthropic API keys**: stop sending the Claude Code subscription beta (`claude-code-20250219`) on API-key hops to `api.anthropic.com`. The flag switched billing to the subscription surface, where API keys hold no balance, so upstream answered 400 "credit balance too low" even for funded accounts (notably user-scoped `sk-ant-usr-*` keys). OAuth/subscription hops are unchanged and keep the beta; feature betas like interleaved-thinking are preserved.
+- Added regression coverage for per-auth-type beta scoping at the identity fetch layer.
+
 # v0.9.48 (2026-10-09)
 
 - Bound vault-stream idle failures without awaiting a hung cancellation or an unread cloned stream branch. Interrupted buffered responses return an explicit retryable error.
