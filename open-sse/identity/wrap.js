@@ -40,6 +40,25 @@ export function withClaudeOAuthCredentialBetas(betas) {
   return parts.join(",");
 }
 
+/**
+ * Drop the Claude Code subscription-surface beta for API-key hops.
+ * `claude-code-20250219` switches Anthropic billing to the Claude Code
+ * surface, where API keys — notably user-scoped sk-ant-usr-* keys — carry
+ * no balance, so upstream answers 400 "credit balance too low" even for
+ * funded accounts. Plain API calls must omit it; OAuth (Bearer) hops keep
+ * it (see withClaudeOAuthCredentialBetas). All other betas pass through.
+ *
+ * @param {string} betas
+ * @returns {string}
+ */
+export function withoutClaudeCodeBeta(betas) {
+  return String(betas || "")
+    .split(",")
+    .map((beta) => beta.trim())
+    .filter((beta) => beta && beta !== CLAUDE_CODE_BETA)
+    .join(",");
+}
+
 function nodeVersion() {
   return typeof process !== "undefined" && process.version ? process.version.replace(/^v/, "") : "unknown";
 }

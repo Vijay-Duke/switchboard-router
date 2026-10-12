@@ -167,3 +167,51 @@ describe("identity TLS transport dispatch", () => {
     }) }));
   });
 });
+
+function wireBetas(init) {
+  const betaKey = Object.keys(init.headers).find((k) => k.toLowerCase() === "anthropic-beta");
+  return (betaKey ? init.headers[betaKey] : "").split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+describe("claude-cli beta by auth type", () => {
+  beforeEach(() => vi.restoreAllMocks());
+  afterEach(() => { globalThis.fetch = nativeFetch; });
+
+  it("Bearer [REDACTED] keep the claude-code beta and gain the oauth beta", async () => {
+    const claudeFetch = vi.fn().mockResolvedValue(new Response("ok"));
+    const { proxyAwareFetch, __setTransportLoadersForTests } = await loadProxyFetch();
+    __setTransportLoadersForTests({ loadClaudeCodeFetch: async () => claudeFetch });
+
+    await proxyAwareFetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      identity: "claude-cli",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer [REDACTED]" },
+      body: "{}",
+    });
+
+    const [, init] = claudeFetch.mock.calls[0];
+    const betas = wireBetas(init);
+    expect(betas).toContain("claude-code-20250219");
+    expect(betas).toContain("oauth-2025-04-20");
+    expect(init.headers.Authorization).toBe("Bearer [REDACTED]");
+  });
+
+  it("x-api-key hops drop claude-code-20250219 but keep feature betas", async () => {
+    const claudeFetch = vi.fn().mockResolvedValue(new Response("ok"));
+    const { proxyAwareFetch, __setTransportLoadersForTests } = await loadProxyFetch();
+    __setTransportLoadersForTests({ loadClaudeCodeFetch: async () => claudeFetch });
+
+    await proxyAwareFetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      identity: "claude-cli",
+      headers: { "Content-Type": "application/json", "x-api-key": "sk-ant-usr-test" },
+      body: "{}",
+    });
+
+    const [, init] = claudeFetch.mock.calls[0];
+    const betas = wireBetas(init);
+    expect(betas).not.toContain("claude-code-20250219");
+    expect(betas).toContain("interleaved-thinking-2025-05-14");
+    expect(init.headers["x-api-key"]).toBe("sk-ant-usr-test");
+  });
+});

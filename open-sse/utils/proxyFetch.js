@@ -1,7 +1,7 @@
 import { Readable } from "stream";
 import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
 import { dbg } from "./debugLog.js";
-import { wrapHeaders, withClaudeOAuthCredentialBetas } from "../identity/wrap.js";
+import { wrapHeaders, withClaudeOAuthCredentialBetas, withoutClaudeCodeBeta } from "../identity/wrap.js";
 import { getProfile, CLAUDE_MESSAGES_HEADER_ORDER, CLAUDE_COUNT_TOKENS_HEADER_ORDER } from "../identity/catalog.js";
 import { createClaudeCodeFetch } from "../identity/tls/claude-code.js";
 import { CLAUDE_CODE_TLS_SPEC_REV } from "../identity/tls/claude-code-spec.js";
@@ -315,6 +315,21 @@ function applyIdentityWrap(url, options = {}) {
       const betaKey = Object.keys(headers).find((k) => k.toLowerCase() === "anthropic-beta");
       if (betaKey && headers[betaKey]) {
         headers[betaKey] = withClaudeOAuthCredentialBetas(headers[betaKey]);
+      }
+    } else {
+      // API-key hop (x-api-key, no Bearer): the Claude Code beta bills
+      // against the subscription surface, where API keys hold no balance,
+      // so upstream 400s "credit balance too low" even for funded accounts
+      // (notably user-scoped sk-ant-usr-* keys). Drop just that flag;
+      // feature betas like interleaved-thinking stay intact.
+      const keyKey = Object.keys(headers).find((k) => k.toLowerCase() === "x-api-key");
+      if (keyKey && headers[keyKey]) {
+        const betaKey = Object.keys(headers).find((k) => k.toLowerCase() === "anthropic-beta");
+        if (betaKey && headers[betaKey]) {
+          const stripped = withoutClaudeCodeBeta(headers[betaKey]);
+          if (stripped) headers[betaKey] = stripped;
+          else delete headers[betaKey];
+        }
       }
     }
   }
