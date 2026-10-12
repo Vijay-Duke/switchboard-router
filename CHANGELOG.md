@@ -1,3 +1,13 @@
+# v0.9.54 (2026-10-12)
+
+## Features
+- **Static effort levels on `/v1/models`**: compatible-provider models (e.g. Anthropic API nodes, whose upstreams advertise no capabilities) now carry per-family `capabilities.effort` blocks grounded in vendor docs and the live Claude Code catalog, so pickers can offer reasoning effort. Live upstream capabilities always win; conservative exclusions (Haiku 4.5, Opus 4.1, Claude 3.x snapshots) stay unadvertised.
+- **Compatible capability relay**: `/v1/models` discovery now relays upstream capability objects, so explicit restrictions (e.g. `effort.supported: false`) survive instead of being replaced by static fallbacks.
+
+## Fixes
+- **Haiku 5.5 passthrough**: adaptive thinking + `output_config.effort` no longer stripped for Haiku 5.5 (it supports both); legacy Haiku behavior unchanged.
+- **Opus 4.5 levels**: static advertisement corrected to low/medium/high (no max tier) per vendor docs.
+
 # v0.9.53 (2026-10-12)
 
 ## Features
