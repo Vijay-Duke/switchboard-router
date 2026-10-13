@@ -2,6 +2,14 @@ import { platform, arch } from "os";
 import { PROVIDERS, PROVIDER_OAUTH } from "./providers.js";
 import { getConsistentSnapshot } from "../identity/snapshot.js";
 
+// Nous Portal requires attribution for some API-key models. Use a neutral
+// router identity rather than exposing a credential or claiming another client.
+export const NOUS_ATTRIBUTION = {
+  hostname: "inference-api.nousresearch.com",
+  chatCompletionsPath: "/v1/chat/completions",
+  tags: ["product=switchboard", "client=switchboard", "user=switchboard"],
+};
+
 // === Gemini CLI === registry gemini-cli.transport carries no version keys, so
 // derive from the identity snapshot (the wire source of truth applied by
 // wrapHeaders) with committed-version fallbacks — never emit "undefined".

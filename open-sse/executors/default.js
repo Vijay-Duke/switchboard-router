@@ -2,7 +2,7 @@ import { BaseExecutor, streamIsTransportControlled } from "./base.js";
 import { PROVIDERS, PROVIDER_OAUTH } from "../config/providers.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE, selectAnthropicBeta } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType, getTargetFormat } from "../services/provider.js";
-import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
+import { OAUTH_ENDPOINTS, buildKimiHeaders, NOUS_ATTRIBUTION } from "../config/appConstants.js";
 import { buildClineHeaders } from "../shared/clineAuth.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
@@ -85,7 +85,7 @@ export class DefaultExecutor extends BaseExecutor {
     // Base injects stream_options / body.stream for usage + Accept consistency.
     super.transformRequest(model, body, stream, credentials);
 
-    const transformed = this.applyJsonSchemaFallback(body);
+    const transformed = this.applyJsonSchemaFallback(this.applyNousAttribution(model, body, stream, credentials));
 
     if (transformed && typeof transformed === "object") {
       // `safeguards` (server-side classifier review) only exists on the
@@ -123,6 +123,29 @@ export class DefaultExecutor extends BaseExecutor {
     }
 
     return injectReasoningContent({ provider: this.provider, model, body: transformed });
+  }
+
+  applyNousAttribution(model, body, stream, credentials) {
+    if (!this.provider?.startsWith?.("openai-compatible-") || !credentials?.apiKey
+      || !body || typeof body !== "object" || Array.isArray(body)
+      || (body.tags != null && !Array.isArray(body.tags))) return body;
+
+    try {
+      const url = new URL(this.buildUrl(model, stream, 0, credentials));
+      if (url.protocol !== "https:" || url.hostname !== NOUS_ATTRIBUTION.hostname
+        || url.pathname !== NOUS_ATTRIBUTION.chatCompletionsPath) return body;
+    } catch {
+      return body;
+    }
+
+    let tags = Array.isArray(body.tags) ? [...body.tags] : [];
+    for (const fallback of NOUS_ATTRIBUTION.tags) {
+      const prefix = fallback.slice(0, fallback.indexOf("=") + 1);
+      // Empty attribution values do not satisfy the upstream requirement.
+      tags = tags.filter((tag) => typeof tag !== "string" || !tag.startsWith(prefix) || tag.slice(prefix.length).trim());
+      if (!tags.some((tag) => typeof tag === "string" && tag.startsWith(prefix))) tags.push(fallback);
+    }
+    return { ...body, tags: [...new Set(tags)] };
   }
 
   // Fallback json_schema → json_object for openai-compatible providers without native Structured Output.
