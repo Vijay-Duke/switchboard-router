@@ -41,6 +41,18 @@ describe("Codex registry — ghost models removed (#4202)", () => {
   it("gpt-5.4-image is removed", () => {
     expect(codexSrc).not.toMatch(/id:\s*"gpt-5\.4-image"/);
   });
+
+  it("gpt-5.5 is removed", () => {
+    expect(codexSrc).not.toMatch(/id:\s*"gpt-5\.5"/);
+  });
+
+  it("gpt-5.5-image is removed", () => {
+    expect(codexSrc).not.toMatch(/id:\s*"gpt-5\.5-image"/);
+  });
+
+  it("gpt-5.3-image is removed", () => {
+    expect(codexSrc).not.toMatch(/id:\s*"gpt-5\.3-image"/);
+  });
 });
 
 describe("Codex registry — new models added (#4202)", () => {
@@ -54,8 +66,8 @@ describe("Codex registry — new models added (#4202)", () => {
 });
 
 describe("Codex registry — still-live models kept (#4202 regression guard)", () => {
-  it("gpt-5.5 still present", () => {
-    expect(codexSrc).toContain('"gpt-5.5"');
+  it("gpt-5.6-sol still present", () => {
+    expect(codexSrc).toContain('"gpt-5.6-sol"');
   });
 
   it("gpt-5.6-terra still present", () => {
@@ -76,13 +88,13 @@ const inferProvider = async (model) => (await getModelInfoCore(model, {})).provi
 
 describe("bare model routing — Codex-only gpt-* models route to codex (#4405)", () => {
   it.each([
-    "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.5", "gpt-6-astra", "gpt-6-sol",
+    "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol",
     "gpt-daybreak-blue-latest", "gpt-reserve", "codex-auto-review",
   ])("%s → codex", async (model) => {
     expect(await inferProvider(model)).toBe("codex");
   });
 
-  it.each(["gpt-5.4", "gpt-5", "gpt-5-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-5.9-unknown"])(
+  it.each(["gpt-5.5", "gpt-5.4", "gpt-5", "gpt-5-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-5.9-unknown"])(
     "%s → openai (OpenAI API / unknown ids unaffected)",
     async (model) => {
       expect(await inferProvider(model)).toBe("openai");
