@@ -1,3 +1,9 @@
+# v0.9.56 (2026-10-12)
+
+## Fixes
+- **Pi max on openai effort wire**: openai-format upstreams clamp `max`→`xhigh` on the wire, but the catalog nulled Pi's `max` level when the upstream vocabulary lacked it. Wire-alias resolution now keeps `max` selectable for openai-thinking-format models (translator sends the clamp); all other formats stay strict.
+- **Muse Spark/Wonder thinking levels**: top-tier Meta models now advertise the full six-level vocabulary (minimal…max).
+
 # v0.9.55 (2026-10-12)
 
 ## Fixes
