@@ -35,6 +35,21 @@ const PATTERN_THINKING = [
   { pattern: "*codex*", levels: ["low", "medium", "high", "xhigh"] }, // codex cannot disable thinking
 ];
 
+/**
+ * Wire effort level an upstream accepts for a Pi level, or null when the
+ * upstream has no vocabulary for it. Effort-capable (openai) gateways accept
+ * `max` as an alias for their top tier — the translator clamps max→xhigh —
+ * so it round-trips instead of hiding the level in Pi's picker.
+ * @param {string[] | null | undefined} levels
+ * @param {string} level Pi level key (low|medium|high|xhigh|max)
+ */
+export function effortWireLevel(levels, level) {
+  if (!Array.isArray(levels)) return null;
+  if (levels.includes(level)) return level;
+  if (level === "max" && levels.includes("xhigh")) return "max";
+  return null;
+}
+
 // Returns valid thinking levels for a model, or null when the model has no reasoning.
 export function getThinkingLevels(provider, model) {
   const caps = getCapabilitiesForModel(provider, model);

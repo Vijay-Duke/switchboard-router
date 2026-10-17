@@ -207,4 +207,29 @@ describe("effortCapabilitiesForModelId", () => {
     expect(effortCapabilitiesForModelId("gpt-5")).toBeNull();
     expect(effortCapabilitiesForModelId("")).toBeNull();
   });
+
+  // Muse models carry max on the top tier (registry muse.js thinking.levels).
+  // /v1/models must advertise it or Pi's /thinking picker caps at high —
+  // discovered models like muse-wonder never appear in the static catalog.
+  it("advertises max for muse spark and wonder models", async () => {
+    const { effortCapabilitiesForModelId } = await import(
+      "../../open-sse/providers/capabilities.js"
+    );
+    for (const id of [
+      "muse/muse-spark-1.3",
+      "muse/muse-wonder-1.0-contributor",
+      "muse/muse-wonder-full-1.0-contributor",
+      "muse-spark-1.3",
+    ]) {
+      expect(effortCapabilitiesForModelId(id)?.effort).toEqual({
+        supported: true,
+        minimal: { supported: true },
+        low: { supported: true },
+        medium: { supported: true },
+        high: { supported: true },
+        xhigh: { supported: true },
+        max: { supported: true },
+      });
+    }
+  });
 });

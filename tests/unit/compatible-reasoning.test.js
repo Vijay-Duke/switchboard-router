@@ -21,6 +21,7 @@ import {
   buildThinkingLevelMap,
 } from "../../src/lib/cli/modelCatalog.js";
 import { planPiSync } from "../../src/lib/cli/piCatalogSync.js";
+import { effortWireLevel, getThinkingLevels } from "../../open-sse/providers/thinkingLevels.js";
 
 afterEach(() => {
   setCompatibleThinkingResolver(null);
@@ -277,6 +278,33 @@ describe("buildPiModelEntries caps resolver", () => {
       xhigh: null,
       max: null,
     });
+  });
+
+  it("openai effort-wire keeps Pi max (wire-clamped to xhigh), other formats stay strict", () => {
+    // openai-format vocabulary caps at xhigh; max must stay selectable and
+    // send the wire alias "max" (translator clamps max→xhigh upstream).
+    const [gpt] = buildPiModelEntries(
+      ["cx/gpt-5.5"],
+      [],
+      {},
+      () => ({ reasoning: true, levels: getThinkingLevels("cx", "gpt-5.5"), wireLevel: effortWireLevel }),
+    );
+    expect(gpt.thinkingLevelMap).toEqual({
+      off: "none", minimal: "minimal", low: "low", medium: "medium",
+      high: "high", xhigh: "xhigh", max: "max",
+    });
+    expect(gpt.thinking.efforts).toEqual(["minimal", "low", "medium", "high", "xhigh", "max"]);
+    // No wire alias (e.g. claude-adaptive) → xhigh/max follow native levels exactly.
+    const [claude] = buildPiModelEntries(
+      ["cc/claude-opus-5-5"],
+      [],
+      {},
+      () => ({ reasoning: true, levels: getThinkingLevels("cc", "claude-opus-5-5") }),
+    );
+    expect(claude.thinkingLevelMap.xhigh).toBeNull();
+    expect(claude.thinkingLevelMap.max).toBe("max");
+    expect(effortWireLevel(["none", "low", "medium", "high"], "max")).toBeNull();
+    expect(effortWireLevel(null, "max")).toBeNull();
   });
 
   it("maps binary thinking levels onto high; no map without levels", () => {

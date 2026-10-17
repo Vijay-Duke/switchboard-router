@@ -20,7 +20,7 @@ import {
 } from "@/lib/cli/modelCatalog.js";
 import { getCombos, getCustomModels } from "@/lib/db/index.js";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
-import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
+import { effortWireLevel, getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import {
   ensureCompatibleReasoning,
   lookupCompatibleReasoningSupport,
@@ -205,7 +205,14 @@ export async function buildPiCapsResolver() {
         return { reasoning: compat.supported === true, contextWindow: caps.contextWindow || null, levels: null };
       }
       const levels = getThinkingLevels(prefix, base);
-      return { reasoning: caps.reasoning === true, contextWindow: caps.contextWindow || null, levels };
+      return {
+        reasoning: caps.reasoning === true,
+        contextWindow: caps.contextWindow || null,
+        levels,
+        // openai-format upstreams accept `max` (clamped to xhigh on the wire);
+        // effort levels must show in Pi's picker instead of being nulled.
+        ...(caps.thinkingFormat === "openai" ? { wireLevel: effortWireLevel } : {}),
+      };
     } catch {
       return null;
     }

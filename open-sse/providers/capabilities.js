@@ -312,6 +312,9 @@ export function getCapabilitiesForModel(provider, model) {
  * ORDER MATTERS: specific families before generic ones.
  */
 export const EFFORT_LEVEL_PATTERNS = [
+  // Muse Spark (Meta): top tier carries max (registry muse.js thinking.levels).
+  { pattern: "*muse-spark*", levels: ["minimal", "low", "medium", "high", "xhigh", "max"] },
+  { pattern: "*muse-wonder*", levels: ["minimal", "low", "medium", "high", "xhigh", "max"] },
   // Claude 5.x / late 4.x: five levels (matches the live Claude Code catalog)
   { pattern: "*claude*opus-5*",     levels: ["low", "medium", "high", "xhigh", "max"] },
   { pattern: "*claude*sonnet-5*",   levels: ["low", "medium", "high", "xhigh", "max"] },

@@ -49,13 +49,19 @@ export function modelDisplayName(id) {
 // Value = wire string we accept in reasoning_effort; null = level hidden in Pi's picker.
 const PI_LEVEL_KEYS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
-/** @param {string[] | null | undefined} levels */
-export function buildThinkingLevelMap(levels) {
+/**
+ * @param {string[] | null | undefined} levels
+ * @param {(levels: string[], level: string) => string | null} [wireLevel]
+ *   Effort-wire spelling for a level the gateway vocabulary lacks natively
+ *   (e.g. Pi `max` on an openai-format model, clamped max→xhigh upstream).
+ *   Defaults to exact membership so non-effort gateways stay strict.
+ */
+export function buildThinkingLevelMap(levels, wireLevel) {
   if (!Array.isArray(levels) || levels.length === 0) return undefined;
   const map = {};
   for (const key of PI_LEVEL_KEYS) {
-    const ours = key === "off" ? "none" : key;
-    map[key] = levels.includes(ours) ? ours : null;
+    if (key === "off") { map[key] = levels.includes("none") ? "none" : null; continue; }
+    map[key] = levels.includes(key) ? key : (wireLevel ? wireLevel(levels, key) : null);
   }
   // ponytail: binary formats (zai/minimax "thinking") collapse to off-only in Pi;
   // map their "thinking" onto high when present so the model stays selectable.
@@ -69,9 +75,9 @@ export function buildThinkingLevelMap(levels) {
 const OMP_EFFORT_KEYS = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** @param {string[] | null | undefined} levels */
-export function buildOmpThinking(levels) {
+export function buildOmpThinking(levels, wireLevel) {
   if (!Array.isArray(levels) || levels.length === 0) return undefined;
-  const efforts = OMP_EFFORT_KEYS.filter((k) => levels.includes(k));
+  const efforts = OMP_EFFORT_KEYS.filter((k) => levels.includes(k) || (wireLevel ? wireLevel(levels, k) != null : false));
   if (efforts.length === 0) return undefined;
   // Values are identity: omp sends the mapped string as reasoning_effort,
   // and our gateway accepts its own level names verbatim.
@@ -83,7 +89,7 @@ export function buildOmpThinking(levels) {
  * @param {unknown} modelIds
  * @param {Array<Record<string, any>>} [previous]
  * @param {Record<string, string>} [pickerLabels]
- * @param {(id: string) => { reasoning: boolean, contextWindow?: number|null, vision?: boolean, levels?: string[] | null } | null} [capsResolver]
+ * @param {(id: string) => { reasoning: boolean, contextWindow?: number|null, vision?: boolean, levels?: string[] | null, wireLevel?: (levels: string[], level: string) => string | null } | null} [capsResolver]
  *   Optional capability lookup (registry patterns + compatible-node discovery
  *   + combo member union). Computed reasoning repairs the stale false written
  *   by the pre-capability sync; hand-set fields (name, contextWindow, …)
@@ -105,8 +111,8 @@ export function buildPiModelEntries(modelIds, previous = [], pickerLabels = {}, 
         ...(caps.contextWindow && !prev.contextWindow ? { contextWindow: caps.contextWindow } : {}),
         ...(caps.vision === false ? { input: ["text"] } : {}),
         ...(caps.reasoning === true && caps.levels ? {
-          thinkingLevelMap: buildThinkingLevelMap(caps.levels),
-          thinking: buildOmpThinking(caps.levels),
+          thinkingLevelMap: buildThinkingLevelMap(caps.levels, caps.wireLevel),
+          thinking: buildOmpThinking(caps.levels, caps.wireLevel),
         } : {}),
       } : {}),
       id,
