@@ -89,23 +89,15 @@ func clientHelloSpec() *tls.ClientHelloSpec {
 			&tls.ALPNExtension{AlpnProtocols: []string{"http/1.1"}}, &tls.StatusRequestExtension{},
 			&tls.SignatureAlgorithmsExtension{SupportedSignatureAlgorithms: []tls.SignatureScheme{
 				tls.ECDSAWithP256AndSHA256, tls.PSSWithSHA256, tls.PKCS1WithSHA256, tls.ECDSAWithP384AndSHA384,
-				tls.PSSWithSHA384, tls.PKCS1WithSHA384, tls.PSSWithSHA512, tls.PKCS1WithSHA512, tls.PKCS1WithSHA1,
+				tls.PSSWithSHA384, tls.PKCS1WithSHA384, tls.PSSWithSHA512, tls.PKCS1WithSHA512, tls.Ed25519, tls.ECDSAWithP521AndSHA512, tls.PKCS1WithSHA1,
 			}},
-			&tls.SCTExtension{}, &tls.KeyShareExtension{KeyShares: []tls.KeyShare{{Group: tls.X25519MLKEM768}}},
+			&tls.SCTExtension{}, &tls.KeyShareExtension{KeyShares: []tls.KeyShare{{Group: tls.X25519MLKEM768}, {Group: tls.X25519}}},
 			&tls.PSKKeyExchangeModesExtension{Modes: []uint8{tls.PskModeDHE}},
 			&tls.SupportedVersionsExtension{Versions: []uint16{tls.VersionTLS13, tls.VersionTLS12}},
 		},
 	}
 }
 
-func prepareClaude258MLKEMState(conn *tls.UConn) {
-	keys := conn.HandshakeState.State13.KeyShareKeys
-	if keys != nil && keys.Ecdhe == nil && keys.MlkemEcdhe != nil {
-		// uTLS 1.8.2 custom presets generate the hybrid ECDHE key in
-		// MlkemEcdhe, but TLS 1.3 reads Ecdhe before applying its ML-KEM path.
-		keys.Ecdhe = keys.MlkemEcdhe
-	}
-}
 func buildDialer(proxyURL string) (proxyDialer, error) {
 	direct := &net.Dialer{}
 	if proxyURL == "" {
@@ -161,9 +153,6 @@ func dialTLS(ctx context.Context, u *url.URL, proxyURL string, deadline time.Tim
 	if err = tlsConn.ApplyPreset(clientHelloSpec()); err != nil {
 		tlsConn.Close()
 		return nil, err
-	}
-	if conn, ok := tlsConn.(*tls.UConn); ok {
-		prepareClaude258MLKEMState(conn)
 	}
 	if err = tlsConn.HandshakeContext(ctx); err != nil {
 		tlsConn.Close()

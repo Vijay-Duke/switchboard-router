@@ -19,38 +19,38 @@ describe("identity fallback version refresh", () => {
 
   it("checks stale fallback versions without writing", async () => {
     const file = versionsFile;
-    const staleNow = Date.parse("2026-09-15T00:00:00.000Z");
+    const staleNow = Date.parse("2026-11-02T00:00:00.000Z");
     await expect(refreshIdentityVersions({ file, now: staleNow, fetchImpl: fetchVersion("99.0.0") }))
       .rejects.toThrow("Identity fallback versions exceed 7-day grace");
   });
 
   it("never rewrites Claude's captured wire version", async () => {
     const file = versionsFile;
-    const snapshots = await refreshIdentityVersions({ file, now, fetchImpl: fetchVersion("2.1.290") });
-    expect(snapshots["claude-cli"].version).toBe("2.1.289");
-    expect(snapshots["claude-cli"].latestVersion).toBe("2.1.289");
+    const snapshots = await refreshIdentityVersions({ file, now, fetchImpl: fetchVersion("2.1.303") });
+    expect(snapshots["claude-cli"].version).toBe("2.1.302");
+    expect(snapshots["claude-cli"].latestVersion).toBe("2.1.302");
   });
 
   it("requires a new Claude capture even when npm latest is already recorded", async () => {
     const file = versionsFile;
-    const staleNow = Date.parse("2026-10-20T00:00:00.000Z");
+    const staleNow = Date.parse("2026-11-02T00:00:00.000Z");
     const fetchImpl = async (url) => new Response(JSON.stringify({
-      version: url.includes("claude-code") ? "2.1.290" : url.includes("codex") ? "0.153.4" : "0.58.0",
+      version: url.includes("claude-code") ? "2.1.303" : url.includes("codex") ? "0.163.0" : "0.64.0",
     }), { status: 200 });
     await expect(refreshIdentityVersions({ file, now: staleNow, fetchImpl }))
-      .rejects.toThrow("claude-cli: captured 2.1.289 → 2.1.290");
+      .rejects.toThrow("claude-cli: captured 2.1.302 → 2.1.303");
   });
 
-  it("commits the complete measured Claude Code 2.1.289 tuple", async () => {
+  it("commits the complete measured Claude Code 2.1.302 tuple", async () => {
     const snapshots = JSON.parse(await (await import("node:fs/promises")).readFile(versionsFile, "utf8"));
     expect(snapshots["claude-cli"]).toMatchObject({
-      version: "2.1.289",
-      latestVersion: "2.1.289",
-      tlsSpecRev: "claude-code-2.1.289",
+      version: "2.1.302",
+      latestVersion: "2.1.302",
+      tlsSpecRev: "claude-code-2.1.302",
       packageVersion: "0.128.0",
       runtimeVersion: "v26.3.0",
       entrypoint: "cli",
-      betas: "claude-code-20250219,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24,structured-outputs-2025-12-15",
+      betas: "claude-code-20250219,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,structured-outputs-2025-12-15",
     });
   });
 });

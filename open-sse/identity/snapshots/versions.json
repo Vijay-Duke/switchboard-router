@@ -1,24 +1,24 @@
 {
   "claude-cli": {
     "npm": "@anthropic-ai/claude-code",
-    "version": "2.1.289",
-    "latestVersion": "2.1.289",
-    "capturedAt": "2026-10-05T00:29:45.739Z",
-    "releasedAt": "2026-10-03T20:12:02.717Z",
-    "tlsSpecRev": "claude-code-2.1.289",
+    "version": "2.1.302",
+    "latestVersion": "2.1.302",
+    "capturedAt": "2026-10-17T14:44:54.840Z",
+    "releasedAt": "2026-10-16T16:48:28.057Z",
+    "tlsSpecRev": "claude-code-2.1.302",
     "packageVersion": "0.128.0",
     "runtimeVersion": "v26.3.0",
     "entrypoint": "cli",
-    "betas": "claude-code-20250219,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24,structured-outputs-2025-12-15"
+    "betas": "claude-code-20250219,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,structured-outputs-2025-12-15"
   },
   "codex-cli": {
     "npm": "@openai/codex",
-    "version": "0.153.4",
-    "releasedAt": "2026-09-04T23:31:18.513Z"
+    "version": "0.163.0",
+    "releasedAt": "2026-10-15T21:37:11.083Z"
   },
   "gemini-cli": {
     "npm": "@google/gemini-cli",
-    "version": "0.58.0",
-    "releasedAt": "2026-09-01T20:50:39.295Z"
+    "version": "0.64.0",
+    "releasedAt": "2026-10-13T20:48:24.183Z"
   }
 }

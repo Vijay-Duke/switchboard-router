@@ -70,9 +70,9 @@ function fallbackUserAgent(profileId, snapshot) {
   const plat = hostPlatform() || "linux";
   const arch = hostArch() === "ia32" ? "x86" : hostArch() || "x64";
   switch (profileId) {
-    case "claude-cli": return `claude-cli/${version || "2.1.289"} (external, cli)`;
-    case "codex-cli": return `codex_cli_rs/${version || "0.149.0"}`;
-    case "gemini-cli": return `GeminiCLI/${version || "0.56.0"}/unknown (${plat}; ${arch}; terminal)`;
+    case "claude-cli": return `claude-cli/${version || "2.1.302"} (external, cli)`;
+    case "codex-cli": return `codex_cli_rs/${version || "0.163.0"}`;
+    case "gemini-cli": return `GeminiCLI/${version || "0.64.0"}/unknown (${plat}; ${arch}; terminal)`;
     case "cline": return `Cline/${version || "3.0.0"}`;
     case "antigravity": return `antigravity/${version || "2.9.1"} ${plat}/${arch}`; // Cloud Code client floor
     case "copilot": return `GitHubCopilotChat/${version || "0.38.0"}`;

@@ -41,30 +41,87 @@ func (c *deadlineConn) SetDeadline(t time.Time) error    { c.deadline = t; retur
 func (c *deadlineConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *deadlineConn) SetWriteDeadline(time.Time) error { return nil }
 
-func TestClientHelloMatchesClaudeCode258Capture(t *testing.T) {
+func TestClientHelloMatchesClaudeCode302Capture(t *testing.T) {
 	spec := clientHelloSpec()
 	var curves []tls.CurveID
 	var keyShares []tls.KeyShare
+	var signatureAlgorithms []tls.SignatureScheme
+	var extensionOrder []string
 	for _, extension := range spec.Extensions {
 		switch ext := extension.(type) {
+		case *tls.SNIExtension:
+			extensionOrder = append(extensionOrder, "server_name")
+		case *tls.ExtendedMasterSecretExtension:
+			extensionOrder = append(extensionOrder, "extended_master_secret")
+		case *tls.RenegotiationInfoExtension:
+			extensionOrder = append(extensionOrder, "renegotiation_info")
 		case *tls.SupportedCurvesExtension:
+			extensionOrder = append(extensionOrder, "supported_groups")
 			curves = ext.Curves
+		case *tls.SupportedPointsExtension:
+			extensionOrder = append(extensionOrder, "ec_point_formats")
+		case *tls.SessionTicketExtension:
+			extensionOrder = append(extensionOrder, "session_ticket")
+		case *tls.ALPNExtension:
+			extensionOrder = append(extensionOrder, "alpn")
+		case *tls.StatusRequestExtension:
+			extensionOrder = append(extensionOrder, "status_request")
+		case *tls.SignatureAlgorithmsExtension:
+			extensionOrder = append(extensionOrder, "signature_algorithms")
+			signatureAlgorithms = ext.SupportedSignatureAlgorithms
+		case *tls.SCTExtension:
+			extensionOrder = append(extensionOrder, "signed_certificate_timestamp")
 		case *tls.KeyShareExtension:
+			extensionOrder = append(extensionOrder, "key_share")
 			keyShares = ext.KeyShares
-		case *tls.UtlsPaddingExtension, *tls.UtlsPreSharedKeyExtension:
-			t.Fatalf("stale extension %T remains in Claude Code 2.1.258 capture", extension)
+		case *tls.PSKKeyExchangeModesExtension:
+			extensionOrder = append(extensionOrder, "psk_key_exchange_modes")
+		case *tls.SupportedVersionsExtension:
+			extensionOrder = append(extensionOrder, "supported_versions")
+		default:
+			t.Fatalf("unexpected extension %T in Claude Code 2.1.302 capture", extension)
 		}
+	}
+	wantCiphers := []uint16{
+		tls.TLS_AES_128_GCM_SHA256, tls.TLS_AES_256_GCM_SHA384, tls.TLS_CHACHA20_POLY1305_SHA256,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384, tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA, tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA, tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+		tls.TLS_RSA_WITH_AES_128_GCM_SHA256, tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+		tls.TLS_RSA_WITH_AES_128_CBC_SHA, tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+	}
+	if !slices.Equal(spec.CipherSuites, wantCiphers) {
+		t.Fatalf("cipher suites = %v, want %v", spec.CipherSuites, wantCiphers)
+	}
+	wantExtensions := []string{
+		"server_name", "extended_master_secret", "renegotiation_info", "supported_groups",
+		"ec_point_formats", "session_ticket", "alpn", "status_request", "signature_algorithms",
+		"signed_certificate_timestamp", "key_share", "psk_key_exchange_modes", "supported_versions",
+	}
+	if !slices.Equal(extensionOrder, wantExtensions) {
+		t.Fatalf("extensions = %v, want %v", extensionOrder, wantExtensions)
 	}
 	wantCurves := []tls.CurveID{tls.X25519MLKEM768, tls.X25519, tls.CurveP256, tls.CurveP384}
 	if !slices.Equal(curves, wantCurves) {
 		t.Fatalf("supported curves = %v, want %v", curves, wantCurves)
 	}
-	if len(keyShares) != 1 || keyShares[0].Group != tls.X25519MLKEM768 {
-		t.Fatalf("key shares = %v, want X25519MLKEM768 only", keyShares)
+	if len(keyShares) != 2 || keyShares[0].Group != tls.X25519MLKEM768 || keyShares[1].Group != tls.X25519 {
+		t.Fatalf("key shares = %v, want X25519MLKEM768 then X25519", keyShares)
+	}
+	// Bun 1.4.4 (Claude Code 2.1.302) added Ed25519 + ECDSA-P521 to the 2.1.289 list.
+	wantSignatureAlgorithms := []tls.SignatureScheme{
+		tls.ECDSAWithP256AndSHA256, tls.PSSWithSHA256, tls.PKCS1WithSHA256, tls.ECDSAWithP384AndSHA384,
+		tls.PSSWithSHA384, tls.PKCS1WithSHA384, tls.PSSWithSHA512, tls.PKCS1WithSHA512,
+		tls.Ed25519, tls.ECDSAWithP521AndSHA512, tls.PKCS1WithSHA1,
+	}
+	if !slices.Equal(signatureAlgorithms, wantSignatureAlgorithms) {
+		t.Fatalf("signature algorithms = %v, want %v", signatureAlgorithms, wantSignatureAlgorithms)
 	}
 }
 
-func TestPrepareClaude258MLKEMState(t *testing.T) {
+func TestKeyShareStateMatchesClaudeCode302(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
 	defer server.Close()
@@ -72,10 +129,15 @@ func TestPrepareClaude258MLKEMState(t *testing.T) {
 	if err := conn.ApplyPreset(clientHelloSpec()); err != nil {
 		t.Fatal(err)
 	}
-	prepareClaude258MLKEMState(conn)
+	// uTLS handshake reads Ecdhe when the server selects plain X25519 and
+	// MlkemEcdhe+Mlkem when it selects X25519MLKEM768. Claude Code sends both
+	// shares, so all three keys must exist and the two X25519 keys differ.
 	keys := conn.HandshakeState.State13.KeyShareKeys
-	if keys.Ecdhe == nil || keys.Ecdhe != keys.MlkemEcdhe {
-		t.Fatal("Claude 2.1.258 ML-KEM ECDHE state is not wired for the uTLS handshake")
+	if keys.Ecdhe == nil || keys.MlkemEcdhe == nil || keys.Mlkem == nil {
+		t.Fatalf("key share state incomplete: ecdhe=%v mlkemEcdhe=%v mlkem=%v", keys.Ecdhe != nil, keys.MlkemEcdhe != nil, keys.Mlkem != nil)
+	}
+	if keys.Ecdhe == keys.MlkemEcdhe {
+		t.Fatal("plain X25519 key share aliases the hybrid ML-KEM ECDHE key")
 	}
 }
 

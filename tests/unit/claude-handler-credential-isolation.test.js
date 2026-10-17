@@ -290,7 +290,7 @@ it("pins continued Claude requests and returns429 without account fallback or va
   const limited = Response.json({ error: "limited" }, { status: 429, headers: { "retry-after": "60" } });
   mocks.handleChatCore.mockResolvedValue({ success: false, status: 429, error: "limited", response: limited });
   const response = await handleChat(new Request("http://localhost/v1/messages", {
-    method: "POST", headers: { "content-type": "application/json", "user-agent": "claude-code/2.1.289" },
+    method: "POST", headers: { "content-type": "application/json", "user-agent": "claude-code/2.1.302" },
     body: JSON.stringify({ model: "cc/claude-opus-5-5", thread: { type: "continue", previous_message_id: "msg_prior" }, tools: [{ name: "Read" }], messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "tu_prior", content: "real output" }] }] }),
   }));
   expect(response).toBe(limited); expect(response.headers.get("retry-after")).toBe("60");

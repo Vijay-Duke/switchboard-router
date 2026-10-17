@@ -1,7 +1,7 @@
-// Captured from Claude Code 2.1.258, 2.1.263 and 2.1.289 native darwin-arm64 binaries
-// (byte-identical ClientHello; X-Stainless-Runtime v26.3.0 in all three,
-// Bun 1.4.1 → 1.4.3 changed nothing on the wire).
-export const CLAUDE_CODE_TLS_SPEC_REV = "2.1.289";
+// Captured from Claude Code 2.1.258, 2.1.263, 2.1.289 and 2.1.302 native darwin-arm64 binaries
+// (X-Stainless-Runtime v26.3.0 in all four; Bun 1.4.1 → 1.4.3 changed nothing on the
+// wire, Bun 1.4.4 in 2.1.302 adds ed25519 + ecdsa_secp521r1_sha512 sigalgs).
+export const CLAUDE_CODE_TLS_SPEC_REV = "2.1.302";
 export const CLAUDE_CODE_ALPN = Object.freeze(["http/1.1"]);
 
 export const CLAUDE_CODE_CIPHER_SUITES = Object.freeze([
@@ -33,9 +33,9 @@ export const CLAUDE_CODE_EXTENSIONS = Object.freeze([
   "session_ticket",
   "alpn:http/1.1",
   "status_request",
-  "signature_algorithms:ecdsa_secp256r1_sha256,rsa_pss_rsae_sha256,rsa_pkcs1_sha256,ecdsa_secp384r1_sha384,rsa_pss_rsae_sha384,rsa_pkcs1_sha384,rsa_pss_rsae_sha512,rsa_pkcs1_sha512,rsa_pkcs1_sha1",
+  "signature_algorithms:ecdsa_secp256r1_sha256,rsa_pss_rsae_sha256,rsa_pkcs1_sha256,ecdsa_secp384r1_sha384,rsa_pss_rsae_sha384,rsa_pkcs1_sha384,rsa_pss_rsae_sha512,rsa_pkcs1_sha512,ed25519,ecdsa_secp521r1_sha512,rsa_pkcs1_sha1",
   "signed_certificate_timestamp",
-  "key_share:x25519_mlkem768",
+  "key_share:x25519_mlkem768,x25519",
   "psk_key_exchange_modes:psk_dhe_ke",
   "supported_versions:TLS1.3,TLS1.2",
 ]);

@@ -3,7 +3,7 @@ import { mapStainlessArch, mapStainlessOs, hostArch, hostPlatform } from "./os.j
 import { release as osRelease } from "node:os";
 import { GROK_CLI_CLIENT_IDENTIFIER, GROK_CLI_VERSION } from "../config/grokCli.js";
 
-const CLAUDE_BETAS = "claude-code-20250219,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24,structured-outputs-2025-12-15";
+const CLAUDE_BETAS = "claude-code-20250219,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,structured-outputs-2025-12-15";
 
 const CLAUDE_MESSAGES_HEADER_ORDER = [
   "Accept",
@@ -35,7 +35,7 @@ const CLAUDE_COUNT_TOKENS_HEADER_ORDER = CLAUDE_MESSAGES_HEADER_ORDER.filter(
 );
 
 function claudeHeaders(snapshot) {
-  const version = snapshot?.version || "2.1.289";
+  const version = snapshot?.version || "2.1.302";
   const entrypoint = snapshot?.entrypoint || "cli";
   return {
     "Anthropic-Version": ANTHROPIC_API_VERSION,
@@ -175,7 +175,7 @@ function chromeHeaders(snapshot) {
 }
 
 function codexHeaders(snapshot) {
-  const version = snapshot?.version || "0.149.0";
+  const version = snapshot?.version || "0.163.0";
   return {
     originator: "codex_cli_rs",
     "User-Agent": `codex_cli_rs/${version}`,

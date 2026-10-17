@@ -56,7 +56,7 @@ function fallbackSnapshot(profileId) {
     userAgent: `claude-cli/${version} (external, ${metadata.entrypoint || "cli"})`,
     packageVersion: metadata.packageVersion || "0.128.0",
     runtimeVersion: metadata.runtimeVersion || "v26.3.0",
-    betas: metadata.betas || "claude-code-20250219,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,effort-2025-11-24,structured-outputs-2025-12-15",
+    betas: metadata.betas || "claude-code-20250219,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,effort-2025-11-24,structured-outputs-2025-12-15",
   };
 }
 
