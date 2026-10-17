@@ -4,7 +4,8 @@
 
 import { getCapabilitiesForModel } from "../../providers/capabilities.js";
 import { PROVIDERS } from "../../providers/index.js";
-import { LEVEL_TO_BUDGET, budgetToLevel, effortToBudget, effortToThinkingLevel } from "./thinking.js";
+import { getThinkingLevels } from "../../providers/thinkingLevels.js";
+import { EFFORT_LEVELS, LEVEL_TO_BUDGET, budgetToLevel, effortToBudget, effortToThinkingLevel } from "./thinking.js";
 
 // Map a target wire-format to its native thinking format (when capability has none).
 const FORMAT_TO_NATIVE = {
@@ -30,6 +31,29 @@ let compatibleThinkingResolver = null;
 export function setCompatibleThinkingResolver(fn) {
   compatibleThinkingResolver = typeof fn === "function" ? fn : null;
 }
+
+// Clamp a requested level to the model's nearest supported level (tie → higher,
+// matching the per-format maps that never reduce an above-high request).
+// Mirrors CLIProxyAPI clampLevel: skip non-effort markers ("none"/"thinking");
+// unknown lists pass the level through untouched.
+function clampToSupported(level, levels) {
+  if (!Array.isArray(levels) || levels.length === 0 || levels.includes(level)) return level;
+  const pos = EFFORT_LEVELS.indexOf(level);
+  if (pos === -1) return level;
+  let best = null;
+  for (const s of levels) {
+    const idx = EFFORT_LEVELS.indexOf(s);
+    if (idx === -1) continue;
+    const d = Math.abs(idx - pos);
+    const bd = best === null ? Infinity : Math.abs(EFFORT_LEVELS.indexOf(best) - pos);
+    if (best === null || d < bd || (d === bd && idx > EFFORT_LEVELS.indexOf(best))) best = s;
+  }
+  return best ?? level;
+}
+
+// Formats whose wire has no native "auto" effort — a dynamic request must be
+// auto-selected to a concrete level the model supports (CLIProxyAPI mid-range).
+const AUTO_TO_LEVEL_FORMATS = new Set(["openai", "openai-nested", "openai-responses", "deepseek", "step"]);
 
 // Strip a trailing thinking suffix "model(value)" → "model" (no-op when absent).
 export function stripThinkingSuffix(model) {
@@ -310,8 +334,22 @@ export function applyThinking(targetFormat, model, body, provider = null, intent
   if (!body || typeof body !== "object") return body;
 
   const { cleanModel, override } = parseSuffix(model);
-  const cfg = override || intent || extractThinking(body);
+  let cfg = override || intent || extractThinking(body);
   const caps = getCapabilitiesForModel(provider, cleanModel);
+  const fmt = resolveFormat(targetFormat, cleanModel, provider);
+
+  // Auto-select a valid effort for this model (CLIProxyAPI-style): clamp
+  // requested levels to the model's supported list, and give "auto" a concrete
+  // level on formats with no dynamic effort (they would leak the literal "auto").
+  const supported = getThinkingLevels(provider, cleanModel);
+  if (cfg && supported) {
+    if (cfg.mode === "level") {
+      const clamped = clampToSupported(cfg.level, supported);
+      if (clamped !== cfg.level) cfg = { ...cfg, level: clamped };
+    } else if (cfg.mode === "auto" && AUTO_TO_LEVEL_FORMATS.has(fmt)) {
+      cfg = { mode: "level", level: clampToSupported("medium", supported) };
+    }
+  }
 
   // Compatible-node per-model override (discovered from the gateway's catalog
   // at import time): the catalog is authoritative there — it outranks both the
@@ -335,7 +373,6 @@ export function applyThinking(targetFormat, model, body, provider = null, intent
   }
   if (!cfg) return body;
 
-  const fmt = resolveFormat(targetFormat, cleanModel, provider);
   stripAll(body);
   applyFormat(fmt, body, cfg, caps);
   return body;
