@@ -1,3 +1,12 @@
+# v0.9.57 (2026-10-18)
+
+## Features
+- **Auto-select valid thinking effort per model**: requested effort levels now clamp to the model's supported list (nearest level, ties round up — e.g. `max` on gpt-5 becomes `xhigh`, `xhigh` on DeepSeek becomes `max`) instead of leaking an unsupported level upstream. `"auto"` resolves to a concrete mid-range level on wires with no native dynamic effort (OpenAI/Responses/DeepSeek/Step), so the literal `"auto"` never reaches those upstreams; adaptive-capable wires (Claude) keep dynamic thinking. Models without a known level list pass through untouched.
+
+## Fixes
+- **Claude Code identity recaptured at 2.1.302**: fingerprint tuple re-captured from the real 2.1.302 (npm latest 2026-10-16) and 2.1.289 darwin-arm64 binaries against a local trap. Header order, Stainless package (0.128.0), and runtime (v26.3.0) are unchanged; the default beta assembly drops `mid-conversation-system-2026-04-07`. Bun 1.4.4's TLS ClientHello adds `ed25519` + `ecdsa_secp521r1_sha512` signature algorithms — all six native TLS helpers rebuilt and the helper hello verified byte-structure-identical to the real 2.1.302 binary (including its second `x25519` key share, which the old single-share spec lacked). Harvest accepts real 2.1.302 traffic again.
+- **Identity fallbacks refreshed**: Codex CLI fallback 0.163.0, Gemini CLI fallback 0.64.0 (current npm latest).
+
 # v0.9.56 (2026-10-12)
 
 ## Fixes
