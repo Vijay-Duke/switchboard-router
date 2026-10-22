@@ -4,9 +4,29 @@
  */
 
 const DEFAULT_TTL_MS = 15_000;
+const MAX_ENTRIES = 500;
+const SWEEP_INTERVAL_MS = 30_000;
 
 /** @type {Map<string, { expiresAt: number, value: any }>} */
 const store = new Map();
+let sweepTimer = null;
+
+function pruneExpired(now = Date.now()) {
+  for (const [key, entry] of store) {
+    if (entry.expiresAt <= now) store.delete(key);
+  }
+  while (store.size > MAX_ENTRIES) {
+    const oldest = store.keys().next().value;
+    if (oldest === undefined) break;
+    store.delete(oldest);
+  }
+}
+
+function ensureSweepTimer() {
+  if (sweepTimer) return;
+  sweepTimer = setInterval(() => pruneExpired(), SWEEP_INTERVAL_MS);
+  sweepTimer.unref?.();
+}
 
 /**
  * @template T
@@ -16,10 +36,13 @@ const store = new Map();
  * @returns {Promise<T>}
  */
 export async function cached(key, loader, ttlMs = DEFAULT_TTL_MS) {
+  ensureSweepTimer();
   const hit = store.get(key);
   if (hit && hit.expiresAt > Date.now()) return hit.value;
+  if (hit) store.delete(key);
   const value = await loader();
   store.set(key, { value, expiresAt: Date.now() + ttlMs });
+  pruneExpired();
   return value;
 }
 

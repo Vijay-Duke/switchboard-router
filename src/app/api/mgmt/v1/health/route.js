@@ -1,5 +1,6 @@
 // @ts-check
 import { getProviderConnections, getSettings } from "@/lib/db/index.js";
+import { getObservabilityBufferStats } from "@/lib/db/repos/requestDetailsRepo.js";
 import { fail, ok, requireManagementAuth } from "../_lib/http.js";
 
 export const dynamic = "force-dynamic";
@@ -33,10 +34,16 @@ export async function GET(request) {
   if (denied) return denied;
   try {
     const [dbOk, connections] = await Promise.all([checkDb(), getProviderConnections()]);
+    const observability = getObservabilityBufferStats();
     return ok({
       status: dbOk ? "ok" : "degraded",
       uptimeSeconds: Math.round(process.uptime()),
       db: { ok: dbOk },
+      observability: {
+        buffered: observability.buffered,
+        maxBuffer: observability.maxBuffer,
+        droppedTotal: observability.droppedTotal,
+      },
       providers: summarizeProviders(connections),
       timestamp: new Date().toISOString(),
     });

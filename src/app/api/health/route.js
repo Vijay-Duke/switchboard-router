@@ -7,10 +7,9 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "*",
 };
 
-// Watchdog readiness probe (S7): the launcher restarts the server after 3
-// consecutive non-healthy probes, so a wedged DB must surface here instead of
-// reporting ok while every /v1 and dashboard route 500s.
-const DB_PROBE_TIMEOUT_MS = 2000;
+// Must exceed SQLite busy_timeout (5000ms in schema.js) so a legitimately
+// waiting connection is not reported dead while locks clear.
+const DB_PROBE_TIMEOUT_MS = 6000;
 
 // Reads the DB, so it must never be prerendered (see driver.js isBuildPhase guard).
 export const dynamic = "force-dynamic";
@@ -32,10 +31,12 @@ async function isDbReady() {
 }
 
 export async function GET() {
-  if (!(await isDbReady())) {
-    return NextResponse.json({ ok: false, error: "db" }, { status: 503, headers: CORS_HEADERS });
+  const dbReady = await isDbReady();
+  if (!dbReady) {
+    // Degraded readiness for operators; the CLI watchdog uses /api/health/live.
+    return NextResponse.json({ ok: false, error: "db", live: true }, { status: 503, headers: CORS_HEADERS });
   }
-  return NextResponse.json({ ok: true }, { headers: CORS_HEADERS });
+  return NextResponse.json({ ok: true, live: true, db: true }, { headers: CORS_HEADERS });
 }
 
 export async function OPTIONS() {

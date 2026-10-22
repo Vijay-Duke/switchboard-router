@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
-# Install Switchboard CLI (latest release). Requires Node.js 18+.
+# Install Switchboard CLI (latest release). Requires Node.js 20.9+ (see package.json engines).
 set -euo pipefail
 
 if ! command -v node >/dev/null 2>&1; then
-  echo "Node.js 18+ is required: https://nodejs.org/" >&2
+  echo "Node.js 20.9+ is required: https://nodejs.org/" >&2
   exit 1
 fi
+
+node -e '
+const [maj, min, patch] = process.versions.node.split(".").map(Number);
+const ok = maj > 20 || (maj === 20 && (min > 9 || (min === 9 && patch >= 0)));
+if (!ok) {
+  console.error("Node.js 20.9+ is required (found " + process.version + ").");
+  process.exit(1);
+}
+'
 
 if ! command -v npm >/dev/null 2>&1; then
   echo "npm is required (ships with Node.js)." >&2

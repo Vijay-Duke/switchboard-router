@@ -60,6 +60,18 @@ let isFlushing = false;
 const DROP_WARN_INTERVAL_MS = 60_000;
 let lastDropWarnAt = 0;
 let droppedSinceLastWarn = 0;
+let droppedTotal = 0;
+
+/** @returns {{ buffered: number, maxBuffer: number, droppedTotal: number, droppedSinceLastWarn: number }} */
+export function getObservabilityBufferStats() {
+  const maxBuffer = cachedConfig?.maxBuffer ?? DEFAULT_MAX_BUFFER;
+  return {
+    buffered: writeBuffer.length,
+    maxBuffer,
+    droppedTotal,
+    droppedSinceLastWarn,
+  };
+}
 
 function sanitizeHeaders(headers) {
   if (!headers || typeof headers !== "object") return {};
@@ -327,6 +339,7 @@ export async function saveRequestDetail(detail) {
   if (writeBuffer.length >= config.maxBuffer) {
     writeBuffer.shift();
     droppedSinceLastWarn++;
+    droppedTotal++;
     const now = Date.now();
     if (now - lastDropWarnAt > DROP_WARN_INTERVAL_MS) {
       console.warn(

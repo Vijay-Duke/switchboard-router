@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/Vijay-Duke/switchboard-router/releases/latest"><img src="https://img.shields.io/github/v/release/Vijay-Duke/switchboard-router?style=flat-square&label=latest" alt="Latest release" /></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen?style=flat-square" alt="Node 18+" />
+  <img src="https://img.shields.io/badge/node-%3E%3D20.9-brightgreen?style=flat-square" alt="Node 20.9+" />
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT" />
 </p>
 
@@ -22,7 +22,7 @@
 
 ## Install
 
-Copy and run ([Node.js 18+](https://nodejs.org/) required):
+Copy and run ([Node.js 20.9+](https://nodejs.org/) required):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Vijay-Duke/switchboard-router/master/install.sh | bash

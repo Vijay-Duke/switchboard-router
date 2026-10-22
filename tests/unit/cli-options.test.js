@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const { formatHelp, isLoopbackHost, parseCliArgs } = require("../../cli/src/cli/cliOptions.js");
-const { probeHealth, probeSwitchboard, startHealthWatchdog, waitForSwitchboard } = require("../../cli/src/cli/serverStatus.js");
+const { probeHealth, probeLive, probeSwitchboard, startHealthWatchdog, waitForSwitchboard } = require("../../cli/src/cli/serverStatus.js");
 const { getLaunchArgs } = require("../../cli/src/cli/tray/autostart.js");
 const { renderHeader } = require("../../cli/src/cli/terminalUI.js");
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -170,17 +170,17 @@ describe("CLI option contract", () => {
     }
   });
 
-  it("uses one health request per watchdog probe", async () => {
+  it("uses one liveness request per watchdog probe", async () => {
     const paths = [];
     const server = http.createServer((req, res) => {
       paths.push(req.url);
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify({ ok: true }));
+      res.end(JSON.stringify({ ok: true, live: true }));
     });
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     try {
-      await expect(probeHealth(server.address().port, 1000)).resolves.toBe(true);
-      expect(paths).toEqual(["/api/health"]);
+      await expect(probeLive(server.address().port, 1000)).resolves.toBe(true);
+      expect(paths).toEqual(["/api/health/live"]);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
