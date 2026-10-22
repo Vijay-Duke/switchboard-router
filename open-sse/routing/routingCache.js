@@ -66,7 +66,9 @@ export function readRoutingCache(key) {
  * @param {number} [ttlMs]
  */
 export function writeRoutingCache(key, value, ttlMs = DEFAULT_TTL_MS) {
+  ensureSweepTimer();
   store.set(key, { value, expiresAt: Date.now() + ttlMs });
+  pruneExpired();
 }
 
 /** @param {string} [prefix] */
