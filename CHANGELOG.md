@@ -1,3 +1,13 @@
+# v0.9.58 (2026-10-22)
+
+## Fixes
+- **Health watchdog under load**: the CLI launcher now probes **`/api/health/live`** (process liveness, no SQLite) instead of DB-bound `/api/health`, so observability write bursts and lock contention no longer trigger repeated SIGTERM restarts and launcher exit. Full `/api/health` still reports DB readiness (6s probe, aligned with `busy_timeout`). Watchdog respawns preserve `everHealthy`, retry with backoff on spawn failure, and parent `uncaughtException` no longer tears down a healthy child.
+- **Production sql.js guard**: refuse the in-memory full-file-rewrite fallback in production unless `SWITCHBOARD_ALLOW_SQLJS=1`.
+- **Streaming tool IDs**: id-less tool calls use index/sequence-based IDs instead of `Date.now()` collisions under parallel chunks.
+- **Memory bounds**: routing cache sweep + 500 cap; token-refresh dedup and Codex WebSocket breakers capped at 256 keys.
+- **Install/docs**: README and `install.sh` require **Node 20.9+**, matching `package.json` engines.
+- **Mgmt health**: exposes observability buffer drop totals for operators.
+
 # v0.9.57 (2026-10-18)
 
 ## Features
