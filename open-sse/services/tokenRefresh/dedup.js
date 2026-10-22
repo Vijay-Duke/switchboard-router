@@ -1,5 +1,16 @@
 const REFRESH_RESULT_TTL_MS = 10_000;
+const MAX_DEDUP_ENTRIES = 256;
 const refreshDedupCache = new Map();
+
+function trimDedupCache() {
+  while (refreshDedupCache.size > MAX_DEDUP_ENTRIES) {
+    const oldest = refreshDedupCache.keys().next().value;
+    if (oldest === undefined) break;
+    const entry = refreshDedupCache.get(oldest);
+    refreshDedupCache.delete(oldest);
+    if (entry?.cleanupTimer) clearTimeout(entry.cleanupTimer);
+  }
+}
 
 function removeCacheEntry(key, entry) {
   if (refreshDedupCache.get(key) !== entry) return;
@@ -22,6 +33,7 @@ function cacheRefreshResult(key, result) {
   // A cache cleanup timer should never keep the gateway process alive.
   entry.cleanupTimer.unref?.();
   refreshDedupCache.set(key, entry);
+  trimDedupCache();
 }
 
 export async function dedupRefresh(provider, oldToken, fn, log) {
@@ -58,5 +70,6 @@ export async function dedupRefresh(provider, oldToken, fn, log) {
   })();
   inFlight.promise = promise;
   refreshDedupCache.set(key, inFlight);
+  trimDedupCache();
   return promise;
 }

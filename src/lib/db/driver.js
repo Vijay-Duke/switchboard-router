@@ -1,7 +1,9 @@
 import { ensureDirs, DATA_FILE, BACKUPS_DIR } from "./paths.js";
 import { isBuildPhase } from "@/lib/buildPhase.js";
 
-// Use global to survive Next.js dev hot-reload (module state resets on reload)
+// Use global to survive Next.js dev hot-reload (module state resets on reload).
+// In dev, Next may re-evaluate this module while the old adapter is still open;
+// adapterShutdownRegistry coordinates close on SIGTERM — do not duplicate listeners.
 if (!global._dbAdapter) global._dbAdapter = { instance: null, initPromise: null, logged: false };
 const state = global._dbAdapter;
 
@@ -75,6 +77,17 @@ async function initAdapter() {
   if (!adapter) adapter = await tryBetterSqlite(failures);
   if (!adapter) adapter = await tryNodeSqlite(failures);
   if (!adapter) adapter = await trySqlJs(failures);
+  if (adapter?.driver === "sql.js") {
+    const allowSqlJs = process.env.SWITCHBOARD_ALLOW_SQLJS === "1"
+      || process.env.NODE_ENV !== "production";
+    if (!allowSqlJs) {
+      try { await adapter.close?.(); } catch {}
+      throw new Error(
+        "[DB] sql.js fallback is dev-only (full-file rewrite stalls the event loop). "
+        + "Use Node ≥22.5 (node:sqlite) or install better-sqlite3, or set SWITCHBOARD_ALLOW_SQLJS=1."
+      );
+    }
+  }
   if (!adapter) {
     const corrupt = failures.some((error) =>
       error?.code === "SQLITE_CORRUPT" || /corrupt|malformed|not a database/i.test(error?.message || "")

@@ -23,10 +23,16 @@ import { getDispatcher, resolveProxyUrl, shouldBypassMitmDns } from "../utils/pr
 const wsBreakers = new Map();
 const WS_BREAKER_MAX_FAILURES = 3;
 const WS_BREAKER_OPEN_MS = 5 * 60_000;
+const WS_BREAKER_MAX_KEYS = 256;
 
 function wsBreakerFor(key) {
   let breaker = wsBreakers.get(key);
   if (!breaker) {
+    while (wsBreakers.size >= WS_BREAKER_MAX_KEYS) {
+      const oldest = wsBreakers.keys().next().value;
+      if (oldest === undefined) break;
+      wsBreakers.delete(oldest);
+    }
     breaker = { failures: 0, openUntil: 0 };
     wsBreakers.set(key, breaker);
   }

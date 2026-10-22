@@ -666,12 +666,12 @@ function startServer(latestVersion) {
   let crashLog = [];
   let lastPrintedCrashLog = "";
 
-  function spawnServer() {
+  function spawnServer({ resetEverHealthy = true } = {}) {
     serverStartTime = Date.now();
     crashLog = [];
-    // A restarted child must prove itself healthy again before it earns
-    // unbounded restarts.
-    everHealthy = false;
+    // Boot failures abandon after maxBootFailures; watchdog respawns keep
+    // everHealthy so transient overload does not permanently quit the launcher.
+    if (resetEverHealthy) everHealthy = false;
     const child = spawn(RUNTIME, ["--max-old-space-size=6144", serverPath], {
       cwd: standaloneDir,
       stdio: ["ignore", "pipe", "pipe"],
@@ -706,6 +706,32 @@ function startServer(latestVersion) {
   let shutdownPromise = null;
   let restartTimer = null;
   let watchdogRestarting = false;
+  let watchdogRespawnAttempt = 0;
+
+  function scheduleWatchdogRespawn(attempt) {
+    if (isShuttingDown) return;
+    const delay = attempt > 0 ? processTools.nextRestartDelay(attempt - 1) : 0;
+    const run = () => {
+      restartTimer = null;
+      if (isShuttingDown) return;
+      try {
+        server = spawnServer({ resetEverHealthy: false });
+        attachServerEvents();
+        watchdogRespawnAttempt = 0;
+      } catch (error) {
+        watchdogRespawnAttempt += 1;
+        console.error(`Failed to restart server (attempt ${watchdogRespawnAttempt}):`, error.message);
+        scheduleWatchdogRespawn(watchdogRespawnAttempt);
+      }
+    };
+    if (delay > 0) {
+      console.error(`Retrying server restart in ${delay / 1000}s...`);
+      restartTimer = setTimeout(run, delay);
+    } else {
+      run();
+    }
+  }
+
   const stopHealthWatchdog = startHealthWatchdog({
     port,
     hostname: getProbeHost(),
@@ -727,15 +753,7 @@ function startServer(latestVersion) {
       try {
         const terminated = await processTools.terminatePid(unhealthyServer.pid, { timeoutMs: 2500, processGroup: true });
         if (!terminated || isShuttingDown || server !== unhealthyServer) return;
-        try {
-          server = spawnServer();
-          attachServerEvents();
-        } catch (error) {
-          // The watchdog swallows callback errors, so a failed respawn must
-          // exit here instead of leaving a launcher with no server.
-          console.error("Failed to restart server:", error.message);
-          void shutdown(1);
-        }
+        scheduleWatchdogRespawn(0);
       } finally {
         watchdogRestarting = false;
       }
@@ -776,8 +794,8 @@ function startServer(latestVersion) {
 
   process.on("uncaughtException", (err) => {
     if (isShuttingDown) return;
-    console.error("Error:", err.message);
-    void shutdown(1);
+    // Parent-process faults (tray, watchdog timers) must not SIGTERM a healthy child.
+    console.error("Uncaught exception in launcher (continuing):", err?.stack || err?.message || err);
   });
 
   process.on("SIGINT", () => { void shutdown(0, "\nStopping Switchboard gracefully..."); });
@@ -1036,7 +1054,7 @@ function startServer(latestVersion) {
     restartTimer = setTimeout(() => {
       restartTimer = null;
       if (isShuttingDown) return;
-      server = spawnServer();
+      server = spawnServer({ resetEverHealthy: !everHealthy });
       attachServerEvents();
     }, delay);
   }

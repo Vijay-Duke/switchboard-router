@@ -71,6 +71,12 @@ async function probeHealth(port, timeoutMs = 1000, hostname = "127.0.0.1") {
   return response?.statusCode === 200 && response?.body?.ok === true;
 }
 
+/** Liveness probe used by the launcher watchdog (no DB on the server hot path). */
+async function probeLive(port, timeoutMs = 3000, hostname = "127.0.0.1") {
+  const response = await requestJson({ hostname, port, path: "/api/health/live", timeoutMs });
+  return response?.statusCode === 200 && response?.body?.ok === true;
+}
+
 async function probeSwitchboard(port, timeoutMs = 1000, hostname = "127.0.0.1") {
   const response = await requestJson({ hostname, port, path: "/api/mgmt/v1/version", timeoutMs });
   const data = response?.body?.data;
@@ -101,9 +107,9 @@ function startHealthWatchdog({
   hostname = "127.0.0.1",
   graceMs = 60_000,
   intervalMs = 10_000,
-  timeoutMs = 2_000,
+  timeoutMs = 3_000,
   maxFailures = 3,
-  probe = probeHealth,
+  probe = probeLive,
   onUnhealthy,
   onHealthy,
 } = {}) {
@@ -149,4 +155,4 @@ function startHealthWatchdog({
   };
 }
 
-module.exports = { probeHealth, probeSwitchboard, probeTcp, startHealthWatchdog, waitForSwitchboard };
+module.exports = { probeHealth, probeLive, probeSwitchboard, probeTcp, startHealthWatchdog, waitForSwitchboard };

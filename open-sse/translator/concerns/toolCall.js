@@ -4,9 +4,15 @@ import { isClaudeThreadContinuation } from "../../utils/claudeThread.js";
 // Anthropic tool_use.id must match: ^[a-zA-Z0-9_-]+$
 const TOOL_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
-// Fallback streaming tool_call id when provider omits one (index optional)
-export function fallbackToolCallId(index) {
-  return index === undefined ? `call_${Date.now()}` : `call_${index}_${Date.now()}`;
+let fallbackStreamSeq = 0;
+
+// Fallback streaming tool_call id when provider omits one (index optional).
+// Avoid Date.now() — parallel chunks in the same ms collided and broke tool_result pairing.
+export function fallbackToolCallId(index, toolName = "") {
+  const name = toolName ? `_${String(toolName).replace(/[^a-zA-Z0-9_-]/g, "")}` : "";
+  if (index !== undefined) return `call_stream_${index}${name}`;
+  fallbackStreamSeq += 1;
+  return `call_stream_fb_${fallbackStreamSeq}${name}`;
 }
 
 // Map a Gemini functionCallingConfig back to an OpenAI tool_choice

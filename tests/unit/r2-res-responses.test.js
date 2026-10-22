@@ -64,7 +64,7 @@ describe("R2-X2 id-less tool call survives", () => {
     ]);
     const added = addedOf(events).filter((e) => e.data.item?.type === "function_call");
     expect(added).toHaveLength(1);
-    expect(added[0].data.item.call_id).toMatch(/^call_0_/);
+    expect(added[0].data.item.call_id).toMatch(/^call_stream_0$/);
     const done = events.find((e) => e.event === "response.output_item.done" && e.data.item?.type === "function_call");
     expect(done.data.item.call_id).toBe(added[0].data.item.call_id);
   });
