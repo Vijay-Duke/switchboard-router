@@ -1,3 +1,21 @@
+# v0.9.59 (2026-10-23)
+
+## Fixes
+- **Health under load**: `/api/health` returns quickly from a background DB heartbeat snapshot instead of blocking every request on SQLite probes.
+- **Custom server**: cap h2c downgrade body size and idle read timeout to avoid unbounded reads.
+- **Streaming**: bound SSE passthrough/translate reassembly buffers.
+- **Dashboard logs**: usage API supports structured `format=records`; RequestLogger consumes record rows instead of fragile pipe-delimited strings.
+- **Spend ceiling UI**: `GET /api/keys` refreshes `spentUsd` from the live ledger.
+- **Key policy form**: guard `NaN` in optional numeric fields before save.
+- **Pi CLI tools**: manual config files built via `buildPiManualConfigFiles` with `GET /api/cli-tools/pi-settings/manual-configs`; caps resolver extracted for reuse.
+
+## Tests
+- **Pi thinking map**: regression that Muse Wonder **max** appears in `thinkingLevelMap` when openai-format level lists stop at `xhigh`.
+- **Stability**: heartbeat, h2c oversize, Pi manual configs, health route, usage records API.
+
+## Docs
+- **GitBook**: bump Next.js to **16.4.2+** so docs CI npm audit passes.
+
 # v0.9.58 (2026-10-22)
 
 ## Fixes
