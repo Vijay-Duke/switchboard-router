@@ -294,6 +294,20 @@ describe("buildPiModelEntries caps resolver", () => {
       high: "high", xhigh: "xhigh", max: "max",
     });
     expect(gpt.thinking.efforts).toEqual(["minimal", "low", "medium", "high", "xhigh", "max"]);
+    // Muse openai-format models advertise max on /v1/models; Pi catalog must expose
+    // max in /thinking via effortWireLevel even when native level list stops at xhigh.
+    const [muse] = buildPiModelEntries(
+      ["muse/muse-wonder-1.0-contributor"],
+      [],
+      {},
+      () => ({
+        reasoning: true,
+        levels: getThinkingLevels("muse", "muse-wonder-1.0-contributor"),
+        wireLevel: effortWireLevel,
+      }),
+    );
+    expect(muse.thinkingLevelMap.max).toBe("max");
+    expect(muse.thinking.efforts).toContain("max");
     // No wire alias (e.g. claude-adaptive) → xhigh/max follow native levels exactly.
     const [claude] = buildPiModelEntries(
       ["cc/claude-opus-5-5"],
