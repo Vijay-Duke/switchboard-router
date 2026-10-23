@@ -5,7 +5,7 @@ import Button from "./Button";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 
-export default function ManualConfigModal({ isOpen, onClose, title = "Manual Configuration", configs = [] }) {
+export default function ManualConfigModal({ isOpen, onClose, title = "Manual Configuration", configs = [], loading = false }) {
   // The hook's `copied` id drives the "Copied!" UI (and resets itself), so a
   // failed copy can never show a false "Copied!".
   const { copied, copy } = useCopyToClipboard();
@@ -20,6 +20,12 @@ export default function ManualConfigModal({ isOpen, onClose, title = "Manual Con
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={title} size="xl">
       <div className="flex flex-col gap-4">
+        {loading ? (
+          <p className="text-sm text-text-muted py-6 text-center">Building configuration…</p>
+        ) : null}
+        {!loading && configs.length === 0 ? (
+          <p className="text-sm text-text-muted py-6 text-center">No configuration available.</p>
+        ) : null}
         {configs.map((config, index) => (
           <div key={index} className="flex flex-col gap-2">
             <div className="flex items-center justify-between">

@@ -899,13 +899,36 @@ function formatLogDate(date = new Date()) {
 // No-op: request log is now derived from usageHistory table on read.
 export async function appendRequestLog() {}
 
-export async function getRecentLogs(limit = 200) {
+async function loadRecentLogRows(limit = 200) {
+  const db = await getAdapter();
+  return db.all(
+    `SELECT timestamp, provider, model, connectionId, promptTokens, completionTokens, status, tokens FROM usageHistory ORDER BY id DESC LIMIT ?`,
+    [limit],
+  );
+}
+
+/** @param {Awaited<ReturnType<typeof loadRecentLogRows>>[number]} r @param {Record<string, string>} connMap */
+function rowToLogRecord(r, connMap) {
+  const tk = r.tokens ? parseJson(r.tokens, {}) : {};
+  return {
+    timestamp: formatLogDate(new Date(r.timestamp)),
+    model: r.model || "-",
+    provider: r.provider?.toUpperCase() || "-",
+    account: connMap[r.connectionId] || (r.connectionId ? r.connectionId.slice(0, 8) : "-"),
+    promptTokens: r.promptTokens ?? tk.prompt_tokens ?? "-",
+    completionTokens: r.completionTokens ?? tk.completion_tokens ?? "-",
+    status: r.status || "-",
+  };
+}
+
+/** @param {ReturnType<typeof rowToLogRecord>} record */
+export function formatRequestLogLine(record) {
+  return `${record.timestamp} | ${record.model} | ${record.provider} | ${record.account} | ${record.promptTokens} | ${record.completionTokens} | ${record.status}`;
+}
+
+export async function getRecentLogRecords(limit = 200) {
   try {
-    const db = await getAdapter();
-    const rows = db.all(
-      `SELECT timestamp, provider, model, connectionId, promptTokens, completionTokens, status, tokens FROM usageHistory ORDER BY id DESC LIMIT ?`,
-      [limit],
-    );
+    const rows = await loadRecentLogRows(limit);
     if (!rows.length) return [];
 
     const connMap = {};
@@ -915,18 +938,14 @@ export async function getRecentLogs(limit = 200) {
       for (const c of connections) connMap[c.id] = c.name || c.email || "";
     } catch {}
 
-    return rows.map((r) => {
-      const ts = formatLogDate(new Date(r.timestamp));
-      const p = r.provider?.toUpperCase() || "-";
-      const m = r.model || "-";
-      const account = connMap[r.connectionId] || (r.connectionId ? r.connectionId.slice(0, 8) : "-");
-      const tk = r.tokens ? parseJson(r.tokens, {}) : {};
-      const sent = r.promptTokens ?? tk.prompt_tokens ?? "-";
-      const received = r.completionTokens ?? tk.completion_tokens ?? "-";
-      return `${ts} | ${m} | ${p} | ${account} | ${sent} | ${received} | ${r.status || "-"}`;
-    });
+    return rows.map((r) => rowToLogRecord(r, connMap));
   } catch (e) {
-    console.error("[usageRepo] getRecentLogs failed:", e.message);
+    console.error("[usageRepo] getRecentLogRecords failed:", e.message);
     return [];
   }
+}
+
+export async function getRecentLogs(limit = 200) {
+  const records = await getRecentLogRecords(limit);
+  return records.map(formatRequestLogLine);
 }

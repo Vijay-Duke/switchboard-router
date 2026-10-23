@@ -18,12 +18,10 @@ import {
   buildPiModelEntries,
   normalizeModelIds,
 } from "@/lib/cli/modelCatalog.js";
+import { createPiCapsResolver } from "@/lib/cli/piCapsResolverCore.js";
 import { getCombos, getCustomModels } from "@/lib/db/index.js";
-import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
-import { effortWireLevel, getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import {
   ensureCompatibleReasoning,
-  lookupCompatibleReasoningSupport,
 } from "@/sse/services/compatibleReasoning.js";
 
 export const PROVIDER_ID = "switchboard";
@@ -164,68 +162,7 @@ export async function buildPiCapsResolver() {
     ? await Promise.resolve(getCombos()).catch(() => [])
     : [];
   const comboByName = new Map(combos.map((c) => [c.name, c]));
-  const resolver = (fullId, visited = new Set()) => {
-    try {
-      const id = String(fullId || "");
-      const slash = id.indexOf("/");
-      if (slash <= 0) {
-        if (visited.has(id)) return null; // nested-combo cycle guard
-        visited.add(id);
-        const combo = comboByName.get(id);
-        if (!combo || !Array.isArray(combo.models) || combo.models.length === 0) return null;
-        // Union across members: the combo routes to any of them, so Pi's
-        // picker must expose every level at least one member accepts
-        // (order-stable), and `reasoning` is true when ANY member reasons —
-        // a non-reasoning first member must not mask the rest.
-        let first = null;
-        let reasoning = false;
-        let levels = null;
-        for (const member of combo.models) {
-          const caps = resolver(String(member), visited);
-          if (!caps) continue;
-          if (!first) first = caps;
-          if (caps.reasoning) reasoning = true;
-          if (caps.reasoning && Array.isArray(caps.levels) && caps.levels.length) {
-            levels = levels ? unionLevels(levels, caps.levels) : [...caps.levels];
-          }
-        }
-        if (!first) return null;
-        return { ...first, reasoning, ...(levels ? { levels } : {}) };
-      }
-      const prefix = id.slice(0, slash);
-      const base = id.slice(slash + 1);
-      const caps = getCapabilitiesForModel(prefix, base);
-      const compat = lookupCompatibleReasoningSupport(prefix, base);
-      if (compat) {
-        // Compatible-node descriptor is authoritative for reasoning, but it
-        // exposes no per-level set — never import registry vocabulary for it
-        // (e.g. a compatible "glm-*" would otherwise map high→"thinking",
-        // a value a flat reasoning_effort gateway rejects). No map → Pi's
-        // default picker, and the gateway clamps per member when routing.
-        return { reasoning: compat.supported === true, contextWindow: caps.contextWindow || null, levels: null };
-      }
-      const levels = getThinkingLevels(prefix, base);
-      return {
-        reasoning: caps.reasoning === true,
-        contextWindow: caps.contextWindow || null,
-        levels,
-        // openai-format upstreams accept `max` (clamped to xhigh on the wire);
-        // effort levels must show in Pi's picker instead of being nulled.
-        ...(caps.thinkingFormat === "openai" ? { wireLevel: effortWireLevel } : {}),
-      };
-    } catch {
-      return null;
-    }
-  };
-  return resolver;
-}
-
-// Canonical order so unioned combo levels stay deterministic.
-const LEVEL_ORDER = ["none", "thinking", "minimal", "low", "medium", "high", "xhigh", "max"];
-
-function unionLevels(a, b) {
-  const set = new Set([...a, ...b]);
-  return LEVEL_ORDER.filter((l) => set.has(l));
+  return createPiCapsResolver(comboByName);
 }
 
 /**

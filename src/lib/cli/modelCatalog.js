@@ -390,3 +390,87 @@ export function buildGeminiSettings(settings, { models: rawModels, defaultModel,
     },
   };
 }
+
+/** @param {Record<string, unknown>} entry */
+function formatPiYmlModelEntry(entry) {
+  const lines = [
+    `    - id: ${entry.id}`,
+    `      name: ${JSON.stringify(entry.name)}`,
+    `      reasoning: ${entry.reasoning === true}`,
+    `      input: ${JSON.stringify(entry.input || ["text", "image"])}`,
+    `      contextWindow: ${Number(entry.contextWindow) || 200000}`,
+    `      maxTokens: ${Number(entry.maxTokens) || 16384}`,
+  ];
+  if (entry.thinkingLevelMap && typeof entry.thinkingLevelMap === "object") {
+    lines.push(`      thinkingLevelMap: ${JSON.stringify(entry.thinkingLevelMap)}`);
+  }
+  if (entry.thinking && typeof entry.thinking === "object") {
+    lines.push(`      thinking: ${JSON.stringify(entry.thinking)}`);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Manual Pi copy snippets — same shape as pi-settings Apply (models.yml + models.json + settings merge).
+ * @param {{ baseUrl: string, apiKey: string, models: string[], defaultModel: string, pickerLabels?: Record<string, string>, capsResolver?: ((id: string) => Record<string, unknown> | null) | null, previousModels?: Array<Record<string, unknown>> }} options
+ */
+export function buildPiManualConfigFiles({
+  baseUrl,
+  apiKey,
+  models,
+  defaultModel,
+  pickerLabels = {},
+  capsResolver = null,
+  previousModels = [],
+}) {
+  const modelIds = normalizeModelIds(models);
+  const entries = buildPiModelEntries(modelIds, previousModels, pickerLabels, capsResolver);
+  const provider = {
+    baseUrl,
+    api: "openai-completions",
+    apiKey,
+    authHeader: true,
+    compat: {
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: true,
+      supportsUsageInStreaming: true,
+    },
+    models: entries,
+  };
+  return [
+    {
+      filename: "~/.pi/agent/models.yml",
+      content: [
+        "providers:",
+        "  switchboard:",
+        `    baseUrl: ${baseUrl}`,
+        "    api: openai-completions",
+        `    apiKey: ${apiKey}`,
+        "    authHeader: true",
+        "    compat:",
+        "      supportsDeveloperRole: false",
+        "      supportsReasoningEffort: true",
+        "      supportsUsageInStreaming: true",
+        "    discovery:",
+        "      type: openai-models-list",
+        "    models:",
+        ...entries.map(formatPiYmlModelEntry),
+      ].join("\n"),
+    },
+    {
+      filename: "~/.pi/agent/models.json",
+      content: JSON.stringify({ providers: { switchboard: provider } }, null, 2),
+    },
+    {
+      filename: "~/.pi/agent/settings.json (merge these keys — keep your other settings)",
+      content: JSON.stringify(
+        {
+          defaultProvider: "switchboard",
+          defaultModel: resolveDefaultModel(defaultModel, modelIds),
+        },
+        null,
+        2,
+      ),
+    },
+  ];
+}

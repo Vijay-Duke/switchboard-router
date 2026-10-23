@@ -26,10 +26,10 @@ export default function RequestLogger() {
   const fetchLogs = async (showLoading = true) => {
     if (showLoading) setLoading(true);
     try {
-      const res = await fetch("/api/usage/request-logs");
+      const res = await fetch("/api/usage/request-logs?format=records");
       if (res.ok) {
         const data = await res.json();
-        setLogs(data);
+        setLogs(Array.isArray(data) ? data : []);
       }
     } catch (error) {
       reportClientError("Failed to fetch logs:", error);
@@ -86,10 +86,17 @@ export default function RequestLogger() {
               </thead>
               <tbody className="divide-y divide-border/50">
                 {logs.map((log, i) => {
-                  const parts = log.split(" | ");
-                  if (parts.length < 7) return null;
+                  const record = typeof log === "object" && log !== null ? log : null;
+                  const parts = record ? null : String(log).split(" | ");
+                  if (!record && (!parts || parts.length < 7)) return null;
 
-                  const status = parts[6];
+                  const status = record ? record.status : parts[6];
+                  const datetime = record ? record.timestamp : parts[0];
+                  const model = record ? record.model : parts[1];
+                  const provider = record ? record.provider : parts[2];
+                  const account = record ? record.account : parts[3];
+                  const sent = record ? record.promptTokens : parts[4];
+                  const received = record ? record.completionTokens : parts[5];
                   // Producers write lowercase ("ok", "success", "error",
                   // "pending", ...), so normalize case before matching.
                   const s = String(status).toLowerCase();
@@ -99,16 +106,16 @@ export default function RequestLogger() {
 
                   return (
                     <tr key={i} className={`hover:bg-primary/5 transition-colors ${isPending ? 'bg-primary/5' : ''}`}>
-                      <td className="px-3 py-1.5 border-r border-border text-text-muted">{parts[0]}</td>
-                      <td className="px-3 py-1.5 border-r border-border font-medium">{parts[1]}</td>
+                      <td className="px-3 py-1.5 border-r border-border text-text-muted">{datetime}</td>
+                      <td className="px-3 py-1.5 border-r border-border font-medium">{model}</td>
                       <td className="px-3 py-1.5 border-r border-border">
                         <span className="px-1.5 py-0.5 rounded bg-bg-subtle border border-border text-[10px] uppercase font-bold">
-                          {parts[2]}
+                          {provider}
                         </span>
                       </td>
-                      <td className="px-3 py-1.5 border-r border-border truncate max-w-[150px]" title={parts[3]}>{parts[3]}</td>
-                      <td className="px-3 py-1.5 border-r border-border text-right text-primary">{parts[4]}</td>
-                      <td className="px-3 py-1.5 border-r border-border text-right text-success">{parts[5]}</td>
+                      <td className="px-3 py-1.5 border-r border-border truncate max-w-[150px]" title={account}>{account}</td>
+                      <td className="px-3 py-1.5 border-r border-border text-right text-primary">{sent}</td>
+                      <td className="px-3 py-1.5 border-r border-border text-right text-success">{received}</td>
                       <td className={`px-3 py-1.5 font-bold ${isSuccess ? 'text-success' :
                           isFailed ? 'text-error' :
                             'text-primary animate-pulse'

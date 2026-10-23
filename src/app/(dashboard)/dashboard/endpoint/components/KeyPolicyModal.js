@@ -12,7 +12,9 @@ function lines(value) {
 }
 
 function optionalNumber(value) {
-  return value === "" ? null : Number(value);
+  if (value === "" || value == null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function localDateTime(iso) {
