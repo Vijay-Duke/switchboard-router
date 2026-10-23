@@ -26,6 +26,7 @@ import {
   updateProviderCredentials,
 } from "@/sse/services/tokenRefresh";
 import { capabilitiesFromServiceKind, effortCapabilitiesForModelId, resolveEffortCapabilities } from "open-sse/providers/capabilities.js";
+import { effortCapabilitiesFromThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import {
   buildClaudeCatalogDisplayNameMap,
   formatClaudeCatalogDisplayName,
@@ -622,7 +623,9 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
         const kindCaps = capabilitiesFromServiceKind(customKind || liveKind);
         const liveCaps = liveCapabilitiesById.get(modelId)
           || (relayedCaps || kindCaps ? { ...(kindCaps || {}), ...(relayedCaps || {}) } : null);
-        const staticCaps = effortCapabilitiesForModelId(modelId);
+        const registryEffort = effortCapabilitiesFromThinkingLevels(providerId, modelId);
+        const staticCaps = effortCapabilitiesForModelId(modelId)
+          || (registryEffort ? { effort: registryEffort } : null);
         const effortCaps = resolveEffortCapabilities(liveCaps, staticCaps);
         const caps = effortCaps ? { ...(liveCaps || {}), ...effortCaps } : liveCaps;
         if (caps) model.capabilities = caps;

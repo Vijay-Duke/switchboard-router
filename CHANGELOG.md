@@ -1,3 +1,15 @@
+# v0.9.60 (2026-10-23)
+
+## Features
+- **FX CLI tool**: Dashboard card + `POST /api/cli-tools/fx-settings` writes `~/.fx/settings.json` with a Switchboard OpenAI-compatible provider and per-model `model_metadata` (`context_window`, `max_output_tokens`, `supports_tool_use`, `supports_vision`). Reasoning effort is exposed as **distinct model IDs** `alias/model(level)` because FX custom connections do not send `reasoning_effort`.
+- **`/v1/models` effort**: DeepSeek V4 **high/max** via pattern; registry fallback through `effortCapabilitiesFromThinkingLevels`.
+
+## Fixes
+- **Pi catalog sync**: compatible flat-reasoning nodes (e.g. Surplus) keep registry `getThinkingLevels()` instead of nulling the level list.
+
+## Tests
+- `fx-model-metadata`, `pi-caps-compatible-levels`, DeepSeek V4 effort advertisement.
+
 # v0.9.59 (2026-10-23)
 
 ## Fixes

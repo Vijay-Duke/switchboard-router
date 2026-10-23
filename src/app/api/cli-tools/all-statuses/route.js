@@ -15,6 +15,7 @@ import { GET as deepseekTuiGet } from "../deepseek-tui-settings/route";
 import { GET as jcodeGet } from "../jcode-settings/route";
 import { GET as grokGet } from "../grok-settings/route";
 import { GET as piGet } from "../pi-settings/route";
+import { GET as fxGet } from "../fx-settings/route";
 import { GET as aiderGet } from "../aider-settings/route";
 import { GET as geminiCliGet } from "../gemini-cli-settings/route";
 
@@ -32,6 +33,7 @@ const STATUS_GETTERS = {
   jcode: jcodeGet,
   grok: grokGet,
   pi: piGet,
+  fx: fxGet,
   aider: aiderGet,
   "gemini-cli": geminiCliGet,
 };

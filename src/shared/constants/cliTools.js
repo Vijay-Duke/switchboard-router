@@ -356,6 +356,37 @@ export const CLI_TOOLS = {
       { id: "xai/grok-3-mini", name: "Grok 3 Mini", alias: "grok-3-mini", defaultValue: "xai/grok-3-mini" },
     ],
   },
+  fx: {
+    id: "fx",
+    name: "FX",
+    image: "/providers/fx.svg",
+    color: "#6366F1",
+    description: "fx.sh terminal agent via Switchboard OpenAI-compatible connection",
+    docsUrl: "https://fx.sh/docs/configure-fx/custom-model-connections",
+    configType: "custom",
+    defaultCommand: "fx",
+    notes: [
+      {
+        type: "info",
+        when: "installed",
+        text: "Writes ~/.fx/settings.json with a switchboard provider and model_metadata for every exposed model. Set export FX_SWITCHBOARD_API_KEY before running fx.",
+      },
+      {
+        type: "warning",
+        when: "installed",
+        text: "Effort/thinking: FX custom connections do not send reasoning_effort. Pick a level-specific model ID (alias/model(max)), not fx --effort.",
+      },
+      {
+        type: "install",
+        when: "not_installed",
+        text: "Install: curl -fsSL https://fx.sh/install | sh",
+      },
+    ],
+    defaultModels: [
+      { id: "cc/claude-sonnet-5", name: "Claude Sonnet 5", alias: "sonnet", defaultValue: "cc/claude-sonnet-5" },
+      { id: "cx/gpt-5.5", name: "GPT 5.5", alias: "gpt", defaultValue: "cx/gpt-5.5" },
+    ],
+  },
   pi: {
     id: "pi",
     name: "Pi",

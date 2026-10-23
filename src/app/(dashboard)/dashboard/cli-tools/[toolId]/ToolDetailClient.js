@@ -11,7 +11,7 @@ import {
   ClaudeToolCard, CodexToolCard, DroidToolCard, OpenClawToolCard,
   HermesToolCard, DefaultToolCard, OpenCodeToolCard, CoworkToolCard,
   ClineToolCard, KiloToolCard, DeepSeekTuiToolCard,
-  JcodeToolCard, GrokToolCard, PiToolCard, AiderToolCard, GeminiCliToolCard,
+  JcodeToolCard, GrokToolCard, PiToolCard, FxToolCard, AiderToolCard, GeminiCliToolCard,
 } from "../components";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 
@@ -146,6 +146,8 @@ export default function ToolDetailClient({ toolId, machineId }) {
         return <GrokToolCard {...commonProps} activeProviders={getActiveProviders()} hasActiveProviders={hasActiveProviders} />;
       case "pi":
         return <PiToolCard {...commonProps} activeProviders={getActiveProviders()} hasActiveProviders={hasActiveProviders} />;
+      case "fx":
+        return <FxToolCard {...commonProps} activeProviders={getActiveProviders()} hasActiveProviders={hasActiveProviders} />;
       case "aider":
         return <AiderToolCard {...commonProps} activeProviders={getActiveProviders()} hasActiveProviders={hasActiveProviders} />;
       case "gemini-cli":

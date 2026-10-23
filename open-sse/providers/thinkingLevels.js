@@ -59,3 +59,19 @@ export function getThinkingLevels(provider, model) {
   if (caps.thinkingCanDisable === false) levels = levels.filter((l) => l !== "none");
   return levels;
 }
+
+/**
+ * Build `/v1/models` effort capabilities from registry thinking levels when
+ * EFFORT_LEVEL_PATTERNS has no explicit family entry.
+ * @param {string|null} provider
+ * @param {string} model
+ */
+export function effortCapabilitiesFromThinkingLevels(provider, model) {
+  const levels = getThinkingLevels(provider, model);
+  if (!Array.isArray(levels) || levels.length === 0) return null;
+  const advertised = levels.filter((level) => level !== "none" && level !== "thinking");
+  if (advertised.length === 0) return null;
+  const effort = { supported: true };
+  for (const level of advertised) effort[level] = { supported: true };
+  return { effort };
+}

@@ -211,6 +211,19 @@ describe("effortCapabilitiesForModelId", () => {
   // Muse models carry max on the top tier (registry muse.js thinking.levels).
   // /v1/models must advertise it or Pi's /thinking picker caps at high —
   // discovered models like muse-wonder never appear in the static catalog.
+  it("advertises high and max for DeepSeek V4 models", async () => {
+    const { effortCapabilitiesForModelId } = await import(
+      "../../open-sse/providers/capabilities.js"
+    );
+    expect(effortCapabilitiesForModelId("deepseek-v4.1-flash-1017")).toEqual({
+      effort: {
+        supported: true,
+        high: { supported: true },
+        max: { supported: true },
+      },
+    });
+  });
+
   it("advertises max for muse spark and wonder models", async () => {
     const { effortCapabilitiesForModelId } = await import(
       "../../open-sse/providers/capabilities.js"

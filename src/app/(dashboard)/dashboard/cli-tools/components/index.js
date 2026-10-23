@@ -13,6 +13,7 @@ export { default as DeepSeekTuiToolCard } from "./DeepSeekTuiToolCard";
 export { default as JcodeToolCard } from "./JcodeToolCard";
 export { default as GrokToolCard } from "./GrokToolCard";
 export { default as PiToolCard } from "./PiToolCard";
+export { default as FxToolCard } from "./FxToolCard";
 export { default as AiderToolCard } from "./AiderToolCard";
 export { default as GeminiCliToolCard } from "./GeminiCliToolCard";
 export { default as OpenAiCompatToolCard } from "./OpenAiCompatToolCard";

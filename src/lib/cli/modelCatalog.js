@@ -1,6 +1,7 @@
 // @ts-check
 
 import { parseDocument } from "yaml";
+import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 
 const AIDER_BACKUP_MARKER = "# switchboard-managed-aider:";
 const HERMES_BACKUP_MARKER = "# switchboard-managed-hermes:";
@@ -134,6 +135,99 @@ export function buildPiModelEntries(modelIds, previous = [], pickerLabels = {}, 
 /**
  * @param {{baseUrl: string, models: unknown, defaultModel?: string, capsResolver?: ((id: string) => { reasoning?: boolean } | null) | null}} options
  */
+/** Effort levels exposed as distinct FX model IDs (suffix form), not metadata. */
+const FX_EFFORT_LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+/**
+ * @param {string} fullId
+ * @param {{ reasoning?: boolean, contextWindow?: number|null, vision?: boolean, levels?: string[] | null } | null} caps
+ */
+export function fxMetadataEntryForModel(fullId, caps) {
+  const slash = fullId.indexOf("/");
+  const prefix = slash > 0 ? fullId.slice(0, slash) : null;
+  const base = slash > 0 ? fullId.slice(slash + 1) : fullId;
+  const registry = getCapabilitiesForModel(prefix, base);
+  const contextWindow = caps?.contextWindow || registry.contextWindow || 200000;
+  const maxOutput = registry.maxOutput || 16384;
+  const supportsVision = registry.vision === true || caps?.vision === true;
+  return {
+    context_window: contextWindow,
+    max_output_tokens: maxOutput,
+    supports_tool_use: registry.tools !== false,
+    supports_vision: supportsVision,
+  };
+}
+
+/**
+ * @param {unknown} modelIds
+ * @param {(id: string) => { reasoning?: boolean, contextWindow?: number|null, vision?: boolean, levels?: string[] | null } | null} [capsResolver]
+ */
+export function buildFxModelMetadata(modelIds, capsResolver = null) {
+  const metadata = {};
+  for (const id of normalizeModelIds(modelIds)) {
+    const caps = capsResolver ? capsResolver(id) : null;
+    metadata[id] = fxMetadataEntryForModel(id, caps);
+    if (caps?.reasoning === true && Array.isArray(caps.levels) && caps.levels.length > 0) {
+      for (const level of caps.levels) {
+        if (!FX_EFFORT_LEVELS.includes(level)) continue;
+        metadata[`${id}(${level})`] = fxMetadataEntryForModel(id, caps);
+      }
+    }
+  }
+  return metadata;
+}
+
+/**
+ * @param {Record<string, unknown>} settings
+ * @param {{ baseUrl: string, models: unknown, defaultModel?: string, capsResolver?: ((id: string) => Record<string, unknown> | null) | null }} options
+ */
+export function mergeFxSwitchboardSettings(settings, { baseUrl, models, defaultModel, capsResolver = null }) {
+  const modelIds = normalizeModelIds(models);
+  const activeModel = resolveDefaultModel(defaultModel, modelIds);
+  const providers = settings.providers && typeof settings.providers === "object" && !Array.isArray(settings.providers)
+    ? { ...settings.providers }
+    : {};
+  providers.switchboard = {
+    protocol: "openai-chat-completions",
+    base_url: baseUrl,
+    auth: { type: "bearer", env: "FX_SWITCHBOARD_API_KEY" },
+    model_metadata: buildFxModelMetadata(modelIds, capsResolver),
+  };
+  const modelsMap = settings.models && typeof settings.models === "object" && !Array.isArray(settings.models)
+    ? { ...settings.models }
+    : {};
+  modelsMap.switchboard = activeModel;
+  return {
+    ...settings,
+    provider: "switchboard",
+    providers,
+    models: modelsMap,
+  };
+}
+
+/**
+ * @param {{ baseUrl: string, apiKey: string, models: string[], defaultModel: string, capsResolver?: ((id: string) => Record<string, unknown> | null) | null }} options
+ */
+export function buildFxManualConfigFiles({ baseUrl, apiKey, models, defaultModel, capsResolver = null }) {
+  const modelIds = normalizeModelIds(models);
+  const merged = mergeFxSwitchboardSettings({}, {
+    baseUrl,
+    models: modelIds,
+    defaultModel: resolveDefaultModel(defaultModel, modelIds),
+    capsResolver,
+  });
+  return [
+    {
+      filename: "~/.fx/settings.json",
+      content: JSON.stringify(merged, null, 2),
+    },
+    {
+      filename: "Shell (export before fx)",
+      content: `export FX_SWITCHBOARD_API_KEY=${JSON.stringify(apiKey)}\n# Optional one-shot:\n# FX_PROVIDER=switchboard FX_MODEL=${JSON.stringify(resolveDefaultModel(defaultModel, modelIds))} fx ask "hello"`,
+    },
+  ];
+}
+
 export function buildJcodeProvider({ baseUrl, models: rawModels, defaultModel, capsResolver = null }) {
   const models = normalizeModelIds(rawModels);
   const activeModel = resolveDefaultModel(defaultModel, models);

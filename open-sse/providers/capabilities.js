@@ -326,6 +326,8 @@ export const EFFORT_LEVEL_PATTERNS = [
   { pattern: "*claude*opus-4-6*",   levels: ["low", "medium", "high", "max"] },
   { pattern: "*claude*opus-4-5*",   levels: ["low", "medium", "high"] },
   { pattern: "*claude*sonnet-4-6*", levels: ["low", "medium", "high", "max"] },
+  // DeepSeek V4 family (thinkingFormat deepseek → high + max)
+  { pattern: "*deepseek-v4*", levels: ["high", "max"] },
 ];
 
 /**

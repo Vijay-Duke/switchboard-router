@@ -46,11 +46,17 @@ export function createPiCapsResolver(comboByName = new Map()) {
       const prefix = id.slice(0, slash);
       const base = id.slice(slash + 1);
       const caps = getCapabilitiesForModel(prefix, base);
+      const levels = getThinkingLevels(prefix, base);
       const compat = lookupCompatibleReasoningSupport(prefix, base);
       if (compat) {
-        return { reasoning: compat.supported === true, contextWindow: caps.contextWindow || null, levels: null };
+        return {
+          reasoning: compat.supported === true,
+          contextWindow: caps.contextWindow || null,
+          ...(compat.supported === true && Array.isArray(levels) && levels.length
+            ? { levels, ...(caps.thinkingFormat === "openai" ? { wireLevel: effortWireLevel } : {}) }
+            : {}),
+        };
       }
-      const levels = getThinkingLevels(prefix, base);
       return {
         reasoning: caps.reasoning === true,
         contextWindow: caps.contextWindow || null,
