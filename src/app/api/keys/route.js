@@ -1,6 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { getApiKeys, createApiKey } from "@/lib/db/index.js";
+import { createApiKey, getApiKeys, getClientKeySpend } from "@/lib/db/index.js";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +19,9 @@ async function findOrCreateKey(name, machineId) {
 export async function GET() {
   try {
     const keys = await getApiKeys();
+    for (const key of keys) {
+      key.spentUsd = await getClientKeySpend(key.id);
+    }
     return NextResponse.json({ keys });
   } catch (error) {
     console.log("Error fetching keys:", error);

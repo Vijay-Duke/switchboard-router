@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   getConsistentMachineId: vi.fn(),
   normalizeClientKeyPatch: vi.fn((value) => value),
   updateApiKey: vi.fn(),
+  getClientKeySpend: vi.fn(),
 }));
 
 vi.mock("@/lib/db/index.js", () => ({
@@ -17,6 +18,7 @@ vi.mock("@/lib/db/index.js", () => ({
   getApiKeys: mocks.getApiKeys,
   normalizeClientKeyPatch: mocks.normalizeClientKeyPatch,
   updateApiKey: mocks.updateApiKey,
+  getClientKeySpend: mocks.getClientKeySpend,
 }));
 vi.mock("@/shared/utils/machineId", () => ({ getConsistentMachineId: mocks.getConsistentMachineId }));
 
@@ -45,6 +47,7 @@ beforeEach(() => {
   mocks.updateApiKey.mockResolvedValue(safeKey);
   mocks.deleteApiKey.mockResolvedValue(true);
   mocks.createApiKey.mockResolvedValue({ ...safeKey, key: "sk-full-secret-once" });
+  mocks.getClientKeySpend.mockResolvedValue(0);
   mocks.normalizeClientKeyPatch.mockImplementation((value) => value);
 });
 

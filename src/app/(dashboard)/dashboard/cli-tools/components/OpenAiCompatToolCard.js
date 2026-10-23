@@ -27,6 +27,7 @@ import { buildClaudeCatalogDisplayNameMap } from "@/shared/claudeCatalogDisplay.
  * @param {string} [props.installHint]
  * @param {string} [props.runHint]
  * @param {(ctx: { baseUrl: string, apiKey: string, model: string, models: string[], defaultModel: string, pickerLabels: Record<string, string> }) => Array<{filename: string, content: string}>} [props.buildManualConfigs]
+ * @param {string} [props.manualConfigsEndpoint] POST URL that returns `{ configs }` with full metadata (Pi thinking maps)
  * @param {boolean} [props.multipleModels]
  * @param {boolean} [props.hasDefaultModel]
  * @param {boolean} [props.requiresModelScope]
@@ -49,6 +50,7 @@ export default function OpenAiCompatToolCard({
   installHint,
   runHint,
   buildManualConfigs,
+  manualConfigsEndpoint,
   multipleModels = false,
   hasDefaultModel = true,
   requiresModelScope = false,
@@ -81,6 +83,8 @@ export default function OpenAiCompatToolCard({
   const [modalOpen, setModalOpen] = useState(false);
   const [modelAliases, setModelAliases] = useState({});
   const [showManualConfigModal, setShowManualConfigModal] = useState(false);
+  const [remoteManualConfigs, setRemoteManualConfigs] = useState(/** @type {Array<{filename: string, content: string}>|null} */ (null));
+  const [loadingManualConfigs, setLoadingManualConfigs] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const hasInitializedModel = useRef(false);
 
@@ -372,30 +376,71 @@ export default function OpenAiCompatToolCard({
     }
   };
 
-  const getManualConfigs = () => {
+  const buildManualConfigContext = () => {
     const keyToUse = resolveApiKey() || "<API_KEY_FROM_DASHBOARD>";
     const base = getEffectiveBaseUrl();
     const models = multipleModels
       ? (selectedModels.length > 0 ? selectedModels : ["provider/model-id"])
       : [selectedModel || "provider/model-id"];
     const model = selectedModel || models[0];
+    return {
+      baseUrl: base,
+      apiKey: keyToUse,
+      model,
+      models,
+      defaultModel: selectedModel || models[0],
+      pickerLabels: fillPickerLabels(models, pickerLabels),
+    };
+  };
+
+  const getManualConfigs = () => {
+    if (remoteManualConfigs) return remoteManualConfigs;
+    const ctx = buildManualConfigContext();
     if (typeof buildManualConfigs === "function") {
-      return buildManualConfigs({
-        baseUrl: base,
-        apiKey: keyToUse,
-        model,
-        models,
-        defaultModel: selectedModel || models[0],
-        pickerLabels: fillPickerLabels(models, pickerLabels),
-      });
+      return buildManualConfigs(ctx);
     }
     return [
       {
         filename: "env",
-        content: `export OPENAI_API_KEY="${keyToUse}"\nexport OPENAI_BASE_URL="${base}"\nexport OPENAI_MODEL="${model}"\n`,
+        content: `export OPENAI_API_KEY="${ctx.apiKey}"\nexport OPENAI_BASE_URL="${ctx.baseUrl}"\nexport OPENAI_MODEL="${ctx.model}"\n`,
       },
     ];
   };
+
+  useEffect(() => {
+    if (!showManualConfigModal || !manualConfigsEndpoint) {
+      setRemoteManualConfigs(null);
+      return;
+    }
+    let cancelled = false;
+    const ctx = buildManualConfigContext();
+    setLoadingManualConfigs(true);
+    fetch(manualConfigsEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        baseUrl: ctx.baseUrl,
+        apiKey: ctx.apiKey,
+        models: ctx.models,
+        defaultModel: ctx.defaultModel,
+        pickerLabels: ctx.pickerLabels,
+      }),
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Failed to build manual configs");
+        const data = await res.json();
+        if (!cancelled) setRemoteManualConfigs(Array.isArray(data.configs) ? data.configs : []);
+      })
+      .catch((error) => {
+        reportClientError("Manual config generation failed:", error);
+        if (!cancelled) setRemoteManualConfigs([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingManualConfigs(false);
+      });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh when modal opens or selection changes
+  }, [showManualConfigModal, manualConfigsEndpoint, selectedModel, selectedModels, selectedApiKey, customBaseUrl, pickerLabels]);
 
   return (
     <Card padding="xs" className="overflow-hidden">
@@ -811,7 +856,8 @@ export default function OpenAiCompatToolCard({
         isOpen={showManualConfigModal}
         onClose={() => setShowManualConfigModal(false)}
         title={`${tool.name} — Manual Configuration`}
-        configs={getManualConfigs()}
+        configs={loadingManualConfigs && manualConfigsEndpoint ? [] : getManualConfigs()}
+        loading={loadingManualConfigs && manualConfigsEndpoint}
       />
     </Card>
   );

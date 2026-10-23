@@ -1,5 +1,14 @@
 const http = require("http");
 
+const DEFAULT_H2C_MAX_BODY_BYTES = 16 * 1024 * 1024;
+const H2C_BODY_READ_TIMEOUT_MS = 30_000;
+
+function h2cMaxBodyBytes() {
+  const raw = process.env.STREAM_TO_JSON_MAX_BYTES;
+  const parsed = Number.parseInt(raw || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_H2C_MAX_BODY_BYTES;
+}
+
 // H1: mark that x-switchboard-real-ip is derived from the TCP socket by this wrapper.
 // dashboardGuard only trusts that header when this env is set.
 process.env.SWITCHBOARD_TRUST_REAL_IP = "1";
@@ -53,14 +62,23 @@ http.createServer = (...args) => {
       return origEmit.call(this, event, ...eventArgs);
     }
 
+    const maxBodyBytes = h2cMaxBodyBytes();
     const contentLength = Number(req.headers["content-length"] || 0);
-    if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
+    if (!Number.isSafeInteger(contentLength) || contentLength < 0 || contentLength > maxBodyBytes) {
       socket.destroy();
       return true;
     }
     const chunks = [head];
     let received = head.length;
+    let bodyReadTimer = null;
+    const clearBodyTimer = () => {
+      if (bodyReadTimer) {
+        clearTimeout(bodyReadTimer);
+        bodyReadTimer = null;
+      }
+    };
     const serve = () => {
+      clearBodyTimer();
       // Replay the upgraded request through the existing HTTP/1.1 handler.
       const replay = new http.IncomingMessage(socket);
       Object.assign(replay, { method: req.method, url: req.url, headers: req.headers, complete: true });
@@ -77,13 +95,24 @@ http.createServer = (...args) => {
     };
     if (received >= contentLength) serve();
     else {
-      socket.on("data", function readBody(chunk) {
+      const readBody = (chunk) => {
         chunks.push(chunk);
         received += chunk.length;
+        if (received > maxBodyBytes) {
+          socket.off("data", readBody);
+          clearBodyTimer();
+          socket.destroy();
+          return;
+        }
         if (received < contentLength) return;
         socket.off("data", readBody);
         serve();
-      });
+      };
+      socket.on("data", readBody);
+      bodyReadTimer = setTimeout(() => {
+        socket.off("data", readBody);
+        socket.destroy();
+      }, H2C_BODY_READ_TIMEOUT_MS);
       socket.resume();
     }
     delete req.headers.upgrade;

@@ -17,6 +17,49 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 describe("custom-server h2c downgrade", () => {
+  it("destroys oversize h2c bodies declared in Content-Length", async () => {
+    const originalCreateServer = http.createServer;
+    delete require.cache[require.resolve("../../custom-server.js")];
+    require("../../custom-server.js");
+
+    const server = http.createServer((req, res) => {
+      res.statusCode = 500;
+      res.end("should not reach handler");
+    });
+
+    try {
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const port = server.address().port;
+
+      await new Promise((resolve, reject) => {
+        const socket = net.createConnection({ host: "127.0.0.1", port }, () => {
+          socket.write([
+            "POST /v1/chat/completions HTTP/1.1",
+            `Host: 127.0.0.1:${port}`,
+            "Connection: Upgrade, HTTP2-Settings",
+            "Upgrade: h2c",
+            "HTTP2-Settings: AAEAAEAAAAIAAAAAAAMAAAAAAAQBAAAAAAUAAEAAAAYABgAA",
+            "Content-Length: 99999999",
+            "",
+            "",
+          ].join("\r\n"));
+        });
+        socket.setTimeout(2_000, () => {
+          socket.destroy();
+          resolve();
+        });
+        socket.on("error", () => resolve());
+        socket.on("close", resolve);
+      });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      http.createServer = originalCreateServer;
+    }
+  });
+
   it("serves h2c POST requests as HTTP/1.1", async () => {
     const originalCreateServer = http.createServer;
     delete require.cache[require.resolve("../../custom-server.js")];

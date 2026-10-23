@@ -1,6 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { getRecentLogs } from "@/lib/db/index.js";
+import { getRecentLogRecords, getRecentLogs } from "@/lib/db/index.js";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +19,11 @@ function getLimit(searchParams) {
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
-    const logs = await getRecentLogs(getLimit(searchParams));
+    const limit = getLimit(searchParams);
+    if (searchParams.get("format") === "records") {
+      return NextResponse.json(await getRecentLogRecords(limit));
+    }
+    const logs = await getRecentLogs(limit);
     return NextResponse.json(logs);
   } catch (error) {
     console.error("[API ERROR] /api/usage/logs failed:", error);

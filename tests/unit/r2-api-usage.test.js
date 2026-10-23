@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getUsageStats: vi.fn(),
   getChartData: vi.fn(),
   getRecentLogs: vi.fn(),
+  getRecentLogRecords: vi.fn(),
   getProviderConnections: vi.fn(),
   getProviderConnectionById: vi.fn(),
   updateProviderConnection: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("@/lib/db/index.js", () => ({
   getUsageStats: mocks.getUsageStats,
   getChartData: mocks.getChartData,
   getRecentLogs: mocks.getRecentLogs,
+  getRecentLogRecords: mocks.getRecentLogRecords,
   getProviderConnections: mocks.getProviderConnections,
   getProviderConnectionById: mocks.getProviderConnectionById,
   updateProviderConnection: mocks.updateProviderConnection,
@@ -83,6 +85,15 @@ describe("usage log limit (A20/A21)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getRecentLogs.mockImplementation(async (limit) => Array.from({ length: limit }, (_, i) => `row-${i}`));
+    mocks.getRecentLogRecords.mockImplementation(async (limit) => Array.from({ length: limit }, (_, i) => ({
+      timestamp: "01-01-2026 00:00:00",
+      model: `m-${i}`,
+      provider: "TEST",
+      account: "-",
+      promptTokens: 1,
+      completionTokens: 2,
+      status: "ok",
+    })));
   });
 
   it.each([
@@ -100,6 +111,14 @@ describe("usage log limit (A20/A21)", () => {
     expect(mocks.getRecentLogs).toHaveBeenCalledWith(200);
     await logsRoute.GET(new Request("http://localhost:20128/api/usage/logs?limit=5000"));
     expect(mocks.getRecentLogs).toHaveBeenCalledWith(500);
+  });
+
+  it("request-logs supports structured records for the dashboard", async () => {
+    const res = await requestLogsRoute.GET(new Request("http://localhost:20128/api/usage/request-logs?format=records&limit=3"));
+    expect(res.status).toBe(200);
+    expect(mocks.getRecentLogRecords).toHaveBeenCalledWith(3);
+    const body = await res.json();
+    expect(body[0]).toMatchObject({ model: "m-0", status: "ok" });
   });
 
   it("both routes export force-dynamic", () => {

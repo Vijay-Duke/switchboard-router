@@ -9,6 +9,7 @@ import { errorLine } from "./logTags.js";
 
 import { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER } from "./sseConstants.js";
 import { createThinkExtractor } from "./thinkExtractor.js";
+import { streamToJsonMaxBytes } from "../transformer/streamToJsonConverter.js";
 
 export { COLORS, formatSSE };
 export { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER };
@@ -70,9 +71,18 @@ export function createSSEStream(options = {}) {
 
   let buffer = "";
   let usage = null;
+  const reassemblyMaxBytes = streamToJsonMaxBytes();
+  let reassemblyBytes = 0;
 
   // Per-stream decoder with stream:true to correctly handle multi-byte chars split across chunks
   const decoder = new TextDecoder("utf-8", { fatal: false });
+
+  function assertReassemblyWithinLimit(extraBytes) {
+    reassemblyBytes += extraBytes;
+    if (reassemblyBytes > reassemblyMaxBytes) {
+      throw new Error(`SSE reassembly exceeded ${reassemblyMaxBytes} bytes`);
+    }
+  }
 
   const state = mode === STREAM_MODE.TRANSLATE ? { ...initState(sourceFormat), provider, toolNameMap, model } : null;
 
@@ -335,6 +345,7 @@ export function createSSEStream(options = {}) {
   return new TransformStream({
     transform(chunk, controller) {
       if (!ttftAt) ttftAt = Date.now();
+      assertReassemblyWithinLimit(typeof chunk?.byteLength === "number" ? chunk.byteLength : 0);
       const text = decoder.decode(chunk, { stream: true });
       buffer += text;
       reqLogger?.appendProviderChunk?.(text);

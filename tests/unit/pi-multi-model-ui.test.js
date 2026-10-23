@@ -32,7 +32,7 @@ describe("Pi multi-model picker", () => {
     const sharedCard = source("src/app/(dashboard)/dashboard/cli-tools/components/OpenAiCompatToolCard.js");
 
     expect(piCard).toContain("supportsModelLabels");
-    expect(piCard).toContain("pickerLabels[model]");
+    expect(piCard).toContain("manualConfigsEndpoint");
     expect(sharedCard).toContain("Pi model labels");
     expect(sharedCard).toContain("Improve labels with AI");
     expect(sharedCard).toContain("pickerLabels: supportsModelLabels");

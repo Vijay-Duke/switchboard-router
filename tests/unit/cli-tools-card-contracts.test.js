@@ -136,12 +136,20 @@ describe("T83/T85 OpenCodeToolCard chips", () => {
 });
 
 describe("T86/T87/T88 PiToolCard manual config", () => {
-  const src = comp("PiToolCard");
+  const piCard = comp("PiToolCard");
+  const catalog = readFileSync(
+    fileURLToPath(new URL("../../src/lib/cli/modelCatalog.js", import.meta.url)),
+    "utf8",
+  );
+  it("loads manual snippets from the server-side Pi catalog builder", () => {
+    expect(piCard).toContain("manualConfigsEndpoint");
+    expect(piCard).toContain("/api/cli-tools/pi-settings/manual-configs");
+  });
   it("tells manual followers to merge settings rather than replace", () => {
-    expect(src).toMatch(/merge these keys — keep your other settings/);
+    expect(catalog).toMatch(/merge these keys — keep your other settings/);
   });
   it("ships models.json alongside the v18 models.yml", () => {
-    expect(src).toMatch(/~\/\.pi\/agent\/models\.json/);
-    expect(src).toMatch(/models\.yml/);
+    expect(catalog).toMatch(/~\/\.pi\/agent\/models\.json/);
+    expect(catalog).toMatch(/models\.yml/);
   });
 });
