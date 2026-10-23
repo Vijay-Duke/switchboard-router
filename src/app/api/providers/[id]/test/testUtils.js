@@ -696,6 +696,23 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         const res = await fetchWithConnectionProxy(connection.provider, `${host}/api/tags`, {}, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : `Ollama not reachable at ${host}` };
       }
+      case "sensenova": {
+        const validateUrl = PROVIDERS.sensenova?.validateUrl || "https://token.sensenova.cn/v1/models";
+        const res = await fetchWithConnectionProxy(connection.provider, validateUrl, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${connection.apiKey}`,
+            Accept: "application/json",
+          },
+        }, effectiveProxy);
+        const valid = res.ok;
+        return {
+          valid,
+          error: valid ? null : res.status === 401 || res.status === 403
+            ? "Invalid API key"
+            : `SenseNova API error (${res.status})`,
+        };
+      }
       case "deepgram": {
         const res = await fetchWithConnectionProxy(connection.provider, "https://api.deepgram.com/v1/projects", { headers: { Authorization: `Token ${connection.apiKey}` } }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
