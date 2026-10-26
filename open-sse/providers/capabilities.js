@@ -164,6 +164,13 @@ export const PROVIDER_CAPABILITIES = {
   "opencode-go": {
     "glm-5.3-flash": { vision: true, videoInput: true, pdf: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 131072 },
   },
+  // OpenCode Free (oc). deepseek-v4.1-flash-free: the backend rejects requests
+  // above ~330k prompt tokens (issue #5097). Cap the published context window at
+  // 330000 so clients (VS Code Copilot etc.) compact correctly instead of
+  // hard-failing mid-session.
+  "opencode": {
+    "deepseek-v4.1-flash-free": { vision: true, reasoning: true, thinkingFormat: "deepseek", thinkingEffortSupported: true, contextWindow: 330000, maxOutput: 128000 },
+  },
   // CodeBuddy.cn — authoritative per-model metadata from the gateway's model
   // config (contextWindow=maxInputTokens, maxOutput=maxOutputTokens, vision=
   // supportsImages). Every model reasons via OpenAI-style reasoning_effort
