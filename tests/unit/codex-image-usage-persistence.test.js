@@ -28,7 +28,7 @@ vi.mock("../../src/sse/services/connectionInFlight.js", () => ({
   withConnectionInFlight: async (_meta, work) => work(),
 }));
 vi.mock("../../src/sse/services/model.js", () => ({
-  getModelInfo: async () => ({ provider: "codex", model: "gpt-5.6-sol-image" }),
+  getModelInfo: async () => ({ provider: "codex", model: "gpt-6-sol-image" }),
   getComboModels: async () => null,
 }));
 vi.mock("../../open-sse/handlers/imageGenerationCore.js", () => ({
@@ -51,7 +51,7 @@ import { handleImageGeneration } from "../../src/sse/handlers/imageGeneration.js
 const request = () => new Request("http://localhost/v1/images/generations", {
   method: "POST",
   headers: { Authorization: "Bearer client-key" },
-  body: JSON.stringify({ model: "cx/gpt-5.6-sol-image", prompt: "draw a cat" }),
+  body: JSON.stringify({ model: "cx/gpt-6-sol-image", prompt: "draw a cat" }),
 });
 
 describe("Codex image usage persistence", () => {
@@ -74,7 +74,7 @@ describe("Codex image usage persistence", () => {
     expect(mocks.settleUsageStats).toHaveBeenCalledTimes(1);
     expect(mocks.settleUsageStats).toHaveBeenCalledWith({
       provider: "codex",
-      model: "gpt-5.6-sol-image",
+      model: "gpt-6-sol-image",
       connectionId: "connection-a",
       clientKeyId: "client-key-id",
       endpoint: "/v1/images/generations",
