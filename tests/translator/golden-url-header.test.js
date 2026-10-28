@@ -53,6 +53,11 @@ function sanitize(headers) {
       out[k] = "<ARCH>";
       continue;
     }
+    // CodeBuddy channel-check ids are fresh UUIDs per request.
+    if (name === "x-request-id" || name.startsWith("x-conversation-")) {
+      out[k] = "<UUID>";
+      continue;
+    }
     if (name === "x-msh-device-model") {
       out[k] = "<PLATFORM> <ARCH>";
       continue;
