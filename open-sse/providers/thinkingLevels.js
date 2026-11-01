@@ -2,6 +2,7 @@
 // Reuses capabilities.js (thinkingFormat/canDisable) so this file only maps format→levels (DRY).
 import { getCapabilitiesForModel } from "./capabilities.js";
 import { matchPattern } from "./pricing.js";
+import { lookupCatalogReasoning } from "./reasoningPriors.js";
 
 // Shared level sets (deduped) — verified against provider docs + wire in thinkingUnified.applyFormat.
 const L = {
@@ -55,8 +56,27 @@ export function getThinkingLevels(provider, model) {
   const caps = getCapabilitiesForModel(provider, model);
   if (!caps.reasoning) return null;
   const hit = PATTERN_THINKING.find((p) => matchPattern(p.pattern, model));
-  let levels = hit?.levels || FORMAT_LEVELS[caps.thinkingFormat] || L.base;
-  if (caps.thinkingCanDisable === false) levels = levels.filter((l) => l !== "none");
+  let levels = hit?.levels || null;
+  let prior = null;
+  if (!levels) {
+    const formatLevels = FORMAT_LEVELS[caps.thinkingFormat] || L.base;
+    // Binary format defaults carry no per-model information and go stale
+    // when a vendor ships real tiers (ZAI GLM-5.3 gained low/high/max).
+    // Upgrade ONLY those from synced catalog priors (models.dev +
+    // OpenRouter). Budget-mapped base formats (qwen/step/…) keep their
+    // vocabulary: its size drives level→budget math in the translator, and
+    // effort priors must not silently change sent thinking budgets.
+    if (formatLevels === L.onOff) {
+      prior = lookupCatalogReasoning(provider, model);
+      if (Array.isArray(prior?.levels) && prior.levels.length > 0) {
+        levels = ["none", ...prior.levels];
+      }
+    }
+    if (!levels) levels = formatLevels;
+  }
+  if (caps.thinkingCanDisable === false || prior?.mandatory === true) {
+    levels = levels.filter((l) => l !== "none");
+  }
   return levels;
 }
 

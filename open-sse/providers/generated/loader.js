@@ -7,7 +7,7 @@
 // bundle. Builtins are resolved lazily via process.getBuiltinModule; in a browser
 // that hook is absent and the loader fails open to an empty catalog.
 
-const EMPTY = { pricing: {}, capabilities: {} };
+const EMPTY = { pricing: {}, capabilities: {}, reasoning: {} };
 
 let _cache;
 
@@ -70,6 +70,11 @@ function parseCatalog(raw) {
     capabilities:
       parsed.capabilities && typeof parsed.capabilities === "object"
         ? parsed.capabilities
+        : {},
+    // Reasoning priors (models.dev + OpenRouter, scripts/fetch-reasoning-catalog.mjs).
+    reasoning:
+      parsed.reasoning && typeof parsed.reasoning === "object"
+        ? parsed.reasoning
         : {},
   };
 }
@@ -139,4 +144,9 @@ export function getGeneratedPricing(model) {
 
 export function getGeneratedCapabilities(model) {
   return getGeneratedValue(getGeneratedCatalog().capabilities, model);
+}
+
+/** Whole reasoning-priors map (bare + provider-qualified keys). */
+export function getGeneratedReasoning() {
+  return getGeneratedCatalog().reasoning || {};
 }

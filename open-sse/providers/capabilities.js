@@ -352,6 +352,33 @@ function supportedEffortLevels(effort) {
   return levels.length > 0 ? levels : null;
 }
 
+const REASONING_LIST_LEVELS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
+
+/**
+ * Synthesize an effort block from upstream list dialects that carry levels
+ * without an `effort{}` block: OpenCode-style `reasoning.effort[]` and
+ * OpenRouter-style `reasoning.supported_efforts[]`. ("none" is a disable
+ * claim, not an advertised level.) Returns null when no usable list exists.
+ */
+function effortFromReasoningList(upstreamCaps) {
+  const reasoning = upstreamCaps && typeof upstreamCaps === "object" ? upstreamCaps.reasoning : null;
+  if (!reasoning || typeof reasoning !== "object") return null;
+  const list = Array.isArray(reasoning.effort) ? reasoning.effort
+    : Array.isArray(reasoning.supported_efforts) ? reasoning.supported_efforts
+      : null;
+  if (!list) return null;
+  const effort = { supported: true };
+  let found = false;
+  for (const raw of list) {
+    const level = String(raw || "").toLowerCase();
+    if (REASONING_LIST_LEVELS.has(level)) {
+      effort[level] = { supported: true };
+      found = true;
+    }
+  }
+  return found ? effort : null;
+}
+
 /**
  * Reconcile an upstream-advertised effort block with the statically-known
  * one. Upstream catalogs may attach one generic block to every model, so
@@ -361,8 +388,11 @@ function supportedEffortLevels(effort) {
  * may predate renamed levels). Returns `{ effort }` or null.
  */
 export function resolveEffortCapabilities(upstreamCaps, staticCaps) {
-  const upEffort = upstreamCaps && typeof upstreamCaps === "object" ? upstreamCaps.effort : null;
+  let upEffort = upstreamCaps && typeof upstreamCaps === "object" ? upstreamCaps.effort : null;
   if (upEffort && upEffort.supported === false) return { effort: upEffort };
+  if (!supportedEffortLevels(upEffort)) {
+    upEffort = effortFromReasoningList(upstreamCaps) || upEffort;
+  }
   const stEffort = staticCaps && typeof staticCaps === "object" ? staticCaps.effort : null;
   const upLevels = supportedEffortLevels(upEffort);
   const stLevels = supportedEffortLevels(stEffort);

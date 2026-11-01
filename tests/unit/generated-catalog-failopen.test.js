@@ -25,12 +25,13 @@ describe("generated catalog fail-open behavior", () => {
     expect(readCatalogFile("/no/such/path/catalog.json")).toEqual({
       pricing: {},
       capabilities: {},
+      reasoning: {},
     });
   });
 
   it("returns an empty catalog when the file contains invalid JSON", () => {
     withTemporaryCatalog("{ not json", (catalogPath) => {
-      expect(readCatalogFile(catalogPath)).toEqual({ pricing: {}, capabilities: {} });
+      expect(readCatalogFile(catalogPath)).toEqual({ pricing: {}, capabilities: {}, reasoning: {} });
     });
   });
 
@@ -39,6 +40,7 @@ describe("generated catalog fail-open behavior", () => {
       expect(readCatalogFile(catalogPath)).toEqual({
         pricing: { m: { input: 1 } },
         capabilities: {},
+        reasoning: {},
       });
     });
   });
@@ -61,6 +63,7 @@ describe("generated catalog fail-open behavior", () => {
     expect(readCatalogFile()).toEqual({
       pricing: committed.pricing,
       capabilities: committed.capabilities,
+      reasoning: committed.reasoning || {},
     });
   });
 });
