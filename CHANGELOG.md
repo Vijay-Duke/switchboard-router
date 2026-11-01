@@ -1,3 +1,11 @@
+# v0.9.63 (2026-11-01)
+
+## Fixes
+- **Combo thinking levels**: `/v1/models` now advertises effort levels for combos as the union of their members' levels, resolved per member from that member's own provider entry (static fallbacks cover members without an advertised entry). Nested combos and aliases resolve recursively, and gateway aliases inherit their target's levels — putting a model in a combo no longer hides its thinking/effort selector in Pi/T3 and other harnesses. Routing still picks one member at a time and the translator clamps to that member's provider-native vocabulary.
+
+## Tests
+- `models-compatible-effort-caps`: combo union across providers, nested combos, alias-to-target and alias-to-combo inheritance, `unionEffortCapabilities` ordering/bans/empty cases.
+
 # v0.9.62 (2026-11-01)
 
 ## Fixes
