@@ -1,3 +1,20 @@
+# v0.9.61 (2026-11-01)
+
+## Fixes
+- **Heap OOM resilience**: the SSE logger no longer retains the full streamed output in RAM for every request — it keeps a bounded 32 KB head+tail preview (stored request details were already truncated to ~5 KB). Under concurrent long-context agent traffic this unbounded retention could exhaust the V8 heap and abort the server (SIGABRT) after hours of uptime.
+- **Memory watchdog**: the server samples heap usage against the V8 limit and, on sustained critical pressure, flushes buffered observability rows and exits non-zero for a clean supervisor restart instead of dying in a `FatalProcessOutOfMemory` abort. Tune or disable via `SWITCHBOARD_MEMORY_WATCHDOG`, `SWITCHBOARD_MEMORY_SAMPLE_MS`, `SWITCHBOARD_MEMORY_WARN_FRACTION`, `SWITCHBOARD_MEMORY_CRITICAL_FRACTION`, `SWITCHBOARD_MEMORY_CRITICAL_SAMPLES`. Uncaught exceptions and unhandled rejections now also end in a flushed non-zero exit instead of a wedged process.
+- **Host-aware heap sizing**: launchers size `--max-old-space-size` to host RAM (half, clamped 512–6144 MB; override with `SWITCHBOARD_MAX_OLD_SPACE_MB`) instead of a fixed 6144 MB that invites the kernel OOM killer on small hosts. An operator-set `NODE_OPTIONS` heap flag still wins.
+- **Memory visibility**: `GET /api/mgmt/v1/health` reports RSS/heap usage and heap fraction; Prometheus gains `switchboard_process_memory_bytes` and `switchboard_process_heap_fraction` gauges. New `ecosystem.example.config.cjs` ships the proven PM2 direct-supervision setup (supervise the server itself, never a spawning launcher) with fatal-error diagnostic reports.
+- **Command Code thinking**: effort is applied inside the `params` envelope as a flat `reasoning_effort` (including suffix effort on tool-result turns), and `auto` resolves to a concrete supported level.
+- **`/v1/models` effort**: registry fallback levels are exposed without double-nesting `effort`, including gateway-mapped levels for budget-based reasoning; Pi manual config files repair stale DeepSeek metadata and expose `max`.
+
+## Tests
+- `memory-resilience`: bounded stream previews, sustained-pressure watchdog decisions, host-aware heap sizing.
+- Command Code suffix-effort envelope, `/v1/models` effort fallback shape, Pi DeepSeek metadata repair.
+
+## Docs
+- **GitBook**: endpoint guide documents discovering per-model thinking efforts from `GET /v1/models` (`capabilities.effort`).
+
 # v0.9.60 (2026-10-23)
 
 ## Features
