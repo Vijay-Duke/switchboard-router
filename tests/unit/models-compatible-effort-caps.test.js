@@ -153,6 +153,30 @@ describe("/v1/models relayed compatible-upstream capabilities", () => {
     expect(effortLevels(byId.get("claude-api/plain-thing-1"))).toEqual(["medium"]);
   });
 
+  it("normalizes relayed reasoning.effort lists into an effort block (P0)", async () => {
+    // OpenCode-style gateways advertise levels as reasoning.effort[] with no
+    // effort{} block (live opencode/glm-5.3 shape). /v1/models must still
+    // advertise selectable effort for harnesses.
+    const byId = await modelsViaDiscovery({ data: [{
+      id: "plain-thing-1",
+      capabilities: { reasoning: { supported: true, effort: ["low", "high", "max"] } },
+    }] });
+    expect(effortLevels(byId.get("claude-api/plain-thing-1"))).toEqual(["high", "low", "max"]);
+  });
+
+  it("advertises GLM effort from catalog priors via registry fallback (P1)", async () => {
+    const { __setReasoningPriorsForTests } = await import(
+      "../../open-sse/providers/reasoningPriors.js"
+    );
+    __setReasoningPriorsForTests({ "glm-5.3": { levels: ["low", "high", "max"] } });
+    try {
+      const byId = await modelsViaDiscovery({ data: [{ id: "glm-5.3" }] });
+      expect(effortLevels(byId.get("claude-api/glm-5.3"))).toEqual(["high", "low", "max"]);
+    } finally {
+      __setReasoningPriorsForTests(null);
+    }
+  });
+
   it("intersects overstated upstream levels with the static allow-list", async () => {
     const byId = await modelsViaDiscovery({ data: [{
       id: "claude-sonnet-4-6",

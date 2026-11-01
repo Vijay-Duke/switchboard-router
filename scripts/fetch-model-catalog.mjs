@@ -303,6 +303,12 @@ async function main() {
     }
   }
   const catalog = buildCatalog(entries, knownIds, options.providers, new Date().toISOString());
+  // Preserve the reasoning priors section (scripts/fetch-reasoning-catalog.mjs
+  // owns it; catalog:refresh chains that script right after this one).
+  try {
+    const prev = JSON.parse(await fs.readFile(options.out, "utf8"));
+    if (prev?.reasoning && typeof prev.reasoning === "object") catalog.reasoning = prev.reasoning;
+  } catch { /* first generation */ }
   const output = `${stableStringify(catalog)}\n`;
   if (options.dryRun) process.stdout.write(output);
   else await writeFileAtomic(options.out, output);
