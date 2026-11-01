@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { findWrapper, standaloneRoot } from "./standalone.mjs";
+import { maxOldSpaceArgs } from "./heapSizing.mjs";
 
 export function resolveRuntime(argv = process.argv, execPath = process.execPath) {
   const runtimeFlag = argv.indexOf("--runtime");
@@ -35,7 +36,13 @@ export function main(argv = process.argv) {
   // Loopback default so the locality guard can trust the bind; explicit wins.
   const env = { ...process.env, HOSTNAME: process.env.HOSTNAME || "127.0.0.1" };
 
-  const child = spawn(runtime, [wrapper], { stdio: "inherit", env });
+  // Size the V8 heap to the host (Node only; Bun ignores V8 flags). Without
+  // this the server runs at Node's default old-space and can abort under
+  // concurrent long-context traffic — see src/lib/memoryWatchdog.js.
+  const isNode = runtime === process.execPath || /(^|[\\/])node(\.exe)?$/.test(runtime);
+  const heapArgs = isNode ? maxOldSpaceArgs({ env }) : [];
+
+  const child = spawn(runtime, [...heapArgs, wrapper], { stdio: "inherit", env });
   child.on("exit", (code, signal) => process.exit(signal ? 1 : code ?? 0));
   return child;
 }

@@ -11,6 +11,7 @@ const { DEFAULT_HOST, DEFAULT_PORT, formatHelp, isLoopbackHost, parseCliArgs } =
 const processTools = require("./src/cli/processManager");
 const { findListeningPids, observeChildExit } = processTools;
 const { probeSwitchboard, probeTcp, startHealthWatchdog, waitForSwitchboard } = require("./src/cli/serverStatus");
+const { maxOldSpaceArgs } = require("./src/shared/heapSize");
 
 // Subcommands (`switchboard xai video …`) run against an already-running
 // gateway and skip the launcher flow (no arg parsing, no server spawn).
@@ -672,7 +673,10 @@ function startServer(latestVersion) {
     // Boot failures abandon after maxBootFailures; watchdog respawns keep
     // everHealthy so transient overload does not permanently quit the launcher.
     if (resetEverHealthy) everHealthy = false;
-    const child = spawn(RUNTIME, ["--max-old-space-size=6144", serverPath], {
+    // Heap sized to host RAM (6144 MB on ≥12 GB hosts, less on small ones);
+    // a fixed 6144 gets kernel-OOM-killed on small VPS hosts. Skipped when
+    // the operator set their own flag via NODE_OPTIONS.
+    const child = spawn(RUNTIME, [...maxOldSpaceArgs(), serverPath], {
       cwd: standaloneDir,
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,

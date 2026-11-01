@@ -27,6 +27,11 @@ function deps(overrides = {}) {
       { provider: "openai", model: "DO-NOT-EXPORT-MODEL", account: "DO-NOT-EXPORT-ACCOUNT", count: 2 },
       { provider: "openai", model: "another-secret-model", account: "another-secret-account", count: 1 },
     ] }),
+    getMemorySnapshot: () => ({
+      rssBytes: 1000, heapUsedBytes: 400, heapTotalBytes: 600,
+      heapLimitBytes: 800, externalBytes: 50, arrayBuffersBytes: 10,
+      heapFraction: 0.5, uptimeSeconds: 60,
+    }),
     now: () => new Date("2026-08-22T12:00:00.000Z"),
     ...overrides,
   };
@@ -66,6 +71,10 @@ describe("Prometheus collector", () => {
       "# TYPE switchboard_fetch_cache_entries gauge",
       "# HELP switchboard_fetch_cache_bytes Bytes currently stored by unexpired fetch and search cache entries.",
       "# TYPE switchboard_fetch_cache_bytes gauge",
+      "# HELP switchboard_process_memory_bytes Server process memory by kind (rss, heap_used, heap_total, heap_limit, external, array_buffers).",
+      "# TYPE switchboard_process_memory_bytes gauge",
+      "# HELP switchboard_process_heap_fraction heapUsed as a fraction of the V8 heap limit; sustained values near 1 precede an OOM abort.",
+      "# TYPE switchboard_process_heap_fraction gauge",
     ]);
     expect(text).not.toMatch(/routing_.*_total/);
     expect(text).not.toMatch(/auto_.*_total/);
@@ -85,6 +94,14 @@ describe("Prometheus collector", () => {
     expect(text).toContain('switchboard_auto_retained_decisions{source="bandit_policy"} 0');
     expect(text).toContain("switchboard_fetch_cache_entries 2");
     expect(text).toContain("switchboard_fetch_cache_bytes 2048");
+    expect(text).toContain('switchboard_process_memory_bytes{kind="heap_used"} 400');
+    expect(text).toContain('switchboard_process_memory_bytes{kind="rss"} 1000');
+    expect(text).toContain("switchboard_process_heap_fraction 0.5");
+  });
+
+  it("omits process memory families when the runtime cannot report memory", async () => {
+    const text = await collectPrometheusMetrics(deps({ getMemorySnapshot: () => null }));
+    expect(text).not.toContain("switchboard_process_");
   });
 
   it("escapes labels and never emits sensitive or high-cardinality fields", async () => {

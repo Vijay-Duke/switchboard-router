@@ -15,6 +15,7 @@ import { startAutoLearnScheduler } from "open-sse/routing/scheduler.js";
 import { syncToJson as syncMitmAliasCache } from "@/lib/mitmAliasCache";
 import { closeAdapter } from "@/lib/db/driver.js";
 import { flushPendingRequestDetails } from "@/lib/db/repos/requestDetailsRepo.js";
+import { startMemoryWatchdog } from "@/lib/memoryWatchdog.js";
 
 const ROUTING_RETENTION_DAYS = 90;
 const ROUTING_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -45,7 +46,7 @@ const g = global.__appSingleton ??= {
 export function registerShutdownHandlers() {
   if (g.signalHandlersRegistered) return;
 
-  const cleanup = async () => {
+  const cleanup = async (exitCode = 0) => {
     if (g.shuttingDown) return;
     g.shuttingDown = true;
     const forceExit = setTimeout(() => process.exit(1), 1800);
@@ -54,13 +55,24 @@ export function registerShutdownHandlers() {
     try { await closeAdapter(); } catch { /* best effort */ }
     try { removeAllDNSEntriesSync(); } catch { /* best effort */ }
     clearTimeout(forceExit);
-    process.exit(0);
+    process.exit(exitCode);
   };
 
-  process.on("SIGINT", cleanup);
-  process.on("SIGTERM", cleanup);
+  // Return the cleanup promise (process ignores it; tests await it).
+  process.on("SIGINT", () => cleanup(0));
+  process.on("SIGTERM", () => cleanup(0));
+  // A fatal fault must end in a supervisor-visible non-zero exit (after a
+  // best-effort flush), never a wedged process serving errors forever.
+  process.on("uncaughtException", (error) => {
+    console.error("[InitApp] uncaughtException:", error?.stack || error);
+    void cleanup(1);
+  });
+  process.on("unhandledRejection", (reason) => {
+    console.error("[InitApp] unhandledRejection:", reason?.stack || reason);
+    void cleanup(1);
+  });
   // Windows never delivers SIGTERM; Ctrl+Break is the graceful console path there.
-  if (process.platform === "win32") process.on("SIGBREAK", cleanup);
+  if (process.platform === "win32") process.on("SIGBREAK", () => cleanup(0));
   process.on("exit", () => { try { removeAllDNSEntriesSync(); } catch { /* ignore */ } });
   g.signalHandlersRegistered = true;
 }
@@ -83,6 +95,9 @@ export async function initializeApp() {
     autoStartMitm();
     startQuotaAutoPing();
     startRoutingEventRetention();
+    // Exit cleanly for a supervisor restart on sustained heap pressure
+    // instead of dying in a V8 OOM abort (2026-11-01). Idempotent.
+    startMemoryWatchdog({ onCritical: () => flushPendingRequestDetails() });
     // Proactive OAuth token refresh (long-lived providers). Module is idempotent
     // and self-guards against non-server runtimes.
     import("@/sse/services/backgroundTokenRefresh.js")

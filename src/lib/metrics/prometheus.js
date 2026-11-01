@@ -9,6 +9,7 @@ import {
 } from "@/lib/db/repos/usageRepo.js";
 import { requireMetricNumber } from "@/lib/metrics/numeric.js";
 import { BUILT_IN_PROVIDER_IDS } from "@/lib/metrics/providerRoster.js";
+import { getMemorySnapshot } from "@/lib/memoryWatchdog.js";
 
 const CONNECTION_STATES = ["ready", "disabled", "cooldown", "error"];
 const AUTO_SOURCES = [
@@ -70,6 +71,7 @@ const defaultDeps = {
   getProviderNodes,
   getProviderConnections,
   getActiveRequests,
+  getMemorySnapshot,
   now: () => new Date(),
 };
 
@@ -210,6 +212,33 @@ async function collectOnce(deps) {
       [{ value: cache.bytes }],
     ),
   ];
+
+  // Process memory gauges for OOM alerting (2026-11-01 heap abort). Omitted
+  // when the runtime cannot report memory.
+  const memory = deps.getMemorySnapshot?.();
+  if (memory) {
+    families.push(
+      family(
+        "switchboard_process_memory_bytes",
+        "Server process memory by kind (rss, heap_used, heap_total, heap_limit, external, array_buffers).",
+        "gauge",
+        [
+          { labels: { kind: "rss" }, value: memory.rssBytes },
+          { labels: { kind: "heap_used" }, value: memory.heapUsedBytes },
+          { labels: { kind: "heap_total" }, value: memory.heapTotalBytes },
+          { labels: { kind: "heap_limit" }, value: memory.heapLimitBytes },
+          { labels: { kind: "external" }, value: memory.externalBytes },
+          { labels: { kind: "array_buffers" }, value: memory.arrayBuffersBytes },
+        ],
+      ),
+      family(
+        "switchboard_process_heap_fraction",
+        "heapUsed as a fraction of the V8 heap limit; sustained values near 1 precede an OOM abort.",
+        "gauge",
+        [{ value: memory.heapFraction }],
+      ),
+    );
+  }
   return `${families.flat().join("\n")}\n`;
 }
 

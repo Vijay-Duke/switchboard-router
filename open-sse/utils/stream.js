@@ -10,6 +10,7 @@ import { errorLine } from "./logTags.js";
 import { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER } from "./sseConstants.js";
 import { createThinkExtractor } from "./thinkExtractor.js";
 import { streamToJsonMaxBytes } from "../transformer/streamToJsonConverter.js";
+import { createBoundedTextAccumulator } from "./boundedText.js";
 
 export { COLORS, formatSSE };
 export { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER };
@@ -87,8 +88,12 @@ export function createSSEStream(options = {}) {
   const state = mode === STREAM_MODE.TRANSLATE ? { ...initState(sourceFormat), provider, toolNameMap, model } : null;
 
   let totalContentLength = 0;
-  let accumulatedContent = "";
-  let accumulatedThinking = "";
+  // Observability previews only: saveRequestDetail truncates stored fields
+  // to ~5 KB, so retaining the full stream text here just held megabytes per
+  // concurrent stream until flush (2026-11-01 OOM). Keep head+tail instead;
+  // totalContentLength above stays exact for usage estimation.
+  const contentPreview = createBoundedTextAccumulator();
+  const thinkingPreview = createBoundedTextAccumulator();
   let ttftAt = null;
   let sseLineCount = 0;
   let sseEmittedCount = 0;
@@ -114,7 +119,7 @@ export function createSSEStream(options = {}) {
     if (hasValidUsage(usage)) logUsage(provider, usage, model, connectionId, clientKeyId);
     // Account on the protocol terminal, not TCP EOF: Claude clients disconnect
     // immediately after message_stop and an upstream can leave its socket open.
-    Promise.resolve(onStreamComplete?.({ content: accumulatedContent, thinking: accumulatedThinking, ...outcome }, usage, ttftAt)).catch(() => {});
+    Promise.resolve(onStreamComplete?.({ content: contentPreview.text(), thinking: thinkingPreview.text(), ...outcome }, usage, ttftAt)).catch(() => {});
     reqLogger?.close?.();
   }
 
@@ -180,11 +185,11 @@ export function createSSEStream(options = {}) {
           if (["message_start", "message_delta", "message_stop", "content_block_start", "content_block_delta", "content_block_stop"].includes(parsed.type)) nativeClaudeSeen = true;
           if (parsed.type === "content_block_delta") {
             if (typeof parsed.delta?.text === "string") {
-              accumulatedContent += parsed.delta.text;
+              contentPreview.append(parsed.delta.text);
               totalContentLength += parsed.delta.text.length;
             }
             if (typeof parsed.delta?.thinking === "string") {
-              accumulatedThinking += parsed.delta.thinking;
+              thinkingPreview.append(parsed.delta.thinking);
               totalContentLength += parsed.delta.thinking.length;
             }
           }
@@ -276,11 +281,11 @@ export function createSSEStream(options = {}) {
           const reasoning = delta?.reasoning_content;
           if (content && typeof content === "string") {
             totalContentLength += content.length;
-            accumulatedContent += content;
+            contentPreview.append(content);
           }
           if (reasoning && typeof reasoning === "string") {
             totalContentLength += reasoning.length;
-            accumulatedThinking += reasoning;
+            thinkingPreview.append(reasoning);
           }
 
           const extracted = extractUsage(parsed);
@@ -445,23 +450,23 @@ export function createSSEStream(options = {}) {
         // Claude format - content
         if (parsed.delta?.text) {
           totalContentLength += parsed.delta.text.length;
-          accumulatedContent += parsed.delta.text;
+          contentPreview.append(parsed.delta.text);
         }
         // Claude format - thinking
         if (parsed.delta?.thinking) {
           totalContentLength += parsed.delta.thinking.length;
-          accumulatedThinking += parsed.delta.thinking;
+          thinkingPreview.append(parsed.delta.thinking);
         }
-        
+
         // OpenAI format - content
         if (parsed.choices?.[0]?.delta?.content) {
           totalContentLength += parsed.choices[0].delta.content.length;
-          accumulatedContent += parsed.choices[0].delta.content;
+          contentPreview.append(parsed.choices[0].delta.content);
         }
         // OpenAI format - reasoning
         if (parsed.choices?.[0]?.delta?.reasoning_content) {
           totalContentLength += parsed.choices[0].delta.reasoning_content.length;
-          accumulatedThinking += parsed.choices[0].delta.reasoning_content;
+          thinkingPreview.append(parsed.choices[0].delta.reasoning_content);
         }
         
         // Gemini format
@@ -471,9 +476,9 @@ export function createSSEStream(options = {}) {
               totalContentLength += part.text.length;
               // Check if this is thinking content
               if (part.thought === true) {
-                accumulatedThinking += part.text;
+                thinkingPreview.append(part.text);
               } else {
-                accumulatedContent += part.text;
+                contentPreview.append(part.text);
               }
             }
           }
@@ -548,7 +553,7 @@ export function createSSEStream(options = {}) {
               logUsage(state.provider || targetFormat, state.usage, model, connectionId, clientKeyId);
             }
             if (onStreamComplete) {
-              onStreamComplete({ content: accumulatedContent, thinking: accumulatedThinking }, state?.usage, ttftAt).catch(() => {});
+              onStreamComplete({ content: contentPreview.text(), thinking: thinkingPreview.text() }, state?.usage, ttftAt).catch(() => {});
             }
             reqLogger?.close?.();
             controller.terminate();
@@ -610,8 +615,8 @@ export function createSSEStream(options = {}) {
 
           if (onStreamComplete) {
             await onStreamComplete({
-              content: accumulatedContent,
-              thinking: accumulatedThinking
+              content: contentPreview.text(),
+              thinking: thinkingPreview.text()
             }, usage, ttftAt);
           }
           reqLogger?.close?.();
@@ -688,8 +693,8 @@ export function createSSEStream(options = {}) {
         
         if (onStreamComplete) {
           await onStreamComplete({
-            content: accumulatedContent,
-            thinking: accumulatedThinking
+            content: contentPreview.text(),
+            thinking: thinkingPreview.text()
           }, state?.usage, ttftAt);
         }
         reqLogger?.close?.();
