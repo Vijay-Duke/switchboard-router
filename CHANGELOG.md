@@ -1,3 +1,11 @@
+# v0.9.62 (2026-11-01)
+
+## Fixes
+- **Unified thinking levels**: `/v1/models` now advertises real effort levels for GLM and other binary-registry families. Live upstream level lists (`reasoning.effort[]`, OpenRouter `supported_efforts[]`) are normalized into the `effort{}` block harnesses read, and per-model priors synced from models.dev + OpenRouter (`npm run reasoning:refresh`, chained from `catalog:refresh`) upgrade binary format defaults — `glm/glm-5.3` advertises `low, high, max` (previously no effort at all, so Pi/T3 showed no thinking selector). New models now need a catalog refresh, not a code change. Budget-mapped formats (Qwen/Step/…) keep their exact vocabularies so sent `thinking_budget` values do not move.
+
+## Tests
+- `reasoning-priors`: catalog builders and merge precedence, prior lookup aliases/consensus, binary-only upgrade rules, live-dialect effort synthesis; route-level GLM advertisement via registry fallback.
+
 # v0.9.61 (2026-11-01)
 
 ## Fixes
