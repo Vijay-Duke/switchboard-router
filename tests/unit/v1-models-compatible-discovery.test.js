@@ -115,6 +115,7 @@ describe("/v1/models compatible-provider discovery", () => {
     const models = await buildModelsList(["llm"]);
     const gatewayAliases = models.filter((model) => model.owned_by === "switchboard-alias");
 
+    const on = { supported: true };
     expect(gatewayAliases).toEqual([
       {
         id: "claude-switchboard-gpt",
@@ -122,6 +123,11 @@ describe("/v1/models compatible-provider discovery", () => {
         created: 0,
         owned_by: "switchboard-alias",
         display_name: "Switchboard · claude-switchboard-gpt",
+        capabilities: {
+          effort: {
+            supported: true, minimal: on, low: on, medium: on, high: on, xhigh: on,
+          },
+        },
       },
       {
         id: "anthropic-switchboard-gemini",
@@ -129,6 +135,11 @@ describe("/v1/models compatible-provider discovery", () => {
         created: 0,
         owned_by: "switchboard-alias",
         display_name: "Switchboard · anthropic-switchboard-gemini",
+        capabilities: {
+          effort: {
+            supported: true, minimal: on, low: on, medium: on, high: on,
+          },
+        },
       },
     ]);
   });
