@@ -625,7 +625,7 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
           || (relayedCaps || kindCaps ? { ...(kindCaps || {}), ...(relayedCaps || {}) } : null);
         const registryEffort = effortCapabilitiesFromThinkingLevels(providerId, modelId);
         const staticCaps = effortCapabilitiesForModelId(modelId)
-          || (registryEffort ? { effort: registryEffort } : null);
+          || registryEffort;
         const effortCaps = resolveEffortCapabilities(liveCaps, staticCaps);
         const caps = effortCaps ? { ...(liveCaps || {}), ...effortCaps } : liveCaps;
         if (caps) model.capabilities = caps;

@@ -53,7 +53,7 @@ function clampToSupported(level, levels) {
 
 // Formats whose wire has no native "auto" effort — a dynamic request must be
 // auto-selected to a concrete level the model supports (CLIProxyAPI mid-range).
-const AUTO_TO_LEVEL_FORMATS = new Set(["openai", "openai-nested", "openai-responses", "deepseek", "step"]);
+const AUTO_TO_LEVEL_FORMATS = new Set(["openai", "openai-nested", "openai-responses", "commandcode", "deepseek", "step"]);
 
 // Strip a trailing thinking suffix "model(value)" → "model" (no-op when absent).
 export function stripThinkingSuffix(model) {
@@ -138,8 +138,10 @@ export function extractThinking(body) {
 // at the call-site where intent is snapshotted before format translation.
 export const captureThinking = extractThinking;
 
-// Resolve thinking format: provider override > capability > derive(targetFormat).
+// Command Code envelope override, then provider > capability > target format.
 function resolveFormat(targetFormat, model, provider) {
+  // Command Code's alpha API takes a flat effort for every model family.
+  if (targetFormat === "commandcode") return "commandcode";
   const providerFmt = provider ? PROVIDERS[provider]?.thinkingFormat : null;
   if (providerFmt) return providerFmt;
   const caps = getCapabilitiesForModel(provider, model);
@@ -216,6 +218,12 @@ function applyFormat(fmt, body, cfg, caps) {
   const eff = none && !canDisable ? { mode: "level", level: "minimal" } : cfg;
 
   switch (fmt) {
+    case "commandcode": {
+      // command-code 1.88.0 sends params.reasoning_effort verbatim, including max.
+      const level = none && canDisable ? "none" : toLevel(eff);
+      if (level) body.reasoning_effort = level;
+      break;
+    }
     case "openai": {
       if (none && canDisable) { body.reasoning_effort = "none"; break; }
       const level = toLevel(eff);
@@ -332,6 +340,13 @@ function applyFormat(fmt, body, cfg, caps) {
 // falls back to extracting from the current body when omitted.
 export function applyThinking(targetFormat, model, body, provider = null, intent = undefined) {
   if (!body || typeof body !== "object") return body;
+
+  if (targetFormat === "commandcode" && body.params && typeof body.params === "object") {
+    const cfg = intent || extractThinking(body) || extractThinking(body.params);
+    stripAll(body);
+    applyThinking(targetFormat, model, body.params, provider, cfg);
+    return body;
+  }
 
   const { cleanModel, override } = parseSuffix(model);
   let cfg = override || intent || extractThinking(body);

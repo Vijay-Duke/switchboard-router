@@ -3,6 +3,24 @@ import { buildPiManualConfigFiles, buildPiModelEntries } from "../../src/lib/cli
 import { createPiCapsResolver } from "../../src/lib/cli/piCapsResolverCore.js";
 
 describe("buildPiManualConfigFiles", () => {
+  it("repairs stale DeepSeek metadata and exposes max in both Pi config files", () => {
+    const id = "command-code/deepseek/deepseek-v4.1-flash";
+    const files = buildPiManualConfigFiles({
+      baseUrl: "http://127.0.0.1:20128/v1", apiKey: "test", models: [id], defaultModel: id,
+      capsResolver: createPiCapsResolver(),
+      previousModels: [{ id, reasoning: false, thinkingLevelMap: { max: null } }],
+    });
+    const entry = JSON.parse(files.find((file) => file.filename.endsWith("models.json")).content)
+      .providers.switchboard.models[0];
+    expect(entry.reasoning).toBe(true);
+    expect(entry.thinkingLevelMap).toEqual({
+      off: "none", minimal: null, low: null, medium: null, high: "high", xhigh: null, max: "max",
+    });
+    expect(entry.thinking.efforts).toEqual(["high", "max"]);
+    expect(files.find((file) => file.filename.endsWith("models.yml")).content)
+      .toContain('"max":"max"');
+  });
+
   it("includes thinking metadata for reasoning models", () => {
     const capsResolver = createPiCapsResolver();
     const configs = buildPiManualConfigFiles({

@@ -38,7 +38,7 @@ async function seedCompatibleConnection() {
     providerSpecificData: {
       prefix: "claude-api",
       baseUrl: "https://api.anthropic.com/v1",
-      enabledModels: ["claude-opus-5-5", "claude-sonnet-4-6", "claude-opus-4-5-20251101", "claude-haiku-5-5", "claude-haiku-4-5", "plain-thing-1"],
+      enabledModels: ["claude-opus-5-5", "claude-sonnet-4-6", "claude-opus-4-5-20251101", "claude-haiku-5-5", "claude-haiku-4-5", "gpt-5.2", "plain-thing-1"],
     },
   });
 }
@@ -56,6 +56,15 @@ function effortLevels(entry) {
 }
 
 describe("/v1/models static effort advertisement for compatible providers", () => {
+  it("exposes registry fallback levels without nesting effort twice", async () => {
+    await seedCompatibleConnection();
+    const byId = await modelsById();
+    expect(effortLevels(byId.get("claude-api/gpt-5.2"))).toEqual(
+      ["high", "low", "medium", "minimal", "xhigh"],
+    );
+    expect(byId.get("claude-api/gpt-5.2").capabilities.effort.effort).toBeUndefined();
+  });
+
   it("advertises five effort levels for current claude models", { timeout: 20000 }, async () => {
     await seedCompatibleConnection();
     const byId = await modelsById();
@@ -92,7 +101,16 @@ describe("/v1/models static effort advertisement for compatible providers", () =
     await seedCompatibleConnection();
     const byId = await modelsById();
     expect(byId.get("claude-api/plain-thing-1")?.capabilities?.effort).toBeUndefined();
-    expect(byId.get("claude-api/claude-haiku-4-5")?.capabilities?.effort).toBeUndefined();
+  });
+
+  it("exposes gateway-mapped effort levels for budget-based reasoning", async () => {
+    await seedCompatibleConnection();
+    const byId = await modelsById();
+    // These are gateway selections translated to thinking.budget_tokens,
+    // not a claim that the upstream Haiku API accepts an effort parameter.
+    expect(effortLevels(byId.get("claude-api/claude-haiku-4-5"))).toEqual(
+      ["high", "low", "max", "medium", "xhigh"],
+    );
   });
 });
 

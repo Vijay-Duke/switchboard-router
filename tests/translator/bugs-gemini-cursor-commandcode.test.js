@@ -42,6 +42,42 @@ describe("OpenAI → Cursor", () => {
 });
 
 describe("OpenAI → CommandCode", () => {
+  it.each(["high", "max"])("keeps DeepSeek effort %s inside params", (effort) => {
+    const out = translateRequest(FORMATS.OPENAI, FORMATS.COMMANDCODE,
+      "deepseek/deepseek-v4.1-flash", {
+        messages: [{ role: "user", content: "hi" }], reasoning_effort: effort,
+      }, true, null, "commandcode");
+    expect(out.params.reasoning_effort).toBe(effort);
+    expect(out.params.thinking).toBeUndefined();
+    expect(out.reasoning_effort).toBeUndefined();
+    expect(out.thinking).toBeUndefined();
+  });
+
+  it("keeps a suffix effort inside params on tool-result turns", () => {
+    const out = translateRequest(FORMATS.OPENAI, FORMATS.COMMANDCODE,
+      "deepseek/deepseek-v4.1-flash(max)", {
+        messages: [
+          { role: "user", content: "go" },
+          { role: "assistant", tool_calls: [{ id: "c1", type: "function", function: { name: "f", arguments: "{}" } }] },
+          { role: "tool", tool_call_id: "c1", content: "done" },
+        ],
+      }, true, null, "commandcode");
+    expect(out.params.reasoning_effort).toBe("max");
+    expect(out.reasoning_effort).toBeUndefined();
+  });
+
+  it.each([
+    ["none", "none"], ["auto", "high"], ["xhigh", "max"],
+  ])("normalizes %s to %s in the Command Code envelope", (requested, expected) => {
+    const out = translateRequest(FORMATS.OPENAI, FORMATS.COMMANDCODE,
+      "deepseek/deepseek-v4.1-flash", {
+        messages: [{ role: "user", content: "hi" }], reasoning_effort: requested,
+      }, true, null, "commandcode");
+    expect(out.params.reasoning_effort).toBe(expected);
+    expect(out.params.thinking).toBeUndefined();
+    expect(out.reasoning_effort).toBeUndefined();
+  });
+
   // openai-to-commandcode.js: safeParseJson preserves malformed args in raw property
   it("malformed tool arguments are not silently emptied", () => {
     const out = O2CC({
