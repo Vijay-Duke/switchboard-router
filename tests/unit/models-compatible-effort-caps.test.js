@@ -121,8 +121,9 @@ describe("/v1/models relayed compatible-upstream capabilities", () => {
     global.fetch = originalFetch;
   });
 
-  async function modelsViaDiscovery(catalog) {
+  async function modelsViaDiscovery(catalog, seedExtra) {
     await seedCompatibleConnection();
+    if (seedExtra) await seedExtra();
     global.fetch = vi.fn().mockResolvedValue(Response.json(catalog));
     const { buildModelsList } = await import("@/app/api/v1/models/route.js");
     const models = await buildModelsList(["llm"], { skipCompatibleDiscovery: false, signal: null });
@@ -177,6 +178,72 @@ describe("/v1/models relayed compatible-upstream capabilities", () => {
     }
   });
 
+  it("advertises the union of combo members' effort levels", async () => {
+    // Member A contributes medium (static Opus 4.5: low/medium/high);
+    // member B contributes max (live relayed list: low/max). Neither member
+    // alone has the full set, so first-member-only logic would fail this.
+    const byId = await modelsViaDiscovery({ data: [{
+      id: "plain-thing-1",
+      capabilities: { reasoning: { supported: true, effort: ["low", "max"] } },
+    }] }, async () => {
+      const { createCombo } = await import("@/lib/db/index.js");
+      await createCombo({
+        name: "mixed-effort",
+        models: ["claude-api/claude-opus-4-5-20251101", "claude-api/plain-thing-1"],
+      });
+    });
+    expect(effortLevels(byId.get("mixed-effort"))).toEqual(
+      ["high", "low", "max", "medium"],
+    );
+  });
+
+  it("resolves nested combos and falls back for members with no advertised entry", async () => {
+    const byId = await modelsViaDiscovery({ data: [{
+      id: "claude-opus-4-5-20251101",
+    }] }, async () => {
+      const { createCombo } = await import("@/lib/db/index.js");
+      await createCombo({
+        name: "inner-effort",
+        models: ["claude-api/claude-opus-4-5-20251101"],
+      });
+      await createCombo({
+        name: "outer-effort",
+        models: ["inner-effort", "surplus-deepseek/deepseek-v4.1-flash-1017"],
+      });
+    });
+    expect(effortLevels(byId.get("outer-effort"))).toEqual(
+      ["high", "low", "max", "medium"],
+    );
+  });
+
+  it("inherits alias effort from its target entry", async () => {
+    const byId = await modelsViaDiscovery({ data: [{
+      id: "plain-thing-1",
+      capabilities: { reasoning: { supported: true, effort: ["low", "max"] } },
+    }] }, async () => {
+      const { setModelAlias } = await import("@/lib/db/index.js");
+      await setModelAlias("claude-fable-5-1", "claude-api/plain-thing-1");
+    });
+    expect(effortLevels(byId.get("claude-fable-5-1"))).toEqual(["low", "max"]);
+  });
+
+  it("inherits alias effort from a combo target", async () => {
+    const byId = await modelsViaDiscovery({ data: [{
+      id: "plain-thing-1",
+      capabilities: { reasoning: { supported: true, effort: ["low", "max"] } },
+    }] }, async () => {
+      const { createCombo, setModelAlias } = await import("@/lib/db/index.js");
+      await createCombo({
+        name: "alias-target-combo",
+        models: ["claude-api/claude-opus-4-5-20251101", "claude-api/plain-thing-1"],
+      });
+      await setModelAlias("claude-opus-5-5", "alias-target-combo");
+    });
+    expect(effortLevels(byId.get("claude-opus-5-5"))).toEqual(
+      ["high", "low", "max", "medium"],
+    );
+  });
+
   it("intersects overstated upstream levels with the static allow-list", async () => {
     const byId = await modelsViaDiscovery({ data: [{
       id: "claude-sonnet-4-6",
@@ -228,6 +295,51 @@ describe("resolveEffortCapabilities", () => {
     expect(await resolve(up, null)).toEqual({ effort: up });
     expect(await resolve(null, st)).toEqual({ effort: st });
     expect(await resolve(null, null)).toBeNull();
+  });
+});
+
+describe("unionEffortCapabilities", () => {
+  async function union(list) {
+    const { unionEffortCapabilities } = await import(
+      "../../open-sse/providers/capabilities.js"
+    );
+    return unionEffortCapabilities(list);
+  }
+  const caps = (levels) => ({
+    effort: {
+      supported: true,
+      ...Object.fromEntries(levels.map((level) => [level, { supported: true }])),
+    },
+  });
+
+  it("unions levels in canonical order with unknown levels last", async () => {
+    const result = await union([
+      caps(["max", "low"]),
+      caps(["ultra", "medium"]),
+      caps(["high", "low"]),
+    ]);
+    expect(Object.keys(result.effort)).toEqual(
+      ["supported", "low", "medium", "high", "max", "ultra"],
+    );
+  });
+
+  it("ignores member bans when another member supports levels", async () => {
+    const result = await union([
+      { effort: { supported: false } },
+      caps(["high"]),
+    ]);
+    expect(result).toEqual({ effort: { supported: true, high: { supported: true } } });
+  });
+
+  it("returns null when no member claims a level", async () => {
+    expect(await union([
+      null,
+      {},
+      { effort: { supported: false } },
+      { effort: { supported: true } },
+      { effort: { low: { supported: true } } },
+    ])).toBeNull();
+    expect(await union([])).toBeNull();
   });
 });
 

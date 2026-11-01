@@ -25,8 +25,9 @@ import {
   refreshImportedCursorCredentials,
   updateProviderCredentials,
 } from "@/sse/services/tokenRefresh";
-import { capabilitiesFromServiceKind, effortCapabilitiesForModelId, resolveEffortCapabilities } from "open-sse/providers/capabilities.js";
+import { capabilitiesFromServiceKind, effortCapabilitiesForModelId, resolveEffortCapabilities, unionEffortCapabilities } from "open-sse/providers/capabilities.js";
 import { effortCapabilitiesFromThinkingLevels } from "open-sse/providers/thinkingLevels.js";
+import { MAX_COMBO_DEPTH } from "open-sse/config/runtimeConfig.js";
 import {
   buildClaudeCatalogDisplayNameMap,
   formatClaudeCatalogDisplayName,
@@ -662,6 +663,64 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
     // strict clients never see a missing field.
     if (typeof model.created !== "number") model.created = 0;
     dedupedModels.push(model);
+  }
+
+  // Combos and gateway aliases are emitted before their members/targets, so
+  // their effort metadata can only be resolved once every provider entry
+  // exists. A combo advertises the UNION of its members' levels (routing
+  // picks one member at a time and the translator clamps per member); an
+  // alias inherits its target's levels. Members with no advertised entry
+  // (inactive/undetermined providers) fall back to the static resolvers.
+  const comboByName = new Map(
+    (Array.isArray(combos) ? combos : [])
+      .filter((combo) => combo && typeof combo.name === "string")
+      .map((combo) => [combo.name, combo]),
+  );
+  const modelsById = new Map(dedupedModels.map((model) => [model.id, model]));
+  const staticEffortForModelString = (modelStr) => {
+    const [prefix, ...rest] = modelStr.split("/");
+    const base = rest.join("/") || prefix;
+    return effortCapabilitiesForModelId(modelStr)
+      || effortCapabilitiesFromThinkingLevels(prefix, base);
+  };
+  const resolveModelStringEffort = (modelStr, visiting = new Set(), comboDepth = 0) => {
+    if (typeof modelStr !== "string" || !modelStr) return null;
+    if (visiting.has(modelStr) || visiting.size > 32) return null;
+    visiting.add(modelStr);
+    let resolved = null;
+    const combo = comboByName.get(modelStr);
+    if (combo) {
+      const nextDepth = comboDepth + 1;
+      if (nextDepth <= MAX_COMBO_DEPTH) {
+        const members = Array.isArray(combo.models) ? combo.models : [];
+        resolved = unionEffortCapabilities(
+          members.map((member) => resolveModelStringEffort(member, visiting, nextDepth)),
+        );
+      }
+    } else if (modelAliases && Object.hasOwn(modelAliases, modelStr)) {
+      resolved = resolveModelStringEffort(modelAliases[modelStr], visiting, comboDepth);
+    } else {
+      const entry = modelsById.get(modelStr);
+      resolved = entry?.capabilities?.effort
+        ? { effort: entry.capabilities.effort }
+        : staticEffortForModelString(modelStr);
+    }
+    visiting.delete(modelStr);
+    return resolved;
+  };
+  for (const entry of dedupedModels) {
+    if (entry.capabilities?.effort) continue;
+    let resolved = null;
+    if (entry.owned_by === "combo") {
+      const combo = comboByName.get(entry.id);
+      if (!combo || (combo.kind || LLM_KIND) !== LLM_KIND) continue;
+      resolved = resolveModelStringEffort(entry.id);
+    } else if (entry.owned_by === "switchboard-alias") {
+      resolved = resolveModelStringEffort(entry.id);
+    }
+    if (resolved?.effort) {
+      entry.capabilities = { ...(entry.capabilities || {}), effort: resolved.effort };
+    }
   }
 
   return dedupedModels;

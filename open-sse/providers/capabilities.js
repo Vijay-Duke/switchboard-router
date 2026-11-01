@@ -405,3 +405,37 @@ export function resolveEffortCapabilities(upstreamCaps, staticCaps) {
   for (const level of agreed) effort[level] = { ...upEffort[level] };
   return { effort };
 }
+
+const EFFORT_UNION_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+/**
+ * Union the advertised effort levels of several capability objects.
+ * Combo semantics: a combo CAN reason at a level when at least one member
+ * can, because routing/fallback picks (and clamps for) one member at a
+ * time. Explicit bans on individual members never suppress a supporting
+ * member. Returns `{ effort }` in canonical level order (unknown future
+ * levels last, in first-seen order), or null when nobody claims a level.
+ */
+export function unionEffortCapabilities(capsList = []) {
+  const byLevel = new Map();
+  for (const caps of capsList || []) {
+    const effort = caps && typeof caps === "object" ? caps.effort : null;
+    if (!effort || typeof effort !== "object" || effort.supported === false) continue;
+    for (const level of supportedEffortLevels(effort) || []) {
+      if (!byLevel.has(level)) byLevel.set(level, effort[level]);
+    }
+  }
+  if (byLevel.size === 0) return null;
+  const ordered = [
+    ...EFFORT_UNION_ORDER.filter((level) => byLevel.has(level)),
+    ...[...byLevel.keys()].filter((level) => !EFFORT_UNION_ORDER.includes(level)),
+  ];
+  const effort = { supported: true };
+  for (const level of ordered) {
+    const value = byLevel.get(level);
+    effort[level] = value && typeof value === "object"
+      ? { ...value, supported: true }
+      : { supported: true };
+  }
+  return { effort };
+}
