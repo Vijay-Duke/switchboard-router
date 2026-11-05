@@ -61,9 +61,17 @@ export function vaultPointer(id, content) {
   return `[Switchboard vault] The full tool result (${content.length} chars) was moved to the conversation vault to save context. A preview is below. To read the rest, call the sb_vault_search tool with vault_id "${id}" and a query describing what you need.\n\n--- preview (first 500 chars) ---\n${preview}${suffix}`;
 }
 
+// Deterministic, content-addressed: the client resends the full original
+// history on every turn, so the same tool result must produce the same id
+// (and therefore byte-identical pointer text) on every request. A random
+// id changes the history at the first vaulted result, which breaks the
+// upstream prompt-cache prefix and re-bills the whole conversation as
+// cache writes each turn. Content-addressing also dedupes storage:
+// putVaultEntry is INSERT OR REPLACE by id, so resends refresh one row
+// (and its TTL) instead of piling up duplicates.
 function makeVaultId(conversationId, content) {
   return `vlt_${createHash("sha256")
-    .update(`${conversationId}\0${Date.now()}\0${Math.random()}\0${content.length}`)
+    .update(`${conversationId}\0${content}`)
     .digest("hex")
     .slice(0, 12)}`;
 }

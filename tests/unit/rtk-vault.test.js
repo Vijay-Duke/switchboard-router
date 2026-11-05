@@ -217,6 +217,54 @@ describe("RTK vault", () => {
     expect(vaultEngine.clampVaultThresholdKB("not-a-number")).toBe(vaultEngine.MIN_VAULT_THRESHOLD_KB);
   });
 
+  it("produces byte-identical history when the client resends the same tool result", async () => {
+    // Prompt caching matches on the exact prefix. The client resends the
+    // full original history every turn, so vaulting the same result must
+    // yield the same pointer text (same vault id) on every request —
+    // otherwise the cached prefix stops matching at the first vaulted
+    // result and the whole history is re-written to cache each turn.
+    const original = "deterministic content line\n".repeat(1024);
+    const makeBody = () => ({
+      tools: [{ type: "function" }],
+      messages: [
+        { role: "user", content: "go" },
+        { role: "tool", content: original },
+        { role: "user", content: "next" },
+      ],
+    });
+
+    const first = makeBody();
+    await vaultEngine.storeToVault(first, {
+      conversationId: "conversation-a", thresholdBytes: 8 * 1024, ttlMs: 60_000,
+    });
+    const second = makeBody();
+    await vaultEngine.storeToVault(second, {
+      conversationId: "conversation-a", thresholdBytes: 8 * 1024, ttlMs: 60_000,
+    });
+
+    expect(second.messages[1].content).toBe(first.messages[1].content);
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first));
+
+    // Same content stored under one id — no duplicate rows per resend.
+    const db = await driver.getAdapter();
+    const rows = db.get("SELECT COUNT(*) AS count FROM vault_entries WHERE conversationId = ?", ["conversation-a"]);
+    expect(rows.count).toBe(1);
+
+    // Different content, and same content in another conversation, differ.
+    const other = makeBody();
+    other.messages[1].content = "other content line\n".repeat(1024);
+    await vaultEngine.storeToVault(other, {
+      conversationId: "conversation-a", thresholdBytes: 8 * 1024, ttlMs: 60_000,
+    });
+    expect(pointerId(other.messages[1].content)).not.toBe(pointerId(first.messages[1].content));
+
+    const otherConversation = makeBody();
+    await vaultEngine.storeToVault(otherConversation, {
+      conversationId: "conversation-b", thresholdBytes: 8 * 1024, ttlMs: 60_000,
+    });
+    expect(pointerId(otherConversation.messages[1].content)).not.toBe(pointerId(first.messages[1].content));
+  });
+
   it("rejects invalid TTLs and cleans up expired entries", async () => {
     await expect(vault.putVaultEntry({
       id: "bad-ttl", conversationId: "conversation-a", content: "content", chunks: ["content"], ttlMs: -1,
