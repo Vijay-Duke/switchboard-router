@@ -1,3 +1,11 @@
+# v0.9.65 (2026-11-05)
+
+## Fixes
+- **Upstream error forwarding**: Claude-to-Claude routes now return the upstream error body byte-for-byte with its original status instead of the gateway envelope with a `[400]:`-prefixed message. Claude Code's capability-rejection recovery (rejected beta values, `context_management`, `output_config.effort`, advisor/tool-search rejections) matches on Anthropic's exact error wording, which the re-wrap broke. The internal error string used for account fallback and logs is unchanged, the all-accounts-exhausted path returns the last upstream response instead of re-wrapping it, and non-JSON upstream bodies keep the gateway envelope.
+
+## Tests
+- `claude-error-forwarding`: raw-body capture in `parseUpstreamError`, byte-identical forwarding with the internal string preserved, envelope fallback for non-JSON bodies, and chatCore gating to Claude-format targets only.
+
 # v0.9.64 (2026-11-05)
 
 ## Fixes
