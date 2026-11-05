@@ -125,6 +125,26 @@ function formatTimeRemaining(value) {
   return days > 0 ? `${days}d ${hours}h` : `${hours}h`;
 }
 
+// Seconds until the next auto-refresh. Owns its 1s interval so the tick
+// re-renders only this label, not the whole quota page. `cycle` increments
+// on every refreshAll() to restart the count.
+function RefreshCountdown({ cycle }) {
+  const [seconds, setSeconds] = useState(60);
+  useEffect(() => { setSeconds(60); }, [cycle]);
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      setSeconds((prev) => (prev <= 1 ? 60 : prev - 1));
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <span className="text-[10px] text-text-muted tabular-nums">
+      ({seconds}s)
+    </span>
+  );
+}
+
 export default function ProviderLimits() {
   const { copied, copy } = useCopyToClipboard();
   const [connections, setConnections] = useState([]);
@@ -136,7 +156,7 @@ export default function ProviderLimits() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [hasHydratedAutoRefresh, setHasHydratedAutoRefresh] = useState(false);
   const [refreshingAll, setRefreshingAll] = useState(false);
-  const [countdown, setCountdown] = useState(60);
+  const [refreshCycle, setRefreshCycle] = useState(0);
   const [connectionsLoading, setConnectionsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState(null);
   const [togglingId, setTogglingId] = useState(null);
@@ -169,7 +189,6 @@ export default function ProviderLimits() {
   });
 
   const intervalRef = useRef(null);
-  const countdownRef = useRef(null);
   const tickCountRef = useRef(0);
 
   const fetchConnections = useCallback(
@@ -460,7 +479,7 @@ export default function ProviderLimits() {
     if (refreshingAll) return;
 
     setRefreshingAll(true);
-    setCountdown(60);
+    setRefreshCycle((c) => c + 1);
 
     // Throttle Claude: poll its quota every Nth auto-tick (manual force bypasses)
     const tick = (tickCountRef.current += 1);
@@ -499,14 +518,22 @@ export default function ProviderLimits() {
       const visibleConnections = await fetchConnections(page);
       setConnectionsLoading(false);
 
-      // Always fetch fresh quota on mount, no cache display
+      // Stale-while-revalidate: paint last-known quota from cache
+      // immediately, then fetch fresh values in the background. Cards with
+      // cached data keep showing it while their refresh is in flight.
       setLoading(buildLoadingState(visibleConnections));
       setErrors((prev) =>
         filterQuotaStateByConnections(prev, visibleConnections),
       );
-      setQuotaData((prev) =>
-        filterQuotaStateByConnections(prev, visibleConnections),
-      );
+      setQuotaData((prev) => {
+        const kept = filterQuotaStateByConnections(prev, visibleConnections);
+        const cache = getQuotaCache();
+        const seeded = { ...kept };
+        for (const conn of visibleConnections) {
+          if (!seeded[conn.id] && cache[conn.id]) seeded[conn.id] = cache[conn.id];
+        }
+        return seeded;
+      });
 
       await Promise.all(
         visibleConnections.map((conn) => fetchQuota(conn.id, conn.provider)),
@@ -575,10 +602,6 @@ export default function ProviderLimits() {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
-      if (countdownRef.current) {
-        clearInterval(countdownRef.current);
-        countdownRef.current = null;
-      }
       return;
     }
 
@@ -587,17 +610,9 @@ export default function ProviderLimits() {
       refreshAll();
     }, REFRESH_INTERVAL_MS);
 
-    // Countdown interval
-    countdownRef.current = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) return 60;
-        return prev - 1;
-      });
-    }, 1000);
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
-      if (countdownRef.current) clearInterval(countdownRef.current);
     };
   }, [autoRefresh, refreshAll, hasHydratedAutoRefresh]);
 
@@ -609,16 +624,9 @@ export default function ProviderLimits() {
           clearInterval(intervalRef.current);
           intervalRef.current = null;
         }
-        if (countdownRef.current) {
-          clearInterval(countdownRef.current);
-          countdownRef.current = null;
-        }
       } else if (autoRefresh && hasHydratedAutoRefresh) {
         // Resume auto-refresh when tab becomes visible
         intervalRef.current = setInterval(() => refreshAll(), REFRESH_INTERVAL_MS);
-        countdownRef.current = setInterval(() => {
-          setCountdown((prev) => (prev <= 1 ? 60 : prev - 1));
-        }, 1000);
       }
     };
 
@@ -949,11 +957,7 @@ export default function ProviderLimits() {
             <span className="hidden text-text-primary sm:inline">
               Auto-refresh
             </span>
-            {autoRefresh && (
-              <span className="text-[10px] text-text-muted tabular-nums">
-                ({countdown}s)
-              </span>
-            )}
+            {autoRefresh && <RefreshCountdown cycle={refreshCycle} />}
           </button>
 
 
@@ -1196,13 +1200,13 @@ export default function ProviderLimits() {
               </div>
 
               <div className="px-2 py-1.5">
-                {isLoading ? (
+                {isLoading && !quota ? (
                   <div className="text-center py-5 text-text-muted">
                     <span className="material-symbols-outlined text-[28px] animate-spin">
                       progress_activity
                     </span>
                   </div>
-                ) : error ? (
+                ) : error && !isLoading ? (
                   <div className="text-center py-5">
                     <span className="material-symbols-outlined text-[28px] text-red-500">
                       error
