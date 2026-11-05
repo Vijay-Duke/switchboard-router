@@ -789,6 +789,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   const excludeConnectionIds = new Set();
   let lastError = null;
   let lastStatus = null;
+  let lastResultResponse = null;
   const nativeClaudeCredentials = getNativeClaudeCredentials({
     request,
     provider,
@@ -844,7 +845,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         return errorResponse(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${provider}`);
       }
       log.warn("CHAT", "No more accounts available", { provider });
-      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
+      // Prefer the last upstream error as-is (Claude routes forward it raw
+      // for Claude Code's wording-based retry) over re-wrapping its message.
+      return lastResultResponse || errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
     }
 
     // Log account selection
@@ -980,6 +983,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       excludeConnectionIds.add(credentials.connectionId);
       lastError = result.error;
       lastStatus = result.status;
+      lastResultResponse = result.response;
       continue;
     }
 

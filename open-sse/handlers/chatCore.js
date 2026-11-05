@@ -570,7 +570,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (!providerResponse.ok) {
     trackPendingRequest(model, provider, connectionId, false, true);
     reqLogger?.close?.();
-    const { statusCode, message: upstreamMessage, resetsAtMs } = await parseUpstreamError(providerResponse, executor);
+    const { statusCode, message: upstreamMessage, resetsAtMs, rawBody } = await parseUpstreamError(providerResponse, executor);
     // A dead refresh token is actionable by the user; the raw upstream 401 is not.
     const message = reauthMessage || upstreamMessage;
     saveRequestDetail(buildRequestDetail({
@@ -588,7 +588,15 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     const errMsg = formatProviderError(new Error(message), provider, model, statusCode);
     console.log(`${COLORS.red}[ERROR] ${errMsg}${COLORS.reset}`);
     reqLogger.logError(new Error(message), finalBody || translatedBody);
-    return createErrorResult(statusCode, errMsg, resetsAtMs);
+    // Claude-to-Claude routes forward the upstream error body unmodified:
+    // Claude Code's capability-rejection recovery matches on its exact
+    // wording. The internal error string above keeps its prefixed form
+    // for account fallback and logs. A reauth message is gateway-made,
+    // so it never masquerades as an upstream body.
+    const forwardRaw = !reauthMessage && sourceFormat === FORMATS.CLAUDE && targetFormat === FORMATS.CLAUDE
+      ? rawBody
+      : undefined;
+    return createErrorResult(statusCode, errMsg, resetsAtMs, forwardRaw);
   }
 
   const reexecuteBody = async () => {

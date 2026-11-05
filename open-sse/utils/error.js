@@ -99,7 +99,7 @@ export async function parseUpstreamError(response, executor = null) {
       const parsed = executor.parseError(response, bodyText);
       if (parsed && typeof parsed === "object") {
         const msg = parsed.message || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
-        return { statusCode: parsed.status || response.status, message: msg, resetsAtMs: parsed.resetsAtMs };
+        return { statusCode: parsed.status || response.status, message: msg, resetsAtMs: parsed.resetsAtMs, rawBody: bodyText };
       }
     } catch { /* fall through to default parsing */ }
   }
@@ -119,23 +119,38 @@ export async function parseUpstreamError(response, executor = null) {
   const messageStr = typeof message === "string" ? message : "";
   const finalMessage = messageStr || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
 
-  return { statusCode: response.status, message: finalMessage };
+  return { statusCode: response.status, message: finalMessage, rawBody: bodyText };
 }
 
 /**
  * Create error result for chatCore handler
  * @param {number} statusCode - HTTP status code
- * @param {string} message - Error message
+ * @param {string} message - Internal error message (fallback classification, logs)
  * @param {number} [resetsAtMs] - Optional precise cooldown expiry (ms epoch) for provider-specific quota errors
+ * @param {string} [rawBody] - Optional raw upstream error body. When it is
+ *   valid JSON, the client-facing response forwards it byte-for-byte instead
+ *   of the gateway envelope: Claude Code's capability-rejection recovery
+ *   matches on the upstream's exact error wording, which any re-wrapping
+ *   (envelope or `[400]:` prefix) breaks. `error` keeps `message` either way.
  * @returns {{ success: false, status: number, error: string, response: Response, resetsAtMs?: number }}
  */
-export function createErrorResult(statusCode, message, resetsAtMs) {
+export function createErrorResult(statusCode, message, resetsAtMs, rawBody) {
+  let response = null;
+  if (typeof rawBody === "string" && rawBody) {
+    try {
+      JSON.parse(rawBody);
+      response = new Response(rawBody, {
+        status: statusCode,
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch { /* non-JSON (or truncated) upstream body: keep the envelope */ }
+  }
   return {
     success: false,
     status: statusCode,
     error: message,
     resetsAtMs,
-    response: errorResponse(statusCode, message)
+    response: response || errorResponse(statusCode, message)
   };
 }
 
