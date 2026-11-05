@@ -174,6 +174,12 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (statefulClaude && !passthrough) {
     return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Claude provider-managed threads require a native Claude provider.");
   }
+  // Server-side classifier review (`safeguards`) is provider-owned and
+  // opaque like a provider-managed thread: on the native route the body
+  // must reach Anthropic unmodified, so token savers, tool dedupe, and
+  // cache re-anchoring are all skipped for these requests.
+  const safeguardsPassthrough = passthrough && sourceFormat === FORMATS.CLAUDE && body?.safeguards !== undefined;
+  const opaqueClaude = statefulClaude || safeguardsPassthrough;
 
   // Expose raw client headers to translators/executors for session-id resolution
   if (credentials) credentials.rawHeaders = clientRawRequest?.headers || {};
@@ -241,7 +247,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   noteToolHistory("normalized", translatedBody, passthrough ? sourceFormat : targetFormat);
 
   // Dedupe duplicate built-in tools when equivalent MCP tools are present (Claude clients only).
-  if (!statefulClaude && clientTool === "claude" && Array.isArray(translatedBody.tools)) {
+  if (!opaqueClaude && clientTool === "claude" && Array.isArray(translatedBody.tools)) {
     const { tools: deduped, stripped } = dedupeTools(translatedBody.tools);
     if (stripped.length > 0) {
       translatedBody.tools = deduped;
@@ -266,7 +272,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     // chatCore must never re-derive it: translators can rewrite tool-call ids, so a
     // key computed here (post-translation) could diverge from the search/repair key
     // and strand stored entries. No key → skip vaulting.
-    const vaultOn = !statefulClaude && vaultEnabled && vaultConversationId && Array.isArray(translatedBody?.tools) && translatedBody.tools.length > 0
+    const vaultOn = !opaqueClaude && vaultEnabled && vaultConversationId && Array.isArray(translatedBody?.tools) && translatedBody.tools.length > 0
       && (sourceFormat === FORMATS.OPENAI || sourceFormat === FORMATS.CLAUDE);
     if (vaultOn) {
       const thresholdBytes = clampVaultThresholdKB(vaultThresholdKB ?? 8) * 1024;
@@ -278,7 +284,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
 
   // Per-request opt-out: client can bypass all token savers via header
-  const tokenSaverEnabled = !statefulClaude && clientRawRequest?.headers?.[TOKEN_SAVER_HEADER]?.toLowerCase() !== "off";
+  const tokenSaverEnabled = !opaqueClaude && clientRawRequest?.headers?.[TOKEN_SAVER_HEADER]?.toLowerCase() !== "off";
 
   noteToolHistory("vault", translatedBody, finalFormat);
 
@@ -369,7 +375,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
   // Pin cache breakpoints to the final body — every saver above can reshape
   // system/tools/messages, and a stale anchor costs a full prefix rewrite.
-  if (!statefulClaude && passthrough && clientTool === "claude") anchorClaudeCache(translatedBody);
+  if (!opaqueClaude && passthrough && clientTool === "claude") anchorClaudeCache(translatedBody);
 
   const executor = getExecutor(provider);
   trackPendingRequest(model, provider, connectionId, true);

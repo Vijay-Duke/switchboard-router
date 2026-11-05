@@ -155,11 +155,13 @@ export function createSSEStream(options = {}) {
     if (!eventText.trim()) return;
 
     const lines = eventText.split(/\r?\n/);
+    let eventName = null;
     for (const line of lines) trackSSELineStats(line.trim());
     for (const line of lines) {
       const trimmed = line.trim();
       if (trimmed.startsWith("event:")) {
         const name = trimmed.slice(6).trim();
+        eventName = name;
         if (name.startsWith("response.")) passthroughResponsesFramingSeen = true;
         if (name === "response.completed" || name === "response.done" || name === "response.failed" || name === "response.incomplete") {
           passthroughResponsesTerminalSeen = true;
@@ -326,6 +328,11 @@ export function createSSEStream(options = {}) {
 
     if (!injectedUsage && !output) {
       output = normalizePassthroughEvent(lines);
+    } else if (output && eventName && !output.startsWith("event:")) {
+      // Re-serialized frames (usage injection, tool decloak, id fix) must
+      // keep their SSE event line: clients dispatch on it, and dropping it
+      // loses event types this gateway does not know about.
+      output = `event: ${eventName}\n${output}`;
     }
 
     reqLogger?.appendConvertedChunk?.(output);

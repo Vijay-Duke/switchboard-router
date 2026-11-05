@@ -369,6 +369,24 @@ function claudeOverlayTupleMatches(overlay, snapshot) {
   return version === snapshot?.version;
 }
 
+const CLAUDE_CLIENT_UA_RE = /claude-(?:cli|code)\/\d+\.\d+\.\d+/i;
+
+// Union comma-separated anthropic-beta values, preserving first-seen order.
+function mergeAnthropicBetas(...values) {
+  const parts = [];
+  const seen = new Set();
+  for (const value of values) {
+    for (const beta of String(value || "").split(",")) {
+      const trimmed = beta.trim();
+      if (trimmed && !seen.has(trimmed)) {
+        parts.push(trimmed);
+        seen.add(trimmed);
+      }
+    }
+  }
+  return parts.join(",");
+}
+
 function sanitizeClaudeOverlay(overlay, snapshot) {
   const sanitized = { ...(overlay || {}) };
   const keepTuple = claudeOverlayTupleMatches(sanitized, snapshot);
@@ -410,6 +428,18 @@ export function applyIdentity(base, profileId, opts = {}) {
     ? Object.entries(base || {}).find(([key]) => key.toLowerCase() === "user-agent") || null
     : null;
   const merged = mergeHeadersCaseInsensitive(base, identity);
+  // Capability betas are an open list, not a version fingerprint: a genuine
+  // Claude client's per-request values (e.g. the one paired with a
+  // `safeguards` body field) must reach the upstream even when its version
+  // tuple differs from the harvested snapshot, or the paired feature turns
+  // off / 400s. Capture them before sanitizeClaudeOverlay drops the tuple;
+  // they are unioned into the final header below. Gated on a Claude
+  // User-Agent so arbitrary SDK junk is not forwarded upstream.
+  const clientBeta = profileId === "claude-cli"
+    && opts.overlay && typeof opts.overlay === "object"
+    && CLAUDE_CLIENT_UA_RE.test(String(headerValue(opts.overlay, "user-agent") || ""))
+    ? headerValue(opts.overlay, "anthropic-beta")
+    : null;
   const overlay = opts.overlay && typeof opts.overlay === "object"
     ? (profileId === "claude-cli" ? sanitizeClaudeOverlay(opts.overlay, opts.snapshot) : { ...opts.overlay })
     : {};
@@ -431,6 +461,14 @@ export function applyIdentity(base, profileId, opts = {}) {
     if (typeof opts.retryCount === "number") {
       for (const key of Object.keys(overlaid)) if (key.toLowerCase() === "x-stainless-retry-count") delete overlaid[key];
       overlaid["X-Stainless-Retry-Count"] = String(opts.retryCount);
+    }
+    const baseBeta = headerValue(base, "anthropic-beta");
+    if (clientBeta || baseBeta) {
+      const unioned = mergeAnthropicBetas(headerValue(identity, "anthropic-beta"), baseBeta, clientBeta);
+      if (unioned) {
+        const existing = Object.keys(overlaid).find((key) => key.toLowerCase() === "anthropic-beta");
+        overlaid[existing || "Anthropic-Beta"] = unioned;
+      }
     }
   }
   for (const [lower, [key, value]] of auth) {

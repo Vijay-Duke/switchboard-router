@@ -112,7 +112,7 @@ describe("wrapHeaders", () => {
     expect(headers["x-stainless-helper-method"]).toBeUndefined();
   });
 
-  it("ignores a complete newer overlay tuple but keeps request identifiers", () => {
+  it("ignores a complete newer overlay tuple but keeps request identifiers and unions capability betas", () => {
     const { headers } = wrapHeaders(
       { Authorization: "Bearer t" },
       {
@@ -131,7 +131,11 @@ describe("wrapHeaders", () => {
     );
     expect(headers["User-Agent"]).toContain("claude-cli/2.1.302");
     expect(headers["X-Stainless-Package-Version"]).not.toBe("0.99.0");
+    // Betas are capabilities, not fingerprint: the client's values are
+    // unioned with the snapshot's instead of replacing or dropping them.
     expect(headers["Anthropic-Beta"]).not.toBe("new-beta");
+    expect(headers["Anthropic-Beta"].split(",")).toContain("new-beta");
+    expect(headers["Anthropic-Beta"].split(",")).toContain("interleaved-thinking-2025-05-14");
     expect(headers["x-claude-code-session-id"]).toBe("session-new");
     expect(headers["x-client-request-id"]).toBe("request-new");
   });

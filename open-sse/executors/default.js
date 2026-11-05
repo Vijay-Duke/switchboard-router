@@ -37,6 +37,20 @@ function applyAuth(headers, desc, credentials) {
   if (desc.anthropicVersion && !headers["anthropic-version"]) headers["anthropic-version"] = ANTHROPIC_API_VERSION;
 }
 
+// Official Anthropic upstream (the only one that implements server-side
+// classifier review): the `claude`/`anthropic` providers, or an
+// anthropic-compatible node / runtime transport on api.anthropic.com.
+export function isOfficialAnthropicUpstream(provider, credentials) {
+  if (provider === "claude" || provider === "anthropic") return true;
+  const baseUrl = credentials?.runtimeTransport?.baseUrl
+    || credentials?.providerSpecificData?.baseUrl
+    || "";
+  if (provider?.startsWith?.("anthropic-compatible-")) {
+    return baseUrl === "" || baseUrl.includes("api.anthropic.com");
+  }
+  return baseUrl.includes("api.anthropic.com");
+}
+
 // Provider-specific header quirks kept as small hooks (not pure auth).
 const HEADER_HOOKS = {
   kimiHeaders: (h, c) => Object.assign(h, buildKimiHeaders(c?.providerSpecificData?.deviceId)),
@@ -74,6 +88,13 @@ export class DefaultExecutor extends BaseExecutor {
     const transformed = this.applyJsonSchemaFallback(body);
 
     if (transformed && typeof transformed === "object") {
+      // `safeguards` (server-side classifier review) only exists on the
+      // official Anthropic API. Forwarding it elsewhere 400s as an unknown
+      // field; removing field+beta together turns the feature off quietly
+      // (the client's beta is not forwarded to these upstreams either).
+      if (transformed.safeguards !== undefined && !isOfficialAnthropicUpstream(this.provider, credentials)) {
+        delete transformed.safeguards;
+      }
       // quirk: some openai-compatible providers reject Anthropic's client_metadata field
       if (this.config.quirks?.dropClientMetadata) {
         delete transformed.client_metadata;
