@@ -1,3 +1,15 @@
+# v0.9.64 (2026-11-05)
+
+## Fixes
+- **Auto-mode server-side classifier**: Claude Code's `safeguards` request field and its paired `anthropic-beta` value now reach official Anthropic upstreams unchanged, and `safeguard_results` return intact — sessions through the gateway are eligible for no-charge server-side classifier review instead of falling back to billed classifier calls. The identity layer unions a genuine Claude client's capability betas into the outbound header (previously dropped whenever the client version differed from the harvested snapshot), `safeguards` is stripped for non-Anthropic upstreams that would reject it, token savers/tool dedupe/cache re-anchoring skip these requests, and re-serialized SSE frames keep their `event:` line.
+- **Vault prompt-cache busting**: vault IDs are now content-addressed (`sha256(conversationId + content)`) instead of per-request random. The random ID rewrote history at the first vaulted tool result on every resend, so the upstream cache prefix stopped matching (cache reads pinned at system+tools) and conversations were re-billed as cache writes each turn. Storage also dedupes: resends refresh one row instead of accumulating duplicates.
+- **Quota page refresh**: background refreshes no longer blank every card to a spinner. Cards keep their last values while refreshing, first paint seeds from the cached quota, and the 1-second countdown ticks in an isolated component instead of re-rendering the whole page.
+
+## Tests
+- `claude-safeguards-passthrough` / `claude-safeguards-chatcore`: beta union across client/snapshot versions, safeguards kept for official Anthropic and stripped for third-party upstreams, token savers off on the native route, SSE event-line preservation with unknown events and untouched tool-use IDs.
+- `rtk-vault`: byte-identical history across resends of the same tool result, single-row dedupe, distinct IDs per content/conversation.
+- `quota-partial-refresh`: displayed quota stays visible while a refresh is in flight.
+
 # v0.9.63 (2026-11-01)
 
 ## Fixes
