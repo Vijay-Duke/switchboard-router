@@ -162,7 +162,7 @@ export async function getGlmUsage(apiKey, provider, proxyOptions = null) {
     const quotas = {};
 
     for (const limit of limits) {
-      if (!limit || !["TOKENS_LIMIT", "TIME_LIMIT"].includes(limit.type)) continue;
+      if (!limit || !["TOKENS_LIMIT", "CREDIT_LIMIT", "TIME_LIMIT"].includes(limit.type)) continue;
       if (limit.type === "TIME_LIMIT") {
         quotas["Tools"] = { used: quotaNumber(limit.currentValue), total: quotaNumber(limit.usage), remaining: quotaNumber(limit.remaining), resetAt: parseResetTime(limit.nextResetTime), unlimited: false };
         continue;
@@ -172,7 +172,15 @@ export async function getGlmUsage(apiKey, provider, proxyOptions = null) {
       const resetMs = Number(limit.nextResetTime) || 0;
       const remaining = usedPercent === null || usedPercent < 0 ? null : Math.max(0, 100 - usedPercent);
 
-      const name = quotas.session ? `session ${Object.keys(quotas).length + 1}` : "session";
+      // Key by window (unit 3 = hours, unit 6 = weekly) so credit plans and
+      // multi-interval plans don't overwrite each other (upstream fcfcced4).
+      let base;
+      if (limit.unit === 3 && Number(limit.number) > 0) base = `Session (${limit.number}h)`;
+      else if (limit.unit === 6) base = "Weekly (7d)";
+      else if (limit.type === "TOKENS_LIMIT") base = "session";
+      else base = Number(limit.number) > 0 ? `Limit (${limit.number})` : "Credits";
+      let name = base;
+      for (let i = 2; quotas[name]; i++) name = `${base} ${i}`;
       quotas[name] = {
         used: usedPercent,
         total: 100,
