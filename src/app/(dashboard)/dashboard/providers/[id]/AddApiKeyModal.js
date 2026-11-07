@@ -4,6 +4,7 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import { Button, Badge, Input, Modal, Select } from "@/shared/components";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
+import { parseBulkKeyLine } from "./bulkKeyLine";
 
 const BULK_PLACEHOLDER = `name1|sk-key1\nname2|sk-key2\nsk-key-only-auto-named`;
 export default function AddApiKeyModal({ isOpen, provider, providerName, isCompatible, isAnthropic, authType, authHint, website, error, onSave, onBulkDone, onClose }) {
@@ -141,13 +142,11 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     let success = 0;
     let failed = 0;
     for (let i = 0; i < lines.length; i++) {
-      const parts = lines[i].split("|");
-      const apiKey = parts.length >= 2 ? parts.slice(1).join("|").trim() : parts[0].trim();
+      const { baseName, apiKey } = parseBulkKeyLine(lines[i]);
       if (!apiKey) {
         failed++;
         continue;
       }
-      const baseName = parts.length >= 2 ? parts[0].trim() || "Key" : "Key";
       const name = `${baseName} ${i + 1}`;
       try {
         const res = await fetch("/api/providers", {
