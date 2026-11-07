@@ -29,7 +29,10 @@ const moduleDefault = {
       scope: "all",
     },
   },
-  models: [],
+  models: [
+    // Endpoint formats differ per model, so declare non-chat models explicitly.
+    { id: "union-alpha", name: "Union Alpha Free", targetFormat: "claude" },
+  ],
   modelsFetcher: { url: "https://opencode.ai/zen/v1/models", type: "opencode-free" },
   passthroughModels: true,
 };

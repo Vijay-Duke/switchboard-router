@@ -2,9 +2,15 @@ import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
+import { ANTHROPIC_API_VERSION } from "../providers/shared.js";
 
 // Models that use /zen/v1/messages (claude format)
-const MESSAGES_MODELS = new Set();
+const MESSAGES_MODELS = new Set(["union-alpha"]);
+
+// Strip the thinking suffix "model(level)" so checks hit the base id.
+function baseModelId(model) {
+  return String(model || "").replace(/\([^()]+\)\s*$/, "").trim();
+}
 
 export class OpenCodeExecutor extends BaseExecutor {
   constructor() {
@@ -18,12 +24,12 @@ export class OpenCodeExecutor extends BaseExecutor {
 
   buildUrl(model) {
     const base = this.config.baseUrl;
-    return MESSAGES_MODELS.has(model)
+    return MESSAGES_MODELS.has(baseModelId(model))
       ? `${base}/zen/v1/messages`
       : `${base}/zen/v1/chat/completions`;
   }
 
-  buildHeaders(credentials, stream = true) {
+  buildHeaders(credentials, stream = true, url = "") {
     const headers = {
       "Content-Type": "application/json",
       "Authorization": "Bearer public",
@@ -41,6 +47,7 @@ export class OpenCodeExecutor extends BaseExecutor {
       });
     }
     if (stream) headers["Accept"] = "text/event-stream";
+    if (String(url).endsWith("/messages")) headers["anthropic-version"] = ANTHROPIC_API_VERSION;
     return headers;
   }
 }
