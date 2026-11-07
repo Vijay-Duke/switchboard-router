@@ -3,6 +3,7 @@
 
 import { quotaUnavailableReason } from "open-sse/services/usage/quotaValidity.js";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import QuotaTable from "./QuotaTable";
 import Toggle from "@/shared/components/Toggle";
@@ -165,7 +166,24 @@ export default function ProviderLimits() {
   const [resetCreditsState, setResetCreditsState] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState(null);
-  const [providerFilter, setProviderFilter] = useState("all");
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  // ?provider= deep link: initialize from the URL and keep it in sync so a
+  // filtered Quota Tracker view can be bookmarked (upstream #4217).
+  const [providerFilter, setProviderFilterState] = useState(
+    () => searchParams?.get("provider") || "all"
+  );
+  const setProviderFilter = useCallback((value) => {
+    setProviderFilterState(value);
+    try {
+      const params = new URLSearchParams(searchParams?.toString() || "");
+      if (value === "all") params.delete("provider");
+      else params.set("provider", value);
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    } catch { /* best-effort URL sync */ }
+  }, [pathname, router, searchParams]);
   const [providerOptions, setProviderOptions] = useState([]);
   const [accountFilter, setAccountFilter] = useState("all");
   const [quotaSortMode, setQuotaSortMode] = useState("default");
