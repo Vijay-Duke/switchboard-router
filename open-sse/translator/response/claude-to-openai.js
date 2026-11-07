@@ -92,9 +92,8 @@ export function claudeToOpenAIResponse(chunk, state) {
         break;
       }
       if (block?.type === CLAUDE_BLOCK.THINKING) {
-        state.inThinkingBlock = true;
-        state.currentBlockIndex = chunk.index;
-        results.push(createChunk(state, { content: "<think>" }));
+        // Thinking travels only in reasoning_content. No "<think>" markers in
+        // content: OpenAI-format clients render them as literal text.
       } else if (block?.type === CLAUDE_BLOCK.REDACTED_THINKING) {
         // Opaque ciphertext: a visible reasoning placeholder, never the data.
         // Not a <think> span — nothing streams for it, so no marker pair.
@@ -159,10 +158,6 @@ export function claudeToOpenAIResponse(chunk, state) {
       if (state.serverToolBlockIndex !== -1 && chunk.index === state.serverToolBlockIndex) {
         state.serverToolBlockIndex = -1;
         break;
-      }
-      if (state.inThinkingBlock && chunk.index === state.currentBlockIndex) {
-        results.push(createChunk(state, { content: "</think>" }));
-        state.inThinkingBlock = false;
       }
       break;
     }
