@@ -445,6 +445,32 @@ export function anchorClaudeCache(body) {
   return body;
 }
 
+// Anthropic itself reads images inside tool_result; other Anthropic-compatible
+// endpoints (OpenCode Go, Kimi, DeepSeek, GLM, MiniMax) accept image blocks only
+// as user content and silently drop them inside a tool result. Move a tool's
+// screenshot out of the result and into the same user turn, after the results.
+export function hoistToolResultImages(body) {
+  if (!Array.isArray(body?.messages)) return body;
+  let touched = false;
+  const messages = body.messages.map((msg) => {
+    if (msg?.role !== ROLE.USER || !Array.isArray(msg.content)) return msg;
+    const hoisted = [];
+    const content = msg.content.map((block) => {
+      if (block?.type !== CLAUDE_BLOCK.TOOL_RESULT || !Array.isArray(block.content)) return block;
+      const images = block.content.filter((c) => c?.type === CLAUDE_BLOCK.IMAGE);
+      if (!images.length) return block;
+      const rest = block.content.filter((c) => c?.type !== CLAUDE_BLOCK.IMAGE);
+      hoisted.push({ type: CLAUDE_BLOCK.TEXT, text: `[Image from tool result ${block.tool_use_id}]` }, ...images);
+      return { ...block, content: rest.length ? rest : [{ type: CLAUDE_BLOCK.TEXT, text: "(image attached below)" }] };
+    });
+    if (!hoisted.length) return msg;
+    touched = true;
+    // tool_result blocks must lead a user message; the hoisted images follow them.
+    return { ...msg, content: [...content, ...hoisted] };
+  });
+  return touched ? { ...body, messages } : body;
+}
+
 // Prepare request for Claude format endpoints
 // - Cleanup cache_control
 // - Filter empty messages
@@ -697,6 +723,12 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
       delete body.tools;
       delete body.tool_choice;
     }
+  }
+
+  // Anthropic's own endpoints (claude OAuth, anthropic API key, anthropic-compatible
+  // nodes in front of Anthropic) read images inside tool_result natively.
+  if (provider !== "claude" && provider !== "anthropic" && !provider?.startsWith("anthropic-compatible")) {
+    body = hoistToolResultImages(body);
   }
 
   // A tool loop's final tool results: cached now, so the next step reads them.

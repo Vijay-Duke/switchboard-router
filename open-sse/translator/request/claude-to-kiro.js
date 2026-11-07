@@ -202,11 +202,21 @@ function convertClaudeMessagesToKiro(messages, tools, model) {
             if (typeof block.content === "string") {
               resultContent = block.content;
             } else if (Array.isArray(block.content)) {
+              // Images a tool returned (screenshots) ride along as user images;
+              // Kiro tool results are text-only.
+              let hasImage = false;
+              for (const c of block.content) {
+                if (c?.type === CLAUDE_BLOCK.IMAGE && c.source?.type === "base64") {
+                  hasImage = true;
+                  const imageType = c.source.media_type || DEFAULT_IMAGE_MIME;
+                  pendingImages.push({ format: imageType.split("/")[1] || imageType, source: { bytes: c.source.data } });
+                }
+              }
               resultContent =
                 block.content
                   .filter((c) => c.type === CLAUDE_BLOCK.TEXT)
                   .map((c) => c.text)
-                  .join("\n") || JSON.stringify(block.content);
+                  .join("\n") || (hasImage ? "(image attached)" : JSON.stringify(block.content));
             } else if (block.content) {
               resultContent = JSON.stringify(block.content);
             }
