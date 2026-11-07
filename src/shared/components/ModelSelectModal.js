@@ -17,6 +17,7 @@ import {
   getSelectableProviderModelRows,
   isCanonicalModelDisabled,
 } from "@/shared/utils/providerCustomModels";
+import { parseSearchQuery, matchesSearch } from "@/shared/utils/modelSearchFilter";
 
 // Provider order: OAuth first, then Free Tier, then API Key (matches dashboard/providers)
 const PROVIDER_ORDER = [
@@ -36,6 +37,11 @@ export default function ModelSelectModal({
   onClose,
   onSelect,
   onDeselect,
+  // Optional batch handlers for "Select all / Deselect all" over the filtered list.
+  // The buttons only render when provided: per-model onSelect fan-out would lose
+  // updates in parents whose handlers close over a stale list.
+  onSelectBatch,
+  onDeselectBatch,
   selectedModel,
   activeProviders = EMPTY_ARRAY,
   title = "Select Model",
@@ -376,14 +382,16 @@ export default function ModelSelectModal({
     return groups;
   }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, liveModelsByAlias, liveModelsQuery.isSuccess, kindFilter, activeProviders]);
 
+  // Parse once: substring terms, !/- exclusions and /regex/ (modelSearchFilter.js).
+  const parsedQuery = useMemo(() => parseSearchQuery(searchQuery), [searchQuery]);
+
   // Filter combos by search query (and hide combos when kindFilter is set — combos are LLM-only by design)
   const filteredCombos = useMemo(() => {
     if (kindFilter || capFilter) return [];
     const availableCombos = combos.filter((combo) => combo.name !== excludeCombo);
-    if (!searchQuery.trim()) return availableCombos;
-    const query = searchQuery.toLowerCase();
-    return availableCombos.filter((combo) => combo.name.toLowerCase().includes(query));
-  }, [combos, searchQuery, kindFilter, excludeCombo, capFilter]);
+    if (parsedQuery.isEmpty) return availableCombos;
+    return availableCombos.filter((combo) => matchesSearch(combo.name, parsedQuery));
+  }, [combos, parsedQuery, kindFilter, excludeCombo, capFilter]);
 
   // Sort models alphabetically, with added models floated to top
   const sortModels = useCallback((models) => {
@@ -415,7 +423,7 @@ export default function ModelSelectModal({
         if (models.length > 0) groups[providerId] = { ...group, models };
       });
     }
-    const queried = filterModelGroupsByQuery(groups, searchQuery);
+    const queried = filterModelGroupsByQuery(groups, parsedQuery);
     const filtered = {};
     Object.entries(queried).forEach(([providerId, group]) => {
       filtered[providerId] = {
@@ -427,7 +435,34 @@ export default function ModelSelectModal({
     });
 
     return filtered;
-  }, [groupedModels, searchQuery, sortModels, capFilter, getCaps]);
+  }, [groupedModels, parsedQuery, sortModels, capFilter, getCaps]);
+
+  // Visible (filtered, non-placeholder) models for the batch select/deselect actions.
+  const visibleModels = useMemo(() => {
+    const list = [];
+    Object.values(filteredGroups).forEach((group) => {
+      group.models.forEach((m) => {
+        if (!m.isPlaceholder) list.push(m);
+      });
+    });
+    return list;
+  }, [filteredGroups]);
+  const visibleUnadded = useMemo(
+    () => visibleModels.filter((m) => !addedModelValues.includes(m.value)),
+    [visibleModels, addedModelValues],
+  );
+  const visibleAdded = useMemo(
+    () => visibleModels.filter((m) => addedModelValues.includes(m.value)),
+    [visibleModels, addedModelValues],
+  );
+
+  const handleSelectAllVisible = () => {
+    if (visibleUnadded.length > 0) onSelectBatch?.(visibleUnadded);
+  };
+
+  const handleDeselectAllVisible = () => {
+    if (visibleAdded.length > 0) onDeselectBatch?.(visibleAdded);
+  };
 
   const handleSelect = (model) => {
     const value = model?.value || model?.name || model;
@@ -487,14 +522,59 @@ export default function ModelSelectModal({
           <input
             ref={searchInputRef}
             type="text"
-            placeholder="Search..."
+            placeholder="Search (e.g. claude -haiku, !embed, /regex/)..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             autoFocus
             aria-label="Search models"
-            className="w-full pl-8 pr-3 py-1.5 bg-surface border border-border rounded text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
+            className="w-full pl-8 pr-20 py-1.5 bg-surface border border-border rounded text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
           />
+          <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            {parsedQuery.isRegex && (
+              <span className="rounded bg-primary/10 px-1 py-0.5 font-mono text-[10px] text-primary">regex</span>
+            )}
+            {parsedQuery.negativeTerms.length > 0 && !parsedQuery.isRegex && (
+              <span className="rounded bg-amber-500/10 px-1 py-0.5 font-mono text-[10px] text-amber-600 dark:text-amber-400">!exclude</span>
+            )}
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                aria-label="Clear search"
+                className="rounded p-0.5 text-text-muted hover:text-text-main"
+              >
+                <span className="material-symbols-outlined text-[14px]">close</span>
+              </button>
+            )}
+          </div>
         </div>
+        {!closeOnSelect && visibleModels.length > 0 && (onSelectBatch || onDeselectBatch) && (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-text-muted">
+            <span>{visibleModels.length} model{visibleModels.length === 1 ? "" : "s"} shown</span>
+            <div className="flex items-center gap-1.5">
+              {visibleUnadded.length > 0 && onSelectBatch && (
+                <button
+                  type="button"
+                  onClick={handleSelectAllVisible}
+                  className="rounded border border-border px-2 py-0.5 hover:border-primary hover:text-primary"
+                  title="Select all filtered models"
+                >
+                  Select all ({visibleUnadded.length})
+                </button>
+              )}
+              {visibleAdded.length > 0 && onDeselectBatch && (
+                <button
+                  type="button"
+                  onClick={handleDeselectAllVisible}
+                  className="rounded border border-border px-2 py-0.5 hover:border-red-500 hover:text-red-500"
+                  title="Deselect all filtered models"
+                >
+                  Deselect all ({visibleAdded.length})
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Models grouped by provider - fixed height so the modal does not
@@ -629,6 +709,8 @@ ModelSelectModal.propTypes = {
   onClose: PropTypes.func.isRequired,
   onSelect: PropTypes.func.isRequired,
   onDeselect: PropTypes.func,
+  onSelectBatch: PropTypes.func,
+  onDeselectBatch: PropTypes.func,
   selectedModel: PropTypes.string,
   activeProviders: PropTypes.arrayOf(
     PropTypes.shape({

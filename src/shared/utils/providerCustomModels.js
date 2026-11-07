@@ -2,6 +2,7 @@ import { canonicalModelId } from "@/lib/model-probe/canonicalId.js";
 import { asServiceKind } from "@/shared/utils/importProviderModels";
 import { ALIAS_TO_ID, getProviderAlias } from "@/shared/constants/providers";
 import { PROVIDER_ID_TO_ALIAS } from "open-sse/config/providerModels.js";
+import { matchesSearch, parseSearchQuery } from "@/shared/utils/modelSearchFilter";
 
 function modelType(model) {
   return asServiceKind(model?.kind || model?.type || "llm");
@@ -20,30 +21,31 @@ export function isCanonicalModelDisabled(disabledIds, modelId, providerAlias = "
 }
 
 /**
- * Filter provider-grouped picker models by a free-text query.
- * When the provider NAME matches, every model in that group is kept;
- * otherwise a model matches by its display name, id, or full
- * `provider/model` value (so an `alias/` prefix query works).
+ * Filter provider-grouped picker models by a search query. Supports plain
+ * substrings, multiple terms (all must match), exclusions (`!term` / `-term`)
+ * and regular expressions (`/pattern/flags`) — see modelSearchFilter.js.
+ * When the provider NAME matches, every model in that group is kept (minus any
+ * excluded by a negative term); otherwise a model matches by its display name,
+ * id, or full `provider/model` value (so an `alias/` prefix query works).
  *
  * @param {Record<string, { name?: string, models?: Array<{ name?: string, id?: string, value?: string }> }>} groupedModels
- * @param {string} searchQuery
+ * @param {string | ReturnType<typeof parseSearchQuery>} searchQuery
  * @returns {Record<string, any>} filtered groups (groups with zero models omitted)
  */
 export function filterModelGroupsByQuery(groupedModels, searchQuery) {
-  const query = String(searchQuery || "").trim().toLowerCase();
-  if (!query) return groupedModels || {};
+  const parsed = typeof searchQuery === "string" || !searchQuery ? parseSearchQuery(searchQuery) : searchQuery;
+  if (parsed.isEmpty) return groupedModels || {};
+  const negativeOnly = parsed.negativeTerms.length > 0 ? { ...parsed, positiveTerms: [] } : null;
   const filtered = {};
   for (const [providerId, group] of Object.entries(groupedModels || {})) {
     const models = Array.isArray(group?.models) ? group.models : [];
-    if (group?.name && String(group.name).toLowerCase().includes(query)) {
-      filtered[providerId] = { ...group, models: [...models] };
-      continue;
-    }
-    const kept = models.filter((m) =>
-      String(m?.name || "").toLowerCase().includes(query) ||
-      String(m?.id || "").toLowerCase().includes(query) ||
-      String(m?.value || "").toLowerCase().includes(query),
-    );
+    const providerNameMatches = Boolean(group?.name) && matchesSearch(String(group.name), parsed);
+    const kept = models.filter((m) => {
+      if (matchesSearch(m, parsed)) return true;
+      if (!providerNameMatches) return false;
+      // Provider name matched: keep the model unless a negative term excludes it.
+      return negativeOnly ? matchesSearch(m, negativeOnly) : true;
+    });
     if (kept.length === 0) continue;
     filtered[providerId] = { ...group, models: kept };
   }
