@@ -3,9 +3,14 @@ import REGISTRY from "../providers/registry/index.js";
 // PROVIDER_MODELS now built from providers/registry (transport + models co-located)
 import { PROVIDER_MODELS } from "../providers/index.js";
 import { modelQuotaFamily, modelStrip, modelSupportedFormats, modelTargetFormat, normalizeModelId } from "../providers/models/schema.js";
-import { CODEX_REVIEW_SUFFIX } from "../providers/models/helpers.js";
+import { CODEX_REVIEW_SUFFIX, opencodeFamilyFormats } from "../providers/models/helpers.js";
+import { FORMATS } from "../translator/formats.js";
 
 export { PROVIDER_MODELS };
+
+// OpenCode Go serves a live catalogue (modelsFetcher + passthrough); ids outside
+// the curated registry get their endpoint lane from the family regex.
+const isOpenCodeGoAlias = (aliasOrId) => aliasOrId === "opencode-go" || aliasOrId === "ocg";
 
 
 // Helper functions
@@ -52,13 +57,22 @@ export function findModelName(aliasOrId, modelId) {
 export function getModelTargetFormat(aliasOrId, modelId) {
   const models = PROVIDER_MODELS[aliasOrId];
   if (!models) return null;
-  return modelTargetFormat(findModel(models, modelId, aliasOrId));
+  const found = findModel(models, modelId, aliasOrId);
+  if (found) return modelTargetFormat(found);
+  // Family fallback keeps modelsFetcher/passthrough ids on their endpoint lane
+  if (isOpenCodeGoAlias(aliasOrId)) return opencodeFamilyFormats(modelId)?.targetFormat || null;
+  return null;
 }
 
+// Unknown OpenCode Go ids fall back to the family regex (chat lane by default) so
+// auto-fetched models never wrongly use the sourceFormat-matched transport.
 export function getModelSupportedFormats(aliasOrId, modelId) {
   const models = PROVIDER_MODELS[aliasOrId];
   if (!models) return null;
-  return modelSupportedFormats(findModel(models, modelId, aliasOrId));
+  const found = findModel(models, modelId, aliasOrId);
+  if (found) return modelSupportedFormats(found);
+  if (isOpenCodeGoAlias(aliasOrId)) return opencodeFamilyFormats(modelId)?.supportedFormats || [FORMATS.OPENAI];
+  return null;
 }
 
 export function getModelType(aliasOrId, modelId) {
