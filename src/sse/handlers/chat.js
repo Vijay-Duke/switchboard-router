@@ -911,6 +911,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       headroomCompressUserMessages: bypassFilters
         ? false
         : !!chatSettings.headroomCompressUserMessages,
+      headroomTimeoutMs: chatSettings.headroomTimeoutMs,
       cavemanEnabled: bypassFilters ? false : !!chatSettings.cavemanEnabled,
       cavemanLevel: chatSettings.cavemanLevel || "full",
       ponytailEnabled: bypassFilters ? false : !!chatSettings.ponytailEnabled,

@@ -59,7 +59,7 @@ const URL_CONTROLLED_STREAM_FORMATS = new Set([
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  * @param {AbortSignal} [options.abortSignal] - Optional external abort (e.g. router timeout)
  */
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, onUpstreamEmptyExhausted, clientRawRequest, connectionId, userAgent, clientKeyId, ccFilterNaming, rtkEnabled, vaultEnabled, vaultThresholdKB, vaultTtlHours, vaultConversationId, headroomEnabled, headroomUrl, headroomCompressUserMessages, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, bypassNativePassthrough, vaultInternal, abortSignal }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, onUpstreamEmptyExhausted, clientRawRequest, connectionId, userAgent, clientKeyId, ccFilterNaming, rtkEnabled, vaultEnabled, vaultThresholdKB, vaultTtlHours, vaultConversationId, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, bypassNativePassthrough, vaultInternal, abortSignal }) {
   if (abortSignal?.aborted) return createErrorResult(499, "Request aborted");
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
@@ -302,7 +302,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   // Headroom: optional external proxy compression; fail open if proxy is absent.
   const headroomDiagnostics = {};
-  const headroomStats = await compressWithHeadroom(translatedBody, { enabled: tokenSaverEnabled && headroomEnabled, url: headroomUrl, model: upstreamModel, format: finalFormat, compressUserMessages: headroomCompressUserMessages, diagnostics: headroomDiagnostics });
+  const headroomStats = await compressWithHeadroom(translatedBody, { enabled: tokenSaverEnabled && headroomEnabled, url: headroomUrl, model: upstreamModel, format: finalFormat, compressUserMessages: headroomCompressUserMessages, timeoutMs: headroomTimeoutMs, diagnostics: headroomDiagnostics });
   const headroomLine = formatHeadroomLog(headroomStats);
   const headroomSizeLine = formatHeadroomSizeLog(headroomDiagnostics);
   if (headroomLine) {
