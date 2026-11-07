@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
-import { OAUTH_ENDPOINTS, AG_DEFAULT_TOOLS, AG_TOOL_SUFFIX } from "../config/appConstants.js";
+import { OAUTH_ENDPOINTS, AG_DEFAULT_TOOLS, AG_TOOL_SUFFIX, ANTIGRAVITY_PROMPT_REWRITES } from "../config/appConstants.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
@@ -223,6 +223,22 @@ export class AntigravityExecutor extends BaseExecutor {
     // Strip tools/toolConfig (handled separately) and blacklisted fields that Google rejects
     const { tools: _originalTools, toolConfig: _originalToolConfig, ...requestWithoutTools } = body.request || {};
     stripBlacklisted(requestWithoutTools);
+
+    // Rewrite competing-client branding in system prompts (Zed's Claude Agent SDK line,
+    // OpenCode/Hermes identity, Claude Code billing header) so Antigravity doesn't flag
+    // the request with a 429 Quota Exhausted. Builds new parts; the caller's body is untouched.
+    if (Array.isArray(requestWithoutTools.systemInstruction?.parts)) {
+      requestWithoutTools.systemInstruction = {
+        ...requestWithoutTools.systemInstruction,
+        parts: requestWithoutTools.systemInstruction.parts.map((part) => {
+          if (typeof part?.text !== "string") return part;
+          let text = part.text;
+          for (const { from, to } of ANTIGRAVITY_PROMPT_REWRITES) text = text.replaceAll(from, to);
+          return text === part.text ? part : { ...part, text };
+        }),
+      };
+    }
+
     const generationConfig = { ...(requestWithoutTools.generationConfig || {}) };
     if (generationConfig.maxOutputTokens > MAX_ANTIGRAVITY_OUTPUT_TOKENS) {
       generationConfig.maxOutputTokens = MAX_ANTIGRAVITY_OUTPUT_TOKENS;
