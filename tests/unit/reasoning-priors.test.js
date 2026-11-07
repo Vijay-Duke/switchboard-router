@@ -105,14 +105,21 @@ describe("lookupReasoningPrior", () => {
 describe("getThinkingLevels with catalog priors", () => {
   afterEach(() => __setReasoningPriorsForTests(null));
 
+  // glm-5.1 can still disable thinking; the 5.3 line cannot (z.ai docs, #4409),
+  // so it never offers "none" — see the mandatory case below.
   it("keeps binary ZAI levels when no prior exists (today's behavior)", () => {
     __setReasoningPriorsForTests({});
-    expect(getThinkingLevels("zai", "glm-5.3")).toEqual(["none", "thinking"]);
+    expect(getThinkingLevels("zai", "glm-5.1")).toEqual(["none", "thinking"]);
   });
 
   it("upgrades binary formats from the catalog prior", () => {
+    __setReasoningPriorsForTests({ "glm-5.1": { levels: ["low", "high", "max"] } });
+    expect(getThinkingLevels("zai", "glm-5.1")).toEqual(["none", "low", "high", "max"]);
+  });
+
+  it("never offers 'none' on GLM-5.3, which cannot disable thinking", () => {
     __setReasoningPriorsForTests({ "glm-5.3": { levels: ["low", "high", "max"] } });
-    expect(getThinkingLevels("zai", "glm-5.3")).toEqual(["none", "low", "high", "max"]);
+    expect(getThinkingLevels("zai", "glm-5.3")).toEqual(["low", "high", "max"]);
   });
 
   it("drops 'none' when the prior says reasoning is mandatory", () => {
