@@ -126,7 +126,8 @@ function createChatCompletionState(fallbackModel) {
     seenChunk: false,
     first: null,
     choiceMap: new Map(),
-    usage: null
+    usage: null,
+    error: null
   };
 }
 
@@ -140,6 +141,13 @@ function choiceState(state, index) {
 }
 
 function processChatCompletionChunk(chunk, state) {
+  // A structured in-band error chunk (e.g. Kiro integrity gate, Qoder billing
+  // envelope) means the upstream failed after HTTP 200. Remember it so the
+  // non-streaming caller can reject instead of returning an empty success.
+  if (chunk?.error && !Array.isArray(chunk?.choices)) {
+    state.error = chunk.error;
+    return;
+  }
   if (!state.seenChunk) {
     state.first = chunk || {};
     state.seenChunk = true;
@@ -185,6 +193,7 @@ function processChatCompletionSSELine(line, state) {
 }
 
 function buildChatCompletionResponse(state) {
+  if (state.error) return { error: state.error };
   if (!state.seenChunk) return null;
 
   const first = state.first || {};

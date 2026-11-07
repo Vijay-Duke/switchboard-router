@@ -36,8 +36,10 @@ const PATTERN_THINKING = [
   { pattern: "*codex*", levels: ["low", "medium", "high", "xhigh"] }, // codex cannot disable thinking
   // DeepSeek v4.* (Alibaba MaaS, probed live): effort low|medium|high|xhigh|max
   // all 200 via output_config.effort; "none" is a 400 on the anthropic route
-  // (disable thinking instead). none kept for the picker = disable.
-  { pattern: "*deepseek-v4.*", levels: ["none", "low", "medium", "high", "xhigh", "max"] },
+  // (disable thinking instead). none kept for the picker = disable. Scoped to
+  // the Alibaba lanes: DeepSeek's own API and Command Code only expose high|max.
+  { provider: "alicode", pattern: "*deepseek-v4.*", levels: ["none", "low", "medium", "high", "xhigh", "max"] },
+  { provider: "alicode-intl", pattern: "*deepseek-v4.*", levels: ["none", "low", "medium", "high", "xhigh", "max"] },
   // codebuddy-cn per-model effort sets — the server's product-config payload
   // publishes `reasoning.supportedEfforts` per model. NOTE: the chat endpoint
   // accepts any level you send (probed none/minimal/low/medium/high/xhigh/max
@@ -71,7 +73,9 @@ export function effortWireLevel(levels, level) {
 export function getThinkingLevels(provider, model) {
   const caps = getCapabilitiesForModel(provider, model);
   if (!caps.reasoning) return null;
-  const hit = PATTERN_THINKING.find((p) => matchPattern(p.pattern, model));
+  // Provider-scoped entries (e.g. codebuddy-cn's published supportedEfforts)
+  // must not leak onto the same model id served by another provider.
+  const hit = PATTERN_THINKING.find((p) => (!p.provider || p.provider === provider) && matchPattern(p.pattern, model));
   let levels = hit?.levels || null;
   let prior = null;
   if (!levels) {

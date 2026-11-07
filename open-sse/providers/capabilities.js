@@ -223,6 +223,8 @@ export const PATTERN_CAPABILITIES = [
 
   // ── Kimi (enabled→reasoning_effort; K2.7-code cannot disable) ─────
   { pattern: "*kimi*k2.7*code*", caps: { vision: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 262144, maxOutput: 262144 } },
+  // Kimi K3 family (K3, K3.1 Pro): 1M context, thinking always on.
+  { pattern: "*kimi*k3*",       caps: { vision: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 1048576, maxOutput: 131072 } },
   { pattern: "*kimi*k2*",       caps: { vision: true, reasoning: true, thinkingFormat: "kimi", contextWindow: 262144, maxOutput: 262144 } },
   { pattern: "*kimi*",          caps: { reasoning: true, thinkingFormat: "kimi", contextWindow: 262144 } },
 

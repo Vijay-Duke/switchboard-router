@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/usageDb.js", () => ({
+vi.mock("../../open-sse/runtimeDeps.js", () => ({
+  trackPendingRequest: vi.fn(),
   appendRequestLog: vi.fn(async () => {}),
   saveRequestDetail: vi.fn(async () => {}),
   saveRequestUsage: vi.fn(async () => {}),
@@ -8,7 +9,7 @@ vi.mock("@/lib/usageDb.js", () => ({
 
 import { handleNonStreamingResponse } from "../../open-sse/handlers/chatCore/nonStreamingHandler.js";
 import { FORMATS } from "../../open-sse/translator/formats.js";
-import { saveRequestDetail, saveRequestUsage } from "@/lib/usageDb.js";
+import { saveRequestDetail, saveRequestUsage } from "../../open-sse/runtimeDeps.js";
 
 beforeEach(() => vi.clearAllMocks());
 

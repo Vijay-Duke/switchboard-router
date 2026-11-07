@@ -120,7 +120,9 @@ describe("createStreamController unified tagging", () => {
     const c3 = mk(); c3.handleError(Object.assign(new Error("x"), { name: "AbortError" }));
     // dbg("CTRL", ...) adds a 🐛 [DBG:CTRL] console line outside production — filter it.
     const lines = spy.mock.calls.map((c) => c[0]).filter((l) => !l.includes("[DBG:"));
-    expect(lines).toHaveLength(3);
+    // handleDisconnect is debug-only (Responses clients close the socket on
+    // every completed call), so only COMPLETE and ABORTED reach the log.
+    expect(lines).toHaveLength(2);
     for (const l of lines) {
       expect(l).toMatch(/ (🟢|🔵|🟣|🟡|🟠|🔴|⚪|🟤) /); // exactly one colored tag chip
       expect(l).toContain("openai/gpt-4");
@@ -128,8 +130,8 @@ describe("createStreamController unified tagging", () => {
       expect(l).not.toContain("[STREAM]"); // ad-hoc prefix must be gone
     }
     expect(lines[0]).toContain("🌊 COMPLETE");
-    expect(lines[1]).toContain("⚡ DISCONNECT: client_closed");
-    expect(lines[2]).toContain("⚡ ABORTED");
+    expect(lines[1]).toContain("⚡ ABORTED");
+    expect(lines.some((l) => l.includes("DISCONNECT"))).toBe(false);
   });
 
 

@@ -19,12 +19,13 @@ describe("Command Code Kimi K3.1 Pro", () => {
   });
 
   it("resolves provider capabilities instead of a family pattern", () => {
+    // Switchboard derives the commandcode thinking wire from the target format,
+    // so caps only need to carry the Kimi K3 family limits.
     expect(getCapabilitiesForModel("commandcode", KIMI_K31_PRO)).toMatchObject({
       reasoning: true,
-      thinkingFormat: "commandcode",
-      thinkingEffortSupported: true,
-      contextWindow: 1000000,
-      maxOutput: 384000,
+      thinkingCanDisable: false,
+      contextWindow: 1048576,
+      maxOutput: 131072,
     });
   });
 

@@ -150,6 +150,16 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
   try {
     const parsed = await convertChatCompletionsStreamToJson(providerResponse.body, model, { signal: streamSignal });
     if (!parsed) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Invalid SSE response for non-streaming request");
+    if (parsed.error) {
+      // Preserve a real upstream status carried in the error chunk so the
+      // account loop locks/falls back correctly; anything else maps to 502.
+      const upstreamStatus = Number(parsed.error.status);
+      const status = Number.isInteger(upstreamStatus) && upstreamStatus >= 400 && upstreamStatus <= 599
+        ? upstreamStatus
+        : HTTP_STATUS.BAD_GATEWAY;
+      appendLog({ status: `FAILED ${status}` });
+      return createErrorResult(status, parsed.error.message || "Upstream SSE stream failed");
+    }
 
     markRequestSuccess(onRequestSuccess);
 

@@ -216,10 +216,7 @@ export async function inspectAndWrapCommandCodeResponse(originalResponse, model)
       {
         status: statusCode,
         statusText: statusCode === 503 ? "Service Unavailable" : (statusCode === 429 ? "Too Many Requests" : "Bad Gateway"),
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers: { "Content-Type": "application/json" },
       }
     );
   }
@@ -306,16 +303,16 @@ function wrapNdjsonAsOpenAISse(streamBody, model, originalResponse = null) {
   });
 
   const newBody = streamBody.pipeThrough(transform);
+  const headers = new Headers(originalResponse?.headers || undefined);
+  // Body is re-encoded as SSE, so upstream length/encoding no longer apply.
+  headers.delete("content-length");
+  headers.delete("content-encoding");
+  headers.set("content-type", "text/event-stream");
+  if (!headers.has("cache-control")) headers.set("cache-control", "no-cache");
   return new Response(newBody, {
     status: originalResponse?.status || 200,
     statusText: originalResponse?.statusText || "OK",
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-      ...(originalResponse?.headers ? Object.fromEntries(originalResponse.headers.entries()) : {}),
-      "content-type": "text/event-stream",
-    },
+    headers,
   });
 }
 

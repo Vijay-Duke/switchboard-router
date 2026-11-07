@@ -113,8 +113,11 @@ describe("applyThinking per provider format", () => {
     expect(out.reasoning_effort).toBe(expected);
   });
   it("GLM-5.2 also gets reasoning_effort (supported from 5.2 onward)", () => {
+    // Switchboard clamps to the catalog's GLM-5.2 tiers (high|max) first —
+    // matching z.ai's own server-side low→high mapping.
     const out = apply("openai", "glm-5.2", { reasoning_effort: "low" }, "glm-cn");
-    expect(out.reasoning_effort).toBe("low");
+    expect(out.thinking).toEqual({ type: "enabled" });
+    expect(out.reasoning_effort).toBe("high");
   });
   it("GLM-4.7 (pre-5.2) does not get reasoning_effort — z.ai ignores it", () => {
     const out = apply("openai", "glm-4.7", { reasoning_effort: "low" }, "glm-cn");
