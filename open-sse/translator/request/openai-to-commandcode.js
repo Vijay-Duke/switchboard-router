@@ -12,7 +12,8 @@
 import { register } from "../registry.js";
 import { FORMATS } from "../formats.js";
 import { randomUUID } from "crypto";
-import { ROLE, OPENAI_BLOCK } from "../schema/index.js";
+import { ROLE, OPENAI_BLOCK, CLAUDE_BLOCK } from "../schema/index.js";
+import { parseDataUri, encodeDataUri } from "../concerns/image.js";
 import { resolveSessionId } from "../../utils/sessionManager.js";
 import { clampSampling } from "../concerns/params.js";
 import { DEFAULT_MAX_TOKENS } from "../../config/runtimeConfig.js";
@@ -31,6 +32,32 @@ function flattenText(content) {
   return String(content);
 }
 
+// /alpha/generate image block: {type:"image", image:"data:...;base64,...", mimeType}.
+// Remote http(s) URLs are inlined to data URIs by prefetchRemoteImages before
+// translation (FORMATS.COMMANDCODE is in TARGETS_NEED_BASE64).
+function toNativeImageBlock(part) {
+  if (!part || typeof part !== "object") return null;
+  if (part.type === OPENAI_BLOCK.IMAGE_URL) {
+    const url = typeof part.image_url === "string" ? part.image_url : part.image_url?.url;
+    const parsed = parseDataUri(url);
+    if (!parsed) return null;
+    return { type: OPENAI_BLOCK.IMAGE, image: encodeDataUri(parsed.mimeType, parsed.base64), mimeType: parsed.mimeType };
+  }
+  if (part.type === OPENAI_BLOCK.IMAGE || part.type === CLAUDE_BLOCK.IMAGE) {
+    if (typeof part.image === "string" && part.image.startsWith("data:")) {
+      const parsed = parseDataUri(part.image);
+      const mime = part.mimeType || parsed?.mimeType || "image/png";
+      return { type: OPENAI_BLOCK.IMAGE, image: part.image, mimeType: mime };
+    }
+    const source = part.source;
+    if (source?.type === "base64" && typeof source.data === "string") {
+      const mime = source.media_type || "image/png";
+      return { type: OPENAI_BLOCK.IMAGE, image: encodeDataUri(mime, source.data), mimeType: mime };
+    }
+  }
+  return null;
+}
+
 function toContentBlocks(content) {
   if (content == null) return [{ type: OPENAI_BLOCK.TEXT, text: "" }];
   if (typeof content === "string") return [{ type: OPENAI_BLOCK.TEXT, text: content }];
@@ -42,19 +69,12 @@ function toContentBlocks(content) {
       } else if (part && typeof part === "object") {
         if (part.type === OPENAI_BLOCK.TEXT && typeof part.text === "string") {
           blocks.push({ type: OPENAI_BLOCK.TEXT, text: part.text });
-        } else if (part.type === OPENAI_BLOCK.IMAGE_URL || part.type === OPENAI_BLOCK.IMAGE) {
-          if (part.image_url?.url) {
-            blocks.push({ type: "image_url", image_url: { url: part.image_url.url } });
-          } else if (part.url) {
-            blocks.push({ type: "image_url", image_url: { url: part.url } });
-          } else if (part.source?.data) {
-            blocks.push({
-              type: "image",
-              source: part.source
-            });
-          } else {
-            blocks.push(part);
-          }
+        } else if (part.type === OPENAI_BLOCK.IMAGE_URL || part.type === OPENAI_BLOCK.IMAGE || part.type === CLAUDE_BLOCK.IMAGE) {
+          const image = toNativeImageBlock(part);
+          // A remote URL that prefetch could not inline is left as a text note
+          // rather than an image shape /alpha/generate would reject.
+          if (image) blocks.push(image);
+          else blocks.push({ type: OPENAI_BLOCK.TEXT, text: "[image unavailable]" });
         } else if (typeof part.text === "string") {
           blocks.push({ type: OPENAI_BLOCK.TEXT, text: part.text });
         }

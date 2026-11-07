@@ -328,8 +328,62 @@ export function resolveHandCaps(provider, model) {
  * @param {string} model
  * @returns {object} full capabilities object
  */
+// Mirrors Command Code CLI `isKnownTextOnlyModel` (no image input). New models
+// default to vision; only this denylist stays text-only.
+const COMMANDCODE_TEXT_ONLY = new Set([
+  "deepseek/deepseek-v4-pro",
+  "deepseek/deepseek-v4-flash",
+  "deepseek/deepseek-v4-flash-fast",
+  "zai-org/glm-5.3",
+  "zai-org/glm-5.2",
+  "zai-org/glm-5.2-fast",
+  "zai-org/glm-5.1",
+  "zai-org/glm-5",
+  "minimaxai/minimax-m2.7",
+  "minimax/minimax-m2.7-free",
+  "minimaxai/minimax-m2.5",
+  "xiaomi/mimo-v2.5-pro",
+  "qwen/qwen3.6-max-preview",
+  "qwen/qwen3.7-max",
+  "meituan/longcat-2.0:free",
+  "stepfun/step-3.5-flash",
+  "tencent/hy4-preview",
+  "tencent/hy3",
+  "tencent/hy3-paid",
+  "nvidia/nemotron-3-ultra-550b-a55b",
+  "poolside/laguna-s-2.1-free",
+  "inclusionai/ling-3.0-flash-free",
+  "inclusionai/ling-3.0-flash-sante:free",
+]);
+
+function isCommandCodeTextOnly(model) {
+  const key = String(model || "").toLowerCase();
+  if (COMMANDCODE_TEXT_ONLY.has(key)) return true;
+  for (const id of COMMANDCODE_TEXT_ONLY) {
+    const base = id.includes("/") ? id.slice(id.lastIndexOf("/") + 1) : id;
+    if (key === base || key.endsWith("/" + base)) return true;
+  }
+  return false;
+}
+
 export function getCapabilitiesForModel(provider, model) {
   if (!model) return { ...DEFAULT_CAPABILITIES };
+
+  // CommandCode serves every model on /alpha/generate, which takes images for
+  // all but the CLI's text-only list — a family pattern's vision:false (e.g.
+  // deepseek-v4) must not let the vision adapter steal those requests. Family
+  // limits and effort sets still apply (Switchboard: DeepSeek on Command Code
+  // stays high|max); the commandcode wire shape is chosen by target format.
+  if (provider === "commandcode") {
+    const hand = resolveHandCaps(provider, model);
+    const gen = getGeneratedCapabilities(model);
+    return {
+      ...DEFAULT_CAPABILITIES, ...(gen || {}), ...(hand || {}),
+      reasoning: true,
+      thinkingEffortSupported: true,
+      vision: !isCommandCodeTextOnly(model),
+    };
+  }
 
   const hand = resolveHandCaps(provider, model);
   const gen = getGeneratedCapabilities(model);

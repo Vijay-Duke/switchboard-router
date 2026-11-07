@@ -26,6 +26,8 @@ const FORMAT_LEVELS = {
   qwen: L.base,
   kimi: L.levelMax,
   deepseek: L.hiMax,
+  // command-code sends params.reasoning_effort verbatim, including max.
+  commandcode: ["none", "low", "medium", "high", "xhigh", "max"],
   minimax: L.onOff,
   hunyuan: L.base,
   step: L.base,

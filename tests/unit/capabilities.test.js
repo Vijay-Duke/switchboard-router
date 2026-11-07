@@ -33,4 +33,26 @@ describe("getCapabilitiesForModel", () => {
       thinkingCanDisable: false,
     });
   });
+
+  // Switchboard: the commandcode wire shape comes from the target format
+  // (thinkingUnified.resolveFormat), so caps carry no thinkingFormat here.
+  it("CommandCode v4.1-flash is vision + effort capable", () => {
+    expect(getCapabilitiesForModel("commandcode", "deepseek/deepseek-v4.1-flash")).toMatchObject({
+      vision: true,
+      reasoning: true,
+      thinkingEffortSupported: true,
+    });
+  });
+
+  it("CommandCode MiniMax-M3 is vision capable", () => {
+    expect(getCapabilitiesForModel("commandcode", "MiniMaxAI/MiniMax-M3").vision).toBe(true);
+  });
+
+  it("CommandCode text-only DeepSeek V4 Flash stays non-vision", () => {
+    expect(getCapabilitiesForModel("commandcode", "deepseek/deepseek-v4-flash").vision).toBe(false);
+    expect(getCapabilitiesForModel("commandcode", "deepseek/deepseek-v4-flash")).toMatchObject({
+      reasoning: true,
+      thinkingEffortSupported: true,
+    });
+  });
 });

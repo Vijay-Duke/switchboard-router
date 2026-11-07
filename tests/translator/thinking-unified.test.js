@@ -212,6 +212,24 @@ describe("native-only thinking shapes on an OpenAI-compatible wire (upstream 1fe
     const out = apply("gemini-cli", "gemini-3.5-flash-lite", { reasoning_effort: "medium" }, "gemini-cli");
     expect(out.generationConfig.thinkingConfig.thinkingLevel).toBe("medium");
   });
+  it("commandcode envelope writes params.reasoning_effort, not wrapper fields", () => {
+    const out = apply("commandcode", "deepseek/deepseek-v4.1-flash", {
+      params: { model: "deepseek/deepseek-v4.1-flash", messages: [] },
+      reasoning_effort: "high",
+    }, "commandcode");
+    expect(out.params.reasoning_effort).toBe("high");
+    expect(out.reasoning_effort).toBeUndefined();
+    expect(out.thinking).toBeUndefined();
+  });
+  // Upstream 13b468b8 also passes low through for DeepSeek on Command Code;
+  // Switchboard deliberately keeps that family at high|max there (a6c6e59e).
+  it("commandcode preserves max effort", () => {
+    const out = apply("commandcode", "deepseek/deepseek-v4.1-flash", {
+      params: { messages: [] },
+      reasoning_effort: "max",
+    }, "commandcode");
+    expect(out.params.reasoning_effort).toBe("max");
+  });
 });
 
 describe("extractReasoningText (response shapes)", () => {
