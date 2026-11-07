@@ -3,8 +3,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
+import { deletePreset, readPresets, subscribePresets, upsertPreset } from "./cliEndpointPresets";
 
-const STORAGE_KEY = "switchboard.cliToolEndpointPresets";
 const CUSTOM_VALUE = "__custom__";
 const SAVE_VALUE = "__save__";
 
@@ -12,22 +12,6 @@ const ensureV1 = (url) => {
   const trimmed = (url || "").replace(/\/+$/, "");
   if (!trimmed) return "";
   return /\/v1$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
-};
-
-const readSavedPresets = () => {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || "[]");
-    if (!Array.isArray(raw)) return [];
-    return raw.filter((p) => p?.name && p?.baseUrl);
-  } catch {
-    return [];
-  }
-};
-
-const writeSavedPresets = (presets) => {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(presets));
 };
 
 const buildOptions = ({ requiresExternalUrl, savedPresets, withV1 }) => {
@@ -68,7 +52,9 @@ export default function BaseUrlSelect({
   const initializedRef = useRef(false);
 
   useEffect(() => {
-    setSavedPresets(readSavedPresets());
+    const sync = () => setSavedPresets(readPresets());
+    sync();
+    return subscribePresets(sync);
   }, []);
 
   const options = useMemo(
@@ -116,10 +102,8 @@ export default function BaseUrlSelect({
       try { defaultName = new URL(trimmed).host; } catch {}
       const name = window.prompt("Save endpoint as:", defaultName);
       if (!name?.trim()) return;
-      const updated = [...savedPresets.filter((p) => p.name !== name.trim()), { name: name.trim(), baseUrl: trimmed }]
-        .sort((a, b) => a.name.localeCompare(b.name));
-      setSavedPresets(updated);
-      writeSavedPresets(updated);
+      setSavedPresets(upsertPreset(name.trim(), trimmed));
+      setMode(`saved:${name.trim()}`);
       return;
     }
     setMode(next);
@@ -141,12 +125,19 @@ export default function BaseUrlSelect({
   const handleDeleteSaved = () => {
     if (!mode.startsWith("saved:")) return;
     const name = mode.slice(6);
-    const updated = savedPresets.filter((p) => p.name !== name);
+    const updated = deletePreset(name);
     setSavedPresets(updated);
-    writeSavedPresets(updated);
-    setMode(CUSTOM_VALUE);
-    setCustomInput("");
-    onChange("");
+    // Fall back to the first built-in option instead of clearing the field.
+    const fallback = buildOptions({ requiresExternalUrl, savedPresets: updated, withV1 })
+      .find((o) => o.value !== CUSTOM_VALUE);
+    if (fallback) {
+      setMode(fallback.value);
+      onChange(fallback.url);
+    } else {
+      setMode(CUSTOM_VALUE);
+      setCustomInput("");
+      onChange("");
+    }
   };
 
   const isSaved = mode.startsWith("saved:");
