@@ -30,6 +30,7 @@ import { dedupeTools } from "../utils/toolDeduper.js";
 import { stripOrphanedToolResults } from "../translator/concerns/toolCall.js";
 import { injectCaveman } from "../rtk/caveman.js";
 import { injectPonytail } from "../rtk/ponytail.js";
+import { injectCustomPrompt } from "../rtk/customPrompt.js";
 import { compressMessages, formatRtkLog } from "../rtk/index.js";
 import { applyCloakingWithIdentity } from "../utils/claudeCloaking.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
@@ -59,7 +60,7 @@ const URL_CONTROLLED_STREAM_FORMATS = new Set([
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  * @param {AbortSignal} [options.abortSignal] - Optional external abort (e.g. router timeout)
  */
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, onUpstreamEmptyExhausted, clientRawRequest, connectionId, userAgent, clientKeyId, ccFilterNaming, rtkEnabled, vaultEnabled, vaultThresholdKB, vaultTtlHours, vaultConversationId, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, bypassNativePassthrough, vaultInternal, abortSignal }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, onUpstreamEmptyExhausted, clientRawRequest, connectionId, userAgent, clientKeyId, ccFilterNaming, rtkEnabled, vaultEnabled, vaultThresholdKB, vaultTtlHours, vaultConversationId, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, customPromptEnabled, customPrompt, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, bypassNativePassthrough, vaultInternal, abortSignal }) {
   if (abortSignal?.aborted) return createErrorResult(499, "Request aborted");
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
@@ -334,6 +335,12 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (tokenSaverEnabled && ponytailEnabled && ponytailLevel) {
     injectPonytail(translatedBody, finalFormat, ponytailLevel);
     log?.debug?.("PONYTAIL", `${ponytailLevel} | ${finalFormat}`);
+  }
+
+  // Custom prompt: user-authored instruction, independent of the savers above.
+  // Only the length is logged so the text never reaches the traces.
+  if (tokenSaverEnabled && customPromptEnabled && injectCustomPrompt(translatedBody, finalFormat, customPrompt)) {
+    log?.debug?.("CUSTOMPROMPT", `${customPrompt.trim().length}c | ${finalFormat}`);
   }
 
   // PXPIPE: render bulky Claude-format context as images; fail-open on any error.
