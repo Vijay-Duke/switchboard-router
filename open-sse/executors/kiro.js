@@ -45,6 +45,15 @@ export class KiroExecutor extends BaseExecutor {
       }
     }
 
+    // CLIRO parity for the Amazon surfaces: the Kiro runtime accepts the SSO
+    // bearer header + agent-mode marker; without them the deprecated path
+    // gateway answers REQUEST_BODY_INVALID for modern payloads.
+    if (credentials?.accessToken) headers["x-amz-sso-bearer"] = credentials.accessToken;
+    headers["x-amzn-kiro-agent-mode"] = "spec";
+    headers["x-amzn-codewhisperer-machine-id"] = "kiro-desktop";
+    const profileArn = credentials?.providerSpecificData?.profileArn;
+    if (profileArn) headers["x-amzn-codewhisperer-profile-arn"] = profileArn;
+
     return headers;
   }
 
@@ -60,26 +69,24 @@ export class KiroExecutor extends BaseExecutor {
    * CodeWhisperer hosts FIRST, mirroring the Kiro-Go reference fork which never
    * routes api-key traffic through kiro.dev. External IdP enterprise tokens also
    * use the CodeWhisperer surface, with the `TokenType: EXTERNAL_IDP` header.
-   * Other OAuth methods keep the default order (kiro.dev first) since their
-   * tokens are what that gateway accepts.
+   * Every auth method now tries the Amazon surfaces before kiro.dev (see below).
    */
   getOrderedBaseUrls(credentials) {
     const baseUrls = this.getBaseUrls();
-    const authMethod = credentials?.providerSpecificData?.authMethod;
-    // IAM Identity Center (idc) tokens are AWS SSO access tokens — the same
-    // family as external_idp/api_key. The kiro.dev gateway rejects them with
-    // 403 "bearer token invalid", so they must hit the Amazon Q surface in the
-    // Kiro profile's region, which may differ from the IDC login region.
-    const isCodeWhispererSurface =
-      authMethod === "api_key" || authMethod === "external_idp" || authMethod === "idc";
-    if (!isCodeWhispererSurface) return baseUrls;
-
+    // Kiro deprecated the legacy path-style GenerateAssistantResponse on
+    // runtime.*.kiro.dev (IDE 1.0.228+ moved to POST / + x-amz-target). That
+    // gateway now answers valid modern payloads with 400 REQUEST_BODY_INVALID,
+    // and 400 is terminal in BaseExecutor, so kiro.dev must never be the first
+    // surface for any auth method. Amazon surfaces reject foreign tokens with
+    // 401/403, which do fall through, so trying them first is safe (CLIRO
+    // parity). Outside us-east-1 the Amazon Q host is regionalized to the
+    // Kiro profile's region and tried first.
     const profile = parseKiroProfileArn(credentials?.providerSpecificData?.profileArn);
     const region = profile?.region
       || safeAwsRegion((credentials?.providerSpecificData?.region || "").trim());
     const amazon = baseUrls.filter((u) => u.includes("amazonaws.com"));
     const others = baseUrls.filter((u) => !u.includes("amazonaws.com"));
-    if (amazon.length === 0 || region === "us-east-1") {
+    if (amazon.length === 0 || !region || region === "us-east-1") {
       return amazon.length > 0 ? [...amazon, ...others] : baseUrls;
     }
 
