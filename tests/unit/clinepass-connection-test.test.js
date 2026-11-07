@@ -47,7 +47,7 @@ describe("ClinePass connection tests", () => {
       id: "clinepass-oauth",
       provider: "clinepass",
       authType: "oauth",
-      accessToken: "oauth-token",
+      accessToken: "eyJoauth.eyJtoken",
       expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       providerSpecificData: {},
     });
@@ -63,7 +63,7 @@ describe("ClinePass connection tests", () => {
       "https://api.cline.bot/api/v1/users/me",
       expect.objectContaining({
         method: "GET",
-        headers: expect.objectContaining({ Authorization: "Bearer workos:oauth-token" }),
+        headers: expect.objectContaining({ Authorization: "Bearer workos:eyJoauth.eyJtoken" }),
         identity: "cline",
         provider: "clinepass",
         format: "openai",
@@ -120,7 +120,7 @@ describe("ClinePass connection tests", () => {
     });
     mocks.proxyAwareFetch
       .mockResolvedValueOnce(new Response("", { status: 401 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { accessToken: "fresh-token", refreshToken: "next-refresh" } }), {
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { accessToken: "eyJfresh.eyJtoken", refreshToken: "next-refresh" } }), {
         status: 200,
         headers: { "content-type": "application/json" },
       }))
@@ -143,7 +143,7 @@ describe("ClinePass connection tests", () => {
     expect(mocks.proxyAwareFetch).toHaveBeenNthCalledWith(3,
       "https://api.cline.bot/api/v1/users/me",
       expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "Bearer workos:fresh-token" }),
+        headers: expect.objectContaining({ Authorization: "Bearer workos:eyJfresh.eyJtoken" }),
         identity: "cline",
         provider: "clinepass",
         format: "openai",
@@ -161,7 +161,7 @@ describe("ClinePass connection tests", () => {
       id: `${provider}-oauth`,
       provider,
       authType: "oauth",
-      accessToken: "oauth-token",
+      accessToken: "eyJoauth.eyJtoken",
       expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       providerSpecificData: {},
     });

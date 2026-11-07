@@ -13,6 +13,7 @@ import {
   refreshGitHubToken,
   refreshCopilotToken,
   refreshCodebuddyToken,
+  refreshClineToken,
   classifyOAuthRefreshError,
 } from "./tokenRefresh/providers.js";
 
@@ -28,6 +29,7 @@ export {
   refreshGitHubToken,
   refreshCopilotToken,
   refreshCodebuddyToken,
+  refreshClineToken,
   classifyOAuthRefreshError,
 };
 
@@ -156,6 +158,8 @@ const REFRESH_HANDLERS = {
   xai: (c, log) => refreshXaiToken(c.refreshToken, log),
   "grok-cli": (c, log, proxyOptions) => refreshAccessToken("grok-cli", c.refreshToken, c, log, proxyOptions),
   "codebuddy-cn": (c, log) => refreshCodebuddyToken(c.refreshToken, log),
+  cline: (c, log, proxyOptions) => refreshClineToken(c.refreshToken, log, "cline", proxyOptions),
+  clinepass: (c, log, proxyOptions) => refreshClineToken(c.refreshToken, log, "clinepass", proxyOptions),
   muse: (c, log) => refreshMuseToken(c.providerSpecificData?.dcaToken || c.refreshToken, log),
   vertex: (c, log) => vertexRefreshHandler(c, log, "vertex"),
   "vertex-partner": (c, log) => vertexRefreshHandler(c, log, "vertex-partner"),

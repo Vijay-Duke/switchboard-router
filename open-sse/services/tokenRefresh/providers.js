@@ -134,6 +134,55 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
   }, log);
 }
 
+// Cline / ClinePass: the extension JSON contract (not OAuth2 form). Shares the
+// WorkOS refresh endpoint; the response wraps tokens in `data` with an
+// ISO expiresAt (upstream 88676b30 / f6e7cabe).
+export async function refreshClineToken(refreshToken, log, provider = "cline", proxyOptions = null) {
+  if (!refreshToken) return null;
+  const refreshUrl = PROVIDERS[provider]?.refreshUrl || PROVIDERS.cline?.refreshUrl;
+  if (!refreshUrl) return null;
+
+  return dedupRefresh(provider, refreshToken, async () => {
+    try {
+      const response = await proxyAwareFetch(refreshUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ refreshToken, grantType: "refresh_token", clientType: "extension" }),
+        identity: PROVIDERS[provider]?.identity,
+        provider,
+        format: PROVIDERS[provider]?.format,
+      }, proxyOptions);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        const unrecoverable = unrecoverableRefreshResult(log, provider, errorText, response.status);
+        if (unrecoverable) return unrecoverable;
+        log?.error?.("TOKEN_REFRESH", `Failed to refresh ${provider} token`, {
+          status: response.status,
+          error: safeRefreshError(errorText, response.status),
+        });
+        return null;
+      }
+
+      const body = await response.json();
+      const tokens = body?.data || body;
+      if (!tokens?.accessToken) return null;
+      const expiresAtMs = tokens.expiresAt ? new Date(tokens.expiresAt).getTime() : NaN;
+      const expiresIn = Number.isFinite(expiresAtMs)
+        ? Math.max(1, Math.floor((expiresAtMs - Date.now()) / 1000))
+        : (tokens.expiresIn || tokens.expires_in || 3600);
+      return {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken || refreshToken,
+        expiresIn,
+      };
+    } catch (error) {
+      log?.error?.("TOKEN_REFRESH", `Error refreshing ${provider} token: ${error.message}`);
+      return null;
+    }
+  }, log);
+}
+
 export async function refreshClaudeOAuthToken(refreshToken, log) {
   if (!refreshToken) return null;
   return dedupRefresh("claude", refreshToken, async () => {

@@ -15,7 +15,9 @@ const moduleDefault = {
     },
   },
   category: "oauth",
-  authModes: ["oauth", "apikey"],
+  // ClinePass is meant for an API key from app.cline.bot/settings/api-keys;
+  // list it first (upstream f6e7cabe). OAuth stays available.
+  authModes: ["apikey", "oauth"],
   hasOAuth: true,
   transport: {
     identity: "cline",
