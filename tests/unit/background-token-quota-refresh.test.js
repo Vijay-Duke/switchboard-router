@@ -185,3 +185,26 @@ describe("startBackgroundTokenRefresh guards", () => {
     void loadConnections;
   });
 });
+
+describe("runBackgroundTokenRefreshTick pacing", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    delete globalThis.window;
+  });
+
+  it("refreshes sequentially with a longer gap after Google providers", async () => {
+    const mod = await loadModule();
+    const order = [];
+    const sleep = vi.fn(async (ms) => { order.push(`sleep:${ms >= 12_000 ? "google" : "normal"}`); });
+    const refreshConnection = vi.fn(async (c) => { order.push(`refresh:${c.id}`); });
+    const loadConnections = vi.fn().mockResolvedValue([
+      conn({ id: "ag", provider: "antigravity" }),
+      conn({ id: "cx", provider: "codex" }),
+      conn({ id: "last", provider: "codex" }),
+    ]);
+
+    await mod.runBackgroundTokenRefreshTick({ loadConnections, refreshConnection, sleep });
+
+    expect(order).toEqual(["refresh:ag", "sleep:google", "refresh:cx", "sleep:normal", "refresh:last"]);
+  });
+});

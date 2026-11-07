@@ -7,7 +7,7 @@ const dns = require("dns");
 const { promisify } = require("util");
 const { execSync } = require("child_process");
 const { log, err, dumpRequest, createResponseDumper, clearDumpDir } = require("./logger");
-const { IS_DEV, LSOF_BIN, TARGET_HOSTS, URL_PATTERNS, MODEL_SYNONYMS, MODEL_PATTERNS, MODEL_NO_MAP, getToolForHost } = require("./config");
+const { IS_DEV, LSOF_BIN, TARGET_HOSTS, URL_PATTERNS, MODEL_SYNONYMS, MODEL_PATTERNS, MODEL_NO_MAP, getToolForHost, resolveTieredModel } = require("./config");
 const { DATA_DIR, MITM_DIR } = require("./paths");
 const { generateCert, getCertForDomain } = require("./cert/generate");
 const { getMitmAlias } = require("./dbReader");
@@ -99,18 +99,18 @@ function collectBodyRaw(req) {
 // Extract model from URL path (Gemini), body (OpenAI/Anthropic), or Kiro conversationState
 function extractModel(url, body) {
   const urlMatch = url.match(/\/models\/([^/:]+)/);
-  if (urlMatch) return urlMatch[1];
-  
+  const urlModel = urlMatch?.[1] || null;
+
   // Skip parsing if body is binary (AWS EventStream, Protocol Buffers, etc.)
-  if (isBinaryData(body)) return null;
-  
+  if (isBinaryData(body)) return urlModel;
+
   try {
     const parsed = JSON.parse(body.toString());
     if (parsed.conversationState) {
       return parsed.conversationState.currentMessage?.userInputMessage?.modelId || null;
     }
-    return parsed.model || null;
-  } catch { return null; }
+    return resolveTieredModel(urlModel || parsed.model || null, parsed);
+  } catch { return urlModel; }
 }
 
 // Detect binary data vs JSON text

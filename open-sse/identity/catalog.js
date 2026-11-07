@@ -87,9 +87,10 @@ function geminiHeaders(snapshot) {
 }
 
 function antigravityHeaders(snapshot) {
-  // Floor 2.9.1: Cloud Code rejects newer models for clients below 2.9.0
-  // (CLIProxyAPI antigravityFallbackVersion keeps the same floor).
-  const version = snapshot?.version || "2.9.1";
+  // Fallback 2.24.0 (current Antigravity desktop): Cloud Code rejects newer
+  // models for older clients — below 2.9.0 for Gemini 3.x, and Gemini 4 Argon
+  // answers 404 until the 2.24 line. A captured snapshot version wins.
+  const version = snapshot?.version || "2.24.0";
   return {
     "User-Agent": `antigravity/${version} ${hostPlatform()}/${hostArch()}`,
   };

@@ -37,6 +37,16 @@ const MODEL_SYNONYMS = {
     "gemini-3.5-flash-high": "gemini-3-flash-agent",
     "gemini-3.5-flash-medium": "gemini-3.5-flash-low",
     "gemini-3.5-flash-extra-low": "gemini-3.5-flash-extra-low",
+    "gemini-3.8-flash": "gemini-3.8-flash-medium",
+    "gemini-3.8-flash-high": "gemini-3.8-flash-high",
+    "gemini-3.8-flash-medium": "gemini-3.8-flash-medium",
+    "gemini-3.8-flash-low": "gemini-3.8-flash-low",
+    "gemini-3.7-flash-high": "gemini-3.7-flash-high",
+    "gemini-3.7-flash-medium": "gemini-3.7-flash-medium",
+    "gemini-3.7-flash-low": "gemini-3.7-flash-low",
+    "gemini-3.6-flash-high": "gemini-3.6-flash-high",
+    "gemini-3.6-flash-medium": "gemini-3.6-flash-medium",
+    "gemini-3.6-flash-low": "gemini-3.6-flash-low",
     "gemini-3.1-pro-high": "gemini-pro-agent",
     "gemini-3-pro-high": "gemini-pro-agent",
     "gemini-3-pro-low": "gemini-3.1-pro-low",
@@ -86,4 +96,18 @@ function getToolForHost(host) {
   return null;
 }
 
-module.exports = { IS_DEV, LSOF_BIN, TARGET_HOSTS, URL_PATTERNS, MODEL_SYNONYMS, MODEL_PATTERNS, MODEL_NO_MAP, LOG_BLACKLIST_URL_PARTS, getToolForHost };
+// Antigravity sends one shared "gemini-X.Y-flash-tiered" wire model and picks the
+// tier through thinkingLevel; map it back to the public per-tier alias.
+const TIERED_FLASH_MODEL = /^gemini-(\d+\.\d+)-flash-tiered$/;
+const THINKING_TIERS = new Set(["high", "medium", "low"]);
+
+function resolveTieredModel(model, parsed) {
+  const match = TIERED_FLASH_MODEL.exec(String(model || "").replace(/^models\//, ""));
+  if (!match) return model;
+  const rawLevel = parsed?.request?.generationConfig?.thinkingConfig?.thinkingLevel
+    || parsed?.generationConfig?.thinkingConfig?.thinkingLevel;
+  const level = String(rawLevel || "").toLowerCase();
+  return `gemini-${match[1]}-flash-${THINKING_TIERS.has(level) ? level : "medium"}`;
+}
+
+module.exports = { IS_DEV, LSOF_BIN, TARGET_HOSTS, URL_PATTERNS, MODEL_SYNONYMS, MODEL_PATTERNS, MODEL_NO_MAP, LOG_BLACKLIST_URL_PARTS, getToolForHost, resolveTieredModel };

@@ -7,6 +7,7 @@ import {
   clearAccountError,
   extractApiKey,
 } from "../services/auth.js";
+import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { bindClaudeThreadResponse, resolveClaudeThreadOwner } from "../services/claudeThreadOwnership.js";
 import { hasClaudeThread, isClaudeThreadContinuation } from "open-sse/utils/claudeThread.js";
 import { resolveAffinitySessionId } from "open-sse/utils/sessionManager.js";
@@ -946,6 +947,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       onRequestSuccess: async () => {
         if (credentials.ephemeral) return;
         await clearAccountError(credentials.connectionId, credentials, model);
+        // "Consecutive" strikes: a success clears the breaker for this pair.
+        clearAntigravityStrikes(credentials.connectionId, model);
       },
       // Antigravity empty-stream exhaustion: bench this account so the client's
       // next retry (or outer account loop) can rotate. Switchboard PR#2462.
@@ -983,8 +986,21 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       return result.response;
     }
 
-    // Mark account unavailable (auto-calculates cooldown with exponential backoff, or precise resetsAtMs)
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs);
+    // Antigravity 409/429: refresh live quota to get exact resetAt before locking
+    let quotaResetMs = null;
+    if (provider === "antigravity" && (result.status === 409 || result.status === 429)) {
+      quotaResetMs = await handleAntigravityQuotaError(
+        credentials.connectionId, result.status, model,
+        refreshedCredentials.accessToken, credentials.providerSpecificData
+      );
+    }
+
+    // Exhausted Antigravity model is blocked only in the RAM cache until upstream resetAt.
+    // Do not persist a modelLock_* for this path.
+    // Otherwise mark account unavailable (exponential backoff, or precise resetsAtMs).
+    const shouldFallback = quotaResetMs
+      ? true
+      : (await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs)).shouldFallback;
 
     if (shouldFallback) {
       log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);

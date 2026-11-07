@@ -108,3 +108,6 @@ pi-session-*.html
 *.visual-check.html
 *.visual-check.json
 *.visual-check.*.png
+
+# Kiro local workspace state
+.kiro/

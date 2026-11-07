@@ -35,8 +35,11 @@ const moduleDefault = {
     { id: "openai/gpt-image-1", name: "GPT Image 1 (via OpenRouter)", params: ["n","size","quality","response_format"], kind: "image" },
     { id: "google/imagen-3.0-generate-002", name: "Imagen 3 (via OpenRouter)", params: ["n","size"], kind: "image" },
     { id: "black-forest-labs/FLUX.1-schnell", name: "FLUX.1 Schnell (via OpenRouter)", params: ["n","size"], kind: "image" },
+    { id: "google/veo-3.1", name: "Veo 3.1 (via OpenRouter)", params: ["duration","aspect_ratio","resolution"], kind: "video" },
+    { id: "openai/sora-2-pro", name: "Sora 2 Pro (via OpenRouter)", params: ["duration","aspect_ratio","resolution"], kind: "video" },
+    { id: "bytedance/seedance-2.0", name: "Seedance 2.0 (via OpenRouter)", params: ["duration","aspect_ratio","resolution"], kind: "video" },
   ],
-  serviceKinds: ["llm","embedding","tts","imageToText"],
+  serviceKinds: ["llm","embedding","tts","imageToText","video"],
   ttsConfig: {
     identity: "openai-node",
     baseUrl: "https://openrouter.ai/api/v1/chat/completions",
@@ -51,6 +54,13 @@ const moduleDefault = {
   imageConfig: {
     identity: "openai-node",
     baseUrl: "https://openrouter.ai/api/v1/images/generations",
+  },
+  // Async video jobs (POST /videos → { id, status }, GET /videos/{id} polls).
+  // Docs: https://openrouter.ai/docs/api/api-reference/videos
+  videoConfig: {
+    identity: "openai-node",
+    baseUrl: "https://openrouter.ai/api/v1/videos",
+    headers: {"HTTP-Referer":"https://endpoint-proxy.local","X-Title":"Endpoint Proxy"},
   },
   modelsFetcher: { url: "https://openrouter.ai/api/v1/models", type: "openrouter-free" },
   passthroughModels: true,

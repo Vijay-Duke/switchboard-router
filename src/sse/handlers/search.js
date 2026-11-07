@@ -8,6 +8,7 @@ import {
 import { getSettings, getCombos } from "@/lib/db/index.js";
 import { AI_PROVIDERS, resolveProviderId } from "@/shared/constants/providers.js";
 import { handleSearchCore } from "open-sse/handlers/search/index.js";
+import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
@@ -215,6 +216,15 @@ async function handleSingleProviderSearch(body, providerInput, request, clientKe
       connectionId: credentials.connectionId,
     }, async () => {
       const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
+      // Antigravity search grounding needs the real Cloud Code project; token
+      // refresh resolves it lazily, so fill a cold miss here like the chat path.
+      if (providerId === "antigravity" && !refreshedCredentials.projectId) {
+        const pid = await getProjectIdForConnection(credentials.connectionId, refreshedCredentials.accessToken, providerId);
+        if (pid) {
+          refreshedCredentials.projectId = pid;
+          updateProviderCredentials(credentials.connectionId, { projectId: pid }).catch(() => {});
+        }
+      }
       const result = await handleSearchCore({
         clientKeyId,
         body: coreBody,

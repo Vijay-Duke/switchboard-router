@@ -83,6 +83,8 @@ describe("executor proxyAwareFetch identity triple", () => {
       provider: "qoder",
       format: "openai",
     });
-    expect(chatProxy).toEqual(proxyOptions);
+    // strictProxy: a failed proxied Qoder call must never be replayed direct
+    // with the same COSY signature (upstream 782c137b).
+    expect(chatProxy).toEqual({ ...proxyOptions, strictProxy: true });
   });
 });

@@ -59,6 +59,7 @@ vi.mock("@/sse/services/model.js", () => ({
 
 vi.mock("@/lib/db/index.js", () => ({
   getSettings: vi.fn(async () => ({ requireApiKey: false })),
+  getProviderConnectionById: vi.fn(async () => ({ id: "conn-5", provider: "xai" })),
 }));
 
 vi.mock("@/sse/utils/logger.js", () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }));

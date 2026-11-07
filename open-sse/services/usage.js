@@ -18,6 +18,7 @@ import { getGrokCliUsage } from "./usage/grok-cli.js";
 import { getMuseUsage } from "./usage/muse.js";
 import { getOpenCodeGoUsage } from "./usage/opencode-go.js";
 import { getGroqUsage } from "./usage/groq.js";
+import { getCursorUsage } from "./usage/cursor.js";
 import {
   getQwenUsage,
   getIflowUsage,
@@ -40,6 +41,7 @@ const USAGE_HANDLERS = {
   claude: (c) => getClaudeUsage(c.accessToken, c.proxyOptions, { force: c.force, connectionId: c.connectionId, quotaIdentity: c.quotaIdentity }),
   codex: (c) => getCodexUsage(c.accessToken, c.proxyOptions, c.providerSpecificData),
   kiro: (c) => getKiroUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
+  cursor: (c) => getCursorUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   qoder: (c) => getQoderUsage(c.accessToken, c.proxyOptions),
   qwen: (c) => getQwenUsage(c.accessToken, c.providerSpecificData),
   iflow: (c) => getIflowUsage(c.accessToken),

@@ -9,6 +9,8 @@ import { getCredentialExpiryMs } from "open-sse/services/oauthCredentialManager.
 export const BACKGROUND_REFRESH_LEAD_MS = 30 * 60 * 1000;
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const INITIAL_DELAY_MS = 10 * 1000;
+// Google rate-limits bursts of refresh/onboard calls across accounts.
+const SENSITIVE_PROVIDERS = new Set(["antigravity", "gemini-cli"]);
 
 let started = false;
 let intervalHandle = null;
@@ -85,7 +87,9 @@ async function refreshOne(connection) {
 
 /**
  * One scheduler tick. Fail-open at top level and per connection.
- * @param {{ loadConnections?: Function, refreshConnection?: Function }} [deps]
+ * Connections refresh one at a time with a jittered gap (longer for Google
+ * providers) so a multi-account pool never bursts the upstream token endpoint.
+ * @param {{ loadConnections?: Function, refreshConnection?: Function, sleep?: Function }} [deps]
  */
 export async function runBackgroundTokenRefreshTick(deps = {}) {
   if (tickRunning) return;
@@ -93,25 +97,34 @@ export async function runBackgroundTokenRefreshTick(deps = {}) {
   try {
     const load = deps.loadConnections || loadActiveConnections;
     const refresh = deps.refreshConnection || refreshOne;
+    const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
 
     const connections = await load();
     const due = selectConnectionsNeedingRefresh(connections, Date.now());
 
     if (due.length === 0) return;
 
-    await Promise.allSettled(
-      due.map(async (conn) => {
-        try {
-          await refresh(conn);
-        } catch (err) {
-          log.warn("BG_TOKEN_REFRESH", "Connection refresh failed (swallowed)", {
-            id: conn?.id,
-            provider: conn?.provider,
-            error: err?.message ?? String(err),
-          });
-        }
-      }),
-    );
+    const sensitiveDelayMs = Number(process.env.BG_REFRESH_GOOGLE_DELAY_MS) || 12_000;
+    const normalDelayMs = Number(process.env.BG_REFRESH_DELAY_MS) || 1_500;
+
+    for (let i = 0; i < due.length; i++) {
+      const conn = due[i];
+      try {
+        await refresh(conn);
+      } catch (err) {
+        log.warn("BG_TOKEN_REFRESH", "Connection refresh failed (swallowed)", {
+          id: conn?.id,
+          provider: conn?.provider,
+          error: err?.message ?? String(err),
+        });
+      }
+
+      if (i < due.length - 1) {
+        const sensitive = SENSITIVE_PROVIDERS.has(conn?.provider);
+        const jitter = sensitive ? Math.floor(Math.random() * 4000) : 200;
+        await sleep((sensitive ? sensitiveDelayMs : normalDelayMs) + jitter);
+      }
+    }
   } catch (err) {
     log.warn("BG_TOKEN_REFRESH", "Tick failed (swallowed)", {
       error: err?.message ?? String(err),

@@ -208,7 +208,11 @@ async function onboardUser(accessToken, tierID, externalSignal, provider, proxyO
     console.log(`[ProjectId] Onboarding user with tier: ${tierID}`);
 
     const reqBody = { tierId: tierID, metadata: LOAD_CODE_ASSIST_METADATA };
-    const MAX_ATTEMPTS = 5;
+    // Few, widely spaced attempts: rapid onboardUser retries across several
+    // accounts trip Google Cloud anti-abuse rate limits.
+    const MAX_ATTEMPTS = Number(process.env.ONBOARD_MAX_ATTEMPTS) || 2;
+    const BASE_RETRY_DELAY_MS = Number(process.env.ONBOARD_RETRY_DELAY_MS) || 12_000;
+    const retryDelay = () => new Promise(resolve => setTimeout(resolve, BASE_RETRY_DELAY_MS + Math.floor(Math.random() * 5000)));
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         // Bail out immediately if the connection was removed
@@ -250,9 +254,9 @@ async function onboardUser(accessToken, tierID, externalSignal, provider, proxyO
                 throw new Error("onboardUser done but no project_id in response");
             }
 
-            // Server not done yet – wait and retry
+            // Server not done yet – wait (with jitter) and retry
             console.log(`[ProjectId] Onboard attempt ${attempt}/${MAX_ATTEMPTS}: not done yet, waiting...`);
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await retryDelay();
 
         } catch (error) {
             clearTimeout(timeoutId);
@@ -267,7 +271,7 @@ async function onboardUser(accessToken, tierID, externalSignal, provider, proxyO
             }
             // Continue to next attempt instead of throwing (which would skip remaining retries)
             console.warn(`[ProjectId] onboardUser attempt ${attempt} failed: ${error.message}, retrying...`);
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await retryDelay();
         } finally {
             clearTimeout(timeoutId);
             externalSignal?.removeEventListener("abort", forwardAbort);
