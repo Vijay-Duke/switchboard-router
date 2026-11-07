@@ -148,7 +148,11 @@ function convertClaudeMessagesToKiro(messages, tools, model) {
 
   const flushPending = () => {
     if (currentRole === ROLE.USER) {
-      const content = pendingUserContent.join("\n\n").trim() || "continue";
+      // Kiro rejects empty user content. A tool-results-only turn must not read
+      // like an instruction: with "continue", models answer the word itself
+      // ("Nothing in progress to continue") and drop the task in progress.
+      const content = pendingUserContent.join("\n\n").trim()
+        || (pendingToolResults.length > 0 ? "Tool results provided." : "continue");
       const userMsg = { userInputMessage: { content, modelId: model } };
 
       if (pendingImages.length > 0) {
