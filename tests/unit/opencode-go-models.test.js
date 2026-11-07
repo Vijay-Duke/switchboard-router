@@ -10,15 +10,19 @@ import { resolveTransport } from "../../open-sse/services/provider.js";
 
 const CHAT_MODELS = [
   "glm-5.3-flash",
+  "glm-5.3",
   "glm-5.2",
   "glm-5.1",
   // OpenCode Go docs' endpoint table currently says kimi-k2.7, but its
   // config example and the live API use kimi-k2.7-code.
   "kimi-k2.7-code",
   "kimi-k2.6",
+  "kimi-k3",
   "deepseek-v4-pro",
   "deepseek-v4-flash",
   "deepseek-v4-flash-vision-exp",
+  "deepseek-flash",
+  "longcat-2.0",
   "mimo-v2.5",
   "mimo-v2.5-pro",
 ];
@@ -27,10 +31,18 @@ const MESSAGES_MODELS = [
   "minimax-m3",
   "minimax-m2.7",
   "minimax-m2.5",
+  "qwen3.8-max",
+  "qwen3.8-flash",
   "qwen3.7-max",
   "qwen3.7-plus",
   "qwen3.6-plus",
 ];
+
+// Chat-lane models listed after the Messages block in the registry
+const TRAILING_CHAT_MODELS = ["hy4-preview", "hy3"];
+
+// Served by /zen/go/v1/responses only
+const RESPONSES_ONLY_MODELS = ["grok-4.6", "gpt-5.6-luna"];
 
 const MULTI_TRANSPORT_MODELS = ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"];
 
@@ -38,7 +50,7 @@ describe("OpenCode Go official model catalog", () => {
   it("matches the documented OpenCode Go model IDs", () => {
     const ids = (PROVIDER_MODELS["opencode-go"] || []).map((model) => model.id);
 
-    expect(ids).toEqual([...CHAT_MODELS, ...MESSAGES_MODELS]);
+    expect(ids).toEqual([...CHAT_MODELS, ...MESSAGES_MODELS, ...TRAILING_CHAT_MODELS, ...RESPONSES_ONLY_MODELS]);
   });
 
   it("marks documented Qwen and MiniMax models as Anthropic messages format", () => {
@@ -48,13 +60,20 @@ describe("OpenCode Go official model catalog", () => {
   });
 
   it("keeps GLM, Kimi, DeepSeek, and MiMo on OpenAI-compatible chat format", () => {
-    for (const model of CHAT_MODELS) {
+    for (const model of [...CHAT_MODELS, ...TRAILING_CHAT_MODELS]) {
       expect(getModelTargetFormat("opencode-go", model)).toBeNull();
     }
   });
 
+  it("pins responses-only models to the openai-responses target", () => {
+    for (const model of RESPONSES_ONLY_MODELS) {
+      expect(getModelTargetFormat("opencode-go", model)).toBe("openai-responses");
+      expect(getModelSupportedFormats("opencode-go", model)).toEqual(["openai-responses"]);
+    }
+  });
+
   it("declares the native transports supported by each model", () => {
-    for (const model of CHAT_MODELS.filter((id) => !MULTI_TRANSPORT_MODELS.includes(id))) {
+    for (const model of [...CHAT_MODELS, ...TRAILING_CHAT_MODELS].filter((id) => !MULTI_TRANSPORT_MODELS.includes(id))) {
       expect(getModelSupportedFormats("opencode-go", model)).toEqual(["openai"]);
     }
     for (const model of MESSAGES_MODELS) {
@@ -91,6 +110,12 @@ describe("OpenCode Go endpoint routing", () => {
       .toBe("https://opencode.ai/zen/go/v1/chat/completions");
     expect(nativeTransport("glm-5.2", "claude")).toBeNull();
     expect(nativeTransport("minimax-m3", "openai-responses")).toBeNull();
+    for (const model of RESPONSES_ONLY_MODELS) {
+      expect(nativeTransport(model, "openai-responses")?.baseUrl)
+        .toBe("https://opencode.ai/zen/go/v1/responses");
+      expect(nativeTransport(model, "claude")).toBeNull();
+      expect(nativeTransport(model, "openai")).toBeNull();
+    }
   });
 
   it("uses the selected transport URL and authentication contract", () => {
