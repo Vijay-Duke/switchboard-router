@@ -3,31 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-// Same storage BaseUrlSelect reads — one schema, and no raw API keys in
-// localStorage (T54). Legacy entries that still carry an apiKey are tolerated
-// on read but never written back.
-const STORAGE_KEY = "switchboard.cliToolEndpointPresets";
-
-function normalizePresets(value) {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((preset) => preset?.name && preset?.baseUrl)
-    .map(({ name, baseUrl }) => ({ name, baseUrl }));
-}
-
-function readPresets() {
-  if (typeof window === "undefined") return [];
-  try {
-    return normalizePresets(JSON.parse(window.localStorage.getItem(STORAGE_KEY) || "[]"));
-  } catch {
-    return [];
-  }
-}
-
-function writePresets(presets) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizePresets(presets)));
-}
+import { deletePreset, readPresets, subscribePresets, upsertPreset } from "./cliEndpointPresets";
 
 export default function EndpointPresetControl({
   baseUrl,
@@ -37,7 +13,9 @@ export default function EndpointPresetControl({
   const [selectedName, setSelectedName] = useState("");
 
   useEffect(() => {
-    setPresets(readPresets());
+    const sync = () => setPresets(readPresets());
+    sync();
+    return subscribePresets(sync);
   }, []);
 
   const selectedPreset = useMemo(
@@ -65,23 +43,14 @@ export default function EndpointPresetControl({
     const name = window.prompt("Preset name", selectedPreset?.name || defaultName);
     if (!name?.trim()) return;
 
-    const nextPreset = { name: name.trim(), baseUrl: trimmedBaseUrl };
-    const nextPresets = [
-      ...presets.filter((preset) => preset.name !== nextPreset.name),
-      nextPreset,
-    ].sort((a, b) => a.name.localeCompare(b.name));
-
-    setPresets(nextPresets);
-    setSelectedName(nextPreset.name);
-    writePresets(nextPresets);
+    setPresets(upsertPreset(name.trim(), trimmedBaseUrl));
+    setSelectedName(name.trim());
   };
 
   const handleDelete = () => {
     if (!selectedPreset) return;
-    const nextPresets = presets.filter((preset) => preset.name !== selectedPreset.name);
-    setPresets(nextPresets);
+    setPresets(deletePreset(selectedPreset.name));
     setSelectedName("");
-    writePresets(nextPresets);
   };
 
   return (

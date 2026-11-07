@@ -13,6 +13,10 @@ import { PROVIDERS, PROVIDER_MEDIA } from "../providers/index.js";
 const EMBEDDINGS_MAX_BATCH = 256;
 const EMBEDDINGS_MAX_TOTAL_CHARS = 1024 * 1024;
 
+// Providers whose endpoint is the user's own host by design (default localhost),
+// so the public-URL SSRF guard does not apply.
+const LOCAL_EMBEDDING_PROVIDERS = new Set(["selfhosted-embedding", "ollama-local"]);
+
 function embeddingTransport(provider) {
   const transport = PROVIDERS[provider] || {};
   const config = PROVIDER_MEDIA[provider]?.embeddingConfig || {};
@@ -94,7 +98,7 @@ export async function handleEmbeddingsCore({
 
   let providerResponse;
   try {
-    if (provider !== "selfhosted-embedding") await assertPublicUrlResolved(url, ssrfAllowHosts);
+    if (!LOCAL_EMBEDDING_PROVIDERS.has(provider)) await assertPublicUrlResolved(url, ssrfAllowHosts);
     providerResponse = await proxyAwareFetch(url, {
       method: "POST",
       headers,
@@ -140,7 +144,7 @@ export async function handleEmbeddingsCore({
       try {
         const retryHeaders = adapter.buildHeaders(credentials, ctx);
         const retryUrl = adapter.buildUrl(model, credentials, ctx);
-        if (provider !== "selfhosted-embedding") await assertPublicUrlResolved(retryUrl, ssrfAllowHosts);
+        if (!LOCAL_EMBEDDING_PROVIDERS.has(provider)) await assertPublicUrlResolved(retryUrl, ssrfAllowHosts);
         await providerResponse.body?.cancel?.().catch?.(() => {});
         providerResponse = await proxyAwareFetch(retryUrl, {
           method: "POST",

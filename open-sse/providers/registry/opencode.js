@@ -18,9 +18,21 @@ const moduleDefault = {
     headers: {
       "x-opencode-client": "desktop",
     },
+    // Free tier answers SSE only; chatCore aggregates it for non-stream clients.
+    forceStream: true,
     noAuth: true,
+    // Zen reasoning models reject multi-turn history whose assistant messages
+    // carry no reasoning_content (400 missing_required_parameter), and the
+    // response pipeline strips the field before it reaches the client, so the
+    // echo can never come from the client. Inject a placeholder instead.
+    reasoningInject: {
+      scope: "all",
+    },
   },
-  models: [],
+  models: [
+    // Endpoint formats differ per model, so declare non-chat models explicitly.
+    { id: "union-alpha", name: "Union Alpha Free", targetFormat: "claude" },
+  ],
   modelsFetcher: { url: "https://opencode.ai/zen/v1/models", type: "opencode-free" },
   passthroughModels: true,
 };
