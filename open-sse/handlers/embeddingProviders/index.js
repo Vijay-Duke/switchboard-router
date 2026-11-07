@@ -3,6 +3,7 @@ import createOpenAIEmbeddingAdapter from "./openai.js";
 import gemini from "./gemini.js";
 import openaiCompatNode from "./openaiCompatNode.js";
 import selfhostedEmbedding from "./selfhostedEmbedding.js";
+import ollamaLocal from "./ollamaLocal.js";
 
 const OPENAI_COMPAT_PROVIDERS = [
   "openai", "openrouter", "mistral", "voyage-ai", "fireworks",
@@ -15,6 +16,7 @@ const ADAPTERS = {
   gemini,
   google_ai_studio: gemini,
   "selfhosted-embedding": selfhostedEmbedding,
+  "ollama-local": ollamaLocal,
 };
 
 export function getEmbeddingAdapter(provider) {
