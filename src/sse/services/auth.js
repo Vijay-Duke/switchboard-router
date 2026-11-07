@@ -10,6 +10,7 @@ import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLock
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import * as log from "../utils/logger.js";
+import { getAntigravityQuotaCache } from "./antigravityQuota.js";
 import { extractGatewayApiKey } from "@/shared/utils/gatewayApiKey.js";
 import { selectScheduledConnection } from "./accountScheduler.js";
 
@@ -112,8 +113,22 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       return null;
     }
 
-    // Filter out model-locked and excluded connections
-    const eligible = candidateConnections.filter(c => !excludeSet.has(c.id) && !isModelLockActive(c, model));
+    // Antigravity quota cache is lazy: only populated after that account returns 409/429.
+    const antigravityQuotaCache = providerId === "antigravity" && model ? getAntigravityQuotaCache() : null;
+    const antigravityQuotaResetAt = (c) => {
+      const quota = antigravityQuotaCache?.get(c.id)?.[model];
+      if (!quota?.resetAt || new Date(quota.resetAt).getTime() <= Date.now()) return null;
+      return quota.resetAt;
+    };
+    const isAntigravityQuotaBlocked = (c) => {
+      const quota = antigravityQuotaCache?.get(c.id)?.[model];
+      if (!quota || quota.remainingPercentage > 0 || !antigravityQuotaResetAt(c)) return false;
+      log.info("AG_QUOTA", `${c.id?.slice(0, 8) || "unknown"} | CACHE_BLOCK ${model} — skip upstream until ${quota.resetAt}`);
+      return true;
+    };
+
+    // Filter out model-locked, excluded, and Antigravity quota-exhausted connections
+    const eligible = candidateConnections.filter(c => !excludeSet.has(c.id) && !isModelLockActive(c, model) && !isAntigravityQuotaBlocked(c));
     // A connection whose refresh token was revoked is skipped while a healthy
     // sibling exists. When it is the only one left it is still selected: the
     // request then fails with an explicit "reconnect" error instead of a
@@ -137,7 +152,14 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       // Find the first account that can serve this model after both relevant
       // locks expire, and report that account's error alongside its reset.
       const lockedConns = candidateConnections
-        .map(connection => ({ connection, until: getModelLockUntil(connection, model) }))
+        .map(connection => {
+          const lockUntil = getModelLockUntil(connection, model);
+          const quotaUntil = antigravityQuotaCache ? antigravityQuotaResetAt(connection) : null;
+          // An account is free only once both its persistent lock and its
+          // Antigravity quota-cache block have expired.
+          const until = [lockUntil, quotaUntil].filter(Boolean).sort().pop() || null;
+          return { connection, until };
+        })
         .filter(entry => entry.until)
         .sort((a, b) => a.until.localeCompare(b.until));
       const earliest = lockedConns[0]?.until || null;
@@ -320,7 +342,10 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     let shouldFallback, cooldownMs, newBackoffLevel;
     if (preciseReset) {
       shouldFallback = true;
-      cooldownMs = Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
+      // Antigravity quota API provides exact per-model resetAt. Do not truncate it.
+      cooldownMs = resolveProviderId(provider) === "antigravity"
+        ? resetsAtMs - Date.now()
+        : Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
       newBackoffLevel = 0;
     } else {
       ({ shouldFallback, cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel));
