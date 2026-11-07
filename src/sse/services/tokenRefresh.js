@@ -196,6 +196,12 @@ function _refreshProjectId(provider, connectionId, accessToken) {
   // Evict the stale cached entry so getProjectIdForConnection does a real fetch
   invalidateProjectId(connectionId);
 
+  // Lazy resolution: eagerly fetching projectId (which may onboardUser) for many
+  // accounts at once trips Google Cloud anti-abuse limits. The chat/search handlers
+  // resolve it on demand via getProjectIdForConnection(). Opt back in with
+  // EAGER_PROJECT_ID_REFRESH=true.
+  if (process.env.EAGER_PROJECT_ID_REFRESH !== "true") return;
+
   getProjectIdForConnection(connectionId, accessToken, provider)
     .then((projectId) => {
       if (!projectId) return;
