@@ -5,7 +5,7 @@ import { OAUTH_ENDPOINTS, AG_DEFAULT_TOOLS, AG_TOOL_SUFFIX, ANTIGRAVITY_PROMPT_R
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
-import { cleanJSONSchemaForAntigravity } from "../translator/formats/gemini.js";
+import { cleanJSONSchemaForAntigravity, normalizeGeminiContents } from "../translator/formats/gemini.js";
 import { DEFAULT_THINKING_AG_SIGNATURE } from "../config/defaultThinkingSignature.js";
 
 // Sanitize function name: Gemini requires [a-zA-Z_][a-zA-Z0-9_.:\-]{0,63}
@@ -171,7 +171,7 @@ export class AntigravityExecutor extends BaseExecutor {
 
     // ─── Standard (non-image) request ───
     // Fix contents for Claude models via Antigravity
-    const contents = body.request?.contents?.map(c => {
+    const rawContents = body.request?.contents?.map(c => {
       let role = c.role;
       // functionResponse must be role "user" for Claude models
       if (c.parts?.some(p => p.functionResponse)) {
@@ -199,6 +199,8 @@ export class AntigravityExecutor extends BaseExecutor {
       }
       return c;
     });
+    // Merge same-role turns, drop empty parts, guard leading/trailing turns.
+    const contents = rawContents && normalizeGeminiContents(rawContents, model);
 
     // Sanitize tool schemas and function names before sending to Antigravity.
     let tools = body.request?.tools;
@@ -263,6 +265,11 @@ export class AntigravityExecutor extends BaseExecutor {
 
     this._lastSessionId = transformedRequest.sessionId; // cached for buildHeaders (base.execute order)
 
+    // No requestType on the agent (chat) path, including one leaked through
+    // the ...body spread: the official client omits it, and "agent" draws a
+    // detail-free 429 RESOURCE_EXHAUSTED with quota left. image_gen keeps its own.
+    delete body.requestType;
+
     return {
       ...body,
       project: projectId,
@@ -270,7 +277,6 @@ export class AntigravityExecutor extends BaseExecutor {
       // `model` is the public alias the client asked for.
       model: body.model || model,
       userAgent: "antigravity",
-      requestType: "agent",
       requestId: `agent-${crypto.randomUUID()}`,
       request: transformedRequest
     };

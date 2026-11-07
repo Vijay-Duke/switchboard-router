@@ -6,6 +6,14 @@ import {
 
 const DEFAULT_TIMEOUT_MS = 3000;
 
+// Busy/slow machines time out on the fixed 3s default and send the LLM an
+// inconsistently compressed body, which also defeats prompt caching.
+function normalizeTimeout(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : DEFAULT_TIMEOUT_MS;
+}
+
 function jsonBytes(value) {
   try {
     return new TextEncoder().encode(JSON.stringify(value) || "").length;
@@ -217,6 +225,7 @@ function applyProjectedHeadroomMessages(projection, compressedMessages, diagnost
 // /v1/compress only understands OpenAI shape, so Claude bodies are projected to
 // OpenAI-shaped text messages and the compressed text is written back in place.
 export async function compressWithHeadroom(body, { enabled, url, model, format, compressUserMessages, timeoutMs = DEFAULT_TIMEOUT_MS, diagnostics = null } = {}) {
+  timeoutMs = normalizeTimeout(timeoutMs);
   if (!enabled) {
     setDiagnostic(diagnostics, "disabled");
     return null;
@@ -318,8 +327,10 @@ export function formatHeadroomSizeLog(diagnostics) {
 
 export function isHeadroomPhantomSavings(stats, diagnostics, minShrinkRatio = 0.05) {
   if (!stats?.tokens_saved || stats.tokens_saved <= 0) return false;
-  const before = diagnostics?.before?.bodyBytes || 0;
-  const after = diagnostics?.after?.bodyBytes || 0;
-  if (before <= 0 || after <= 0) return false;
-  return after >= before * (1 - minShrinkRatio);
+  // Keep the body check for savings in Claude's top-level system prompt.
+  return ["bodyBytes", "messageBytes"].every((key) => {
+    const before = diagnostics?.before?.[key] || 0;
+    const after = diagnostics?.after?.[key] || 0;
+    return before > 0 && after > 0 && after >= before * (1 - minShrinkRatio);
+  });
 }

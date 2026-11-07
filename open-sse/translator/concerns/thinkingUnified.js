@@ -136,16 +136,53 @@ export function extractThinking(body) {
 
 // Capture thinking intent from a body. Alias of extractThinking, named for clarity
 // at the call-site where intent is snapshotted before format translation.
-export const captureThinking = extractThinking;
+// Capture thinking intent from a body before format translation strips it.
+// Besides the effort, records whether an OpenAI-shaped client wants the thinking
+// text itself: Claude returns it only with thinking.display "summarized" (the
+// default on newer models is "omitted"), a field OpenAI has no equivalent for.
+export function captureThinking(body) {
+  const cfg = extractThinking(body);
+  if (!cfg || cfg.mode === "none") return cfg;
+  const display = openAIThinkingDisplay(body);
+  return display ? { ...cfg, display } : cfg;
+}
+
+function openAIThinkingDisplay(body) {
+  // Responses API: reasoning.summary is the explicit request for reasoning text.
+  if (body.reasoning && typeof body.reasoning === "object") {
+    const summary = body.reasoning.summary;
+    return typeof summary === "string" && summary && summary !== "none" ? "summarized" : undefined;
+  }
+  // Chat Completions has no summary knob. A client setting reasoning_effort is
+  // asking for reasoning, and reasoning_content is how it would receive it.
+  if (typeof body.reasoning_effort === "string") return "summarized";
+  return undefined;
+}
+
+// Thinking shapes that only exist on a model's native wire (Gemini
+// generationConfig, Claude thinking/output_config, Kiro tags). A Gemini or
+// Claude model reached over an OpenAI-compatible wire takes reasoning_effort.
+const NATIVE_ONLY_FORMATS = new Set(["gemini-level", "gemini-budget", "claude-budget", "claude-adaptive", "kiro"]);
 
 // Command Code envelope override, then provider > capability > target format.
 function resolveFormat(targetFormat, model, provider) {
   // Command Code's alpha API takes a flat effort for every model family.
   if (targetFormat === "commandcode") return "commandcode";
+  // A multi-endpoint provider can declare, per transports[] entry, the thinking
+  // shape that endpoint accepts. It wins over the model's thinkingFormat, which
+  // describes the Chat wire: strict /responses upstreams (OpenCode Go) reject
+  // Chat-shaped reasoning_effort / thinking:{type} and need reasoning:{effort,summary}.
+  const transportFmt = provider
+    ? PROVIDERS[provider]?.transports?.find((t) => t.format === targetFormat)?.thinkingFormat
+    : null;
+  if (transportFmt) return transportFmt;
   const providerFmt = provider ? PROVIDERS[provider]?.thinkingFormat : null;
   if (providerFmt) return providerFmt;
   const caps = getCapabilitiesForModel(provider, model);
-  if (caps.thinkingFormat) return caps.thinkingFormat;
+  const isOpenAIWire = targetFormat === "openai" || targetFormat === "openai-responses";
+  if (caps.thinkingFormat && !(isOpenAIWire && NATIVE_ONLY_FORMATS.has(caps.thinkingFormat))) {
+    return caps.thinkingFormat;
+  }
   return FORMAT_TO_NATIVE[targetFormat] || "openai";
 }
 
@@ -218,7 +255,7 @@ function openAIWireLevel(level, supportedLevels) {
   return supportedLevels?.includes("max") ? "max" : "xhigh";
 }
 
-function applyFormat(fmt, body, cfg, caps, supportedLevels = null) {
+function applyFormat(fmt, body, cfg, caps, supportedLevels = null, display = undefined, model = "") {
   const none = cfg.mode === "none";
   const canDisable = caps.thinkingCanDisable !== false;
   // Model cannot disable thinking → clamp "none" to minimal effort instead.
@@ -260,18 +297,34 @@ function applyFormat(fmt, body, cfg, caps, supportedLevels = null) {
       // Emit both thinking.type and output_config.effort — Bedrock (via LiteLLM
       // or other proxies) requires both fields present. Direct Anthropic API
       // accepts either alone; keeping both is harmless and maximally compatible.
-      body.thinking = { type: "adaptive" };
-      body.output_config = { effort: level === "xhigh" ? "high" : level };
+      // Permanently adaptive models (Fable 5.1) take effort alone; the
+      // redundant switch is dropped for them.
+      // Claude's own always-on models still get the switch when it carries a
+      // requested display (it defaults to "omitted", hiding the thinking text);
+      // a thinking-off request (clamped to minimal) asks for no text.
+      if (canDisable) body.thinking = { type: "adaptive", ...(display ? { display } : {}) };
+      else if (display && level !== "minimal" && /claude/i.test(model)) body.thinking = { type: "adaptive", display };
+      else delete body.thinking;
+      // Claude effort has no "minimal" (always-on models clamp "none" to it).
+      // Anthropic has no "auto" effort (HTTP 400) — dynamic requests get "high".
+      // xhigh is model-gated (Opus/Sonnet 4.6 reject it) — clamp when not advertised.
+      body.output_config = { effort: level === "auto" ? "high"
+        : level === "minimal" ? "low"
+        : level === "xhigh" && !supportedLevels?.includes("xhigh") ? "high" : level };
       break;
     }
     case "claude-budget": {
       if (none && canDisable) { body.thinking = { type: "disabled" }; break; }
       const budget = toBudget(eff, caps.thinkingRange);
-      body.thinking = budget === -1 ? { type: "enabled" } : { type: "enabled", budget_tokens: budget || 8192 };
+      const disp = display ? { display } : {};
+      body.thinking = budget === -1 ? { type: "enabled", ...disp } : { type: "enabled", budget_tokens: budget || 8192, ...disp };
       break;
     }
     case "gemini-level": {
-      const level = none ? "minimal" : toGeminiThinkingLevel(eff);
+      let level = none ? "minimal" : toGeminiThinkingLevel(eff);
+      // Models without a "minimal" tier (Gemini 4) reject it with 400 — clamp to the lowest supported level.
+      const lowest = supportedLevels?.find((l) => l !== "none");
+      if (supportedLevels?.length && lowest && !supportedLevels.includes(level)) level = lowest;
       setGeminiThinking(body, { thinkingLevel: level, includeThoughts: level !== "minimal" });
       break;
     }
@@ -407,7 +460,11 @@ export function applyThinking(targetFormat, model, body, provider = null, intent
   }
   if (!cfg) return body;
 
+  // Anthropic's `display` (summarized | omitted) decides whether thinking text
+  // comes back at all; keep what the client asked for instead of resetting it.
+  // An OpenAI-shaped client's ask arrives via the captured intent instead.
+  const display = typeof body.thinking?.display === "string" ? body.thinking.display : intent?.display;
   stripAll(body);
-  applyFormat(fmt, body, cfg, caps, supported);
+  applyFormat(fmt, body, cfg, caps, supported, display, cleanModel);
   return body;
 }

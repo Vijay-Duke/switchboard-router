@@ -193,7 +193,8 @@ describe("X10 claude-model detection", () => {
       messages: [{ role: "user", content: "hi" }],
     }, true);
     expect(out.userAgent).toBe("antigravity");
-    expect(out.requestType).toBe("agent");
+    // Agent path omits requestType (false 429s; upstream 5798b308).
+    expect(out.requestType).toBeUndefined();
     expect(out.request.generationConfig).toBeDefined();
     expect(out.request.contents).toBeDefined();
   });

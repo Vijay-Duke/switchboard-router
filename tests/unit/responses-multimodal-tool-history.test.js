@@ -75,7 +75,8 @@ describe("Responses multimodal tool history full pipeline", () => {
     expect(blocks.filter(b => b.type === "tool_use").map(b => b.id)).toEqual(["call_one", "call_two"]);
     expect(blocks.filter(b => b.type === "tool_result").map(b => [b.tool_use_id, b.content[0].type]))
       .toEqual([["call_one", "image"], ["call_two", "document"]]);
-    expect(blocks.at(-1)).toEqual({ type: "image", source: { type: "url", url: "https://example.com/followup.png" } });
+    // The final tool-results turn carries the 4th (5m) breakpoint (upstream 49c761cd).
+    expect(blocks.at(-1)).toEqual({ type: "image", source: { type: "url", url: "https://example.com/followup.png" }, cache_control: { type: "ephemeral" } });
   });
   it("round trips media payloads and call IDs through Claude without inventing a result", () => {
     const original = [

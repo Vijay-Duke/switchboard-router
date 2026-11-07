@@ -41,7 +41,10 @@ export function budgetToLevel(budget) {
   if (b <= 4096) return "low";
   if (b <= 16384) return "medium";
   if (b <= 28672) return "high";
-  return "xhigh";
+  // xhigh/max boundary at the 32768/128000 midpoint, so the top tier is
+  // reachable from a large budget_tokens request.
+  if (b <= 80384) return "xhigh";
+  return "max";
 }
 
 // Gemini thinkingBudget (numeric) → OpenAI reasoning_effort (antigravity reverse map).

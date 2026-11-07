@@ -93,9 +93,8 @@ export function claudeToOpenAIResponse(chunk, state) {
         break;
       }
       if (block?.type === CLAUDE_BLOCK.THINKING) {
-        state.inThinkingBlock = true;
-        state.currentBlockIndex = chunk.index;
-        results.push(createChunk(state, { content: "<think>" }));
+        // Thinking travels only in reasoning_content. No "<think>" markers in
+        // content: OpenAI-format clients render them as literal text.
       } else if (block?.type === CLAUDE_BLOCK.REDACTED_THINKING) {
         // Opaque ciphertext: a visible reasoning placeholder, never the data.
         // Not a <think> span — nothing streams for it, so no marker pair.
@@ -161,10 +160,6 @@ export function claudeToOpenAIResponse(chunk, state) {
         state.serverToolBlockIndex = -1;
         break;
       }
-      if (state.inThinkingBlock && chunk.index === state.currentBlockIndex) {
-        results.push(createChunk(state, { content: "</think>" }));
-        state.inThinkingBlock = false;
-      }
       break;
     }
 
@@ -196,6 +191,13 @@ export function claudeToOpenAIResponse(chunk, state) {
 
       if (chunk.delta?.stop_reason) {
         state.finishReason = convertStopReason(chunk.delta.stop_reason);
+        // A refusal produces no content blocks at all. Surface Anthropic's own
+        // explanation as the message text so the client shows *why* the turn is
+        // empty instead of a blank reply.
+        const refusalNote = chunk.delta.stop_reason === "refusal" && chunk.delta.stop_details?.explanation;
+        if (refusalNote) {
+          results.push(createChunk(state, { content: refusalNote }));
+        }
         const finalChunk = createChunk(state, {}, state.finishReason);
 
         if (state.usage) {

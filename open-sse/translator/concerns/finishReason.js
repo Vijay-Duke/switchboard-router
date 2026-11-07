@@ -17,6 +17,10 @@ export function toOpenAIFinish(reason, format) {
         case CLAUDE_STOP.MAX_TOKENS: return OPENAI_FINISH.LENGTH;
         case CLAUDE_STOP.TOOL_USE: return OPENAI_FINISH.TOOL_CALLS;
         case CLAUDE_STOP.STOP_SEQUENCE: return OPENAI_FINISH.STOP;
+        // A refusal is a blocked turn, not a clean stop: with the default mapping an
+        // OpenAI client saw finish_reason "stop" and an empty message (Switchboard logged
+        // "succeeded", OUT 0) and could not tell it from a real answer.
+        case CLAUDE_STOP.REFUSAL: return OPENAI_FINISH.CONTENT_FILTER;
         default: return OPENAI_FINISH.STOP;
       }
     case "commandcode":
@@ -67,6 +71,7 @@ export function fromOpenAIFinish(reason, format) {
         // Surface aborted upstream turns as end_turn with no content is wrong —
         // leave as end_turn for Claude wire; stream error events handle the rest.
         case OPENAI_FINISH.ERROR: return CLAUDE_STOP.END_TURN;
+        case OPENAI_FINISH.CONTENT_FILTER: return CLAUDE_STOP.REFUSAL;
         default: return CLAUDE_STOP.END_TURN;
       }
     default:

@@ -1,4 +1,5 @@
 import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS, MAX_TOTAL_RETRY_WAIT_MS } from "../config/runtimeConfig.js";
+import { ANTHROPIC_BETA_REDACT_THINKING, wantsThinkingSummaries } from "../providers/shared.js";
 import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
@@ -276,6 +277,9 @@ export class BaseExecutor {
           credentialId: credentials?.connectionId || credentials?.apiKey || credentials?.accessToken,
           stream,
           retryCount: retryAttemptsByUrl[urlIndex] || 0,
+          // The identity layer re-adds snapshot betas at egress; drop the one
+          // that would blank thinking summaries the request asked for.
+          dropBetas: wantsThinkingSummaries(transformedBody) ? [ANTHROPIC_BETA_REDACT_THINKING] : undefined,
         }, proxyOptions);
         clearTimeout(connectTimer);
         if (signal?.aborted) {

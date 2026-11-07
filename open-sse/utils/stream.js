@@ -2,7 +2,7 @@ import { translateResponse, initState } from "../translator/index.js";
 import { FORMATS } from "../translator/formats.js";
 import { trackPendingRequest, appendRequestLog } from "../runtimeDeps.js";
 import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
-import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE } from "./streamHelpers.js";
+import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE, ensureStreamToolCallIds } from "./streamHelpers.js";
 import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
 import { errorLine } from "./logTags.js";
@@ -73,6 +73,8 @@ export function createSSEStream(options = {}) {
 
   let buffer = "";
   let usage = null;
+  // Tool-call ids already sent to the client, keyed by tool-call index (#4992).
+  const seenToolCallIds = new Map();
   const reassemblyMaxBytes = streamToJsonMaxBytes();
   let reassemblyBytes = 0;
 
@@ -86,7 +88,20 @@ export function createSSEStream(options = {}) {
     }
   }
 
-  const state = mode === STREAM_MODE.TRANSLATE ? { ...initState(sourceFormat), provider, toolNameMap, model } : null;
+  // Direct chat→Responses route: the response translator may defer
+  // response.completed until the usage trailer (only safe here — on a pivoted
+  // route the terminal null chunk never reaches that translator).
+  const deferCompletionForUsage = targetFormat === FORMATS.OPENAI && sourceFormat === FORMATS.OPENAI_RESPONSES;
+  const state = mode === STREAM_MODE.TRANSLATE
+    ? { ...initState(sourceFormat), provider, toolNameMap, model, deferCompletionForUsage }
+    : null;
+  // Bound the deferred-completion wait: a broken upstream can stall after
+  // finish_reason with no usage trailer and no [DONE], holding the socket open.
+  const PENDING_COMPLETION_FLUSH_MS = 3000;
+  let completionFlushTimer = null;
+  function clearCompletionTimer() {
+    if (completionFlushTimer) { clearTimeout(completionFlushTimer); completionFlushTimer = null; }
+  }
 
   let totalContentLength = 0;
   // Observability previews only: saveRequestDetail truncates stored fields
@@ -113,10 +128,60 @@ export function createSSEStream(options = {}) {
   let nativeClaudeOutcome = null;
   let nativeClaudeFinalized = false;
 
+  // Release the pending-request slot exactly once: terminal-event finalization
+  // and flush() can both run for the same stream.
+  let pendingReleased = false;
+  function releasePending(error = false) {
+    if (pendingReleased) return;
+    pendingReleased = true;
+    trackPendingRequest(model, provider, connectionId, false, error);
+  }
+
+  // Usage/logging tail, callable from transform() as well as flush(): the
+  // Responses API has no [DONE] sentinel, so a client (codex) that closes right
+  // after response.completed cancels the reader and flush() never runs.
+  let streamFinalized = false;
+  let streamCompletion = null;
+  function finalizeStream() {
+    clearCompletionTimer();
+    if (streamFinalized) return streamCompletion;
+    streamFinalized = true;
+    releasePending();
+    const isPassthrough = mode === STREAM_MODE.PASSTHROUGH;
+    let finalUsage = isPassthrough ? usage : state?.usage;
+    if (!hasValidUsage(finalUsage) && totalContentLength > 0) {
+      finalUsage = estimateUsage(body, totalContentLength, isPassthrough ? FORMATS.OPENAI : sourceFormat);
+      if (isPassthrough) usage = finalUsage; else state.usage = finalUsage;
+    }
+    if (hasValidUsage(finalUsage)) {
+      logUsage(isPassthrough ? provider : (state?.provider || targetFormat), finalUsage, model, connectionId, clientKeyId);
+    } else {
+      appendRequestLog({ model, provider, connectionId, tokens: null, status: "200 OK" }).catch(() => { });
+    }
+    streamCompletion = Promise.resolve(onStreamComplete?.({ content: contentPreview.text(), thinking: thinkingPreview.text() }, finalUsage, ttftAt)).catch(() => {});
+    return streamCompletion;
+  }
+
+  // Emit a deferred response.completed now — on [DONE], or when the watchdog
+  // gives up on a usage trailer that never arrives.
+  function flushPendingCompletion(controller) {
+    clearCompletionTimer();
+    if (!state?.completionPending || state.completedSent) return;
+    const completed = translateResponse(targetFormat, sourceFormat, null, state);
+    for (const item of completed || []) {
+      if (item === null || item === undefined) continue;
+      const output = formatSSE(item, sourceFormat);
+      reqLogger?.appendConvertedChunk?.(output);
+      controller.enqueue(sharedEncoder.encode(output));
+      sseEmittedCount++;
+    }
+    finalizeStream();
+  }
+
   function finalizeNativeClaude(outcome) {
     if (nativeClaudeFinalized) return;
     nativeClaudeFinalized = true;
-    trackPendingRequest(model, provider, connectionId, false, !outcome.completed);
+    releasePending(!outcome.completed);
     if (hasValidUsage(usage)) logUsage(provider, usage, model, connectionId, clientKeyId);
     // Account on the protocol terminal, not TCP EOF: Claude clients disconnect
     // immediately after message_stop and an upstream can leave its socket open.
@@ -200,6 +265,9 @@ export function createSSEStream(options = {}) {
           if (parsed.type === "error") nativeClaudeOutcome = { completed: false, error: parsed.error?.message || "upstream stream error" };
 
           const idFixed = fixInvalidId(parsed);
+          // A fragment opening a new tool-call index without an id breaks strict
+          // OpenAI-compatible clients; mint one before it reaches the client.
+          const toolCallIdFixed = ensureStreamToolCallIds(parsed, seenToolCallIds);
 
           // Decloak tool names in Claude content_block_start events.
           // claude→claude passthrough skips translateResponse (which applies
@@ -308,7 +376,7 @@ export function createSSEStream(options = {}) {
             parsed.usage = filterUsageForFormat(buffered, FORMATS.OPENAI);
             output = `data: ${JSON.stringify(parsed)}\n\n`;
             injectedUsage = true;
-          } else if (idFixed || fieldsInjected || toolNameDecloaked) {
+          } else if (idFixed || fieldsInjected || toolNameDecloaked || toolCallIdFixed) {
             output = `data: ${JSON.stringify(parsed)}\n\n`;
             injectedUsage = true;
           }
@@ -340,6 +408,8 @@ export function createSSEStream(options = {}) {
     if (nativeClaudeOutcome) finalizeNativeClaude(nativeClaudeOutcome);
     controller.enqueue(sharedEncoder.encode(output));
     if (nativeClaudeOutcome) controller.terminate();
+    // Responses clients (codex CLI) close on response.completed instead of [DONE]
+    else if (passthroughResponsesTerminalSeen && !nativeClaudeSeen) finalizeStream();
   }
 
   function drainPassthroughEvents(controller, force = false) {
@@ -436,6 +506,9 @@ export function createSSEStream(options = {}) {
         // For Ollama: done=true is the final chunk with finish_reason/usage, must translate
         // For other formats: done=true is the [DONE] sentinel, skip
         if (parsed && parsed.done && targetFormat !== FORMATS.OLLAMA) {
+          // [DONE] ends any wait for a usage trailer, even if the upstream
+          // keeps the HTTP connection open.
+          if (deferCompletionForUsage) flushPendingCompletion(controller);
           // Synthesize response.failed if the Responses stream never sent a terminal event
           if (keepsOpenAIResponsesFormat && !openAIResponsesTerminalSeen) {
             const failedOutput = formatIncompleteOpenAIResponsesStreamFailure();
@@ -503,6 +576,8 @@ export function createSSEStream(options = {}) {
           controller.enqueue(sharedEncoder.encode(output));
           currentOpenAIResponsesEvent = null;
           sseEmittedCount++;
+          // Responses clients (codex) close on response.completed instead of [DONE]
+          if (openAIResponsesTerminal) finalizeStream();
           continue;
         }
 
@@ -543,7 +618,16 @@ export function createSSEStream(options = {}) {
             reqLogger?.appendConvertedChunk?.(output);
             controller.enqueue(sharedEncoder.encode(output));
             sseEmittedCount++;
+            // Responses clients (codex) close on response.completed instead of [DONE]
+            if (deferCompletionForUsage && item?.event === "response.completed") finalizeStream();
           }
+        }
+        if (deferCompletionForUsage && state.completionPending && !state.completedSent && !completionFlushTimer) {
+          completionFlushTimer = setTimeout(() => {
+            completionFlushTimer = null;
+            try { flushPendingCompletion(controller); } catch { /* controller already closed */ }
+          }, PENDING_COMPLETION_FLUSH_MS);
+          completionFlushTimer.unref?.();
         }
         if (openAIResponsesTerminal && sourceFormat === FORMATS.OPENAI && !streamDoneSent) {
           const doneOutput = "data: [DONE]\n\n";
@@ -553,16 +637,7 @@ export function createSSEStream(options = {}) {
           if (terminateOnResponsesTerminal) {
             // HTTP Responses streams may leave the connection open after the
             // terminal event. Finish accounting and detach without waiting.
-            trackPendingRequest(model, provider, connectionId, false);
-            if (!hasValidUsage(state?.usage) && totalContentLength > 0) {
-              state.usage = estimateUsage(body, totalContentLength, sourceFormat);
-            }
-            if (hasValidUsage(state?.usage)) {
-              logUsage(state.provider || targetFormat, state.usage, model, connectionId, clientKeyId);
-            }
-            if (onStreamComplete) {
-              onStreamComplete({ content: contentPreview.text(), thinking: thinkingPreview.text() }, state?.usage, ttftAt).catch(() => {});
-            }
+            finalizeStream();
             reqLogger?.close?.();
             controller.terminate();
             return;
@@ -574,7 +649,8 @@ export function createSSEStream(options = {}) {
     async flush(controller) {
       const evtSummary = Object.entries(eventTypeCounts).map(([k, v]) => `${k}=${v}`).join(",") || "none";
       dbg("SSE", `flush | provider=${provider} | model=${model} | recvLines=${sseLineCount} | emitted=${sseEmittedCount} | events=[${evtSummary}]`);
-      trackPendingRequest(model, provider, connectionId, false);
+      releasePending();
+      clearCompletionTimer();
       try {
         const remaining = decoder.decode();
         if (remaining) buffer += remaining;
@@ -589,16 +665,6 @@ export function createSSEStream(options = {}) {
           }
           if (nativeClaudeFinalized) return;
 
-          if (!hasValidUsage(usage) && totalContentLength > 0) {
-            usage = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
-          }
-
-          if (hasValidUsage(usage)) {
-            logUsage(provider, usage, model, connectionId, clientKeyId);
-          } else {
-            appendRequestLog({ model, provider, connectionId, tokens: null, status: "200 OK" }).catch(() => { });
-          }
-          
           // IMPORTANT: In passthrough mode we still must terminate the SSE stream.
           // Some clients (e.g. OpenClaw) expect the OpenAI-style sentinel:
           //   data: [DONE]\n\n
@@ -621,12 +687,7 @@ export function createSSEStream(options = {}) {
             controller.enqueue(sharedEncoder.encode(doneOutput));
           }
 
-          if (onStreamComplete) {
-            await onStreamComplete({
-              content: contentPreview.text(),
-              thinking: thinkingPreview.text()
-            }, usage, ttftAt);
-          }
+          await finalizeStream();
           reqLogger?.close?.();
           return;
         }
@@ -702,22 +763,7 @@ export function createSSEStream(options = {}) {
           streamDoneSent = true;
         }
 
-        if (!hasValidUsage(state?.usage) && totalContentLength > 0) {
-          state.usage = estimateUsage(body, totalContentLength, sourceFormat);
-        }
-
-        if (hasValidUsage(state?.usage)) {
-          logUsage(state.provider || targetFormat, state.usage, model, connectionId, clientKeyId);
-        } else {
-          appendRequestLog({ model, provider, connectionId, tokens: null, status: "200 OK" }).catch(() => { });
-        }
-        
-        if (onStreamComplete) {
-          await onStreamComplete({
-            content: contentPreview.text(),
-            thinking: thinkingPreview.text()
-          }, state?.usage, ttftAt);
-        }
+        await finalizeStream();
         reqLogger?.close?.();
       } catch (error) {
         reqLogger?.close?.();
@@ -729,6 +775,7 @@ export function createSSEStream(options = {}) {
 
     // Client abort / pipe error: flush never runs, so release chunk logs here.
     cancel() {
+      clearCompletionTimer();
       reqLogger?.close?.();
     }
   });

@@ -1,4 +1,5 @@
 import { FORMATS } from "../../translator/formats.js";
+import { upstreamResponseHeaders } from "../../utils/upstreamHeaders.js";
 import { ollamaBodyToOpenAI } from "../../translator/response/ollama-to-openai.js";
 import { projectCompletionToClientFormat, responsesApiToOpenAICompletion } from "../../translator/response/completionProjector.js";
 import { addBufferToUsage, filterUsageForFormat } from "../../utils/usageTracking.js";
@@ -360,7 +361,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   return {
     success: true,
     response: new Response(JSON.stringify(translatedResponse), {
-      headers: { "Content-Type": "application/json" }
+      headers: { "Content-Type": "application/json", ...upstreamResponseHeaders(providerResponse.headers) }
     })
   };
 }

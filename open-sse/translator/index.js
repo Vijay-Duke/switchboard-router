@@ -1,11 +1,13 @@
 import { FORMATS } from "./formats.js";
 import { ensureToolCallIds, fixMissingToolResponses } from "./concerns/toolCall.js";
-import { prepareClaudeRequest } from "./formats/claude.js";
-import { cloakClaudeTools } from "../utils/claudeCloaking.js";
+import { prepareClaudeRequest, ensureTrailingUserTurn } from "./formats/claude.js";
+import { ROLE, GEMINI_ROLE } from "./schema/roles.js";
+import { cloakClaudeTools, decloakStreamChunk } from "../utils/claudeCloaking.js";
 import { filterToOpenAIFormat } from "./formats/openai.js";
 import { normalizeThinkingConfig } from "../services/provider.js";
 import { applyThinking, captureThinking } from "./concerns/thinkingUnified.js";
 import { captureSessionId } from "../utils/sessionManager.js";
+import { ensureStreamToolCallIds } from "../utils/streamHelpers.js";
 import { AntigravityExecutor } from "../executors/antigravity.js";
 import { PROVIDERS } from "../providers/index.js";
 import { getRequestTranslator, getResponseTranslator } from "./registry.js";
@@ -31,10 +33,26 @@ function stripContentTypes(body, stripList = []) {
   }
 }
 
+// Role the client's conversation actually ended on, in the source format's own
+// shape (Gemini/Antigravity: contents[], Responses/Codex: input[]). Only an
+// explicit trailing model/assistant turn is real prefill and maps to
+// ROLE.ASSISTANT; any other tail stays undefined so the emptied-turn fix applies.
+function detectClientLastRole(body) {
+  if (Array.isArray(body?.messages)) return body.messages[body.messages.length - 1]?.role;
+  const items = Array.isArray(body?.contents) ? body.contents
+    : Array.isArray(body?.request?.contents) ? body.request.contents
+    : Array.isArray(body?.input) ? body.input : null;
+  if (!items) return undefined;
+  const role = items[items.length - 1]?.role;
+  return role === ROLE.ASSISTANT || role === GEMINI_ROLE.MODEL ? ROLE.ASSISTANT : undefined;
+}
+
 // Translate request: source -> openai -> target
 export function translateRequest(sourceFormat, targetFormat, model, body, stream = true, credentials = null, provider = null, reqLogger = null, stripList = [], connectionId = null, clientTool = null) {
   ensureInitialized();
   let result = body;
+  // Role the client actually ended on, before any translator drops an emptied turn.
+  const clientLastRole = detectClientLastRole(body);
 
   // Strip explicit content types (opt-in via strip[] in PROVIDER_MODELS entry)
   stripContentTypes(result, stripList);
@@ -101,9 +119,10 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
   if (targetFormat === FORMATS.CLAUDE) {
     const apiKey = credentials?.accessToken || credentials?.apiKey || null;
     result = prepareClaudeRequest(result, provider, apiKey, connectionId, credentials?.rawHeaders, clientSessionId, credentials?.connectionId || apiKey);
+    if (Array.isArray(result?.messages)) result.messages = ensureTrailingUserTurn(result.messages, clientLastRole);
   }
 
-  // Claude cloaking: rename client tools with _cc suffix (anti-ban)
+  // Claude cloaking: rename client tools with CLAUDE_TOOL_SUFFIX (anti-ban)
   // quirk: only providers flagged cloakToolsOnOAuth, and only with an OAuth token
   if (PROVIDERS[provider]?.quirks?.cloakToolsOnOAuth) {
     const apiKey = credentials?.accessToken || credentials?.apiKey || null;
@@ -131,9 +150,19 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
 // Translate response chunk: target -> openai -> source
 export function translateResponse(targetFormat, sourceFormat, chunk, state) {
   ensureInitialized();
-  // If same format, return as-is
+  // If same format, return as-is — except the tool name may still be cloaked:
+  // translateRequest() suffixes client tools for OAuth-cloaked Claude providers
+  // even when no format conversion is needed, so streamed tool_use blocks must
+  // be decloaked here or the client sees an unknown ("_ide"-suffixed) tool.
   if (sourceFormat === targetFormat) {
-    return [chunk];
+    // Same-format (openai→openai) passthrough: the upstream chunk reaches the
+    // client as-is. A fragment that opens a new tool-call index without an id
+    // aborts strict OpenAI-compatible clients (#4992) — mint/reuse one first.
+    if (state && chunk && typeof chunk === "object") {
+      if (!state.streamToolCallIds) state.streamToolCallIds = new Map();
+      ensureStreamToolCallIds(chunk, state.streamToolCallIds);
+    }
+    return [decloakStreamChunk(chunk, state?.toolNameMap)];
   }
 
   let results = [chunk];

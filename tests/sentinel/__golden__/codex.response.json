@@ -180,6 +180,28 @@
         "status": "completed",
         "background": false,
         "error": null,
+        "output": [
+          {
+            "id": "msg_resp_chatcmpl-codex-1234567890_0",
+            "type": "message",
+            "content": [
+              {
+                "type": "output_text",
+                "annotations": [],
+                "logprobs": [],
+                "text": "Hello"
+              }
+            ],
+            "role": "assistant"
+          },
+          {
+            "id": "fc_call_abc",
+            "type": "function_call",
+            "arguments": "{\"city\":\"NYC\"}",
+            "call_id": "call_abc",
+            "name": "get_weather"
+          }
+        ],
         "usage": {
           "input_tokens": 120,
           "output_tokens": 18,

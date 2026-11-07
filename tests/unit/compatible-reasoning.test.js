@@ -309,14 +309,23 @@ describe("buildPiModelEntries caps resolver", () => {
     expect(muse.thinkingLevelMap.max).toBe("max");
     expect(muse.thinking.efforts).toContain("max");
     // No wire alias (e.g. claude-adaptive) → xhigh/max follow native levels exactly.
+    // claude-adaptive advertises xhigh since upstream 7894f3d3; the 4.6 models do not.
     const [claude] = buildPiModelEntries(
       ["cc/claude-opus-5-5"],
       [],
       {},
       () => ({ reasoning: true, levels: getThinkingLevels("cc", "claude-opus-5-5") }),
     );
-    expect(claude.thinkingLevelMap.xhigh).toBeNull();
+    expect(claude.thinkingLevelMap.xhigh).toBe("xhigh");
     expect(claude.thinkingLevelMap.max).toBe("max");
+    const [claude46] = buildPiModelEntries(
+      ["cc/claude-opus-4-6"],
+      [],
+      {},
+      () => ({ reasoning: true, levels: getThinkingLevels("cc", "claude-opus-4-6") }),
+    );
+    expect(claude46.thinkingLevelMap.xhigh).toBeNull();
+    expect(claude46.thinkingLevelMap.max).toBe("max");
     expect(effortWireLevel(["none", "low", "medium", "high"], "max")).toBeNull();
     expect(effortWireLevel(null, "max")).toBeNull();
   });

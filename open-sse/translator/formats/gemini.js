@@ -2,6 +2,7 @@
 
 import { safeParseJSON } from "../concerns/json.js";
 import { OPENAI_BLOCK } from "../schema/index.js";
+import { isGemini4Model } from "../../providers/modelFamilies.js";
 
 // Unsupported JSON Schema constraints that should be removed for Antigravity
 export const UNSUPPORTED_SCHEMA_CONSTRAINTS = [
@@ -14,6 +15,8 @@ export const UNSUPPORTED_SCHEMA_CONSTRAINTS = [
   "contains",
   // 2020-12 keywords with no Gemini equivalent
   "unevaluatedProperties", "unevaluatedItems", "contentSchema",
+  // Tuple-array keywords; converted to items first, leftovers stripped
+  "prefixItems", "additionalItems",
   // Numeric constraints Gemini rejects (Switchboard#2309)
   "multipleOf", "minimum", "maximum",
   // Claude rejects these in VALIDATED mode
@@ -328,7 +331,17 @@ function flattenTypeArrays(obj) {
 
   if (obj.type && Array.isArray(obj.type)) {
     const nonNullTypes = obj.type.filter(t => t !== "null");
-    obj.type = nonNullTypes.length > 0 ? nonNullTypes[0] : "string";
+    if (nonNullTypes.length <= 1) {
+      obj.type = nonNullTypes[0] || "string";
+    } else if (obj.properties && nonNullTypes.includes("object")) {
+      // Several types: prefer the one the schema's structure describes, then
+      // the most permissive scalar (string), then number/integer/boolean.
+      obj.type = "object";
+    } else if (obj.items?.type && nonNullTypes.includes("array")) {
+      obj.type = "array";
+    } else {
+      obj.type = ["string", "number", "integer", "boolean"].find(t => nonNullTypes.includes(t)) || nonNullTypes[0];
+    }
   }
 
   for (const value of Object.values(obj)) {
@@ -352,6 +365,65 @@ function ensureObjectType(obj) {
   }
 }
 
+// Recurse into child schemas; a `properties` map holds schemas keyed by
+// parameter name, so its own keys (a param named "type"/"items") are not schema keywords.
+function forEachChildSchema(obj, fn) {
+  for (const [key, v] of Object.entries(obj)) {
+    if (!v || typeof v !== "object") continue;
+    if (key === "properties" && !Array.isArray(v)) {
+      for (const sub of Object.values(v)) fn(sub);
+    } else {
+      fn(v);
+    }
+  }
+}
+
+// Convert prefixItems (tuple validation) to items — Gemini cannot express tuples,
+// and a type:"array" schema without items is rejected with "missing field".
+function convertPrefixItems(obj) {
+  if (!obj || typeof obj !== "object") return;
+  if (Array.isArray(obj.prefixItems) && obj.prefixItems.length > 0) {
+    const variants = obj.prefixItems.filter(s => s && s.type !== "null");
+    if (!obj.items && variants.length === 1) {
+      obj.items = variants[0];
+    } else if (!obj.items && variants.length > 1) {
+      obj.items = { anyOf: variants };
+    }
+    delete obj.prefixItems;
+  }
+  forEachChildSchema(obj, convertPrefixItems);
+}
+
+// Gemini requires typed items on every type:"array" schema — fill a permissive placeholder.
+function fixArrayItems(obj) {
+  if (!obj.items || typeof obj.items !== "object" || Array.isArray(obj.items) || Object.keys(obj.items).length === 0) {
+    obj.items = { type: "string" };
+  } else if (!obj.items.type) {
+    obj.items.type = obj.items.properties ? "object" : obj.items.items ? "array" : "string";
+  }
+}
+
+function ensureArrayItems(obj) {
+  if (!obj || typeof obj !== "object") return;
+  if (obj.type === "array") fixArrayItems(obj);
+  forEachChildSchema(obj, ensureArrayItems);
+}
+
+// Gemini Schema proto predicates: `items` only on type array; `properties` /
+// `required` only on type object. Recursion skips a properties map's own keys,
+// so params named items/properties/required are never mistaken for keywords.
+function enforceTypeConstraints(obj) {
+  if (!obj || typeof obj !== "object") return;
+  forEachChildSchema(obj, enforceTypeConstraints);
+  if (Array.isArray(obj)) return;
+  if (obj.type === "array") fixArrayItems(obj);
+  else delete obj.items;
+  if (obj.type !== "object") {
+    delete obj.properties;
+    delete obj.required;
+  }
+}
+
 // Clean JSON Schema for Antigravity API compatibility - removes unsupported keywords recursively
 export function cleanJSONSchemaForAntigravity(schema) {
   if (!schema || typeof schema !== "object") return schema;
@@ -364,6 +436,7 @@ export function cleanJSONSchemaForAntigravity(schema) {
 
   // Phase 2: Flatten complex structures
   mergeAllOf(cleaned);
+  convertPrefixItems(cleaned);
   flattenAnyOfOneOf(cleaned);
   flattenTypeArrays(cleaned);
 
@@ -373,6 +446,7 @@ export function cleanJSONSchemaForAntigravity(schema) {
 
   // Phase 2.5: Infer missing type=object when properties exist (Gemini requirement)
   ensureObjectType(cleaned);
+  ensureArrayItems(cleaned);
 
   // Phase 2.7: Convert invalid property values (e.g. property: "object") to proper schemas.
   // Claude Code tools sometimes have properties like { "field": "object" } where the value
@@ -453,6 +527,78 @@ export function cleanJSONSchemaForAntigravity(schema) {
 
   addPlaceholders(cleaned);
 
+  // Phase 6: Enforce Gemini protobuf type predicates on items/properties/required
+  enforceTypeConstraints(cleaned);
+
   return cleaned;
 }
 
+// Gemini / Cloud Code treat a `$ref` key inside functionResponse.response as a
+// pointer to functionResponse.parts and reject the request with 400
+// INVALID_ARGUMENT ("The referenced name ... does not match to a display_name").
+// Tool results carrying JSON Schema / OpenAPI documents (webfetch, read, MCP)
+// hit this, so rename the key.
+export const GEMINI_RESERVED_RESPONSE_KEYS = { "$ref": "_ref" };
+
+// Recursively rename reserved keys in a tool-result payload (arrays/objects only)
+export function sanitizeFunctionResponsePayload(value) {
+  if (Array.isArray(value)) return value.map(sanitizeFunctionResponsePayload);
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [key, val] of Object.entries(value)) {
+    out[GEMINI_RESERVED_RESPONSE_KEYS[key] ?? key] = sanitizeFunctionResponsePayload(val);
+  }
+  return out;
+}
+
+function sanitizeFunctionResponsePart(part) {
+  const response = part?.functionResponse?.response;
+  if (!response || typeof response !== "object") return part;
+  return { ...part, functionResponse: { ...part.functionResponse, response: sanitizeFunctionResponsePayload(response) } };
+}
+
+// Gemini 4 rejects a merged user turn whose last part is not a functionResponse (#4802)
+function moveFunctionResponsesLast(parts) {
+  const responses = parts.filter(p => p.functionResponse);
+  if (!responses.length) return parts;
+  return [...parts.filter(p => !p.functionResponse), ...responses];
+}
+
+// Merge adjacent same-role turns, strip empty parts, and guarantee the
+// conversation opens and closes on a user turn (Gemini rejects a leading
+// model turn, and a trailing model turn is assistant prefill; a trailing
+// unanswered functionCall gets a stub functionResponse instead).
+export function normalizeGeminiContents(contents, model = null) {
+  const frLast = isGemini4Model(model);
+  const out = [];
+  for (const c of contents || []) {
+    if (!c?.role || !Array.isArray(c.parts)) continue;
+    const parts = c.parts.filter(p => p && Object.keys(p).length > 0).map(sanitizeFunctionResponsePart);
+    if (parts.length === 0) continue;
+    const last = out.at(-1);
+    if (last?.role === c.role) {
+      last.parts.push(...parts);
+      if (frLast) last.parts = moveFunctionResponsesLast(last.parts);
+    } else out.push({ ...c, parts: [...parts] });
+  }
+  if (out.length > 0 && out[0].role !== "user") {
+    out.unshift({ role: "user", parts: [{ text: "..." }] });
+  }
+  if (out.length > 0 && out.at(-1).role === "model") {
+    const fnCalls = out.at(-1).parts.filter(p => p?.functionCall);
+    if (fnCalls.length > 0) {
+      out.push({
+        role: "user",
+        parts: fnCalls.map(p => {
+          const call = p.functionCall || {};
+          const fr = { name: call.name || "tool", response: { result: "Continue." } };
+          if (call.id) fr.id = call.id;
+          return { functionResponse: fr };
+        }),
+      });
+    } else {
+      out.push({ role: "user", parts: [{ text: "Continue." }] });
+    }
+  }
+  return out;
+}

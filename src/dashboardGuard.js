@@ -6,7 +6,9 @@ import { isManagementTokenValid } from "@/lib/mgmt/token.js";
 import { hasValidDashboardSession } from "@/lib/auth/dashboardSession.js";
 
 // Public LLM API prefixes (optional API-key gate for non-local callers).
-const PUBLIC_PREFIXES = ["/v1", "/v1beta", "/api/v1", "/api/v1beta", "/codex"];
+// Keep root-level rewrites here too (next.config rewrites /responses and
+// /codex/* to /api/v1/responses): the guard runs before Next.js rewrites.
+const PUBLIC_PREFIXES = ["/v1", "/v1beta", "/api/v1", "/api/v1beta", "/codex", "/responses"];
 
 // Spawn-capable / host-secret routes — loopback or CLI token only.
 const LOCAL_ONLY_PATHS = [

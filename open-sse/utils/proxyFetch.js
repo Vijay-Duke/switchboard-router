@@ -352,6 +352,15 @@ function applyIdentityWrap(url, options = {}) {
         }
       }
     }
+    if (Array.isArray(options.dropBetas) && options.dropBetas.length) {
+      const betaKey = Object.keys(headers).find((k) => k.toLowerCase() === "anthropic-beta");
+      if (betaKey && headers[betaKey]) {
+        const kept = String(headers[betaKey]).split(",").map((s) => s.trim())
+          .filter((b) => b && !options.dropBetas.includes(b)).join(",");
+        if (kept) headers[betaKey] = kept;
+        else delete headers[betaKey];
+      }
+    }
   }
   return {
     ...options,
@@ -366,7 +375,7 @@ function applyIdentityWrap(url, options = {}) {
 function publicFetchInit(options) {
   const {
     _identityTls, _identityAlpn, _identityTlsSpecRev, _identityProfile,
-    identity, provider, format, overlay, credentialId, stream, retryCount, snapshot,
+    identity, provider, format, overlay, credentialId, stream, retryCount, snapshot, dropBetas,
     ...init
   } = options;
   return init;

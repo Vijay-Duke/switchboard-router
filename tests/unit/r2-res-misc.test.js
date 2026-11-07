@@ -75,19 +75,16 @@ describe("R2-X24 commandcode other finish", () => {
   });
 });
 
-describe("R2-X25 commandcode error+finish single terminal", () => {
-  it("yields exactly one finish chunk", () => {
+describe("R2-X25 commandcode error is a stream failure, never a clean finish", () => {
+  // Since upstream 092c84ea a mid-stream error throws (the stream handler ends
+  // the client stream with its abort terminal) instead of a fake stop chunk.
+  it("throws on the error event and emits no finish chunk before it", () => {
     const state = {};
     const all = [];
-    for (const e of [
-      JSON.stringify({ type: "text-delta", text: "hi" }),
-      JSON.stringify({ type: "error", message: "boom" }),
-      JSON.stringify({ type: "finish", finishReason: "stop" }),
-    ]) {
-      const out = commandCodeToOpenAIResponse(e, state);
-      if (out) all.push(...out);
-    }
-    expect(all.filter((c) => c.choices[0].finish_reason).length).toBe(1);
+    const feed = (e) => { const out = commandCodeToOpenAIResponse(JSON.stringify(e), state); if (out) all.push(...out); };
+    feed({ type: "text-delta", text: "hi" });
+    expect(() => feed({ type: "error", message: "boom" })).toThrow(/boom/);
+    expect(all.filter((c) => c.choices[0].finish_reason)).toHaveLength(0);
   });
 });
 

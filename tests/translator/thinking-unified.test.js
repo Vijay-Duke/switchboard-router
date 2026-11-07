@@ -67,6 +67,26 @@ describe("extractThinking", () => {
 });
 
 describe("applyThinking per provider format", () => {
+  it("claude adaptive thinking maps auto effort to a supported level", () => {
+    const out = apply("claude", "claude-opus-4.7", { thinking: { type: "adaptive" } }, "claude");
+    expect(out.output_config).toEqual({ effort: "high" });
+    expect(out.thinking).toEqual({ type: "adaptive" });
+  });
+  it("permanently adaptive Claude maps auto effort without adding a thinking switch", () => {
+    const out = apply("claude", "claude-fable-5-1", { thinking: { type: "adaptive" } }, "claude");
+    expect(out.output_config).toEqual({ effort: "high" });
+    expect(out.thinking).toBeUndefined();
+  });
+  it("Fable 5.1 → effort without a redundant thinking switch", () => {
+    const out = apply("claude", "claude-fable-5-1", { reasoning_effort: "high" }, "claude");
+    expect(out.output_config).toEqual({ effort: "high" });
+    expect(out.thinking).toBeUndefined();
+  });
+  it("Fable 5.1 cannot disable thinking → none clamps to Claude's lowest effort", () => {
+    const out = apply("claude", "claude-fable-5-1", { reasoning_effort: "none" }, "claude");
+    expect(out.output_config).toEqual({ effort: "low" });
+    expect(out.thinking).toBeUndefined();
+  });
   it("claude 4.6+ → adaptive output_config (no budget_tokens)", () => {
     const out = apply("claude", "claude-opus-4.7", { reasoning_effort: "high" }, "claude");
     expect(out.output_config).toEqual({ effort: "high" });
@@ -175,6 +195,43 @@ describe("applyThinking per provider format", () => {
   });
 });
 
+describe("native-only thinking shapes on an OpenAI-compatible wire (upstream 1fe996db, #3718)", () => {
+  it.each([["gemini-3.5-flash-lite"], ["gemini-3.7-flash"], ["gemini-3-pro"]])(
+    "Gemini 3.x %s over a custom OpenAI-compatible provider → reasoning_effort, not generationConfig", (model) => {
+      const out = apply("openai", model, { reasoning_effort: "medium" }, "my-custom-gemini-openai");
+      expect(out.reasoning_effort).toBe("medium");
+      expect(out.generationConfig).toBeUndefined();
+      expect(out.thinkingConfig).toBeUndefined();
+    });
+  it("Gemini 2.5 (gemini-budget) over a custom OpenAI-compatible provider → reasoning_effort", () => {
+    const out = apply("openai", "gemini-2.5-flash", { reasoning_effort: "high" }, "my-custom-gemini-openai");
+    expect(out.reasoning_effort).toBe("high");
+    expect(out.generationConfig).toBeUndefined();
+  });
+  it("Gemini model on its native wire (gemini-cli) still gets generationConfig", () => {
+    const out = apply("gemini-cli", "gemini-3.5-flash-lite", { reasoning_effort: "medium" }, "gemini-cli");
+    expect(out.generationConfig.thinkingConfig.thinkingLevel).toBe("medium");
+  });
+  it("commandcode envelope writes params.reasoning_effort, not wrapper fields", () => {
+    const out = apply("commandcode", "deepseek/deepseek-v4.1-flash", {
+      params: { model: "deepseek/deepseek-v4.1-flash", messages: [] },
+      reasoning_effort: "high",
+    }, "commandcode");
+    expect(out.params.reasoning_effort).toBe("high");
+    expect(out.reasoning_effort).toBeUndefined();
+    expect(out.thinking).toBeUndefined();
+  });
+  // Upstream 13b468b8 also passes low through for DeepSeek on Command Code;
+  // Switchboard deliberately keeps that family at high|max there (a6c6e59e).
+  it("commandcode preserves max effort", () => {
+    const out = apply("commandcode", "deepseek/deepseek-v4.1-flash", {
+      params: { messages: [] },
+      reasoning_effort: "max",
+    }, "commandcode");
+    expect(out.params.reasoning_effort).toBe("max");
+  });
+});
+
 describe("extractReasoningText (response shapes)", () => {
   it("reasoning_content (GLM/Qwen/DeepSeek)", () => {
     expect(extractReasoningText({ reasoning_content: "abc" })).toBe("abc");
@@ -211,5 +268,18 @@ describe("OpenCode Free ids with no capabilities entry (#2690)", () => {
 
   it("still strips it for a model that has no entry at all (control)", () => {
     expect(apply("openai", "oc/no-such-model-xyz", bunny("high"), "oc").reasoning_effort).toBeUndefined();
+  });
+});
+
+describe("per-transport thinkingFormat (upstream d07e5bc3)", () => {
+  it("OpenCode Go /responses gets nested reasoning, not Chat-shaped fields", () => {
+    const out = apply("openai-responses", "deepseek-v4-flash", { reasoning_effort: "high" }, "opencode-go");
+    expect(out.reasoning).toEqual({ effort: "high", summary: "auto" });
+    expect(out.reasoning_effort).toBeUndefined();
+    expect(out.thinking).toBeUndefined();
+  });
+  it("OpenCode Go chat wire keeps the model's own thinking shape", () => {
+    const out = apply("openai", "deepseek-v4-flash", { reasoning_effort: "high" }, "opencode-go");
+    expect(out.thinking).toEqual({ type: "enabled" });
   });
 });

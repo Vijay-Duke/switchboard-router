@@ -26,6 +26,12 @@ const moduleDefault = {
     reasoningInject: {
       scope: "all",
     },
+    quirks: {
+      // The /anthropic/v1/messages endpoint whitelists tool `type` to these
+      // built-ins and 400s "unknown variant `custom`" on typed client tools;
+      // prepareClaudeRequest sends client tools typeless under this quirk.
+      claudeSupportedToolTypes: ["web_search_20250305", "web_search_20260209"],
+    },
   },
   // Multi-endpoint: pick the transport matching client sourceFormat to skip translation.
   transports: [
