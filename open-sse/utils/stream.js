@@ -2,7 +2,7 @@ import { translateResponse, initState } from "../translator/index.js";
 import { FORMATS } from "../translator/formats.js";
 import { trackPendingRequest, appendRequestLog } from "../runtimeDeps.js";
 import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
-import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE } from "./streamHelpers.js";
+import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE, ensureStreamToolCallIds } from "./streamHelpers.js";
 import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
 import { errorLine } from "./logTags.js";
@@ -72,6 +72,8 @@ export function createSSEStream(options = {}) {
 
   let buffer = "";
   let usage = null;
+  // Tool-call ids already sent to the client, keyed by tool-call index (#4992).
+  const seenToolCallIds = new Map();
   const reassemblyMaxBytes = streamToJsonMaxBytes();
   let reassemblyBytes = 0;
 
@@ -262,6 +264,9 @@ export function createSSEStream(options = {}) {
           if (parsed.type === "error") nativeClaudeOutcome = { completed: false, error: parsed.error?.message || "upstream stream error" };
 
           const idFixed = fixInvalidId(parsed);
+          // A fragment opening a new tool-call index without an id breaks strict
+          // OpenAI-compatible clients; mint one before it reaches the client.
+          const toolCallIdFixed = ensureStreamToolCallIds(parsed, seenToolCallIds);
 
           // Decloak tool names in Claude content_block_start events.
           // claude→claude passthrough skips translateResponse (which applies
@@ -370,7 +375,7 @@ export function createSSEStream(options = {}) {
             parsed.usage = filterUsageForFormat(buffered, FORMATS.OPENAI);
             output = `data: ${JSON.stringify(parsed)}\n\n`;
             injectedUsage = true;
-          } else if (idFixed || fieldsInjected || toolNameDecloaked) {
+          } else if (idFixed || fieldsInjected || toolNameDecloaked || toolCallIdFixed) {
             output = `data: ${JSON.stringify(parsed)}\n\n`;
             injectedUsage = true;
           }

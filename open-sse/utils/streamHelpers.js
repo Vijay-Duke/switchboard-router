@@ -1,4 +1,5 @@
 import { FORMATS } from "../translator/formats.js";
+import { fallbackToolCallId } from "../translator/concerns/toolCall.js";
 
 // Parse SSE data line (or NDJSON). L1: also accept raw JSON lines for non-Ollama
 // providers that emit NDJSON, and multi-line payloads joined with \n.
@@ -77,6 +78,36 @@ export function hasValuableContent(chunk, format) {
   }
 
   return true; // Other formats: keep all chunks
+}
+
+// Ensure every streamed tool_call carries an id (#4992).
+// OpenAI's contract puts the id on the FIRST fragment of a call; some providers
+// open a new `index` in a later fragment without one, and strict clients
+// (@ai-sdk/openai-compatible: "Expected 'id' to be a string") abort the turn.
+// Remember the id per index and mint a stable one when an index is new.
+// Returns true when the chunk was modified.
+export function ensureStreamToolCallIds(chunk, seenIds) {
+  if (!chunk?.choices?.length) return false;
+  let changed = false;
+  for (const choice of chunk.choices) {
+    const calls = choice?.delta?.tool_calls;
+    if (!Array.isArray(calls)) continue;
+    for (const tc of calls) {
+      if (!tc || typeof tc !== "object") continue;
+      if (typeof tc.id === "string" && tc.id.length > 0) {
+        if (tc.index !== undefined) seenIds.set(tc.index, tc.id);
+        continue;
+      }
+      // Reuse the id already seen for this index (stable for the whole call),
+      // or mint one when the index is new to the client.
+      const known = tc.index !== undefined ? seenIds.get(tc.index) : undefined;
+      const id = known || fallbackToolCallId(tc.index, tc.function?.name);
+      tc.id = id;
+      if (tc.index !== undefined) seenIds.set(tc.index, id);
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 // Fix invalid id (generic or too short)
