@@ -65,7 +65,7 @@ describe("checkFallbackError classification", () => {
   it.each([400, 405, 409, 422])(
     "does not rotate accounts on unmatched client error %i (rotating cannot fix a bad body)",
     (status) => {
-      expect(checkFallbackError(status, "")).toEqual({ shouldFallback: false, cooldownMs: 0 });
+      expect(checkFallbackError(status, "")).toEqual({ shouldFallback: false, cooldownMs: 0, requestScoped: true });
     }
   );
 

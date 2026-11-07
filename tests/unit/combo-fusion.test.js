@@ -460,11 +460,9 @@ describe("combo 404 fallback", () => {
     expect(json.choices[0].message.content).toBe("B response");
   });
 
-  it("preserves account-level non-fallback errors (400) without advancing to next model", async () => {
-    const handleSingleModel = vi.fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: { message: "bad request" } }), { status: 400, headers: { "Content-Type": "application/json" } })
-      );
+  it("advances past a request-scoped 400 and returns it verbatim when no member serves the request", async () => {
+    const bad = () => new Response(JSON.stringify({ error: { message: "bad request" } }), { status: 400, headers: { "Content-Type": "application/json" } });
+    const handleSingleModel = vi.fn().mockResolvedValueOnce(bad()).mockResolvedValueOnce(bad());
 
     const res = await handleComboChat({
       body: { messages: [{ role: "user", content: "hi" }] },
@@ -473,7 +471,23 @@ describe("combo 404 fallback", () => {
       log,
     });
 
-    // 400 from candidate A should NOT advance to B
+    // Upstream 5cdcddf5: a 400 is request-scoped, so B gets a chance; with no
+    // member serving it the client still sees the first member's own 400.
+    expect(handleSingleModel).toHaveBeenCalledTimes(2);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.message).toBe("bad request");
+  });
+
+  it("still stops on a text-rule non-fallback error (improperly formed request)", async () => {
+    const handleSingleModel = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: "Improperly formed request" } }), { status: 400, headers: { "Content-Type": "application/json" } })
+    );
+    const res = await handleComboChat({
+      body: { messages: [{ role: "user", content: "hi" }] },
+      models: ["p/model-a", "p/model-b"],
+      handleSingleModel,
+      log,
+    });
     expect(handleSingleModel).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(400);
   });
