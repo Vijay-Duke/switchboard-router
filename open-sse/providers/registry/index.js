@@ -100,7 +100,8 @@ import p97 from "./voyage-ai.js";
 import p98 from "./xai.js";
 import p99 from "./xiaomi-mimo.js";
 import p100 from "./xiaomi-tokenplan.js";
-import p101 from "./youcom.js";
+import p101 from "./xquik.js";
+import p102 from "./youcom.js";
 
 const providerRegistry = [
   p0,
@@ -204,7 +205,8 @@ const providerRegistry = [
   p98,
   p99,
   p100,
-  p101
+  p101,
+  p102
 ];
 
 export default providerRegistry;
