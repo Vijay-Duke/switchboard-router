@@ -281,13 +281,22 @@ export async function getQoderUsage(accessToken, proxyOptions = null) {
     // siblings so the dashboard parser doesn't try to render them as rows.
     const userQuota = body.userQuota || {};
     const orgQuota = body.orgResourcePackage || {};
+    // Add-on credits (free grants / promos). Qoder emits this block only when
+    // the account actually holds a grant, so gate on total > 0 to keep the
+    // no-grant shape unchanged.
+    const addOnQuota = body.addOnQuota || {};
+    const addOnTotal = quotaNumber(addOnQuota.total) || 0;
     // Qoder publishes a single absolute reset timestamp (`expiresAt` in ms);
     // surface it on every quota record as ISO so the table can render
-    // "resets at" alongside used/total.
+    // "resets at" alongside used/total. 253402214400000 (9999-12-31T00:00:00Z)
+    // is Qoder's "never expires" sentinel for open-ended plans — flag it
+    // instead of rendering a reset date in the year 9999.
+    const NO_RESET_SENTINEL_MS = 253402214400000;
     const expiresAtMs = Number.isFinite(Number(body.expiresAt)) && Number(body.expiresAt) > 0
       ? Number(body.expiresAt)
       : null;
-    const resetAt = expiresAtMs ? parseResetTime(expiresAtMs) : null;
+    const neverExpires = expiresAtMs === NO_RESET_SENTINEL_MS;
+    const resetAt = expiresAtMs && !neverExpires ? parseResetTime(expiresAtMs) : null;
     const quotas = {
       user: {
         total: quotaNumber(userQuota.total),
@@ -295,6 +304,7 @@ export async function getQoderUsage(accessToken, proxyOptions = null) {
         remaining: quotaNumber(userQuota.remaining),
         unit: userQuota.unit || "credits",
         resetAt,
+        neverExpires,
       },
       organization: {
         total: quotaNumber(orgQuota.total),
@@ -302,8 +312,23 @@ export async function getQoderUsage(accessToken, proxyOptions = null) {
         remaining: quotaNumber(orgQuota.remaining),
         unit: orgQuota.unit || "credits",
         resetAt,
+        neverExpires,
       },
     };
+    if (addOnTotal > 0) {
+      quotas.addOn = {
+        total: addOnTotal,
+        used: quotaNumber(addOnQuota.used) || 0,
+        remaining: quotaNumber(addOnQuota.remaining) || 0,
+        unit: addOnQuota.unit || "credits",
+        // The add-on block has no expiry of its own; the account-level
+        // expiresAt describes the plan, not the grants, so leave it unset and
+        // point at Qoder's usage page where per-package dates live.
+        resetAt: null,
+        neverExpires: false,
+        detailUrl: addOnQuota.detailUrl || null,
+      };
+    }
     return {
       quotas,
       totalUsagePercentage: Number(body.totalUsagePercentage) || 0,
