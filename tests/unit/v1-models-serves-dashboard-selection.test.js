@@ -86,13 +86,13 @@ describe("/v1/models serves the provider dashboard selection", () => {
   });
 });
 
-describe("/v1/models kind of untyped live models", () => {
-  it("keeps untyped live image models out of the chat list", async () => {
+describe("/v1/models kind of live models", () => {
+  it("treats untyped live rows as chat models, like the dashboard page", async () => {
     mocks.discoverConnectionModels.mockResolvedValue({
-      models: [{ id: "gpt-6.1-terra" }, { id: "gpt-image-2" }],
+      models: [{ id: "gpt-image-2" }, { id: "gpt-image-3", type: "image" }],
     });
     const ids = await cxIds();
-    expect(ids).toContain("cx/gpt-6.1-terra");
-    expect(ids).not.toContain("cx/gpt-image-2");
+    expect(ids).toContain("cx/gpt-image-2");
+    expect(ids).not.toContain("cx/gpt-image-3");
   });
 });

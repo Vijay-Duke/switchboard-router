@@ -1,5 +1,5 @@
 import { canonicalModelId } from "@/lib/model-probe/canonicalId.js";
-import { asServiceKind, inferModelType } from "@/shared/utils/importProviderModels";
+import { asServiceKind } from "@/shared/utils/importProviderModels";
 import { ALIAS_TO_ID, getProviderAlias } from "@/shared/constants/providers";
 import { PROVIDER_ID_TO_ALIAS } from "open-sse/config/providerModels.js";
 
@@ -313,9 +313,7 @@ export function buildServedProviderModels({
   for (const model of builtIn.values()) {
     rows.push({
       id: model.id,
-      // Untyped live rows get the same id heuristics Import models uses, so an
-      // image/tts/embedding model never lands in the chat list.
-      kind: model.kind || model.type ? modelType(model) : inferModelType(model.id),
+      kind: modelType(model),
       source: model.source,
       ...(model.capabilities ? { capabilities: model.capabilities } : {}),
       storageAlias,
