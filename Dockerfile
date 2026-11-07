@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.7
-ARG NODE_IMAGE=node:22-alpine
+# Pinned patch release for the October 2026 Node security CVEs.
+ARG NODE_IMAGE=node:22.23.4-alpine
 FROM ${NODE_IMAGE} AS base
 WORKDIR /app
 
