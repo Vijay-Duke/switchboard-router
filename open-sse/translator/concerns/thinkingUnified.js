@@ -138,6 +138,11 @@ export function extractThinking(body) {
 // at the call-site where intent is snapshotted before format translation.
 export const captureThinking = extractThinking;
 
+// Thinking shapes that only exist on a model's native wire (Gemini
+// generationConfig, Claude thinking/output_config, Kiro tags). A Gemini or
+// Claude model reached over an OpenAI-compatible wire takes reasoning_effort.
+const NATIVE_ONLY_FORMATS = new Set(["gemini-level", "gemini-budget", "claude-budget", "claude-adaptive", "kiro"]);
+
 // Command Code envelope override, then provider > capability > target format.
 function resolveFormat(targetFormat, model, provider) {
   // Command Code's alpha API takes a flat effort for every model family.
@@ -145,7 +150,10 @@ function resolveFormat(targetFormat, model, provider) {
   const providerFmt = provider ? PROVIDERS[provider]?.thinkingFormat : null;
   if (providerFmt) return providerFmt;
   const caps = getCapabilitiesForModel(provider, model);
-  if (caps.thinkingFormat) return caps.thinkingFormat;
+  const isOpenAIWire = targetFormat === "openai" || targetFormat === "openai-responses";
+  if (caps.thinkingFormat && !(isOpenAIWire && NATIVE_ONLY_FORMATS.has(caps.thinkingFormat))) {
+    return caps.thinkingFormat;
+  }
   return FORMAT_TO_NATIVE[targetFormat] || "openai";
 }
 

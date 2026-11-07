@@ -33,9 +33,18 @@ describe("applyThinking auto effort selection", () => {
   });
 
   it("auto stays dynamic on adaptive-capable wires (claude)", () => {
-    const out = applyThinking(FORMATS.OPENAI, "claude-sonnet-4-5", { reasoning_effort: "auto" }, "anthropic");
+    // Anthropic's wire is claude; on an OpenAI-compatible wire a Claude model
+    // takes reasoning_effort instead (see the next case, upstream 1fe996db).
+    const out = applyThinking(FORMATS.CLAUDE, "claude-sonnet-4-5", { reasoning_effort: "auto" }, "anthropic");
     expect(out.thinking).toEqual({ type: "adaptive" });
     expect(out.thinking.budget_tokens).toBeUndefined();
+  });
+
+  it("auto on a Claude model over an OpenAI-compatible wire becomes a concrete reasoning_effort", () => {
+    const out = applyThinking(FORMATS.OPENAI, "claude-sonnet-4-5", { reasoning_effort: "auto" }, "openrouter");
+    expect(out.reasoning_effort).toBe("medium");
+    expect(out.thinking).toBeUndefined();
+    expect(out.output_config).toBeUndefined();
   });
 
   it("tie clamps to the higher level (xhigh on deepseek [high,max] → max)", () => {

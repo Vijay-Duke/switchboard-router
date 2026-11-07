@@ -185,6 +185,25 @@ describe("applyThinking per provider format", () => {
   });
 });
 
+describe("native-only thinking shapes on an OpenAI-compatible wire (upstream 1fe996db, #3718)", () => {
+  it.each([["gemini-3.5-flash-lite"], ["gemini-3.7-flash"], ["gemini-3-pro"]])(
+    "Gemini 3.x %s over a custom OpenAI-compatible provider → reasoning_effort, not generationConfig", (model) => {
+      const out = apply("openai", model, { reasoning_effort: "medium" }, "my-custom-gemini-openai");
+      expect(out.reasoning_effort).toBe("medium");
+      expect(out.generationConfig).toBeUndefined();
+      expect(out.thinkingConfig).toBeUndefined();
+    });
+  it("Gemini 2.5 (gemini-budget) over a custom OpenAI-compatible provider → reasoning_effort", () => {
+    const out = apply("openai", "gemini-2.5-flash", { reasoning_effort: "high" }, "my-custom-gemini-openai");
+    expect(out.reasoning_effort).toBe("high");
+    expect(out.generationConfig).toBeUndefined();
+  });
+  it("Gemini model on its native wire (gemini-cli) still gets generationConfig", () => {
+    const out = apply("gemini-cli", "gemini-3.5-flash-lite", { reasoning_effort: "medium" }, "gemini-cli");
+    expect(out.generationConfig.thinkingConfig.thinkingLevel).toBe("medium");
+  });
+});
+
 describe("extractReasoningText (response shapes)", () => {
   it("reasoning_content (GLM/Qwen/DeepSeek)", () => {
     expect(extractReasoningText({ reasoning_content: "abc" })).toBe("abc");
