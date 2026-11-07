@@ -14,6 +14,8 @@ export const UNSUPPORTED_SCHEMA_CONSTRAINTS = [
   "contains",
   // 2020-12 keywords with no Gemini equivalent
   "unevaluatedProperties", "unevaluatedItems", "contentSchema",
+  // Tuple-array keywords; converted to items first, leftovers stripped
+  "prefixItems", "additionalItems",
   // Numeric constraints Gemini rejects (Switchboard#2309)
   "multipleOf", "minimum", "maximum",
   // Claude rejects these in VALIDATED mode
@@ -352,6 +354,44 @@ function ensureObjectType(obj) {
   }
 }
 
+// Recurse into child schemas; a `properties` map holds schemas keyed by
+// parameter name, so its own keys (a param named "type"/"items") are not schema keywords.
+function forEachChildSchema(obj, fn) {
+  for (const [key, v] of Object.entries(obj)) {
+    if (!v || typeof v !== "object") continue;
+    if (key === "properties" && !Array.isArray(v)) {
+      for (const sub of Object.values(v)) fn(sub);
+    } else {
+      fn(v);
+    }
+  }
+}
+
+// Convert prefixItems (tuple validation) to items — Gemini cannot express tuples,
+// and a type:"array" schema without items is rejected with "missing field".
+function convertPrefixItems(obj) {
+  if (!obj || typeof obj !== "object") return;
+  if (Array.isArray(obj.prefixItems) && obj.prefixItems.length > 0) {
+    const variants = obj.prefixItems.filter(s => s && s.type !== "null");
+    if (!obj.items && variants.length === 1) {
+      obj.items = variants[0];
+    } else if (!obj.items && variants.length > 1) {
+      obj.items = { anyOf: variants };
+    }
+    delete obj.prefixItems;
+  }
+  forEachChildSchema(obj, convertPrefixItems);
+}
+
+// Gemini requires items on every type:"array" schema — fill a permissive placeholder.
+function ensureArrayItems(obj) {
+  if (!obj || typeof obj !== "object") return;
+  if (obj.type === "array" && (!obj.items || typeof obj.items !== "object" || Array.isArray(obj.items))) {
+    obj.items = { type: "string" };
+  }
+  forEachChildSchema(obj, ensureArrayItems);
+}
+
 // Clean JSON Schema for Antigravity API compatibility - removes unsupported keywords recursively
 export function cleanJSONSchemaForAntigravity(schema) {
   if (!schema || typeof schema !== "object") return schema;
@@ -364,6 +404,7 @@ export function cleanJSONSchemaForAntigravity(schema) {
 
   // Phase 2: Flatten complex structures
   mergeAllOf(cleaned);
+  convertPrefixItems(cleaned);
   flattenAnyOfOneOf(cleaned);
   flattenTypeArrays(cleaned);
 
@@ -373,6 +414,7 @@ export function cleanJSONSchemaForAntigravity(schema) {
 
   // Phase 2.5: Infer missing type=object when properties exist (Gemini requirement)
   ensureObjectType(cleaned);
+  ensureArrayItems(cleaned);
 
   // Phase 2.7: Convert invalid property values (e.g. property: "object") to proper schemas.
   // Claude Code tools sometimes have properties like { "field": "object" } where the value
