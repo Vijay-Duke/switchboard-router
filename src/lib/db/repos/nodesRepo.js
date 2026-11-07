@@ -91,6 +91,11 @@ export async function deleteProviderNode(id) {
     if (!row) return;
     removed = rowToNode(row);
     db.run(`DELETE FROM providerNodes WHERE id = ?`, [id]);
+    // Saved models of a deleted compatible node must not keep surfacing in
+    // /v1/models and pickers (upstream a8f63f4d). Keys are `${alias}|${id}|${type}`.
+    // substr() not LIKE: node ids may contain `_`/`%` wildcards.
+    const prefix = `${id}|`;
+    db.run(`DELETE FROM kv WHERE scope = 'customModels' AND substr(key, 1, ?) = ?`, [prefix.length, prefix]);
     retirePrometheusProviderInTx(db, id);
   });
   return removed;
