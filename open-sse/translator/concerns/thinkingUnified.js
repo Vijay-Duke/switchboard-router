@@ -219,7 +219,7 @@ function stripAll(body) {
 }
 
 // Apply unified thinking config to body in the resolved provider-native format.
-function applyFormat(fmt, body, cfg, caps) {
+function applyFormat(fmt, body, cfg, caps, supportedLevels = null) {
   const none = cfg.mode === "none";
   const canDisable = caps.thinkingCanDisable !== false;
   // Model cannot disable thinking → clamp "none" to minimal effort instead.
@@ -267,7 +267,10 @@ function applyFormat(fmt, body, cfg, caps) {
       else delete body.thinking;
       // Claude effort has no "minimal" (always-on models clamp "none" to it).
       // Anthropic has no "auto" effort (HTTP 400) — dynamic requests get "high".
-      body.output_config = { effort: level === "xhigh" || level === "auto" ? "high" : level === "minimal" ? "low" : level };
+      // xhigh is model-gated (Opus/Sonnet 4.6 reject it) — clamp when not advertised.
+      body.output_config = { effort: level === "auto" ? "high"
+        : level === "minimal" ? "low"
+        : level === "xhigh" && !supportedLevels?.includes("xhigh") ? "high" : level };
       break;
     }
     case "claude-budget": {
@@ -414,6 +417,6 @@ export function applyThinking(targetFormat, model, body, provider = null, intent
   if (!cfg) return body;
 
   stripAll(body);
-  applyFormat(fmt, body, cfg, caps);
+  applyFormat(fmt, body, cfg, caps, supported);
   return body;
 }
