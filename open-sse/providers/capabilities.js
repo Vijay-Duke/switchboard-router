@@ -73,6 +73,13 @@ export function capabilitiesFromServiceKind(kind) {
  * otherwise mis-match. Only declare deltas vs DEFAULT.
  */
 export const MODEL_CAPABILITIES = {
+  "sensenova-6.8-flash-lite": {
+    vision: true,
+    reasoning: true,
+    thinkingFormat: "openai",
+    contextWindow: 1000000,
+    maxOutput: 131072,
+  },
   // Claude Opus 5.5/5, 4.6/4.7/4.8 and Kiro Sonnet 5 have 1M context + adaptive thinking (override generic claude pattern)
   // Claude Opus 5.5 — experimental preview on Kiro (rateMultiplier: 2.0, 1M context)
   "claude-opus-5.5":                    { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },

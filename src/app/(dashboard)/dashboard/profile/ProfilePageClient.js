@@ -30,6 +30,11 @@ export default function ProfilePageClient({ initialData }) {
   const [settings, setSettings] = useState(initialData?.settings || { fallbackStrategy: "fill-first" });
   const [loading, setLoading] = useState(!initialData?.settings);
   const [dbLoading, setDbLoading] = useState(false);
+  const [isRemoteHost, setIsRemoteHost] = useState(false);
+  useEffect(() => {
+    if (typeof window !== "undefined")
+      setIsRemoteHost(!["localhost", "127.0.0.1", "::1", "[::1]"].includes(window.location.hostname));
+  }, []);
   const [dbStatus, setDbStatus] = useState({ type: "", message: "" });
   const importFileRef = useRef(null);
   const [proxyForm, setProxyForm] = useState({
@@ -634,7 +639,7 @@ export default function ProfilePageClient({ initialData }) {
         {/* App Info */}
         <div className="text-center text-xs sm:text-sm text-text-muted py-4">
           <p>{APP_CONFIG.name} v{APP_CONFIG.version}</p>
-          <p className="mt-1">Local Mode - All data stored on your machine</p>
+          <p className="mt-1">{isRemoteHost ? "Remote Mode" : "Local Mode - All data stored on your machine"}</p>
         </div>
       </div>
 

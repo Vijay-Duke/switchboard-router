@@ -85,6 +85,7 @@ export default function CombosPageClient({ initialData }) {
     return normalized;
   });
   const [confirmState, setConfirmState] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const { copied, copy } = useCopyToClipboard();
 
   const fetchData = useCallback(async () => {
@@ -320,6 +321,9 @@ export default function CombosPageClient({ initialData }) {
     }
   };
 
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredCombos = filterCombos(combos, searchQuery);
+
   if (loading) {
     return (
       <div className="flex flex-col gap-6">
@@ -369,6 +373,39 @@ export default function CombosPageClient({ initialData }) {
         </Button>
       </div>
 
+      {combos.length > 0 && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative w-full sm:w-64">
+            <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-text-muted">
+              search
+            </span>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search combos…"
+              aria-label="Search combos"
+              className="w-full rounded-lg border border-border bg-surface py-2 pl-10 pr-9 text-sm text-text-main placeholder-text-muted/70 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-text-muted transition-colors hover:text-text-main"
+              >
+                <span className="material-symbols-outlined text-[16px]">close</span>
+              </button>
+            )}
+          </div>
+          {normalizedQuery && (
+            <span className="text-xs text-text-muted">
+              {filteredCombos.length} of {combos.length} shown
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Combos List */}
       {combos.length === 0 ? (
         <Card>
@@ -385,9 +422,19 @@ export default function CombosPageClient({ initialData }) {
             </Button>
           </div>
         </Card>
+      ) : filteredCombos.length === 0 ? (
+        <Card>
+          <div className="text-center py-10">
+            <p className="text-text-main font-medium mb-1">No combos match “{searchQuery.trim()}”</p>
+            <p className="text-sm text-text-muted mb-4">Try a shorter query, or clear the search to see all {combos.length} combos.</p>
+            <Button variant="secondary" onClick={() => setSearchQuery("")}>
+              Clear search
+            </Button>
+          </div>
+        </Card>
       ) : (
         <div className="flex flex-col gap-4">
-          {combos.map((combo) => (
+          {filteredCombos.map((combo) => (
             <ComboCard
               key={combo.id}
               combo={combo}
@@ -492,6 +539,21 @@ function strategyPatchFromForm(form) {
     patch.explorationRate = "";
   }
   return patch;
+}
+
+/**
+ * Case-insensitive search over the combo name and its model ids, so both
+ * "deepseek" and "deepseek-v4.1-flash" find the right rows.
+ * @param {Array<{ name?: string, models?: unknown[] }>} combos
+ * @param {string} query
+ */
+export function filterCombos(combos, query) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return combos;
+  return combos.filter((c) => (
+    String(c.name || "").toLowerCase().includes(q)
+    || (c.models || []).some((m) => String(m).toLowerCase().includes(q))
+  ));
 }
 
 /** Return true when a non-empty Auto worker pool has no vision-capable model. */
@@ -1504,6 +1566,14 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, model
         onClose={() => setShowModelSelect(false)}
         onSelect={handleAddModel}
         onDeselect={handleDeselectModel}
+        onSelectBatch={(items) => {
+          const vals = items.map((m) => m?.value || m?.name || m).filter(Boolean);
+          setModels((prev) => [...new Set([...prev, ...vals])]);
+        }}
+        onDeselectBatch={(items) => {
+          const vals = new Set(items.map((m) => m?.value || m?.name || m).filter(Boolean));
+          setModels((prev) => prev.filter((m) => !vals.has(m)));
+        }}
         activeProviders={activeProviders}
         modelAliases={modelAliases}
         title="Add Model to Combo"
@@ -1556,11 +1626,18 @@ export function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getC
   const patch = (p) => onChange({ ...entry, ...p });
 
   const handleAdd = (model) => {
-    if (models.includes(model.value)) return;
-    patch({ models: [...models, model.value] });
+    const value = model?.value || model?.name || model;
+    if (!value || models.includes(value)) return;
+    patch({ models: [...models, value] });
   };
 
-  // Removing the last chip restores the default pool model so the pool never goes empty.
+  const handleDeselect = (model) => {
+    const value = model?.value || model?.name || model;
+    const next = models.filter((m) => m !== value);
+    patch({ models: next.length === 0 ? [DEFAULT_FALLBACK_MODEL] : next });
+  };
+
+  // Removing the last model restores the default pool model so the pool never goes empty.
   const handleRemove = (index) => {
     const next = models.filter((_, i) => i !== index);
     patch({ models: next.length === 0 ? [DEFAULT_FALLBACK_MODEL] : next });
@@ -1577,7 +1654,7 @@ export function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getC
   return (
     <div className={`group rounded-lg border border-black/5 p-3 ${!enabled ? "opacity-50" : ""} dark:border-white/10`}>
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        {/* Master toggle + icon + label + chips */}
+        {/* Master toggle + icon + label */}
         <div className="flex min-w-0 flex-1 items-start gap-2.5 sm:items-center">
           <Toggle
             checked={enabled}
@@ -1591,32 +1668,6 @@ export function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getC
             <div className="flex items-center gap-1.5">
               <code className="font-mono text-sm font-medium text-text-main">{cap.label}</code>
               <span className="text-[10px] text-text-muted">— {cap.desc}</span>
-            </div>
-            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
-              {models.length === 0 ? (
-                <span className="text-xs text-text-muted italic">No models</span>
-              ) : (
-                // O13: render the full pool — slicing to 3 left entries at
-                // index 3+ unremovable/unreorderable (no separate editor here).
-                models.map((model, index) => (
-                  <code
-                    key={`${model}-${index}`}
-                    className="group/chip inline-flex items-center gap-1 rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs text-text-muted dark:bg-white/5"
-                  >
-                    <span>{model}</span>
-                    <CapacityBadges caps={getCaps?.(model)} />
-                    <button onClick={() => handleMove(index, -1)} disabled={index === 0} className={`leading-none opacity-0 group-hover/chip:opacity-100 ${index === 0 ? "text-text-muted/20" : "text-text-muted hover:text-primary"}`}>
-                      <span className="material-symbols-outlined text-[12px]">arrow_upward</span>
-                    </button>
-                    <button onClick={() => handleMove(index, 1)} disabled={index === models.length - 1} className={`leading-none opacity-0 group-hover/chip:opacity-100 ${index === models.length - 1 ? "text-text-muted/20" : "text-text-muted hover:text-primary"}`}>
-                      <span className="material-symbols-outlined text-[12px]">arrow_downward</span>
-                    </button>
-                    <button onClick={() => handleRemove(index)} className="leading-none opacity-0 group-hover/chip:opacity-100 text-text-muted hover:text-red-500">
-                      <span className="material-symbols-outlined text-[12px]">close</span>
-                    </button>
-                  </code>
-                ))
-              )}
             </div>
           </div>
         </div>
@@ -1645,11 +1696,97 @@ export function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getC
         </div>
       </div>
 
+      {/* Model pool list/table */}
+      {models.length === 0 ? (
+        <div className="mt-3 py-2 text-center text-xs text-text-muted italic">
+          No models in pool (will fallback to {DEFAULT_FALLBACK_MODEL})
+        </div>
+      ) : (
+        <div className="mt-3 overflow-hidden rounded-lg border border-border/50">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b border-border/40 bg-black/[0.02] text-text-muted dark:bg-white/[0.02]">
+                <th className="w-12 px-3 py-1.5 font-medium text-center">#</th>
+                <th className="px-3 py-1.5 font-medium">Model</th>
+                <th className="w-24 px-3 py-1.5 font-medium text-center">Order</th>
+                <th className="w-12 px-3 py-1.5 font-medium text-right"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/30 font-mono">
+              {models.map((model, index) => (
+                <tr key={`${model}-${index}`} className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors">
+                  <td className="px-3 py-2 text-center text-text-muted text-[11px] font-sans">
+                    #{index + 1}
+                  </td>
+                  <td className="px-3 py-2 text-text-main">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="truncate">{model}</span>
+                      <CapacityBadges caps={getCaps?.(model)} />
+                      {model === DEFAULT_FALLBACK_MODEL && (
+                        <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-sans text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                          free default
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <div className="inline-flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleMove(index, -1)}
+                        disabled={!enabled || index === 0}
+                        className={`p-1 rounded transition-colors ${
+                          !enabled || index === 0
+                            ? "text-text-muted/20 cursor-not-allowed"
+                            : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"
+                        }`}
+                        title="Move up"
+                      >
+                        <span className="material-symbols-outlined text-[16px] leading-none">arrow_upward</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleMove(index, 1)}
+                        disabled={!enabled || index === models.length - 1}
+                        className={`p-1 rounded transition-colors ${
+                          !enabled || index === models.length - 1
+                            ? "text-text-muted/20 cursor-not-allowed"
+                            : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"
+                        }`}
+                        title="Move down"
+                      >
+                        <span className="material-symbols-outlined text-[16px] leading-none">arrow_downward</span>
+                      </button>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <button
+                      type="button"
+                      onClick={() => handleRemove(index)}
+                      disabled={!enabled}
+                      className={`p-1 rounded transition-colors ${
+                        !enabled
+                          ? "text-text-muted/20 cursor-not-allowed"
+                          : "text-text-muted hover:text-red-500 hover:bg-red-500/10"
+                      }`}
+                      title="Remove model"
+                    >
+                      <span className="material-symbols-outlined text-[16px] leading-none">close</span>
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {showModelSelect && (
         <ModelSelectModal
           isOpen={showModelSelect}
           onClose={() => setShowModelSelect(false)}
           onSelect={handleAdd}
+          onDeselect={handleDeselect}
           activeProviders={activeProviders}
           title={`Add ${cap.label} Model`}
           addedModelValues={models}

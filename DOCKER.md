@@ -165,7 +165,7 @@ docker rm -f switchboard
 ## Build image locally (test)
 
 ```bash
-cd app && docker build -t switchboard .
+docker build -t switchboard .
 
 # Reuses the `switchboard` bridge network from the quick start above.
 docker run --rm --network switchboard -p 127.0.0.1:20128:20128 \
@@ -173,6 +173,15 @@ docker run --rm --network switchboard -p 127.0.0.1:20128:20128 \
   -e DATA_DIR=/app/data \
   -e SWITCHBOARD_LOCAL_PEERS=172.30.0.1 \
   switchboard
+```
+
+The Dockerfile uses the official Alpine and npm registries by default. Regional mirrors can be supplied when needed:
+
+```bash
+docker build \
+  --build-arg ALPINE_MIRROR=mirrors.aliyun.com \
+  --build-arg NPM_REGISTRY=https://registry.npmmirror.com/ \
+  -t switchboard .
 ```
 
 ## Publish (automatic via CI)

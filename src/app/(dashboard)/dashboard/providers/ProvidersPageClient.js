@@ -25,6 +25,12 @@ import { isErrorStatus } from "@/shared/utils/connectionStatus";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
 import ModelAvailabilityBadge from "./components/ModelAvailabilityBadge";
 import AddCompatibleModal from "./components/AddCompatibleModal";
+import { STATUS_FILTER_OPTIONS, matchesStatusFilter } from "./utils";
+
+// Kiro accepts both OAuth and api-key connections; its headless api-key flow
+// persists authType "api_key" (underscore) while generic providers use "apikey".
+const freeProviderAuthTypes = (key) =>
+  key === "kiro" ? ["oauth", "apikey", "api_key"] : "oauth";
 
 function getStatusDisplay(connected, error, errorCode) {
   const parts = [];
@@ -124,6 +130,7 @@ export default function ProvidersPageClient({ initialData }) {
   const [showAddCustomMenu, setShowAddCustomMenu] = useState(false);
   const [testingMode, setTestingMode] = useState(null);
   const [testResults, setTestResults] = useState(null);
+  const [statusFilter, setStatusFilter] = useState("all");
   const notify = useNotificationStore();
   const searchQuery = useHeaderSearchStore((s) => s.query);
   const registerSearch = useHeaderSearchStore((s) => s.register);
@@ -134,9 +141,11 @@ export default function ProvidersPageClient({ initialData }) {
     return () => unregisterSearch();
   }, [registerSearch, unregisterSearch]);
 
-  const matchSearch = (name) =>
-    !searchQuery.trim() ||
-    name.toLowerCase().includes(searchQuery.trim().toLowerCase());
+  const matchSearch = (name) => {
+    if (!searchQuery.trim()) return true;
+    if (!name) return false;
+    return name.toLowerCase().includes(searchQuery.trim().toLowerCase());
+  };
 
   const sortByPriority = (entries, authType) =>
     [...entries].sort(([ka, a], [kb, b]) => {
@@ -233,6 +242,9 @@ export default function ProvidersPageClient({ initialData }) {
     return { connected, error, total, errorCode, errorTime, allDisabled };
   };
 
+  const matchStatus = (stats, isNoAuth) =>
+    matchesStatusFilter(statusFilter, stats, isNoAuth);
+
   // Toggle all connections for a provider on/off. authType may be a single
   // string or an array (kiro counts oauth + api_key/apikey together).
   const handleToggleProvider = async (providerId, authType, newActive) => {
@@ -302,7 +314,9 @@ export default function ProvidersPageClient({ initialData }) {
       textIcon: "OC",
       apiType: node.apiType,
     }))
-    .filter((p) => matchSearch(p.name));
+    .filter(
+      (p) => matchSearch(p.name) && matchStatus(getProviderStats(p.id, "apikey")),
+    );
 
   const anthropicCompatibleProviders = providerNodes
     .filter((node) => node.type === "anthropic-compatible")
@@ -312,21 +326,34 @@ export default function ProvidersPageClient({ initialData }) {
       color: "#D97757",
       textIcon: "AC",
     }))
-    .filter((p) => matchSearch(p.name));
+    .filter(
+      (p) => matchSearch(p.name) && matchStatus(getProviderStats(p.id, "apikey")),
+    );
 
   const oauthEntries = sortByPriority(
-    Object.entries(OAUTH_PROVIDERS).filter(([, info]) => !info.hidden && matchSearch(info.name)),
+    Object.entries(OAUTH_PROVIDERS).filter(
+      ([key, info]) =>
+        !info.hidden &&
+        matchSearch(info.name) &&
+        matchStatus(getProviderStats(key, "oauth"), info.noAuth),
+    ),
     "oauth",
   );
   const freeEntries = Object.entries(FREE_PROVIDERS)
-    .filter(([, info]) => !info.hidden && matchSearch(info.name))
+    .filter(
+      ([key, info]) =>
+        !info.hidden &&
+        matchSearch(info.name) &&
+        matchStatus(getProviderStats(key, freeProviderAuthTypes(key)), info.noAuth),
+    )
     .sort(([, a], [, b]) => (b.noAuth ? 1 : 0) - (a.noAuth ? 1 : 0));
   const freeTierEntries = sortByPriority(
     Object.entries(FREE_TIER_PROVIDERS).filter(
-      ([, info]) =>
+      ([key, info]) =>
         !info.hidden &&
         matchSearch(info.name) &&
-        (info.serviceKinds ?? ["llm"]).includes("llm"),
+        (info.serviceKinds ?? ["llm"]).includes("llm") &&
+        matchStatus(getProviderStats(key, "apikey"), info.noAuth),
     ),
     "freeTier",
   ).sort(([, a], [, b]) => (b.noAuth ? 1 : 0) - (a.noAuth ? 1 : 0));
@@ -334,10 +361,11 @@ export default function ProvidersPageClient({ initialData }) {
   // then disabled last; alphabetical within each group.
   const apikeyEntries = Object.entries(APIKEY_PROVIDERS)
     .filter(
-      ([, info]) =>
+      ([key, info]) =>
         !info.hidden &&
         (info.serviceKinds ?? ["llm"]).includes("llm") &&
-        matchSearch(info.name),
+        matchSearch(info.name) &&
+        matchStatus(getProviderStats(key, "apikey"), info.noAuth),
     )
     .sort(([ka, a], [kb, b]) => {
       const ra = rankBuiltInProviderEntry(getProviderStats(ka, "apikey"));
@@ -345,7 +373,7 @@ export default function ProvidersPageClient({ initialData }) {
       if (ra !== rb) return ra - rb;
       return (a.name || "").localeCompare(b.name || "");
     });
-  const isApikeySearching = !!searchQuery.trim();
+  const isApikeySearching = !!searchQuery.trim() || statusFilter !== "all";
   const visibleApikeyEntries =
     isApikeySearching || showAllApikey
       ? apikeyEntries
@@ -362,9 +390,9 @@ export default function ProvidersPageClient({ initialData }) {
   }
 
   // API Key section is always rendered (add custom), so never show a page-level empty state
-  // unless the user is actively searching and nothing matches anywhere.
+  // unless the user is actively searching/filtering and nothing matches anywhere.
   const hasAnyResult =
-    !searchQuery.trim() ||
+    (!searchQuery.trim() && statusFilter === "all") ||
     oauthEntries.length > 0 ||
     freeEntries.length > 0 ||
     freeTierEntries.length > 0 ||
@@ -374,12 +402,27 @@ export default function ProvidersPageClient({ initialData }) {
 
   return (
     <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
+      <div className="flex items-center justify-end">
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="h-8 rounded-lg border border-black/10 bg-black/[0.02] px-2 text-xs text-text-primary outline-none transition-colors hover:bg-black/5 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/10"
+          aria-label="Filter providers by connection status"
+        >
+          {STATUS_FILTER_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
       {!hasAnyResult && (
         <div className="text-center py-8 border border-dashed border-border rounded-xl">
           <span className="material-symbols-outlined text-[32px] text-text-muted mb-2">
             search_off
           </span>
-          <p className="text-text-muted text-sm">No providers match your search</p>
+          <p className="text-text-muted text-sm">No providers match your search or filters</p>
         </div>
       )}
 
@@ -459,8 +502,7 @@ export default function ProvidersPageClient({ initialData }) {
             // so the card total matches the provider detail page (#kiro-apikey).
             // Kiro's headless api-key flow persists authType "api_key" (underscore),
             // while generic apikey providers use "apikey" — include both spellings.
-            const freeAuthTypes =
-              key === "kiro" ? ["oauth", "apikey", "api_key"] : "oauth";
+            const freeAuthTypes = freeProviderAuthTypes(key);
             return (
               <ProviderCard
                 key={key}

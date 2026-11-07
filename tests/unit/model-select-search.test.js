@@ -145,3 +145,38 @@ describe("live rows are not custom (W1b)", () => {
     );
   });
 });
+
+describe("filterModelGroupsByQuery: exclusions and regex", () => {
+  const groups = {
+    anthropic: {
+      name: "Anthropic",
+      models: [
+        { id: "claude-sonnet-5", name: "Claude Sonnet 5", value: "cc/claude-sonnet-5" },
+        { id: "claude-haiku-5", name: "Claude Haiku 5", value: "cc/claude-haiku-5" },
+      ],
+    },
+    openai: {
+      name: "OpenAI",
+      models: [
+        { id: "gpt-5", name: "GPT 5", value: "openai/gpt-5" },
+        { id: "text-embedding-3", name: "Embedding 3", value: "openai/text-embedding-3" },
+      ],
+    },
+  };
+  const ids = (out) => Object.values(out).flatMap((g) => g.models.map((m) => m.id));
+
+  it("drops excluded models with -term / !term", () => {
+    expect(ids(filterModelGroupsByQuery(groups, "claude -haiku"))).toEqual(["claude-sonnet-5"]);
+    expect(ids(filterModelGroupsByQuery(groups, "!embed"))).toEqual(["claude-sonnet-5", "claude-haiku-5", "gpt-5"]);
+  });
+
+  it("keeps a provider-name match but still honours exclusions", () => {
+    expect(ids(filterModelGroupsByQuery(groups, "anthropic !haiku"))).toEqual(["claude-sonnet-5"]);
+  });
+
+  it("matches /regex/ against model fields", () => {
+    expect(ids(filterModelGroupsByQuery(groups, "/^gpt-\\d$/"))).toEqual(["gpt-5"]);
+    // A global flag must not leak lastIndex between models.
+    expect(ids(filterModelGroupsByQuery(groups, "/claude/g"))).toEqual(["claude-sonnet-5", "claude-haiku-5"]);
+  });
+});

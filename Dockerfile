@@ -1,30 +1,52 @@
 # syntax=docker/dockerfile:1.7
 # Pinned patch release for the October 2026 Node security CVEs.
 ARG NODE_IMAGE=node:22.23.4-alpine
+ARG ALPINE_MIRROR=dl-cdn.alpinelinux.org
+ARG NPM_REGISTRY=https://registry.npmjs.org/
+ARG APP_VERSION=unknown
+
 FROM ${NODE_IMAGE} AS base
+ARG ALPINE_MIRROR
 WORKDIR /app
 
-FROM base AS builder
+# Use the official Alpine mirror by default. A build arg can override it for
+# environments that require a regional mirror.
+RUN if [ "$ALPINE_MIRROR" != "dl-cdn.alpinelinux.org" ]; then \
+      sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
+    fi
 
-RUN apk --no-cache upgrade && apk --no-cache add python3 make g++ linux-headers go
+FROM base AS builder
+ARG NPM_REGISTRY
+
+RUN apk --no-cache add python3 make g++ linux-headers go
 
 COPY package.json ./
 COPY package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
-  npm ci
+  npm ci \
+    --registry="${NPM_REGISTRY}" \
+    --fetch-retries=5 \
+    --fetch-retry-factor=2 \
+    --fetch-retry-mintimeout=10000 \
+    --fetch-retry-maxtimeout=120000 \
+    --fetch-timeout=300000
 
 COPY . ./
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
 FROM ${NODE_IMAGE} AS runner
+ARG ALPINE_MIRROR
+ARG APP_VERSION
 WORKDIR /app
 # The base stage's mirror swap does not reach here: runner starts from
-# ${NODE_IMAGE} directly, so the apk upgrade below would go to
-# dl-cdn.alpinelinux.org and hang forever on networks that cannot reach it.
-RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
+# ${NODE_IMAGE} directly, so repeat it before the apk add below.
+RUN if [ "$ALPINE_MIRROR" != "dl-cdn.alpinelinux.org" ]; then \
+      sed -i "s|dl-cdn.alpinelinux.org|${ALPINE_MIRROR}|g" /etc/apk/repositories; \
+    fi
 
-LABEL org.opencontainers.image.title="switchboard"
+LABEL org.opencontainers.image.title="switchboard" \
+      org.opencontainers.image.version="${APP_VERSION}"
 
 ENV NODE_ENV=production
 ENV PORT=20128
@@ -50,8 +72,9 @@ RUN mkdir -p /app/data && chown -R node:node /app && \
   mkdir -p /app/data-home && chown node:node /app/data-home && \
   ln -sf /app/data-home /root/.switchboard 2>/dev/null || true
 
-# Fix permissions at runtime (handles mounted volumes)
-RUN apk --no-cache upgrade && apk --no-cache add su-exec && \
+# Fix permissions at runtime (handles mounted volumes). Avoid a full
+# distribution upgrade in the runtime image: it makes builds less reproducible.
+RUN apk --no-cache add su-exec && \
   printf '#!/bin/sh\nchown -hR node:node /app/data /app/data-home 2>/dev/null\nexec su-exec node "$@"\n' > /entrypoint.sh && \
   chmod +x /entrypoint.sh
 

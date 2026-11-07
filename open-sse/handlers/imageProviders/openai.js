@@ -20,6 +20,13 @@ export default function createOpenAIAdapter(providerId) {
       if (quality) full.quality = quality;
       if (style) full.style = style;
       if (response_format) full.response_format = response_format;
+      // Provider-specific extras (e.g. SenseNova) pass through only when the
+      // provider whitelists them, so other OpenAI-style providers are unchanged.
+      for (const field of ["output_format", "watermark", "prompt_extend"]) {
+        if (cfg.bodyFields?.includes(field) && body[field] !== undefined) {
+          full[field] = body[field];
+        }
+      }
       // bodyFields whitelist (e.g. xAI accepts only model/prompt/n/response_format)
       if (Array.isArray(cfg.bodyFields)) {
         const req = {};
