@@ -45,6 +45,7 @@ const moduleDefault = {
   ],
   // supportedFormats follow the endpoint table in https://opencode.ai/docs/go/
   models: [
+    { id: "deepseek-flash", name: "DeepSeek V4.1 Flash", supportedFormats: ["openai"] },
     { id: "glm-5.3-flash", name: "GLM 5.3 Flash (Vision)", supportedFormats: ["openai"] },
     { id: "glm-5.3", name: "GLM 5.3", supportedFormats: ["openai"] },
     { id: "glm-5.2", name: "GLM 5.2", supportedFormats: ["openai"] },
@@ -55,7 +56,6 @@ const moduleDefault = {
     { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", supportedFormats: ["openai", "claude", "openai-responses"] },
     { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash", supportedFormats: ["openai", "claude", "openai-responses"] },
     { id: "deepseek-v4-flash-vision-exp", name: "DeepSeek V4 Flash Vision (Exp)", supportedFormats: ["openai", "claude", "openai-responses"] },
-    { id: "deepseek-flash", name: "DeepSeek V4.1 Flash", supportedFormats: ["openai"] },
     { id: "longcat-2.0", name: "LongCat 2.0", supportedFormats: ["openai"] },
     { id: "mimo-v2.5", name: "MiMo V2.5", supportedFormats: ["openai"] },
     { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro", supportedFormats: ["openai"] },

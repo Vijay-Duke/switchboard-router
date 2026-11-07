@@ -9,6 +9,8 @@ import { getExecutor, hasSpecializedExecutor } from "../../open-sse/executors/in
 import { resolveTransport } from "../../open-sse/services/provider.js";
 
 const CHAT_MODELS = [
+  // Registry order is display order: deepseek-flash (V4.1) leads the catalog.
+  "deepseek-flash",
   "glm-5.3-flash",
   "glm-5.3",
   "glm-5.2",
@@ -21,7 +23,6 @@ const CHAT_MODELS = [
   "deepseek-v4-pro",
   "deepseek-v4-flash",
   "deepseek-v4-flash-vision-exp",
-  "deepseek-flash",
   "longcat-2.0",
   "mimo-v2.5",
   "mimo-v2.5-pro",
