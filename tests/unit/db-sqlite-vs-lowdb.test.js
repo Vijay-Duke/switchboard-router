@@ -370,4 +370,17 @@ describe("DB SQLite layer — public API parity", () => {
     const data = await sqliteDb.getChartData("7d");
     expect(data).toHaveLength(7);
   });
+
+  it("getChartData: all-time spans earliest recorded day through today", async () => {
+    const d = new Date();
+    d.setDate(d.getDate() - 89);
+    await sqliteDb.saveRequestUsage({
+      provider: "openai", model: "gpt-test", timestamp: d.toISOString(),
+      tokens: { prompt_tokens: 3, completion_tokens: 4 },
+    });
+    const data = await sqliteDb.getChartData("all");
+    expect(data.length).toBeGreaterThanOrEqual(90);
+    expect(data[0].tokens).toBe(7);
+    expect(data.at(-1)).toHaveProperty("label");
+  });
 });
