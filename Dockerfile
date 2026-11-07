@@ -40,6 +40,8 @@ COPY --from=builder /app/open-sse ./open-sse
 COPY --from=builder /app/src/mitm ./src/mitm
 # Standalone node_modules may omit deps only required by the MITM child process.
 COPY --from=builder /app/node_modules/node-forge ./node_modules/node-forge
+# node-machine-id is createRequire/require-loaded at runtime (MITM child); tracing omits it.
+COPY --from=builder /app/node_modules/node-machine-id ./node_modules/node-machine-id
 # Ensure `next` is available at runtime in case tracing did not include it.
 COPY --from=builder /app/node_modules/next ./node_modules/next
 
