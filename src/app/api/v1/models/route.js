@@ -1,5 +1,5 @@
 // @ts-check
-import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS, getModelKind } from "@/shared/constants/models";
+import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
 import {
   AI_PROVIDERS,
   getProviderAlias,
@@ -12,19 +12,10 @@ import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { isModelCatalogDiscoveryRequest, MODEL_CATALOG_HEADER } from "@/lib/modelCatalogDiscovery";
 import {
   buildCanonicalDisabledModelSet,
+  buildServedProviderModels,
   isCanonicalModelDisabled,
 } from "@/shared/utils/providerCustomModels.js";
-import { resolveKiroModels } from "open-sse/services/kiroModels.js";
-import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
-import { resolveQoderModels } from "open-sse/services/qoderModels.js";
-import { resolveCopilotModels } from "open-sse/services/copilotModels.js";
-import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
-import { resolveProviderModels } from "open-sse/services/providerModels.js";
-import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
-import {
-  refreshImportedCursorCredentials,
-  updateProviderCredentials,
-} from "@/sse/services/tokenRefresh";
+import { discoverConnectionModels } from "@/lib/providerModelDiscovery";
 import { capabilitiesFromServiceKind, effortCapabilitiesForModelId, resolveEffortCapabilities, unionEffortCapabilities } from "open-sse/providers/capabilities.js";
 import { effortCapabilitiesFromThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import { MAX_COMBO_DEPTH } from "open-sse/config/runtimeConfig.js";
@@ -40,81 +31,33 @@ import {
   readClaudeCatalogPickerLabelsFromHeaders,
   readClaudeCatalogSelectionFromHeaders,
 } from "@/shared/claudeGateway.js";
-import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
-import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 
-// Per-provider live model resolvers. Each receives a connection record and
-// returns { models: [{ id, name? }, ...] } | null on failure.
-// Adding a provider here makes /v1/models prefer the live catalog for it.
-const LIVE_MODEL_RESOLVERS = {
-  kiro: async (conn, options = {}) => {
-    const result = await resolveKiroModels({
-      accessToken: conn.accessToken,
-      refreshToken: conn.refreshToken,
-      providerSpecificData: conn.providerSpecificData || {}
-    }, { log: console, signal: options.signal });
-    return result?.models?.length ? { models: result.models } : null;
-  },
-  qoder: async (conn, options = {}) => {
-    const result = await resolveQoderModels({
-      accessToken: conn.accessToken,
-      refreshToken: conn.refreshToken,
-      email: conn.email,
-      displayName: conn.displayName,
-      providerSpecificData: conn.providerSpecificData || {}
-    }, { signal: options.signal });
-    if (!result?.models?.length) return null;
-    return {
-      models: result.models.map((m) => ({ id: m.id, name: m.name })),
-    };
-  },
-  kimchi: async (conn, options = {}) => {
-    const result = await resolveKimchiModels({
-      accessToken: conn.accessToken,
-      apiKey: conn.apiKey,
-      providerSpecificData: conn.providerSpecificData || {}
-    }, { log: console, signal: options.signal });
-    return result?.models?.length ? { models: result.models } : null;
-  },
-  github: async (conn, options = {}) => {
-    const result = await resolveCopilotModels({
-      accessToken: conn.accessToken,
-      refreshToken: conn.refreshToken,
-      providerSpecificData: conn.providerSpecificData || {}
-    }, {
-      log: console,
-      signal: options.signal,
-      onCredentialsRefreshed: async (refreshed) => {
-        await updateProviderCredentials(conn.id, {
-          copilotToken: refreshed.copilotToken,
-          copilotTokenExpiresAt: refreshed.copilotTokenExpiresAt,
-          existingProviderSpecificData: conn.providerSpecificData || {},
-        });
-      },
-    });
-    return result?.models?.length ? { models: result.models } : null;
-  },
-  clinepass: async (conn, options = {}) => {
-    const result = await resolveClinepassModels({
-      accessToken: conn.accessToken,
-      apiKey: conn.apiKey,
-    }, { signal: options.signal });
-    return result?.models?.length ? { models: result.models } : null;
-  },
-  "grok-cli": async (conn, options = {}) => {
-    const proxyOptions = await resolveConnectionProxyConfig(conn.providerSpecificData || {});
-    const result = await resolveGrokCliModels({ ...conn, connectionId: conn.id }, {
-      log: console,
-      signal: options.signal,
-      proxyOptions,
-      onCredentialsRefreshed: (refreshed) => updateProviderCredentials(conn.id, {
-        ...refreshed,
-        existingProviderSpecificData: conn.providerSpecificData || {},
+// Per-connection discovery budget. A slow upstream must not stall /v1/models;
+// on timeout the provider falls back to its static + saved models.
+const DISCOVERY_TIMEOUT_MS = 10 * 1000;
+
+async function discoverWithTimeout(connection, signal) {
+  if (signal?.aborted) return null;
+  let timer;
+  let onAbort;
+  try {
+    const result = await Promise.race([
+      discoverConnectionModels(connection),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), DISCOVERY_TIMEOUT_MS);
+        onAbort = () => resolve(null);
+        signal?.addEventListener?.("abort", onAbort, { once: true });
       }),
-    });
-    return result?.models?.length ? { models: result.models } : null;
-  },
-};
+    ]);
+    return result && "models" in result ? result : null;
+  } catch (error) {
+    console.log(`Live model fetch failed for ${connection?.provider}: ${error?.message || error}`);
+    return null;
+  } finally {
+    clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener?.("abort", onAbort);
+  }
+}
 
 const parseOpenAIStyleModels = (data) => {
   if (Array.isArray(data)) return data;
@@ -142,16 +85,6 @@ function modelKind(model) {
   const k = model?.kind || model?.type;
   if (!k) return LLM_KIND;
   return MODEL_TYPE_TO_KIND[k] || LLM_KIND;
-}
-
-// For dynamic/unknown model IDs (compatible providers, alias map, custom models)
-// fall back to provider-level kind matching when per-model type is unavailable.
-function inferKindFromUnknownModelId(modelId) {
-  const lower = String(modelId).toLowerCase();
-  if (/embed/.test(lower)) return "embedding";
-  if (/tts|speech|audio|voice/.test(lower)) return "tts";
-  if (/image|imagen|dall-?e|flux|sdxl|sd-|stable-diffusion/.test(lower)) return "image";
-  return LLM_KIND;
 }
 
 async function fetchCompatibleModelIds(connection, externalSignal = null) {
@@ -345,13 +278,8 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
       activeConnectionByProvider.set(conn.provider, conn);
     }
   }
-  const cursorConnection = activeConnectionByProvider.get("cursor");
-  if (cursorConnection) {
-    activeConnectionByProvider.set(
-      "cursor",
-      await refreshImportedCursorCredentials(cursorConnection, { force: true }),
-    );
-  }
+  // Compatible upstreams are fetched only to relay per-model capabilities;
+  // which models are served comes from the saved dashboard selection.
   const compatibleCatalogByProvider = new Map();
   if (!skipCompatibleDiscovery) {
     const compatibleConnections = Array.from(activeConnectionByProvider.entries())
@@ -364,25 +292,17 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
       );
     }));
   }
-  const liveCatalogByProvider = new Map();
-  const liveCatalogConnections = Array.from(activeConnectionByProvider.entries())
+  // Same discovery the provider dashboard renders, so /v1/models serves exactly
+  // the models the dashboard lists as enabled.
+  const discoveredByProvider = new Map();
+  const discoveryConnections = Array.from(activeConnectionByProvider.entries())
     .filter(([providerId]) =>
       providerMatchesKinds(providerId, kindFilter) &&
       !isOpenAICompatibleProvider(providerId) &&
       !isAnthropicCompatibleProvider(providerId));
-  await Promise.all(liveCatalogConnections.map(async ([providerId, connection]) => {
-    const liveResolver = LIVE_MODEL_RESOLVERS[providerId];
-    try {
-      const live = liveResolver
-        ? await liveResolver(connection, { signal })
-        : await resolveProviderModels(connection, {
-            signal,
-            ...(providerId === "cursor" ? { log: console } : {}),
-          });
-      if (live?.models?.length) liveCatalogByProvider.set(providerId, live);
-    } catch (error) {
-      console.log(`Live model fetch failed for ${providerId}: ${error?.message || error}`);
-    }
+  await Promise.all(discoveryConnections.map(async ([providerId, connection]) => {
+    const discovered = await discoverWithTimeout(connection, signal);
+    if (discovered) discoveredByProvider.set(providerId, discovered);
   }));
 
   const models = [];
@@ -493,123 +413,40 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
         || getProviderAlias(providerId)
         || staticAlias
       ).trim();
-      const providerModels = PROVIDER_MODELS[staticAlias] || [];
-      const enabledModels = conn?.providerSpecificData?.enabledModels;
-      const hasExplicitEnabledModels =
-        Array.isArray(enabledModels) && enabledModels.length > 0;
       const isCompatibleProvider =
         isOpenAICompatibleProvider(providerId) || isAnthropicCompatibleProvider(providerId);
 
-      // Build kind lookup for static models so we can filter even when only IDs are exposed
-      const staticModelKindById = new Map(
-        providerModels.map((m) => [m.id, modelKind(m)])
-      );
-      let liveModelKindById = new Map();
-      let liveCapabilitiesById = new Map();
-
-      let rawModelIds = hasExplicitEnabledModels
-        ? Array.from(
-            new Set(
-              enabledModels.filter(
-                (modelId) => typeof modelId === "string" && modelId.trim() !== "",
-              ),
-            ),
-          )
-        : providerModels.map((model) => model.id);
-
       const compatCatalog = compatibleCatalogByProvider.get(providerId);
-      if (isCompatibleProvider && !skipCompatibleDiscovery) {
-        // An empty successful catalog is authoritative. Only unavailable or
-        // invalid discovery retains the saved snapshot.
-        if (compatCatalog && Array.isArray(compatCatalog.ids)) rawModelIds = compatCatalog.ids;
-      }
       const compatCapsById = compatCatalog && compatCatalog.capsById instanceof Map
         ? compatCatalog.capsById
         : null;
 
-      // Live catalogs are fetched concurrently above. Dynamic results replace
-      // stored/static snapshots; discovery failure retains the fallback IDs.
-      const live = liveCatalogByProvider.get(providerId);
-      if (live?.models?.length) {
-        rawModelIds = live.models.map((m) => m.id);
-        liveModelKindById = new Map(
-          live.models
-            .filter((m) => m?.id)
-            .map((m) => [m.id, modelKind(m)])
-        );
-        liveCapabilitiesById = new Map(
-          live.models
-            .filter((m) => m?.id && m.capabilities)
-            .map((m) => [m.id, m.capabilities])
-        );
-      }
+      // Serve exactly what the provider's dashboard page lists as enabled.
+      const rows = buildServedProviderModels({
+        providerId,
+        staticModels: isCompatibleProvider ? [] : (PROVIDER_MODELS[staticAlias] || []),
+        discoveredModels: discoveredByProvider.get(providerId)?.models || [],
+        customModels,
+        modelAliases,
+        isCompatible: isCompatibleProvider,
+      });
+      const stripPrefix = (modelId) => {
+        for (const prefix of [outputAlias, staticAlias, providerId]) {
+          if (modelId.startsWith(`${prefix}/`)) return modelId.slice(prefix.length + 1);
+        }
+        return modelId;
+      };
 
-      const modelIds = rawModelIds
-        .map((modelId) => {
-          if (modelId.startsWith(`${outputAlias}/`)) {
-            return modelId.slice(outputAlias.length + 1);
-          }
-          if (modelId.startsWith(`${staticAlias}/`)) {
-            return modelId.slice(staticAlias.length + 1);
-          }
-          if (modelId.startsWith(`${providerId}/`)) {
-            return modelId.slice(providerId.length + 1);
-          }
-          return modelId;
-        })
-        .filter((modelId) => typeof modelId === "string" && modelId.trim() !== "");
-
-      const customModelKindById = new Map();
-      const customModelIds = customModels
-        .filter((m) => {
-          if (!m?.id) return false;
-          const kind = getModelKind(m) || LLM_KIND;
-          // imageToText custom models are vision-capable chat models: expose them
-          // both in the default LLM list and in /v1/models/image-to-text.
-          if (!kindFilter.includes(kind) && !(kind === "imageToText" && kindFilter.includes(LLM_KIND))) return false;
-          const alias = m.providerAlias;
-          return alias === staticAlias || alias === outputAlias || alias === providerId;
-        })
-        .map((m) => {
-          const modelId = String(m.id).trim();
-          if (modelId) customModelKindById.set(modelId, getModelKind(m) || LLM_KIND);
-          return modelId;
-        })
-        .filter((modelId) => modelId !== "");
-
-      const aliasModelIds = Object.values(modelAliases || {})
-        .filter((fullModel) => {
-          if (typeof fullModel !== "string" || !fullModel.includes("/")) return false;
-          return (
-            fullModel.startsWith(`${outputAlias}/`) ||
-            fullModel.startsWith(`${staticAlias}/`) ||
-            fullModel.startsWith(`${providerId}/`)
-          );
-        })
-        .map((fullModel) => {
-          if (fullModel.startsWith(`${outputAlias}/`)) {
-            return fullModel.slice(outputAlias.length + 1);
-          }
-          if (fullModel.startsWith(`${staticAlias}/`)) {
-            return fullModel.slice(staticAlias.length + 1);
-          }
-          if (fullModel.startsWith(`${providerId}/`)) {
-            return fullModel.slice(providerId.length + 1);
-          }
-          return fullModel;
-        })
-        .filter((modelId) => typeof modelId === "string" && modelId.trim() !== "");
-
-      const mergedModelIds = Array.from(new Set([...modelIds, ...customModelIds, ...aliasModelIds]));
-
-      for (const modelId of mergedModelIds) {
-        // Resolve kind: prefer custom/live metadata, then static, then ID heuristics.
-        const customKind = customModelKindById.get(modelId);
-        const liveKind = liveModelKindById.get(modelId);
-        const kind = customKind || liveKind || staticModelKindById.get(modelId) || inferKindFromUnknownModelId(modelId);
+      for (const row of rows) {
+        const modelId = stripPrefix(row.id);
+        if (!modelId) continue;
+        const customKind = row.source === "custom" ? row.kind : null;
+        const liveKind = row.source === "live" ? row.kind : null;
+        const kind = row.kind;
         // imageToText custom models stay in the LLM list (vision-capable chat models)
         const allowAsLlm = kind === "imageToText" && kindFilter.includes(LLM_KIND);
         if (!kindFilter.includes(kind) && !allowAsLlm) continue;
+        if (row.storageAlias && (isDisabled(row.storageAlias, row.id) || isDisabled(row.storageAlias, modelId))) continue;
         if (isDisabled(outputAlias, modelId) || isDisabled(staticAlias, modelId)) continue;
 
         const model = {
@@ -622,7 +459,7 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
         // fill in only when none of those advertise an effort block.
         const relayedCaps = compatCapsForModel(compatCapsById, outputAlias, staticAlias, providerId, modelId);
         const kindCaps = capabilitiesFromServiceKind(customKind || liveKind);
-        const liveCaps = liveCapabilitiesById.get(modelId)
+        const liveCaps = row.capabilities
           || (relayedCaps || kindCaps ? { ...(kindCaps || {}), ...(relayedCaps || {}) } : null);
         const registryEffort = effortCapabilitiesFromThinkingLevels(providerId, modelId);
         const staticCaps = effortCapabilitiesForModelId(modelId)

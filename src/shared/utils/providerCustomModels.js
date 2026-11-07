@@ -1,6 +1,6 @@
 import { canonicalModelId } from "@/lib/model-probe/canonicalId.js";
 import { asServiceKind } from "@/shared/utils/importProviderModels";
-import { ALIAS_TO_ID } from "@/shared/constants/providers";
+import { ALIAS_TO_ID, getProviderAlias } from "@/shared/constants/providers";
 import { PROVIDER_ID_TO_ALIAS } from "open-sse/config/providerModels.js";
 
 function modelType(model) {
@@ -264,3 +264,71 @@ export function getCompatibleProviderModelRows({
   // A successful empty catalog is authoritative (all models may be disabled).
   return rows;
 }
+
+/**
+ * The model rows a provider serves: exactly the enabled rows its dashboard
+ * page lists, before the disabled filter. /v1/models uses this so removing a
+ * model in the dashboard removes it from /v1/models, and anything listed there
+ * (live-discovered, imported, or alias target) is served.
+ *
+ * Mirrors ProviderDetailPage: built-in = static registry merged with live
+ * discovery; extra rows = saved custom models and alias targets. Compatible
+ * providers list saved custom models only.
+ *
+ * Callers still apply the disabled-model filter per row.
+ *
+ * @param {object} input
+ * @param {string} input.providerId
+ * @param {any[]} [input.staticModels]
+ * @param {any[]} [input.discoveredModels]
+ * @param {any[]} [input.customModels]
+ * @param {Record<string, string>} [input.modelAliases]
+ * @param {boolean} [input.isCompatible]
+ * @returns {{ id: string, kind: string, source: "static"|"live"|"custom"|"legacyAlias", capabilities?: object, storageAlias: string }[]}
+ */
+export function buildServedProviderModels({
+  providerId,
+  staticModels = [],
+  discoveredModels = [],
+  customModels = [],
+  modelAliases = {},
+  isCompatible = false,
+}) {
+  // Same storage key the dashboard writes custom models and disabled flags to.
+  const storageAlias = isCompatible ? providerId : getProviderAlias(providerId);
+  const builtIn = new Map();
+  if (!isCompatible) {
+    for (const model of staticModels) {
+      if (model?.id) builtIn.set(model.id, { ...model, source: "static" });
+    }
+    for (const model of discoveredModels) {
+      const id = typeof model === "string" ? model : model?.id;
+      if (!id) continue;
+      const row = typeof model === "string" ? { id } : model;
+      builtIn.set(id, { ...builtIn.get(id), ...row, id, source: "live" });
+    }
+  }
+
+  const rows = [];
+  for (const model of builtIn.values()) {
+    rows.push({
+      id: model.id,
+      kind: modelType(model),
+      source: model.source,
+      ...(model.capabilities ? { capabilities: model.capabilities } : {}),
+      storageAlias,
+    });
+  }
+  const customRows = getProviderCustomModelRows({
+    customModels,
+    modelAliases,
+    providerAlias: storageAlias,
+    builtInModels: [...builtIn.values()],
+    type: null,
+  });
+  for (const row of customRows) {
+    rows.push({ id: row.id, kind: row.type || "llm", source: row.source, storageAlias });
+  }
+  return rows;
+}
+

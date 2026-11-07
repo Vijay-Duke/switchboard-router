@@ -38,10 +38,14 @@ async function seedCompatibleConnection() {
     providerSpecificData: {
       prefix: "claude-api",
       baseUrl: "https://api.anthropic.com/v1",
-      enabledModels: ["claude-opus-5-5", "claude-sonnet-4-6", "claude-opus-4-5-20251101", "claude-haiku-5-5", "claude-haiku-4-5", "gpt-5.2", "plain-thing-1"],
     },
   });
+  // /v1/models serves the models saved on the provider's dashboard page.
+  const { addCustomModelsBulk } = await import("@/lib/db/index.js");
+  await addCustomModelsBulk(SERVED_MODELS.map((id) => ({ providerAlias: PROVIDER, id, type: "llm" })));
 }
+
+const SERVED_MODELS = ["claude-opus-5-5", "claude-sonnet-4-6", "claude-opus-4-5-20251101", "claude-haiku-5-5", "claude-haiku-4-5", "gpt-5.2", "plain-thing-1", "glm-5.3"];
 
 async function modelsById() {
   const { buildModelsList } = await import("@/app/api/v1/models/route.js");

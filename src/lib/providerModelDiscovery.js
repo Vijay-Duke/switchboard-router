@@ -1,0 +1,715 @@
+// @ts-check
+/**
+ * Live model discovery for one provider connection.
+ *
+ * The provider dashboard shows this catalog and /v1/models serves it, so the
+ * two always agree. Discovery never throws: a failure falls back to the static
+ * registry catalog (with a `warning`) or returns `error` + `status`.
+ */
+import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { GEMINI_CONFIG, ANTIGRAVITY_CONFIG } from "@/lib/oauth/constants/oauth";
+import {
+  refreshGoogleToken,
+  refreshImportedCursorCredentials,
+  updateProviderCredentials,
+} from "@/sse/services/tokenRefresh";
+import { resolveOllamaLocalHost, PROVIDERS } from "open-sse/config/providers.js";
+import { getModelsByProviderId } from "open-sse/config/providerModels.js";
+import { resolveKiroModels } from "open-sse/services/kiroModels.js";
+import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
+import { resolveQoderModels } from "open-sse/services/qoderModels.js";
+import { resolveProviderModels, parseGoogleAvailableModels } from "open-sse/services/providerModels.js";
+import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
+import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
+import { MODEL_CATALOG_HEADER } from "@/lib/modelCatalogDiscovery";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
+import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+
+
+const GEMINI_CLI_MODELS_URL = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels";
+
+const parseOpenAIStyleModels = (data) => {
+  if (Array.isArray(data)) return data;
+  return data?.data || data?.models || data?.results || [];
+};
+
+const parseGeminiCliModels = parseGoogleAvailableModels;
+
+const appendCodexReviewModels = (models) => models.flatMap((model) => {
+  const id = model?.id || model?.slug || model?.model || model?.name;
+  if (!id) return [];
+  const name = model?.display_name || model?.displayName || model?.name || id;
+  const normalized = { ...model, id, name };
+  const isChatModel = (model?.type || "llm") !== "image" && !id.toLowerCase().includes("embed");
+  if (!isChatModel || id.endsWith("-review")) return [normalized];
+  return [
+    normalized,
+    {
+      ...normalized,
+      id: `${id}-review`,
+      name: `${name} Review`,
+      upstreamModelId: id,
+      quotaFamily: "review",
+    },
+  ];
+});
+
+const parseCodexModels = (data) => appendCodexReviewModels(parseOpenAIStyleModels(data));
+
+const createOpenAIModelsConfig = (url) => ({
+  url,
+  method: "GET",
+  headers: { "Content-Type": "application/json" },
+  authHeader: "Authorization",
+  authPrefix: "Bearer ",
+  parseResponse: parseOpenAIStyleModels
+});
+
+const resolveQwenModelsUrl = (connection) => {
+  const fallback = "https://portal.qwen.ai/v1/models";
+  const raw = connection?.providerSpecificData?.resourceUrl;
+  if (!raw || typeof raw !== "string") return fallback;
+  const value = raw.trim();
+  if (!value) return fallback;
+  if (value.startsWith("http://") || value.startsWith("https://")) {
+    return `${value.replace(/\/$/, "")}/models`;
+  }
+  return `https://${value.replace(/\/$/, "")}/v1/models`;
+};
+
+const getStaticProviderModels = (providerId) =>
+  getModelsByProviderId(providerId).map((model) => ({
+    ...model,
+    id: model.id,
+    name: model.name || model.id,
+  }));
+
+const withStaticFallback = (providerId, result, reason = "Live model discovery returned no models") => {
+  if (result?.models?.length) return result;
+  const models = getStaticProviderModels(providerId);
+  if (!models.length) return result || { models: [] };
+  return {
+    ...(result || {}),
+    models,
+    warning: result?.warning || `${reason}; using the static registry catalog.`,
+  };
+};
+
+// Generic custom resolver for OAuth providers that need refresh-on-401 + token persist.
+// Receives a `fetchFn(token)` and returns parsed models or throws.
+const buildOAuthResolver = ({ refreshFn, fetchFn, parseFn, errorLabel }) => async (connection) => {
+  const { accessToken, refreshToken } = connection;
+  if (!accessToken) {
+    return { error: "No valid token found", status: 401 };
+  }
+  let warning;
+  try {
+    let response = await fetchFn(accessToken, connection);
+    if (!response.ok && (response.status === 401 || response.status === 403) && refreshToken) {
+      const refreshed = await refreshFn(connection);
+      if (refreshed?.accessToken) {
+        await updateProviderCredentials(connection.id, {
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken || refreshToken,
+          expiresIn: refreshed.expiresIn,
+        });
+        connection.accessToken = refreshed.accessToken;
+        if (refreshed.refreshToken) connection.refreshToken = refreshed.refreshToken;
+        response = await fetchFn(refreshed.accessToken, connection);
+      }
+    }
+    if (response.ok) {
+      const data = await response.json();
+      const models = parseFn(data);
+      if (models.length > 0) return { models };
+    } else {
+      const errorText = await response.text();
+      warning = `${errorLabel}: ${response.status} ${errorText}`;
+      console.log(`${errorLabel} (falling back to static):`, errorText);
+    }
+  } catch (error) {
+    warning = `${errorLabel}: ${error.message}`;
+    console.log(`${errorLabel} (falling back to static):`, error.message);
+  }
+  return { models: [], warning };
+};
+
+// Provider models endpoints configuration
+const PROVIDER_MODELS_CONFIG = {
+  claude: {
+    url: "https://api.anthropic.com/v1/models",
+    method: "GET",
+    headers: {
+      "Anthropic-Version": "2023-06-01",
+      "Content-Type": "application/json"
+    },
+    authHeader: "x-api-key",
+    // OAuth (Claude subscription) credentials only authenticate as Bearer on
+    // Anthropic endpoints — x-api-key rejects them with 401. API-key
+    // connections keep the native x-api-key header.
+    oauthBearer: true,
+    parseResponse: (data) => data.data || []
+  },
+  gemini: {
+    url: "https://generativelanguage.googleapis.com/v1beta/models",
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+    authQuery: "key", // Use query param for API key
+    parseResponse: (data) => data.models || []
+  },
+  qwen: {
+    url: "https://portal.qwen.ai/v1/models",
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    parseResponse: (data) => data.data || []
+  },
+  codex: {
+    url: "https://chatgpt.com/backend-api/codex/models?client_version=1.0.0",
+    method: "GET",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    parseResponse: parseCodexModels
+  },
+  antigravity: {
+    customResolver: buildOAuthResolver({
+      refreshFn: (conn) => refreshGoogleToken(conn.refreshToken, ANTIGRAVITY_CONFIG.clientId, ANTIGRAVITY_CONFIG.clientSecret),
+      fetchFn: (token, conn) => {
+        // Mirror the Antigravity hub client: daily host first (the same base
+        // the chat transport uses), then prod, plain `{}` body, and the
+        // antigravity identity UA via proxyAwareFetch. The old shape posted to
+        // prod only with VS Code gemini-cli headers and got 403 PERMISSION_DENIED.
+        const projectId = conn.projectId || conn.providerSpecificData?.projectId;
+        const hosts = [
+          "https://daily-cloudcode-pa.googleapis.com",
+          "https://cloudcode-pa.googleapis.com",
+        ];
+        return (async () => {
+          let last = null;
+          for (const host of hosts) {
+            try {
+              const response = await proxyAwareFetch(`${host}/v1internal:fetchAvailableModels`, {
+                method: "POST",
+                identity: "antigravity",
+                provider: "antigravity",
+                format: "antigravity",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${token}`,
+                },
+                body: JSON.stringify(projectId ? { project: projectId } : {}),
+              });
+              if (response.ok) return response;
+              last = response;
+            } catch (error) {
+              last = { ok: false, status: 0, text: async () => error.message };
+            }
+          }
+          return last;
+        })();
+      },
+      parseFn: parseGeminiCliModels,
+      errorLabel: "Failed to fetch Antigravity models"
+    })
+  },
+  github: {
+    url: "https://api.githubcopilot.com/models",
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    parseResponse: (data) => {
+      if (!data?.data) return [];
+      // Filter out embeddings, non-chat models, and disabled models
+      return data.data
+        .filter(m => m.capabilities?.type === "chat")
+        .filter(m => m.policy?.state !== "disabled") // Only return explicitly enabled models
+        .map(m => ({
+          id: m.id,
+          name: m.name || m.id,
+          object: "model",
+          owned_by: m.vendor || "github-copilot",
+          capabilities: m.capabilities,
+        }));
+    }
+  },
+  openai: createOpenAIModelsConfig("https://api.openai.com/v1/models"),
+  openrouter: createOpenAIModelsConfig("https://openrouter.ai/api/v1/models"),
+  anthropic: {
+    url: "https://api.anthropic.com/v1/models",
+    method: "GET",
+    headers: {
+      "Anthropic-Version": "2023-06-01",
+      "Content-Type": "application/json"
+    },
+    authHeader: "x-api-key",
+    parseResponse: (data) => data.data || []
+  },
+
+  alicode: {
+    url: "https://coding.dashscope.aliyuncs.com/v1/models",
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    parseResponse: (data) => data.data || []
+  },
+  "alicode-intl": {
+    url: "https://coding-intl.dashscope.aliyuncs.com/v1/models",
+    method: "GET",
+    headers: { "Content-Type": "application/json" },
+    authHeader: "Authorization",
+    authPrefix: "Bearer ",
+    parseResponse: (data) => data.data || []
+  },
+  "volcengine-ark": createOpenAIModelsConfig("https://ark.cn-beijing.volces.com/api/coding/v3/models"),
+  byteplus: createOpenAIModelsConfig("https://ark.ap-southeast.bytepluses.com/api/coding/v3/models"),
+
+  // OpenAI-compatible API key providers
+  deepseek: createOpenAIModelsConfig("https://api.deepseek.com/models"),
+  groq: createOpenAIModelsConfig("https://api.groq.com/openai/v1/models"),
+  xai: createOpenAIModelsConfig("https://api.x.ai/v1/models"),
+  mistral: createOpenAIModelsConfig("https://api.mistral.ai/v1/models"),
+  perplexity: createOpenAIModelsConfig("https://api.perplexity.ai/v1/models"),
+  together: createOpenAIModelsConfig("https://api.together.xyz/v1/models"),
+  fireworks: createOpenAIModelsConfig("https://api.fireworks.ai/inference/v1/models"),
+  cerebras: createOpenAIModelsConfig("https://api.cerebras.ai/v1/models"),
+  cohere: createOpenAIModelsConfig("https://api.cohere.ai/v1/models"),
+  nebius: createOpenAIModelsConfig("https://api.studio.nebius.ai/v1/models"),
+  siliconflow: createOpenAIModelsConfig("https://api.siliconflow.com/v1/models"),
+  hyperbolic: createOpenAIModelsConfig("https://api.hyperbolic.xyz/v1/models"),
+  ollama: createOpenAIModelsConfig("https://ollama.com/api/tags"),
+  // ollama-local: url resolved dynamically below via providerSpecificData.baseUrl
+  nanobanana: createOpenAIModelsConfig("https://api.nanobananaapi.ai/v1/models"),
+  chutes: createOpenAIModelsConfig("https://llm.chutes.ai/v1/models"),
+  nvidia: createOpenAIModelsConfig("https://integrate.api.nvidia.com/v1/models"),
+  assemblyai: createOpenAIModelsConfig("https://api.assemblyai.com/v1/models"),
+  "vercel-ai-gateway": createOpenAIModelsConfig("https://ai-gateway.vercel.sh/v1/models"),
+  kimchi: {
+    customResolver: async (connection) => {
+      const result = await resolveKimchiModels({
+        accessToken: connection.accessToken,
+        apiKey: connection.apiKey,
+        providerSpecificData: connection.providerSpecificData || {},
+      }, { forceRefresh: true, log: console });
+      if (result?.models?.length) {
+        return { models: result.models };
+      }
+      return {
+        models: getStaticProviderModels("kimchi"),
+        warning: "Kimchi returned no live models; falling back to static catalog.",
+      };
+    }
+  },
+  clinepass: {
+    customResolver: async (connection) => {
+      const result = await resolveClinepassModels({
+        accessToken: connection.accessToken,
+        apiKey: connection.apiKey,
+      });
+      return result || {
+        models: [],
+        warning: "ClinePass returned no live models; falling back to static catalog.",
+      };
+    },
+  },
+
+  // Custom resolvers (non-OpenAI-shaped APIs / token-refresh flows)
+  kiro: {
+    customResolver: async (connection) => {
+      const credentials = {
+        accessToken: connection.accessToken,
+        refreshToken: connection.refreshToken,
+        providerSpecificData: connection.providerSpecificData || {}
+      };
+      let warning;
+      try {
+        const result = await resolveKiroModels(credentials, {
+          log: console,
+          onCredentialsRefreshed: async (refreshed) => {
+            if (refreshed?.accessToken) {
+              await updateProviderCredentials(connection.id, {
+                accessToken: refreshed.accessToken,
+                refreshToken: refreshed.refreshToken || connection.refreshToken,
+                expiresIn: refreshed.expiresIn,
+              });
+              connection.accessToken = refreshed.accessToken;
+              if (refreshed.refreshToken) connection.refreshToken = refreshed.refreshToken;
+            }
+          }
+        });
+        if (result?.models?.length) {
+          return {
+            models: result.models.map((m) => ({
+              id: m.id,
+              name: m.name,
+              upstreamModelId: m.upstreamModelId,
+              contextLength: m.contextLength,
+              rateMultiplier: m.rateMultiplier,
+              capabilities: m.capabilities,
+              description: m.description
+            }))
+          };
+        }
+        warning = "Kiro returned no models; falling back to static catalog.";
+      } catch (error) {
+        warning = `Failed to fetch Kiro models: ${error.message}`;
+        console.log("Failed to fetch Kiro models dynamically, falling back to static:", error.message);
+      }
+      return { models: [], warning };
+    }
+  },
+  qoder: {
+    customResolver: async (connection) => {
+      const credentials = {
+        accessToken: connection.accessToken,
+        refreshToken: connection.refreshToken,
+        email: connection.email,
+        displayName: connection.displayName,
+        providerSpecificData: connection.providerSpecificData || {},
+      };
+      let warning;
+      try {
+        const result = await resolveQoderModels(credentials, { forceRefresh: true });
+        if (result?.models?.length) {
+          return {
+            models: result.models.map((m) => ({
+              // Use the canonical "qoder/<key>" id so the dashboard
+              // surfaces the same identifier the chat router expects.
+              id: `qoder/${m.id}`,
+              name: m.name,
+              contextLength: m.contextLength,
+              isVL: m.isVL,
+              isReasoning: m.isReasoning,
+              maxOutputTokens: m.maxOutputTokens,
+              description: m.description,
+            })),
+          };
+        }
+        warning = "Qoder returned no models; falling back to static catalog.";
+      } catch (error) {
+        warning = `Failed to fetch Qoder models: ${error.message}`;
+        console.log("Failed to fetch Qoder models dynamically, falling back to static:", error.message);
+      }
+      return { models: [], warning };
+    },
+  },
+  "gemini-cli": {
+    customResolver: buildOAuthResolver({
+      refreshFn: (conn) => refreshGoogleToken(conn.refreshToken, GEMINI_CONFIG.clientId, GEMINI_CONFIG.clientSecret),
+      fetchFn: (token, conn) => {
+        const projectId = conn.projectId || conn.providerSpecificData?.projectId;
+        const body = projectId ? { project: projectId } : {};
+        return fetch(GEMINI_CLI_MODELS_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+            "User-Agent": "google-api-nodejs-client/9.15.1",
+            "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1"
+          },
+          body: JSON.stringify(body)
+        });
+      },
+      parseFn: parseGeminiCliModels,
+      errorLabel: "Failed to fetch Gemini CLI models"
+    })
+  },
+  "grok-cli": {
+    customResolver: async (connection) => {
+      const proxyOptions = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
+      const result = await resolveGrokCliModels({
+        ...connection,
+        connectionId: connection.id,
+      }, {
+        log: console,
+        proxyOptions,
+        onCredentialsRefreshed: (refreshed) => updateProviderCredentials(connection.id, {
+          ...refreshed,
+          existingProviderSpecificData: connection.providerSpecificData || {},
+        }),
+      });
+      return withStaticFallback("grok-cli", result, "Grok CLI returned no live models");
+    },
+  },
+  "ollama-local": {
+    customResolver: async (connection) => {
+      const url = `${resolveOllamaLocalHost(connection)}/api/tags`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" }
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.log("Error fetching models from ollama-local:", errorText);
+        return { error: `Failed to fetch models: ${response.status}`, status: response.status };
+      }
+      const data = await response.json();
+      return { models: parseOpenAIStyleModels(data) };
+    }
+  },
+  cursor: {
+    customResolver: async (connection) => {
+      const current = await refreshImportedCursorCredentials(connection, { force: true });
+      return withStaticFallback(
+        connection.provider,
+        await resolveProviderModels(current, { forceRefresh: true, log: console }),
+        "Cursor model discovery failed",
+      );
+    },
+  }
+};
+
+
+const MODEL_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes
+const discoveryCache = (globalThis.__providerModelDiscoveryCache ??= new Map());
+
+/**
+ * @typedef {{ models: any[], warning?: string }} DiscoveryOk
+ * @typedef {{ error: string, status: number }} DiscoveryError
+ */
+
+/**
+ * Discover the model catalog of a provider connection.
+ *
+ * @param {any} connection provider connection record
+ * @param {{ forceRefresh?: boolean }} [options]
+ * @returns {Promise<DiscoveryOk | DiscoveryError>}
+ */
+export async function discoverConnectionModels(connection, { forceRefresh = false } = {}) {
+  const cacheKey = [
+    connection.id,
+    connection.provider,
+    connection.apiKey || connection.accessToken || "",
+    connection.providerSpecificData?.baseUrl || "",
+  ].join(":");
+
+  if (!forceRefresh) {
+    const cached = discoveryCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < MODEL_CACHE_TTL_MS) {
+      return cached.payload;
+    }
+  }
+
+  /** @type {DiscoveryOk | DiscoveryError} */
+  let result;
+  try {
+    result = await discoverUncached(connection);
+  } catch (error) {
+    console.log("Error fetching provider models:", error);
+    const staticModels = getStaticProviderModels(connection.provider);
+    result = staticModels.length
+      ? { models: staticModels, warning: "Live model discovery failed; using the static registry catalog." }
+      : fail("Failed to fetch models", 500);
+  }
+  if ("models" in result && result.models?.length) {
+    discoveryCache.set(cacheKey, { timestamp: Date.now(), payload: result });
+  }
+  return result;
+}
+
+export function clearConnectionModelDiscoveryCache() {
+  discoveryCache.clear();
+}
+
+/**
+ * @param {{ models: any[], warning?: string }} payload
+ * @returns {DiscoveryOk}
+ */
+function ok(payload) {
+  return payload;
+}
+
+/**
+ * @param {string} error
+ * @param {number} status
+ * @returns {DiscoveryError}
+ */
+function fail(error, status) {
+  return { error, status };
+}
+
+/**
+ * @param {any} connection
+ * @returns {Promise<DiscoveryOk | DiscoveryError>}
+ */
+async function discoverUncached(connection) {
+  if (isOpenAICompatibleProvider(connection.provider)) {
+    const baseUrl = connection.providerSpecificData?.baseUrl;
+    if (!baseUrl) {
+      return fail("No base URL configured for OpenAI compatible provider", 400);
+    }
+    const url = `${baseUrl.replace(/\/$/, "")}/models`;
+    const response = await proxyAwareFetch(url, {
+      method: "GET",
+      identity: "openai-node",
+      provider: connection.provider,
+      format: "openai",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${connection.apiKey}`,
+        [MODEL_CATALOG_HEADER]: "1",
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.log(`Error fetching models from ${connection.provider}:`, errorText);
+      return fail(`Failed to fetch models: ${response.status}`, response.status);
+    }
+
+    const data = await response.json();
+    const models = data.data || data.models || [];
+
+    return ok({
+      models
+    });
+  }
+
+  if (isAnthropicCompatibleProvider(connection.provider)) {
+    let baseUrl = connection.providerSpecificData?.baseUrl;
+    if (!baseUrl) {
+      return fail("No base URL configured for Anthropic compatible provider", 400);
+    }
+
+    baseUrl = baseUrl.replace(/\/$/, "");
+    if (baseUrl.endsWith("/messages")) {
+      baseUrl = baseUrl.slice(0, -9);
+    }
+
+    const url = `${baseUrl}/models`;
+    const response = await proxyAwareFetch(url, {
+      method: "GET",
+      identity: baseUrl.includes("api.anthropic.com") ? "claude-cli" : "openai-node",
+      provider: connection.provider,
+      format: "claude",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": connection.apiKey,
+        "anthropic-version": "2023-06-01",
+        "Authorization": `Bearer ${connection.apiKey}`,
+        [MODEL_CATALOG_HEADER]: "1",
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.log(`Error fetching models from ${connection.provider}:`, errorText);
+      return fail(`Failed to fetch models: ${response.status}`, response.status);
+    }
+
+    const data = await response.json();
+    const models = data.data || data.models || [];
+
+    return ok({
+      models
+    });
+  }
+
+  const config = PROVIDER_MODELS_CONFIG[connection.provider];
+  if (!config) {
+    const discovered = await resolveProviderModels(connection);
+    const resolved = withStaticFallback(
+      connection.provider,
+      discovered,
+      `Provider ${connection.provider} does not expose a configured model endpoint`,
+    );
+    if (resolved.models?.length) {
+      return ok({
+        models: resolved.models,
+        ...(resolved.warning ? { warning: resolved.warning } : {}),
+      });
+    }
+    return fail(`Provider ${connection.provider} does not support models listing`, 400);
+  }
+
+  // Config-driven custom resolver path (OAuth refresh, non-OpenAI shape, etc.)
+  if (typeof config.customResolver === "function") {
+    const result = await config.customResolver(connection);
+    if (result.error) {
+      const fallback = withStaticFallback(connection.provider, result, result.error);
+      if (!fallback.models?.length) {
+        return fail(result.error, result.status || 500);
+      }
+      return ok({
+        models: fallback.models,
+        ...(fallback.warning ? { warning: fallback.warning } : {}),
+      });
+    }
+    const resolved = withStaticFallback(connection.provider, result);
+    return ok({
+      models: resolved.models,
+      ...(resolved.warning ? { warning: resolved.warning } : {})
+    });
+  }
+
+  // Get auth token
+  const token = connection.providerSpecificData?.copilotToken || connection.accessToken || connection.apiKey;
+  if (!token) {
+    return fail("No valid token found", 401);
+  }
+
+  // Build request URL
+  let url = config.url;
+  if (connection.provider === "qwen") {
+    url = resolveQwenModelsUrl(connection);
+  }
+  if (config.authQuery) {
+    url += `?${config.authQuery}=${token}`;
+  }
+
+  // Build headers
+  const headers = { ...config.headers };
+  if (config.authHeader && !config.authQuery) {
+    // OAuth credentials authenticate as `Authorization: Bearer` (+ oauth beta)
+    // even on providers whose API-key auth lives in a native header. Same
+    // pattern as the Claude usage hop and CLIProxyAPI's claude executor.
+    if (config.oauthBearer === true && connection.authType === "oauth") {
+      headers["Authorization"] = `Bearer ${token}`;
+      headers["anthropic-beta"] = "oauth-2025-04-20";
+    } else {
+      headers[config.authHeader] = (config.authPrefix || "") + token;
+    }
+  }
+
+  // Make request
+  const fetchOptions = {
+    method: config.method,
+    headers,
+    identity: connection.provider === "github" ? "copilot" : PROVIDERS[connection.provider]?.identity,
+    provider: connection.provider,
+    format: connection.provider === "github" ? "openai" : undefined,
+  };
+
+  if (config.body && config.method === "POST") {
+    fetchOptions.body = JSON.stringify(config.body);
+  }
+
+  const response = await proxyAwareFetch(url, fetchOptions);
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.log(`Error fetching models from ${connection.provider}:`, errorText);
+    const staticModels = getStaticProviderModels(connection.provider);
+    if (staticModels.length) {
+      return ok({
+        models: staticModels,
+        warning: `Live model discovery failed (${response.status}); using the static registry catalog.`,
+      });
+    }
+    return fail(`Failed to fetch models: ${response.status}`, response.status);
+  }
+
+  const data = await response.json();
+  const models = config.parseResponse(data);
+  const resolvedModels = models.length ? models : getStaticProviderModels(connection.provider);
+
+  return ok({
+    models: resolvedModels,
+    ...(models.length ? {} : { warning: "Live model discovery returned no models; using the static registry catalog." }),
+  });
+}
