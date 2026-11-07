@@ -15,7 +15,7 @@ const moduleDefault = {
     deprecationNotice: "RISK_NOTICE",
   },
   category: "oauth",
-  serviceKinds: ["llm", "image"],
+  serviceKinds: ["llm", "image", "webSearch"],
   // Live catalog via v1internal:fetchAvailableModels so newly released models
   // appear in /v1/models without a registry update. Static `models` below is
   // the offline fallback. Body project id is injected per-connection at fetch time.
@@ -88,6 +88,11 @@ const moduleDefault = {
     loadCodeAssistUserAgent: "google-api-nodejs-client/9.15.1",
     loadCodeAssistApiClient: "google-cloud-sdk vscode_cloudshelleditor/0.1",
     refreshLeadMs: 300000,
+  },
+  searchViaChat: {
+    defaultModel: "gemini-2.5-flash",
+    endpoint: "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent",
+    freeTier: "Free — Google Search grounding through an Antigravity OAuth account.",
   },
   features: {
     usage: true,
