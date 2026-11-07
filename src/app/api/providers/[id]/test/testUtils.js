@@ -1,5 +1,5 @@
 // @ts-check
-import { getProviderConnectionById, updateProviderConnection } from "@/lib/db/index.js";
+import { getProviderConnectionById, updateProviderConnection, updateProviderConnectionCredentialsIfCurrent } from "@/lib/db/index.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { testProxyUrl } from "@/lib/network/proxyTest";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, resolveProviderId } from "@/shared/constants/providers";
@@ -16,7 +16,6 @@ import {
   ANTIGRAVITY_CONFIG,
   KIRO_CONFIG,
   QWEN_CONFIG,
-  CLAUDE_CONFIG,
   CLINE_CONFIG,
   KILOCODE_CONFIG,
   KIMCHI_CONFIG,
@@ -230,23 +229,12 @@ async function refreshOAuthToken(connection, effectiveProxy = null) {
       return { accessToken: data.access_token, expiresIn: data.expires_in, refreshToken: data.refresh_token || refreshToken };
     }
 
-    if (provider === "codex" || provider === "xai" || provider === "grok-cli") {
-      return await refreshProviderCredentials(provider, connection, console);
-    }
-
-    if (provider === "claude") {
-      const response = await fetchWithConnectionProxy(provider, CLAUDE_CONFIG.tokenUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json" },
-        body: JSON.stringify({
-          grant_type: "refresh_token",
-          refresh_token: refreshToken,
-          client_id: CLAUDE_CONFIG.clientId,
-        }),
-      }, effectiveProxy);
-      if (!response.ok) return null;
-      const data = await response.json();
-      return { accessToken: data.access_token, expiresIn: data.expires_in, refreshToken: data.refresh_token || refreshToken };
+    // Claude and Codex refresh tokens are single-use: a replay revokes the
+    // whole login. Route them through the shared refresh lock so a connection
+    // test cannot race chat, usage polling or the background refresher.
+    if (provider === "claude" || provider === "codex" || provider === "xai" || provider === "grok-cli") {
+      const result = await refreshProviderCredentials(provider, { ...connection, connectionId: connection.id }, console);
+      return result?.error ? null : result;
     }
 
     if (provider === "kiro") {
@@ -858,7 +846,17 @@ export async function testSingleConnection(id) {
     }
   }
 
-  await updateProviderConnection(id, updateData);
+  if (result.refreshed && result.newTokens) {
+    // Save rotated tokens only if nothing else rotated this account while
+    // the test ran; a blind write could restore an already-spent token.
+    const { testStatus, lastError, lastErrorAt, ...credentialUpdates } = updateData;
+    const saved = await updateProviderConnectionCredentialsIfCurrent(id, connection, credentialUpdates);
+    await updateProviderConnection(id, saved ? { testStatus, lastError, lastErrorAt } : {
+      testStatus: "active", lastError: null, lastErrorAt: null,
+    });
+  } else {
+    await updateProviderConnection(id, updateData);
+  }
 
   return { valid: result.valid, error: result.error, refreshed: !!result.refreshed, latencyMs, testedAt: new Date().toISOString() };
 }

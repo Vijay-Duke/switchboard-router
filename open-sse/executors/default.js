@@ -5,6 +5,7 @@ import { resolveOpenAICompatibleApiType, getTargetFormat } from "../services/pro
 import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
 import { buildClineHeaders } from "../shared/clineAuth.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { refreshProviderCredentials } from "../services/oauthCredentialManager.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { stripUnsupportedParams } from "../translator/concerns/paramSupport.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
@@ -267,7 +268,9 @@ export class DefaultExecutor extends BaseExecutor {
     if (!credentials.refreshToken) return null;
 
     const refreshers = {
-      claude: () => this.refreshFromGrant(credentials, proxyOptions),
+      // Same path as the proactive refresher: shared lock and dedup, a logged
+      // and classified invalid_grant, and an expiry the caller can persist.
+      claude: () => refreshProviderCredentials("claude", credentials, log, proxyOptions),
       codex: () => this.refreshFromGrant(credentials, proxyOptions),
       qwen: () => this.refreshWithForm(OAUTH_ENDPOINTS.qwen.token, { grant_type: "refresh_token", refresh_token: credentials.refreshToken, client_id: PROVIDERS.qwen.clientId }, proxyOptions, "qwen"),
       iflow: () => this.refreshIflow(credentials.refreshToken, proxyOptions),

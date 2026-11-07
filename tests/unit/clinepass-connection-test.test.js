@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getProviderConnectionById: vi.fn(),
   updateProviderConnection: vi.fn(),
+  updateProviderConnectionCredentialsIfCurrent: vi.fn(),
   resolveConnectionProxyConfig: vi.fn(),
   testProxyUrl: vi.fn(),
   proxyAwareFetch: vi.fn(),
@@ -11,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/db/index.js", () => ({
   getProviderConnectionById: mocks.getProviderConnectionById,
   updateProviderConnection: mocks.updateProviderConnection,
+  updateProviderConnectionCredentialsIfCurrent: mocks.updateProviderConnectionCredentialsIfCurrent,
 }));
 
 vi.mock("@/lib/network/connectionProxy", () => ({
@@ -32,6 +34,7 @@ describe("ClinePass connection tests", () => {
     vi.clearAllMocks();
     mocks.resolveConnectionProxyConfig.mockResolvedValue({});
     mocks.testProxyUrl.mockResolvedValue({ ok: true });
+    mocks.updateProviderConnectionCredentialsIfCurrent.mockImplementation(async (id, _expected, patch) => ({ id, ...patch }));
     mocks.proxyAwareFetch.mockResolvedValue(new Response(JSON.stringify({ data: [] }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -149,6 +152,16 @@ describe("ClinePass connection tests", () => {
         format: "openai",
       }),
       {},
+    );
+    // Rotated tokens go through the compare-and-set write, never a blind one.
+    expect(mocks.updateProviderConnectionCredentialsIfCurrent).toHaveBeenCalledWith(
+      "clinepass-refresh",
+      expect.objectContaining({ refreshToken: "refresh-token" }),
+      expect.objectContaining({ accessToken: "fresh-token", refreshToken: "next-refresh" }),
+    );
+    expect(mocks.updateProviderConnection).toHaveBeenCalledWith(
+      "clinepass-refresh",
+      expect.not.objectContaining({ accessToken: expect.anything() }),
     );
   });
 
