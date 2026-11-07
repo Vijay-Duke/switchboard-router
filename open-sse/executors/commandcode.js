@@ -25,11 +25,13 @@ export class CommandCodeExecutor extends BaseExecutor {
     return body;
   }
 
-  buildHeaders(credentials, stream = true) {
+  // x-session-id matches the body's conversation-stable threadId, as the
+  // official CLI sends it, instead of a fresh id per request.
+  buildHeaders(credentials, stream = true, url, model, transformedBody) {
     const headers = {
       "Content-Type": "application/json",
       ...(this.config.headers || {}),
-      "x-session-id": randomUUID(),
+      "x-session-id": (typeof transformedBody?.threadId === "string" && transformedBody.threadId) || randomUUID(),
     };
 
     const token = credentials?.apiKey || credentials?.accessToken;

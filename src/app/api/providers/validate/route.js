@@ -442,7 +442,7 @@ export async function POST(request) {
             headers: {
               "Content-Type": "application/json",
               ...(cfg.headers || {}),
-              "x-session-id": crypto.randomUUID(),
+              "x-session-id": payload.threadId || crypto.randomUUID(),
               "Authorization": `Bearer ${apiKey}`,
             },
             body: JSON.stringify(payload),
