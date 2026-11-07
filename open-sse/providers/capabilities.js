@@ -159,6 +159,9 @@ export const PROVIDER_CAPABILITIES = {
   // the "[1m]" registry variants map to the same upstream id with an
   // extended 872k window (codex-rs/models-manager/models.json).
   "codex": {
+    "gpt-6-astra":               { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
+    "gpt-6-sol":                 { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
+    "gpt-6-luna":                { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
     "gpt-6-astra[1m]":           CODEX_EXTENDED_CAPS,
     "gpt-6-sol[1m]":             CODEX_EXTENDED_CAPS,
     "gpt-6-luna[1m]":            CODEX_EXTENDED_CAPS,
