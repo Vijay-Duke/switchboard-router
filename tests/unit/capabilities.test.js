@@ -2,6 +2,25 @@ import { describe, expect, it } from "vitest";
 import { getCapabilitiesForModel } from "../../open-sse/providers/capabilities.js";
 
 describe("getCapabilitiesForModel", () => {
+  it("reports DeepSeek V4.1-Flash ids as vision-capable without dropping their thinking/context", () => {
+    const v41 = { vision: true, reasoning: true, thinkingFormat: "deepseek", contextWindow: 1000000 };
+    expect(getCapabilitiesForModel(undefined, "deepseek-v4.1-flash")).toMatchObject(v41);
+    expect(getCapabilitiesForModel("opencode-go", "deepseek-v4.1-flash")).toMatchObject(v41);
+    expect(getCapabilitiesForModel("openrouter", "deepseek/deepseek-v4.1-flash")).toMatchObject(v41);
+    // Hyphenated gateway alias (e.g. Kenari) used to match *deepseek-v4* as text-only.
+    expect(getCapabilitiesForModel("kenari", "deepseek-v4-1-flash")).toMatchObject(v41);
+    // "deepseek-flash" is the GA id for V4.1-Flash; keep the 128K/64K limits it had.
+    expect(getCapabilitiesForModel("opencode-go", "deepseek-flash")).toMatchObject({
+      vision: true,
+      reasoning: true,
+      thinkingFormat: "deepseek",
+      contextWindow: 128000,
+      maxOutput: 64000,
+    });
+    // the superseded text-only Flash id stays text-only
+    expect(getCapabilitiesForModel("opencode-go", "deepseek-v4-flash").vision).toBe(false);
+  });
+
   const claudeSonnet5Expected = {
     contextWindow: 1000000,
     maxOutput: 128000,
