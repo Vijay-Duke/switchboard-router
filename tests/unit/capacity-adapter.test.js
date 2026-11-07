@@ -50,7 +50,7 @@ describe("getCapacityAdapterConfig", () => {
   it("injects the default fallback model into an enabled pool with no models", () => {
     const cfg = getCapacityAdapterConfig("vision", settingsWith("vision", { enabled: true, roundRobin: false, models: [] }));
     expect(cfg.enabled).toBe(true);
-    expect(cfg.models).toEqual(["oc/mimo-v2.5-free"]);
+    expect(cfg.models).toEqual(["oc/mimo-v2.6-flash-free"]);
   });
 
   it("leaves a disabled empty pool empty (no default injection)", () => {
