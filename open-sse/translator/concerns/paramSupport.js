@@ -17,6 +17,14 @@ const STRIP_RULES = [
   // Cloudflare Workers AI: content must be plain string, rejects OpenAI content-part array (#1926)
   { provider: "cloudflare-ai", flattenContent: true },
   { provider: "volcengine-ark", match: /glm-5/i, clampToModelMaxOutput: true },
+  // Strict OpenAI-compatible validators reject unknown assistant-message fields.
+  // Clients driving reasoning models echo the prior turn's reasoning on every
+  // assistant message; Groq 400s, Mistral 422s ("extra_forbidden"), Cerebras
+  // 400s, knocking them out of every multi-turn combo. Providers that *require*
+  // the field (DeepSeek, Kimi) go through reasoningContentInjector instead.
+  { provider: "groq", dropMessageFields: ["reasoning_content", "reasoning", "reasoning_details"] },
+  { provider: "mistral", dropMessageFields: ["reasoning_content", "reasoning", "reasoning_details"] },
+  { provider: "cerebras", dropMessageFields: ["reasoning_content", "reasoning", "reasoning_details"] },
 ];
 
 // Test a rule's match (regex or predicate) against the model id.
@@ -39,6 +47,15 @@ export function stripUnsupportedParams(provider, model, body) {
     if (!matches(rule, model)) continue;
     for (const key of rule.drop || []) {
       if (body[key] !== undefined) delete body[key];
+    }
+    // Per-message field drop (assistant turns only — that is where clients replay reasoning).
+    if (Array.isArray(rule.dropMessageFields) && Array.isArray(body.messages)) {
+      for (const msg of body.messages) {
+        if (!msg || msg.role !== "assistant") continue;
+        for (const key of rule.dropMessageFields) {
+          if (msg[key] !== undefined) delete msg[key];
+        }
+      }
     }
     // CF Workers AI oneOf root schema only accepts content as plain string (#1926)
     if (rule.flattenContent && Array.isArray(body.messages)) {
