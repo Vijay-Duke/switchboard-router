@@ -148,7 +148,8 @@ describe("Codex Refresh Token", () => {
       const { getRefreshLeadMs } = await import("../../open-sse/services/tokenRefresh.js");
 
       // Synced with CLIProxyAPI refresh_registry
-      expect(getRefreshLeadMs("codex")).toBe(5 * 24 * 60 * 60 * 1000);   // 5 days
+      // Upstream 0bc7f86e: 10 min (a 5d lead rotated ~1h tokens on every call)
+      expect(getRefreshLeadMs("codex")).toBe(10 * 60 * 1000);
       expect(getRefreshLeadMs("claude")).toBe(4 * 60 * 60 * 1000);       // 4 hours
       expect(getRefreshLeadMs("iflow")).toBe(24 * 60 * 60 * 1000);       // 24 hours
       expect(getRefreshLeadMs("qwen")).toBe(20 * 60 * 1000);             // 20 minutes

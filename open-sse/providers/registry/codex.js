@@ -105,7 +105,9 @@ const moduleDefault = {
       codex_cli_simplified_flow: "true",
       originator: "codex_cli_rs",
     },
-    refreshLeadMs: 432000000,
+    // Access tokens live ~1h; a 5d lead rotated the refresh token on EVERY call —
+    // reuse of a rotated token revokes the whole OpenAI session (account logout).
+    refreshLeadMs: 600000,
     maxRefreshAgeMs: 691200000,
     trackRefreshAt: true,
     // The exchange route accepts a pasted ChatGPT access token (raw JWT) as
