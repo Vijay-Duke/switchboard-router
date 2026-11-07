@@ -286,7 +286,7 @@ export const PROFILES = {
     tls: "node",
     alpn: ["h2", "http/1.1"],
     headerOrder: ["Authorization", "Content-Type", "Accept", "User-Agent", "x-grok-client-identifier", "x-grok-client-version"],
-    source: { capture: "@xai-official/grok 0.2.99" },
+    source: { capture: "@xai-official/grok 1.0.44" },
     headers: grokBuildHeaders,
   },
   "muse-code": {

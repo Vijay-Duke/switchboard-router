@@ -1,5 +1,6 @@
 import { ensureDirs, DATA_FILE, BACKUPS_DIR } from "./paths.js";
 import { isBuildPhase } from "@/lib/buildPhase.js";
+import { stripNullBytes } from "./helpers/nullBytes.js";
 
 // Use global to survive Next.js dev hot-reload (module state resets on reload).
 // In dev, Next may re-evaluate this module while the old adapter is still open;
@@ -59,6 +60,28 @@ async function trySqlJs(failures) {
   }
 }
 
+/**
+ * Make every bound string NUL-safe, once, for all drivers (upstream 5a4e812e).
+ *
+ * SQLite stores TEXT as a NUL-terminated C string: better-sqlite3 rejects a
+ * bound string with an embedded NUL ("String contains null byte") and
+ * node:sqlite silently truncates it. Request-derived values (model ids,
+ * endpoints, tool output) can carry one, which would abort the usage flush or
+ * lose data. Sanitising at the binding boundary covers every driver at once.
+ *
+ * @param {object} adapter
+ * @returns {object} adapter with NUL-safe run/get/all
+ */
+function withNullByteSafeParams(adapter) {
+  const clean = (params) => (Array.isArray(params) ? params.map(stripNullBytes) : params);
+  return {
+    ...adapter,
+    run: (sql, params = []) => adapter.run(sql, clean(params)),
+    get: (sql, params = []) => adapter.get(sql, clean(params)),
+    all: (sql, params = []) => adapter.all(sql, clean(params)),
+  };
+}
+
 async function initAdapter() {
   // `next build` must never open the operator's database: it would run migrations
   // against live data and bake the result into static output. Every page that
@@ -97,6 +120,8 @@ async function initAdapter() {
     }
     throw new Error("[DB] No SQLite driver available (bun/better/node/sql.js all failed)");
   }
+
+  adapter = withNullByteSafeParams(adapter);
 
   if (!state.logged) {
     const level = adapter.driver === "sql.js" ? "warn" : "log";

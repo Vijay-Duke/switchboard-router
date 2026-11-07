@@ -8,6 +8,11 @@ import ProviderLimits from "@/app/(dashboard)/dashboard/usage/components/Provide
 import { useNotificationStore } from "@/store/notificationStore";
 import { createHarness, h, settle, click, fire, jsonResponse } from "./dashboard-dom-harness.js";
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+  usePathname: () => "/dashboard/quota",
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock("@/store/confirmationStore", () => ({
   requestConfirmation: vi.fn(() => Promise.resolve(true)),
 }));

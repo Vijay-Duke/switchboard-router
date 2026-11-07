@@ -97,6 +97,14 @@ function isBlockedIpv6(host) {
     if (groups.every((v, i) => (i === 7 ? v === 1 : v === 0))) return true;
     if ((groups[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
     if ((groups[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
+    // Prefixes that embed a real IPv4 address in the low 32 bits: check it
+    // against the IPv4 blocklist (upstream #3714).
+    const low32 = ((groups[6] << 16) | groups[7]) >>> 0;
+    const isZero = (i) => groups[i] === 0;
+    // NAT64 well-known prefix 64:ff9b::/96
+    if (groups[0] === 0x0064 && groups[1] === 0xff9b && [2, 3, 4, 5].every(isZero)) return isBlockedIpv4Int(low32);
+    // IPv4-compatible ::a.b.c.d/96 (deprecated, still routable on some stacks)
+    if ([0, 1, 2, 3, 4, 5].every(isZero)) return isBlockedIpv4Int(low32);
     return false;
   }
   // Not a parseable literal (e.g. hostname with a colon): prefix heuristic.
@@ -112,6 +120,15 @@ function expandIpv6Groups(host) {
   const right = halves.length === 2 && halves[1] ? halves[1].split(":").filter(Boolean) : [];
   const missing = 8 - left.length - right.length;
   if (missing < 0 || (halves.length === 1 && missing !== 0)) return null;
+  // A dotted-quad tail ("::127.0.0.1", "64:ff9b::10.0.0.1") occupies two groups.
+  const tail = right.length ? right : left;
+  const last = tail[tail.length - 1];
+  if (last && last.includes(".")) {
+    const v4 = ipv4ToInt(last);
+    if (v4 === null) return null;
+    tail.splice(tail.length - 1, 1, (v4 >>> 16).toString(16), (v4 & 0xffff).toString(16));
+    return expandIpv6Groups([left.join(":"), right.join(":")].slice(0, halves.length).join("::"));
+  }
   const groups = [...left, ...Array(missing).fill("0"), ...right];
   if (groups.length !== 8) return null;
   const vals = groups.map((g) => parseInt(g, 16));

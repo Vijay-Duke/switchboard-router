@@ -407,6 +407,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
   let lastError = null;
   let earliestRetryAfter = null;
   let lastStatus = null;
+  let requestScopedResult = null;
 
   for (let i = 0; i < rotatedModels.length; i++) {
     const modelStr = rotatedModels[i];
@@ -469,12 +470,25 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       // account-level 404 rule (shouldFallback: false) which prevents rotating
       // accounts for an unavailable model.
       const isNotFound = result.status === 404;
-      const { shouldFallback: fb, cooldownMs } = checkFallbackError(result.status, errorText);
+      const { shouldFallback: fb, cooldownMs, requestScoped } = checkFallbackError(result.status, errorText);
       const shouldFallback = isNotFound ? true : fb;
 
-      if (!shouldFallback) {
+      if (!shouldFallback && !requestScoped) {
         log.warn("COMBO", `Model ${modelStr} failed (no fallback)`, { status: result.status });
         return result;
+      }
+
+      // A request-scoped 4xx (validation, unsupported parameter, context
+      // overflow) means this member cannot serve THIS request, not that the
+      // credential is unhealthy. Members run on different providers with
+      // different validation, so advance immediately (nothing to recover from).
+      // If no member serves it, the first rejection is returned verbatim below.
+      if (!shouldFallback && requestScoped) {
+        log.warn("COMBO", `Model ${modelStr} rejected the request (${result.status}), trying next`, { status: result.status });
+        lastError = errorText || String(result.status);
+        if (!lastStatus) lastStatus = result.status;
+        if (!requestScopedResult) requestScopedResult = result;
+        continue;
       }
 
       // For transient errors (503/502/504), retry the same model once before
@@ -531,6 +545,14 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       if (!lastStatus) lastStatus = 500;
       log.warn("COMBO", `Model ${modelStr} threw error, trying next`, { error: lastError });
     }
+  }
+
+  // At least one member rejected the request itself: hand back that member's
+  // own response (status + body) rather than a synthesized envelope, so the
+  // client sees the real cause.
+  if (requestScopedResult) {
+    log.warn("COMBO", `No model served the request; returning the first request-scoped failure (${requestScopedResult.status})`);
+    return requestScopedResult;
   }
 
   // All models failed

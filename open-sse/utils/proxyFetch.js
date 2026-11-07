@@ -257,6 +257,17 @@ export function resolveConnectionProxyUrl(targetUrl, proxyOptions) {
   return normalizeProxyUrl(proxyUrlRaw);
 }
 
+function isConnectionProxyIntended(proxyOptions) {
+  return proxyOptions?.enabled === true
+    || proxyOptions?.connectionProxyEnabled === true
+    || !!normalizeString(proxyOptions?.url ?? proxyOptions?.connectionProxyUrl);
+}
+
+function isNoProxyBypassed(targetUrl, proxyOptions) {
+  const noProxy = normalizeString(proxyOptions?.noProxy ?? proxyOptions?.connectionNoProxy);
+  return !!noProxy && shouldBypassByNoProxy(targetUrl, noProxy);
+}
+
 /**
  * Egress proxy for a target: per-connection proxy wins, else env proxy.
  * Shared by proxyAwareFetch and the Codex WebSocket hop so both egress alike.
@@ -550,6 +561,17 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   }
 
   const proxyUrl = resolveProxyUrl(targetUrl, proxyOptions);
+
+  // Strict mode means "never leave over the direct IP". A connection proxy
+  // that is enabled/configured but resolves to nothing (enabled with an empty
+  // url) would otherwise go direct below, on every transport (upstream
+  // #4333). Gate on a proxy being *intended* so callers that use strictProxy
+  // only as "don't replay directly if the proxy fails" keep working with
+  // nothing configured, and let an explicit no_proxy bypass stay direct.
+  if (!proxyUrl && proxyOptions?.strictProxy === true && isConnectionProxyIntended(proxyOptions)
+      && !isNoProxyBypassed(targetUrl, proxyOptions)) {
+    throw new Error("[ProxyFetch] Proxy required but none resolved (strictProxy=true)");
+  }
 
   if (_identityTls !== "node") {
     try {

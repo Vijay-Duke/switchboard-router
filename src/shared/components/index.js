@@ -18,7 +18,8 @@ export { default as ModelSelectModal } from "./ModelSelectModal";
 export { default as ManualConfigModal } from "./ManualConfigModal";
 export { default as ComboFormModal } from "./ComboFormModal";
 export { default as McpMarketplaceModal } from "./McpMarketplaceModal";
-export { default as UsageStats } from "./UsageStats";
+// UsageStats is imported directly by the usage page: re-exporting it here pulled
+// recharts (~589KB) into every page that imports this barrel (upstream ddfdb0df).
 export { default as LanguageSwitcher } from "./LanguageSwitcher";
 export { default as HeaderMenu } from "./HeaderMenu";
 export { default as ChangelogModal } from "./ChangelogModal";

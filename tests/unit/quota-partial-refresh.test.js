@@ -2,6 +2,11 @@
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, flush, h } from "./dashboard-dom-harness.js";
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+  usePathname: () => "/dashboard/quota",
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock("@/shared/components/ProviderIcon", () => ({ default: () => null }));
 vi.mock("@/shared/components", () => ({ ConfirmModal: () => null, EditConnectionModal: () => null, Modal: () => null }));
 import ProviderLimits from "@/app/(dashboard)/dashboard/usage/components/ProviderLimits";

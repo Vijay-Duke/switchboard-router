@@ -50,8 +50,11 @@ export function checkFallbackError(status, errorText, backoffLevel = 0) {
   // Client errors that didn't match a rule are non-retryable (bad schema, invalid
   // tool shape, etc.). Rotating accounts won't fix a 400 from the request body.
   // 408 Request Timeout and 429 are handled above / as backoff when present.
+  // `requestScoped` tells combo rotation that this member rejected the REQUEST
+  // (validation, unsupported parameter, context overflow) while the credential
+  // is healthy — the next combo member may still serve it (upstream 5cdcddf5).
   if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
-    return { shouldFallback: false, cooldownMs: 0 };
+    return { shouldFallback: false, cooldownMs: 0, requestScoped: true };
   }
 
   // Default: transient cooldown for 5xx / unknown

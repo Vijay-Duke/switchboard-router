@@ -4,6 +4,9 @@
 import { NextResponse } from "next/server";
 import { safeErrorMessage } from "@/lib/jsonError.js";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
+import { assertPublicUrlResolved } from "@/shared/utils/ssrfGuard.js";
+import { isLocalRequest } from "@/dashboardGuard";
+import { getSettings } from "@/lib/db/index.js";
 
 const TIMEOUT_MS = 8000;
 
@@ -98,6 +101,16 @@ export async function POST(request) {
     }
     if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
       return NextResponse.json({ error: "only http(s) urls are supported" }, { status: 400 });
+    }
+    // SSRF guard for remote callers (upstream #3783); local-host use keeps
+    // self-hosted MCP servers reachable. Hosts in ssrfAllowHosts are trusted.
+    if (!isLocalRequest(request)) {
+      const settings = await getSettings().catch(() => null);
+      try {
+        await assertPublicUrlResolved(url, settings?.ssrfAllowHosts || null);
+      } catch {
+        return NextResponse.json({ error: "URL not allowed" }, { status: 400 });
+      }
     }
     const result = await probeMcp(url);
     return NextResponse.json(result);

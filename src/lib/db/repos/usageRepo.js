@@ -869,9 +869,35 @@ export async function getChartData(period = "7d") {
     return buckets;
   }
 
+  const labelFn = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const toDateKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  // All time: one bucket per day from the earliest recorded day to today
+  // (upstream b53260ca). Previously "all" fell through to a 60-day window.
+  if (period === "all") {
+    const dayRows = db.all(`SELECT dateKey, data FROM usageDaily ORDER BY dateKey ASC`);
+    if (!dayRows.length) return [];
+    const dayMap = {};
+    for (const r of dayRows) dayMap[r.dateKey] = parseJson(r.data, {});
+    const earliest = new Date(`${dayRows[0].dateKey}T00:00:00`);
+    if (Number.isNaN(earliest.getTime())) return [];
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const days = Math.max(1, Math.round((startOfToday - earliest) / 86400000) + 1);
+    return Array.from({ length: days }, (_, i) => {
+      const d = new Date(earliest);
+      d.setDate(d.getDate() + i);
+      const dayData = dayMap[toDateKey(d)];
+      return {
+        label: labelFn(d),
+        tokens: dayData ? (dayData.promptTokens || 0) + (dayData.completionTokens || 0) : 0,
+        cost: dayData ? (dayData.cost || 0) : 0,
+      };
+    });
+  }
+
   const bucketCount = period === "7d" ? 7 : period === "30d" ? 30 : 60;
   const today = new Date();
-  const labelFn = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
   // Build map of dateKey → day data
   const dayRows = loadDaysInRange(db, bucketCount);

@@ -840,6 +840,8 @@ export async function testSingleConnection(id) {
     testStatus: result.valid ? "active" : "error",
     lastError: result.valid ? null : result.error,
     lastErrorAt: result.valid ? null : new Date().toISOString(),
+    // A successful explicit test clears stale model locks / backoff (#3830).
+    ...(result.valid ? { resetHealthState: true } : {}),
   };
 
   if (result.refreshed && result.newTokens) {

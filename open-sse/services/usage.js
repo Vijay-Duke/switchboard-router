@@ -16,6 +16,8 @@ import { getKimiUsage } from "./usage/kimi.js";
 import { getDeepseekUsage } from "./usage/deepseek.js";
 import { getGrokCliUsage } from "./usage/grok-cli.js";
 import { getMuseUsage } from "./usage/muse.js";
+import { getOpenCodeGoUsage } from "./usage/opencode-go.js";
+import { getGroqUsage } from "./usage/groq.js";
 import {
   getQwenUsage,
   getIflowUsage,
@@ -50,10 +52,12 @@ const USAGE_HANDLERS = {
   "codebuddy-cn": (c) => getCodeBuddyCnUsage(c.accessToken, c.apiKey, c.providerSpecificData, c.proxyOptions),
   kimi: (c) => getKimiUsage(c.accessToken, c.apiKey, c.proxyOptions, c.providerSpecificData),
   "kimi-coding": (c) => getKimiUsage(c.accessToken, c.apiKey, c.proxyOptions, c.providerSpecificData),
+  "opencode-go": (c) => getOpenCodeGoUsage(c.apiKey, c.proxyOptions),
   deepseek: (c) => getDeepseekUsage(c.apiKey, c.proxyOptions),
   "grok-cli": (c) => getGrokCliUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   // Muse quota auth is the DCA device token, not the minted inference key.
   muse: (c) => getMuseUsage(c.providerSpecificData?.dcaToken || c.refreshToken, c.providerSpecificData, c.proxyOptions),
+  groq: (c) => getGroqUsage(c.apiKey, c.proxyOptions),
 };
 
 export async function getUsageForProvider(connection, proxyOptions = null, options = {}) {

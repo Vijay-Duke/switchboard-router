@@ -1,4 +1,6 @@
-export const GROK_CLI_VERSION = "0.2.99";
+// cli-chat-proxy rejects older identities with HTTP 426. Keep this on a
+// current @xai-official/grok release (1.0.44 as of 2026-10-01; minimum 1.0.13).
+export const GROK_CLI_VERSION = "1.0.44";
 export const GROK_CLI_MODEL = "grok-build";
 export const GROK_CLI_BASE_URL = "https://cli-chat-proxy.grok.com/v1";
 export const GROK_CLI_CLIENT_IDENTIFIER = "grok-shell";

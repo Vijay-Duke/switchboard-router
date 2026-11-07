@@ -78,7 +78,7 @@ function fallbackUserAgent(profileId, snapshot) {
     case "copilot": return `GitHubCopilotChat/${version || "0.38.0"}`;
     case "qwen": return `QwenCode/${version || "0.12.3"} (${plat}; ${arch})`;
     case "grok-cli": return `grok-cli/${version || "1.0.0"}`;
-    case "grok-build": return `grok-shell/${version || "0.2.99"} (${plat}; ${arch})`;
+    case "grok-build": return `grok-shell/${version || "1.0.44"} (${plat}; ${arch})`;
     case "chrome": return "Mozilla/5.0";
     default: return `OpenAI/NodeJS/${nodeVersion()}`;
   }

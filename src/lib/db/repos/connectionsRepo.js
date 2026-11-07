@@ -62,6 +62,31 @@ function decryptSecrets(obj) {
   return mapSecrets(obj, (stored) => decryptSecret(stored) ?? stored);
 }
 
+const MODEL_LOCK_PREFIX = "modelLock_";
+
+/**
+ * Clear stale health state (model locks, backoff, rate-limit, error code) when
+ * a connection is explicitly re-validated or re-authenticated as active
+ * (upstream #3830). Deliberately NOT applied to every `testStatus: "active"`
+ * write: token-refresh hooks also write that, and must not wipe a live
+ * 429/quota cooldown.
+ */
+function resetHealthStateOnActivation(existing, patch) {
+  if (patch?.testStatus !== "active") return patch;
+  const normalized = {
+    ...patch,
+    lastError: Object.hasOwn(patch, "lastError") ? patch.lastError : null,
+    lastErrorAt: Object.hasOwn(patch, "lastErrorAt") ? patch.lastErrorAt : null,
+    errorCode: null,
+    rateLimitedUntil: null,
+    backoffLevel: 0,
+  };
+  for (const key of Object.keys(existing || {})) {
+    if (key.startsWith(MODEL_LOCK_PREFIX)) normalized[key] = null;
+  }
+  return normalized;
+}
+
 function rowToConn(row) {
   if (!row) return null;
   const extra = decryptSecrets(parseJson(row.data, {}));
@@ -163,7 +188,10 @@ function reorderInTx(db, providerId) {
     return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
   });
   list.forEach((c, i) => {
-    db.run(`UPDATE providerConnections SET priority = ? WHERE id = ?`, [i + 1, c.id]);
+    const want = i + 1;
+    if ((c.priority || 0) !== want) {
+      db.run(`UPDATE providerConnections SET priority = ? WHERE id = ?`, [want, c.id]);
+    }
   });
 }
 
@@ -174,7 +202,20 @@ export async function createProviderConnection(data) {
   let result;
 
   db.transaction(() => {
-    const all = db.all(`SELECT * FROM providerConnections WHERE provider = ?`, [data.provider]).map(rowToConn);
+    // apikey connections dedupe by name and only need the pool size / max
+    // priority, so query those directly instead of loading the whole pool
+    // (O(pool) per key on bulk import, upstream #4311). oauth identity rules
+    // compare providerSpecificData fields, so that branch still scans.
+    const isApikey = data.authType === "apikey" && !!data.name;
+    const all = isApikey
+      ? db.all(
+          `SELECT * FROM providerConnections WHERE provider = ? AND authType = ? AND name = ?`,
+          [data.provider, "apikey", data.name]
+        ).map(rowToConn)
+      : db.all(`SELECT * FROM providerConnections WHERE provider = ?`, [data.provider]).map(rowToConn);
+    const poolSize = isApikey
+      ? db.get(`SELECT COUNT(*) AS n FROM providerConnections WHERE provider = ?`, [data.provider])?.n ?? all.length
+      : all.length;
 
     let existing = null;
     if (data.authType === "oauth" && data.email) {
@@ -205,7 +246,26 @@ export async function createProviderConnection(data) {
     // access_token: never dedup — user manages duplicates manually
 
     if (existing) {
-      const merged = { ...existing, ...data, updatedAt: now };
+      // A name collision used to silently replace the stored apiKey. Callers
+      // that mean "create" pass allowOverwrite:false and get a typed conflict
+      // naming the row instead (upstream #4311). Omitted = legacy overwrite.
+      if (data.allowOverwrite === false) {
+        const err = new Error(
+          `A connection named "${existing.name}" already exists for provider "${data.provider}". `
+          + "Pass allowOverwrite: true to replace it."
+        );
+        // @ts-ignore — typed error fields for the route's 409 mapping
+        err.code = "PROVIDER_NAME_CONFLICT";
+        // @ts-ignore
+        err.existingId = existing.id;
+        // @ts-ignore
+        err.existingName = existing.name;
+        throw err;
+      }
+      const { allowOverwrite: _allowOverwrite, ...updateData } = data;
+      // Re-login / re-import onto an existing connection is an explicit
+      // re-authentication: drop stale locks if it comes back active.
+      const merged = { ...existing, ...resetHealthStateOnActivation(existing, updateData), updatedAt: now };
       upsert(db, merged);
       result = merged;
       return;
@@ -213,11 +273,15 @@ export async function createProviderConnection(data) {
 
     let connectionName = data.name || null;
     if (!connectionName && (data.authType === "oauth" || data.authType === "access_token")) {
-      connectionName = data.email || `Account ${all.length + 1}`;
+      connectionName = data.email || `Account ${poolSize + 1}`;
     }
     let connectionPriority = data.priority;
-    if (connectionPriority === undefined || connectionPriority === null) {
-      connectionPriority = all.reduce((m, c) => Math.max(m, c.priority || 0), 0) + 1;
+    // An auto-assigned MAX(priority)+1 already sorts last, so the renumber pass
+    // (≈2N statements per insert) is only needed for an explicit priority.
+    const autoPriority = connectionPriority === undefined || connectionPriority === null;
+    if (autoPriority) {
+      const maxRow = db.get(`SELECT MAX(priority) AS m FROM providerConnections WHERE provider = ?`, [data.provider]);
+      connectionPriority = (maxRow?.m || 0) + 1;
     }
 
     const conn = {
@@ -239,7 +303,7 @@ export async function createProviderConnection(data) {
     if (data.email !== undefined) conn.email = data.email;
 
     upsert(db, conn);
-    reorderInTx(db, data.provider);
+    if (!autoPriority) reorderInTx(db, data.provider);
     result = conn;
   });
 
@@ -254,7 +318,11 @@ export async function updateProviderConnection(id, data) {
     const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
     if (!row) { result = null; return; }
     const existing = rowToConn(row);
-    const merged = { ...existing, ...data, updatedAt: new Date().toISOString() };
+    // `resetHealthState: true` = explicit validation said the connection is
+    // healthy (connection test); clears stale locks. Never persisted.
+    const { resetHealthState, ...patch } = data;
+    const normalized = resetHealthState === true ? resetHealthStateOnActivation(existing, patch) : patch;
+    const merged = { ...existing, ...normalized, updatedAt: new Date().toISOString() };
     const identityChanged = JSON.stringify(getQuotaStateIdentity(existing)) !== JSON.stringify(getQuotaStateIdentity(merged));
     const credentialReplaced = ["accessToken", "apiKey", "refreshToken"].some(key => data[key] !== undefined && data[key] !== existing[key]);
     if (identityChanged || credentialReplaced) merged.lastQuota = null;
