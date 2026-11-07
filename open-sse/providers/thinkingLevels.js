@@ -70,6 +70,13 @@ export function effortWireLevel(levels, level) {
   return null;
 }
 
+// OpenAI documents reasoning.effort "max" for GPT-5.6 and GPT-6 (#5186). An
+// OpenAI Compatible node serving those ids must offer it, otherwise the
+// "openai" format list (no max) clamps max to xhigh on the wire.
+const OPENAI_MAX_EFFORT_MODEL = /(?:^|\/)gpt-(?:5\.6|6)(?:[.-]|$)/i;
+const OPENAI_MAX_EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+const isOpenAICompatibleNode = (provider) => String(provider || "").startsWith("openai-compatible-");
+
 // Returns valid thinking levels for a model, or null when the model has no reasoning.
 export function getThinkingLevels(provider, model) {
   const caps = getCapabilitiesForModel(provider, model);
@@ -82,7 +89,9 @@ export function getThinkingLevels(provider, model) {
     ? getProviderModels("cx").find((entry) => entry.id === baseId)?.thinkingLevels
     : null;
   const hit = PATTERN_THINKING.find((p) => (!p.provider || p.provider === provider) && matchPattern(p.pattern, model));
-  let levels = modelLevels || hit?.levels || null;
+  let levels = modelLevels || hit?.levels
+    || (isOpenAICompatibleNode(provider) && OPENAI_MAX_EFFORT_MODEL.test(baseId) ? OPENAI_MAX_EFFORT_LEVELS : null)
+    || null;
   let prior = null;
   if (!levels) {
     const formatLevels = FORMAT_LEVELS[caps.thinkingFormat] || L.base;
