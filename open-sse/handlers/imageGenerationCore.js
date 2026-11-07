@@ -50,6 +50,7 @@ export async function handleImageGenerationCore({
   binaryOutput = false,
   onCredentialsRefreshed,
   onRequestSuccess,
+  onUsage,
   abortSignal = null,
 }) {
   const { provider, model } = modelInfo;
@@ -216,6 +217,7 @@ export async function handleImageGenerationCore({
         log,
         streamToClient,
         onRequestSuccess,
+        onUsage,
         url,
         requestBody,
         model,

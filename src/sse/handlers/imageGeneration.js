@@ -15,9 +15,25 @@ import { handleComboChat } from "open-sse/services/combo.js";
 import * as log from "../utils/logger.js";
 import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
 import { withConnectionInFlight } from "../services/connectionInFlight.js";
+import { settleUsageStats } from "open-sse/handlers/chatCore/requestDetail.js";
 
 // Providers that don't require credentials (noAuth)
 const NO_AUTH_PROVIDERS = new Set(["sdwebui", "comfyui"]);
+
+// Persist exact provider-reported image usage (currently Codex image_generation
+// via Responses). Client-keyed requests await the write so spend caps see it.
+function recordImageRequestUsage({ provider, model, connectionId, clientKeyId, endpoint, usage }) {
+  if (!usage || typeof usage !== "object") return;
+  const promptTokens = usage.prompt_tokens;
+  const completionTokens = usage.completion_tokens;
+  if (!Number.isSafeInteger(promptTokens) || promptTokens < 0
+    || !Number.isSafeInteger(completionTokens) || completionTokens < 0) {
+    return;
+  }
+  return settleUsageStats({
+    provider, model, tokens: usage, connectionId, clientKeyId, endpoint, label: "IMAGE USAGE",
+  });
+}
 
 /**
  * Handle image generation request
@@ -69,7 +85,7 @@ export async function handleImageGeneration(request) {
     return handleComboChat({
       body,
       models: scheduleGate.models,
-      handleSingleModel: (b, m, callOpts) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, signal: callOpts?.signal }),
+      handleSingleModel: (b, m, callOpts) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, endpoint: url.pathname, signal: callOpts?.signal }),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -78,11 +94,11 @@ export async function handleImageGeneration(request) {
     });
   }
 
-  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, signal: request?.signal || null });
+  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, endpoint: url.pathname, signal: request?.signal || null });
   });
 }
 
-async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, signal = null } = {}) {
+async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, endpoint = null, signal = null } = {}) {
   const modelInfo = await getModelInfo(modelStr);
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
@@ -149,6 +165,14 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
             testStatus: "active"
           });
         },
+        onUsage: (usage) => recordImageRequestUsage({
+          provider,
+          model,
+          connectionId: credentials.connectionId,
+          clientKeyId,
+          endpoint,
+          usage,
+        }),
         onRequestSuccess: async () => {
           await clearAccountError(credentials.connectionId, credentials, model);
         }
