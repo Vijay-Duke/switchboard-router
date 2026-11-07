@@ -7,6 +7,7 @@ import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
 import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
+import { getCurrentCodexProviderSettings } from "./codexConfig";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 
 export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, apiKeys, activeProviders, cloudEnabled, initialStatus, tunnelEnabled, tunnelPublicUrl, tailscaleEnabled, tailscaleUrl }) {
@@ -60,15 +61,7 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
   // Read base_url only from the [model_providers.switchboard] section — with
   // several providers configured the first base_url in the file belongs to
   // whichever provider happens to be first, not ours.
-  const parseSwitchboardBaseUrl = (config) => {
-    if (!config) return "";
-    const sectionStart = config.indexOf("[model_providers.switchboard]");
-    if (sectionStart === -1) return "";
-    const sectionEnd = config.indexOf("\n[", sectionStart);
-    const section = config.slice(sectionStart, sectionEnd === -1 ? undefined : sectionEnd);
-    const match = section.match(/^base_url\s*=\s*["']([^"']+)["']/m);
-    return match ? match[1] : "";
-  };
+  const parseSwitchboardBaseUrl = (config) => getCurrentCodexProviderSettings(config, "switchboard").baseUrl;
 
   // Parse model and subagent settings from config content
   useEffect(() => {
@@ -82,12 +75,15 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
       || codexStatus.config.match(/\[agents\.subagent\]\s*\n\s*model\s*=\s*"([^"]+)"/m);
     if (subagentModelMatch) setSubagentModel(subagentModelMatch[1]);
 
-    // Seed the endpoint dropdown from the server until the user touches it.
-    const serverBaseUrl = parseSwitchboardBaseUrl(codexStatus.config);
+    // Seed the endpoint dropdown and key from our provider table until the user touches them.
+    const { baseUrl: serverBaseUrl, apiKey: serverApiKey } = getCurrentCodexProviderSettings(codexStatus.config, "switchboard");
     if (serverBaseUrl && !customBaseUrl) {
       setCustomBaseUrl(serverBaseUrl);
     }
-  }, [codexStatus, customBaseUrl]);
+    if (serverApiKey && !selectedApiKey) {
+      setSelectedApiKey(serverApiKey);
+    }
+  }, [codexStatus, customBaseUrl, selectedApiKey]);
 
   const getConfigStatus = () => {
     if (!codexStatus?.installed) return null;
@@ -98,7 +94,7 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
   const configStatus = getConfigStatus();
 
   const getEffectiveBaseUrl = () => {
-    const url = customBaseUrl || `${baseUrl}/v1`;
+    const url = (customBaseUrl || `${baseUrl}/v1`).replace(/\/+$/, "");
     // Ensure URL ends with /v1
     return url.endsWith("/v1") ? url : `${url}/v1`;
   };
@@ -108,7 +104,7 @@ export default function CodexToolCard({ tool, isExpanded, onToggle, baseUrl, api
   const checkCodexStatus = async () => {
     setCheckingCodex(true);
     try {
-      const res = await fetch("/api/cli-tools/codex-settings");
+      const res = await fetch("/api/cli-tools/codex-settings", { cache: "no-store" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.error || `Failed to read Codex CLI settings (${res.status})`);

@@ -1,5 +1,4 @@
 // @ts-check
-"use server";
 
 import { NextResponse } from "next/server";
 import { exec } from "child_process";
@@ -9,6 +8,9 @@ import path from "path";
 import os from "os";
 import { parseTOML, stringifyTOML } from "confbox";
 import { snapshotObjectKeys, restoreObjectKeys, writeCliFile } from "@/lib/cli/fileIo.js";
+
+// Route Handlers already run on the server; a "use server" directive would reject this export.
+export const dynamic = "force-dynamic";
 
 const execAsync = promisify(exec);
 
