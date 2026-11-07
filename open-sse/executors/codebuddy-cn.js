@@ -35,6 +35,33 @@ export class CodeBuddyExecutor extends DefaultExecutor {
     // filter and return an error (#2071).
     return transformed;
   }
+
+  // CodeBuddy answers per-model rate limits as code 6004 ("超出频率限制" /
+  // "frequency limit") with the retry time inside the message. Surface it as
+  // a 429 with resetsAtMs so the account locks exactly until then.
+  parseError(response, bodyText) {
+    if (bodyText) {
+      try {
+        const data = JSON.parse(bodyText);
+        const msg = data?.msg || data?.message || data?.error?.message || "";
+        if (data?.code === 6004 || /超出频率限制|frequency limit|限额/i.test(msg)) {
+          let resetsAtMs = null;
+          const match = msg.match(/(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})(?:\s*UTC\+?([0-9:]+))?/i);
+          if (match) {
+            const [, datePart, timePart, offset] = match;
+            // No explicit offset → CodeBuddy CN reports Beijing time (UTC+8).
+            const tz = offset
+              ? (offset.includes(":") ? `+${offset}` : `+${offset.padStart(2, "0")}:00`)
+              : "+08:00";
+            const dt = new Date(`${datePart}T${timePart}${tz}`);
+            if (!Number.isNaN(dt.getTime())) resetsAtMs = dt.getTime();
+          }
+          return { status: 429, message: msg || "CodeBuddy frequency limit (6004)", resetsAtMs };
+        }
+      } catch { /* not JSON — fall through */ }
+    }
+    return super.parseError(response, bodyText);
+  }
 }
 
 export default CodeBuddyExecutor;
