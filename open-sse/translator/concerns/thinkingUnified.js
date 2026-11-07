@@ -266,7 +266,8 @@ function applyFormat(fmt, body, cfg, caps) {
       if (canDisable) body.thinking = { type: "adaptive" };
       else delete body.thinking;
       // Claude effort has no "minimal" (always-on models clamp "none" to it).
-      body.output_config = { effort: level === "xhigh" ? "high" : level === "minimal" ? "low" : level };
+      // Anthropic has no "auto" effort (HTTP 400) — dynamic requests get "high".
+      body.output_config = { effort: level === "xhigh" || level === "auto" ? "high" : level === "minimal" ? "low" : level };
       break;
     }
     case "claude-budget": {
