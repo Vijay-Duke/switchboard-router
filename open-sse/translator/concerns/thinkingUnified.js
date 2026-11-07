@@ -253,8 +253,12 @@ function applyFormat(fmt, body, cfg, caps) {
       // Emit both thinking.type and output_config.effort — Bedrock (via LiteLLM
       // or other proxies) requires both fields present. Direct Anthropic API
       // accepts either alone; keeping both is harmless and maximally compatible.
-      body.thinking = { type: "adaptive" };
-      body.output_config = { effort: level === "xhigh" ? "high" : level };
+      // Permanently adaptive models (Fable 5.1) take effort alone; the
+      // redundant switch is dropped for them.
+      if (canDisable) body.thinking = { type: "adaptive" };
+      else delete body.thinking;
+      // Claude effort has no "minimal" (always-on models clamp "none" to it).
+      body.output_config = { effort: level === "xhigh" ? "high" : level === "minimal" ? "low" : level };
       break;
     }
     case "claude-budget": {

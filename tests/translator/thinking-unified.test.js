@@ -67,6 +67,16 @@ describe("extractThinking", () => {
 });
 
 describe("applyThinking per provider format", () => {
+  it("Fable 5.1 → effort without a redundant thinking switch", () => {
+    const out = apply("claude", "claude-fable-5-1", { reasoning_effort: "high" }, "claude");
+    expect(out.output_config).toEqual({ effort: "high" });
+    expect(out.thinking).toBeUndefined();
+  });
+  it("Fable 5.1 cannot disable thinking → none clamps to Claude's lowest effort", () => {
+    const out = apply("claude", "claude-fable-5-1", { reasoning_effort: "none" }, "claude");
+    expect(out.output_config).toEqual({ effort: "low" });
+    expect(out.thinking).toBeUndefined();
+  });
   it("claude 4.6+ → adaptive output_config (no budget_tokens)", () => {
     const out = apply("claude", "claude-opus-4.7", { reasoning_effort: "high" }, "claude");
     expect(out.output_config).toEqual({ effort: "high" });
