@@ -533,12 +533,21 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
     // IMPORTANT: default type to "custom" — strict Anthropic-compatible gateways
     // (MiniMax) reject tools without type (code 2013). Switchboard#2195 / #1939.
     if (provider !== "claude") {
+      // Some Anthropic-compatible gateways whitelist the tool `type` enum.
+      // DeepSeek's /anthropic/v1/messages accepts only web_search_* built-ins
+      // and answers HTTP 400 "unknown variant `custom`" to typed client tools,
+      // but accepts the legacy typeless shape. Under that quirk, keep the
+      // whitelisted built-ins as-is and send client tools without `type`.
+      const supportedTypes = PROVIDERS[provider]?.quirks?.claudeSupportedToolTypes;
+      const hasWhitelist = Array.isArray(supportedTypes);
+      const isClientTool = tool => !tool.type || tool.type === "function" || tool.type === "custom";
       body.tools = body.tools
-        .filter(tool => !tool.type || tool.type === "function" || tool.type === "custom")
+        .filter(tool => isClientTool(tool) || (hasWhitelist && supportedTypes.includes(tool.type)))
         .map(tool => {
+          if (hasWhitelist && !isClientTool(tool)) return tool;
           if (tool.function) {
             return {
-              type: "custom",
+              ...(hasWhitelist ? {} : { type: "custom" }),
               name: tool.function.name,
               description: typeof tool.function.description === "string" ? tool.function.description : String(tool.function.description || ""),
               input_schema: tool.function.parameters || tool.function.input_schema || { type: "object", properties: {} },
@@ -546,7 +555,7 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
           }
           const { type, ...rest } = tool;
           return {
-            type: type && type !== "function" ? type : "custom",
+            ...(hasWhitelist ? {} : { type: type && type !== "function" ? type : "custom" }),
             ...rest,
             description: typeof rest.description === "string" ? rest.description : String(rest.description || ""),
           };
