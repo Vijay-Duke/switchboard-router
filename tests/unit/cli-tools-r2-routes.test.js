@@ -30,6 +30,17 @@ vi.mock("child_process", () => {
   return { default: { exec, spawn }, exec, spawn };
 });
 vi.mock("open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: proxyFetchMock }));
+// The cowork probe DNS-resolves remote-caller URLs (SSRF guard); keep the
+// test hermetic by resolving every host to a public address.
+vi.mock("node:dns/promises", () => {
+  const lookup = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);
+  return { default: { lookup }, lookup };
+});
+// The probe reads settings only for ssrfAllowHosts; never touch a real DB.
+vi.mock("@/lib/db/index.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  getSettings: async () => ({ ssrfAllowHosts: [] }),
+}));
 
 vi.mock("@/shared/utils/machineId", () => ({
   getConsistentMachineId: vi.fn(async () => "test-machine-id"),
