@@ -74,20 +74,20 @@ export function capabilitiesFromServiceKind(kind) {
  */
 export const MODEL_CAPABILITIES = {
   // Claude 4.6/4.7/4.8 and Kiro Sonnet 5 have 1M context + adaptive thinking (override generic claude pattern)
-  "claude-opus-4.6":   { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-opus-4.7":   { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-opus-4-7":   { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-opus-4.8":   { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-opus-4-6":   { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-opus-4-8":   { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-opus-4.8-thinking": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-opus-4-8-thinking": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-sonnet-4.6": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-sonnet-4-6": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-sonnet-5": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-sonnet-5-thinking": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-sonnet-5-agentic": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  "claude-sonnet-5-thinking-agentic": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-opus-4.6":   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-opus-4.7":   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-opus-4-7":   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-opus-4.8":   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-opus-4-6":   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-opus-4-8":   { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-opus-4.8-thinking": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-opus-4-8-thinking": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-sonnet-4.6": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-sonnet-4-6": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-sonnet-5": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-sonnet-5-thinking": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-sonnet-5-agentic": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  "claude-sonnet-5-thinking-agentic": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
 
   // Gemini image-gen / OpenAI image / xai image variants
   "gpt-image-1":       { imageOutput: true, tools: false },
@@ -103,6 +103,10 @@ export const MODEL_CAPABILITIES = {
 /**
  * Provider-specific capability overrides. Keyed by provider alias/id.
  */
+const CODEX_GPT_56_SOL_CAPS  = { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 372000, maxOutput: 128000 };
+const CODEX_GPT_56_DEFAULT_CAPS = { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 };
+const CODEX_EXTENDED_CAPS = { ...CODEX_GPT_56_DEFAULT_CAPS, contextWindow: 872000 };
+
 export const PROVIDER_CAPABILITIES = {
   // NVIDIA NIM is OpenAI-compatible → rejects MiniMax/GLM native `thinking` field.
   // Force openai reasoning_effort format for its reasoning models. #issue
@@ -151,7 +155,35 @@ export const PROVIDER_CAPABILITIES = {
     // contract). maxOutput 128000 per the server's product-config payload.
     "deepseek-v4.1-flash": { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 128000 },
   },
+  // Codex (ChatGPT OAuth) caps the default window below the API model's;
+  // the "[1m]" registry variants map to the same upstream id with an
+  // extended 872k window (codex-rs/models-manager/models.json).
+  "codex": {
+    "gpt-6-astra":               { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
+    "gpt-6-sol":                 { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
+    "gpt-6-luna":                { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
+    // Without its own entry gpt-6.1-sol fell through to *gpt-6* (1.05M), overstating
+    // the Codex window like any unlisted sibling would.
+    "gpt-6.1-sol":               { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 },
+    // codex-rs/models-manager/models.json: gpt-6.1-terra has context_window 500000 on Codex
+    // (the API model is 1.05M; Codex caps the default window like its siblings).
+    "gpt-6.1-terra":             { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 500000, maxOutput: 128000 },
+    "gpt-6-astra[1m]":           CODEX_EXTENDED_CAPS,
+    "gpt-6-sol[1m]":             CODEX_EXTENDED_CAPS,
+    "gpt-6-luna[1m]":            CODEX_EXTENDED_CAPS,
+    "gpt-5.6-sol[1m]":           CODEX_EXTENDED_CAPS,
+    "gpt-5.6-terra[1m]":         CODEX_EXTENDED_CAPS,
+    "gpt-5.6-luna[1m]":          CODEX_EXTENDED_CAPS,
+    "gpt-5.6-sol":               CODEX_GPT_56_SOL_CAPS,
+    "gpt-5.6-sol-review":        CODEX_GPT_56_SOL_CAPS,
+    "gpt-5.6-terra":             CODEX_GPT_56_DEFAULT_CAPS,
+    "gpt-5.6-terra-review":      CODEX_GPT_56_DEFAULT_CAPS,
+    "gpt-5.6-luna":              CODEX_GPT_56_DEFAULT_CAPS,
+    "gpt-5.6-luna-review":       CODEX_GPT_56_DEFAULT_CAPS,
+  },
 };
+// The registry alias resolves to the same table.
+PROVIDER_CAPABILITIES.cx = PROVIDER_CAPABILITIES.codex;
 
 /**
  * Pattern fallback — glob (* = wildcard), matched case-insensitively and
@@ -161,16 +193,25 @@ export const PROVIDER_CAPABILITIES = {
  */
 export const PATTERN_CAPABILITIES = [
   // ── Claude (4.6+ = adaptive thinking; older/haiku = budget) ──────
-  { pattern: "*claude*opus-4.6*",   caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
-  { pattern: "*claude*opus-4.7*",   caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
-  { pattern: "*claude*opus-4.8*",   caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
-  { pattern: "*claude*sonnet-4.6*", caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
-  { pattern: "*claude*sonnet-4.7*", caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
+  // Claude 5.x Opus/Sonnet: 1M context + adaptive thinking. Without these the
+  // generic *claude*sonnet*/opus* rows left 5.5 ids at the 200k default.
+  { pattern: "*claude*opus-5*",     caps: { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 } },
+  { pattern: "*claude*sonnet-5*",   caps: { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 } },
+  { pattern: "*claude*opus-4.6*",   caps: { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
+  { pattern: "*claude*opus-4.7*",   caps: { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
+  { pattern: "*claude*opus-4.8*",   caps: { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
+  { pattern: "*claude*sonnet-4.6*", caps: { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
+  { pattern: "*claude*sonnet-4.7*", caps: { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
+  // PDF input is supported by current Claude families. Keep legacy/generic
+  // fallbacks conservative instead of inferring PDF support from vision alone.
+  // https://platform.claude.com/docs/en/build-with-claude/pdf-support
+  { pattern: "*claude*haiku-5*", caps: { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-budget" } },
+  { pattern: "*claude*haiku-4*", caps: { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-budget" } },
   { pattern: "*claude*haiku*",  caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-budget" } },
   { pattern: "*claude*opus*",   caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
   { pattern: "*claude*sonnet*", caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive" } },
-  { pattern: "*claude*fable*",  caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-budget", contextWindow: 1000000, maxOutput: 128000 } },
-  { pattern: "*claude*mythos*", caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-budget", contextWindow: 1000000, maxOutput: 128000 } },
+  { pattern: "*claude*fable*",  caps: { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-budget", contextWindow: 1000000, maxOutput: 128000 } },
+  { pattern: "*claude*mythos*", caps: { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-budget", contextWindow: 1000000, maxOutput: 128000 } },
   { pattern: "*claude-3*",      caps: { vision: true } },
   { pattern: "*claude*",        caps: { vision: true, reasoning: true, search: true, thinkingFormat: "claude-budget" } },
 
@@ -184,8 +225,25 @@ export const PATTERN_CAPABILITIES = [
   { pattern: "*gemma*",         caps: { vision: true, contextWindow: 128000 } },
   { pattern: "*nanobanana*",    caps: { vision: true, imageOutput: true } },
 
+  // ── OpenAI GPT-6 family (vision + thinking + web search) ─────────
+  // Image variants ("-image" suffix) are image models, not chat models — first
+  // match wins, so they must precede the generic family entry below.
+  { pattern: "*gpt-6*image*",   caps: { imageOutput: true } },
+  // 1.05M is the API window for the whole gpt-6 family (astra, luna, sol alike).
+  // A gateway that truncates lower records its own number in
+  // PROVIDER_CAPABILITIES, which wins over this pattern (Codex OAuth at
+  // 272k/372k/500k above).
+  { pattern: "*gpt-6*",         caps: { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1050000, maxOutput: 128000 } },
+
   // ── OpenAI GPT-5.x (vision + thinking + web search) ──────────────
   { pattern: "*gpt-5*image*",   caps: { imageOutput: true } },
+  // gpt-5.4 is where the 1.05M window starts, but the mini and nano tiers stayed
+  // at 400k — first match wins, so those two have to be listed ahead of it.
+  { pattern: "*gpt-5.4-mini*",  caps: { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 400000, maxOutput: 128000 } },
+  { pattern: "*gpt-5.4-nano*",  caps: { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 400000, maxOutput: 128000 } },
+  { pattern: "*gpt-5.4*",       caps: { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1050000, maxOutput: 128000 } },
+  { pattern: "*gpt-5.5*",       caps: { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1050000, maxOutput: 128000 } },
+  { pattern: "*gpt-5.6*",       caps: { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 1050000, maxOutput: 128000 } },
   { pattern: "*gpt-5*codex*",   caps: { reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 400000, maxOutput: 128000 } },
   { pattern: "*gpt-5*",         caps: { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 400000, maxOutput: 128000 } },
   { pattern: "*gpt-4o*",        caps: { vision: true, search: true, contextWindow: 128000, maxOutput: 16384 } },

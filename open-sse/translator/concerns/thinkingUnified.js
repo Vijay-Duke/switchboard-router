@@ -211,7 +211,14 @@ function stripAll(body) {
 }
 
 // Apply unified thinking config to body in the resolved provider-native format.
-function applyFormat(fmt, body, cfg, caps) {
+// OpenAI-wire effort: "max" is only valid where the model's level list
+// carries it (GPT-5.6 / GPT-6); everywhere else clamp to the "xhigh" top tier.
+function openAIWireLevel(level, supportedLevels) {
+  if (level !== "max") return level;
+  return supportedLevels?.includes("max") ? "max" : "xhigh";
+}
+
+function applyFormat(fmt, body, cfg, caps, supportedLevels = null) {
   const none = cfg.mode === "none";
   const canDisable = caps.thinkingCanDisable !== false;
   // Model cannot disable thinking → clamp "none" to minimal effort instead.
@@ -229,7 +236,7 @@ function applyFormat(fmt, body, cfg, caps) {
       const level = toLevel(eff);
       // OpenAI reasoning_effort enum caps at "xhigh" (no "max"); clamp Claude Code's "max".
       // Without this, upstream returns HTTP 400 "max effort not support". See PR#2466.
-      if (level) body.reasoning_effort = level === "max" ? "xhigh" : level;
+      if (level) body.reasoning_effort = openAIWireLevel(level, supportedLevels);
       break;
     }
     case "openai-nested": {
@@ -388,7 +395,7 @@ export function applyThinking(targetFormat, model, body, provider = null, intent
       if (compat === "none") { stripAll(body); return body; }
       if (!cfg) return body;
       stripAll(body);
-      applyFormat(compat, body, cfg, caps);
+      applyFormat(compat, body, cfg, caps, supported);
       return body;
     }
   }
@@ -401,6 +408,6 @@ export function applyThinking(targetFormat, model, body, provider = null, intent
   if (!cfg) return body;
 
   stripAll(body);
-  applyFormat(fmt, body, cfg, caps);
+  applyFormat(fmt, body, cfg, caps, supported);
   return body;
 }

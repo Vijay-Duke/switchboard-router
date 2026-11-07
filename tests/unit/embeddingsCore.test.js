@@ -360,6 +360,22 @@ describe("buildEmbeddingsHeaders", () => {
     });
   });
 
+  it("github → Copilot embeddings endpoint with Copilot token and IDE identity", async () => {
+    vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
+
+    await handleEmbeddingsCore(makeOptions({
+      modelInfo: { provider: "github", model: "text-embedding-3-small" },
+      credentials: { accessToken: "gho-oauth", copilotToken: "tid=copilot" },
+    }));
+
+    const [url, init] = vi.mocked(proxyAwareFetch).mock.calls[0];
+    expect(url).toBe("https://api.githubcopilot.com/embeddings");
+    expect(init.headers["Authorization"]).toBe("Bearer tid=copilot");
+    // Switchboard: copilot-integration-id / editor-version come from the
+    // "copilot" identity profile applied inside proxyAwareFetch (mocked here).
+    expect(init.identity).toBe("copilot");
+  });
+
   it("openai-compatible-* → Authorization: Bearer only (no extra headers)", async () => {
     vi.mocked(proxyAwareFetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 

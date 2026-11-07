@@ -1,5 +1,4 @@
-import { claudeToOpenAIRequest } from "../translator/request/claude-to-openai.js";
-import { openaiToClaudeRequest } from "../translator/request/openai-to-claude.js";
+import { ROLE, OPENAI_BLOCK, CLAUDE_BLOCK } from "../translator/schema/index.js";
 import {
   openaiResponsesToOpenAIRequest,
   openaiToOpenAIResponsesRequest,
@@ -119,9 +118,104 @@ async function callCompress(url, messages, model, timeoutMs, compressUserMessage
   return data;
 }
 
+// Project text leaves, never the native blocks themselves. A Claude/OpenAI
+// round-trip drops documents, signed thinking and tool-result metadata.
+function collectClaudeHeadroomMessages(body) {
+  if (!Array.isArray(body?.messages)) return null;
+  const messages = [];
+  const targets = [];
+  const addText = (role, object, key, extra = {}) => {
+    if (typeof object?.[key] !== "string") return;
+    messages.push({ role, content: object[key], ...extra });
+    targets.push({ object, key });
+  };
+  const addContent = (role, object, key, extra = {}) => {
+    if (typeof object?.[key] === "string") {
+      addText(role, object, key, extra);
+    } else if (Array.isArray(object?.[key])) {
+      for (const block of object[key]) {
+        if (block?.type !== CLAUDE_BLOCK.TEXT) continue;
+        // The signed CCH billing block (system[0]) must reach the wire byte-for-byte.
+        if (block.text?.startsWith?.("x-anthropic-billing-header:")) continue;
+        addText(role, block, "text", extra);
+      }
+    }
+  };
+
+  addContent(ROLE.SYSTEM, body, "system");
+  for (const message of body.messages) {
+    const blocks = Array.isArray(message?.content) ? message.content : [];
+    const toolUses = blocks.filter((block) => block?.type === CLAUDE_BLOCK.TOOL_USE);
+    if (message?.role === ROLE.ASSISTANT && toolUses.length) {
+      messages.push({
+        role: ROLE.ASSISTANT,
+        content: "",
+        tool_calls: toolUses.map((block) => ({
+          id: block.id,
+          type: OPENAI_BLOCK.FUNCTION,
+          function: { name: block.name, arguments: JSON.stringify(block.input || {}) },
+        })),
+      });
+      targets.push(null);
+    }
+    addContent(message?.role, message, "content");
+    for (const block of blocks) {
+      if (block?.type === CLAUDE_BLOCK.TOOL_RESULT) {
+        addContent(ROLE.TOOL, block, "content", { tool_call_id: block.tool_use_id });
+      }
+    }
+  }
+  return targets.some(Boolean) ? { messages, targets } : null;
+}
+
+function textFromHeadroomMessage(message) {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return null;
+
+  const parts = [];
+  for (const part of content) {
+    if (typeof part === "string") {
+      parts.push(part);
+    } else if (typeof part?.text === "string") {
+      parts.push(part.text);
+    }
+  }
+  return parts.length > 0 ? parts.join("\n") : null;
+}
+
+function applyProjectedHeadroomMessages(projection, compressedMessages, diagnostics, label) {
+  if (!Array.isArray(compressedMessages) || compressedMessages.length !== projection.messages.length) {
+    setDiagnostic(diagnostics, `proxy response did not match ${label} message count`);
+    return false;
+  }
+
+  const updates = [];
+  for (let i = 0; i < projection.messages.length; i++) {
+    const expected = projection.messages[i];
+    const actual = compressedMessages[i];
+    if (!actual || actual.role !== expected.role || actual.tool_call_id !== expected.tool_call_id) {
+      setDiagnostic(diagnostics, `proxy response did not preserve ${label} message order`);
+      return false;
+    }
+
+    const text = textFromHeadroomMessage(actual);
+    if (text === null) {
+      setDiagnostic(diagnostics, `proxy response missing ${label} text content`);
+      return false;
+    }
+    if (projection.targets[i]) updates.push({ target: projection.targets[i], text });
+  }
+
+  for (const update of updates) {
+    update.target.object[update.target.key] = update.text;
+  }
+  return true;
+}
+
 // Compress request body via Headroom proxy. Fail-open: returns null on any error.
-// /v1/compress only understands OpenAI shape, so Claude bodies are translated
-// to OpenAI, compressed, then translated back using Switchboard's own translators.
+// /v1/compress only understands OpenAI shape, so Claude bodies are projected to
+// OpenAI-shaped text messages and the compressed text is written back in place.
 export async function compressWithHeadroom(body, { enabled, url, model, format, compressUserMessages, timeoutMs = DEFAULT_TIMEOUT_MS, diagnostics = null } = {}) {
   if (!enabled) {
     setDiagnostic(diagnostics, "disabled");
@@ -139,28 +233,20 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
   try {
     if (diagnostics) diagnostics.before = captureSizeSnapshot(body);
 
-    // Claude shape: translate → OpenAI → compress → translate back.
+    // Keep Claude's documents, tool blocks, signed thinking and the CCH billing
+    // block in their native form: project only text leaves into Headroom's
+    // OpenAI-shaped messages and copy validated text back into the original
+    // fields. (A Claude -> OpenAI -> Claude round-trip dropped document blocks
+    // and rewrote tool/thinking metadata even when the proxy changed nothing.)
     if (format === "claude") {
-      // The CCH billing block rides as system[0]; the translate-compress-translate
-      // round-trip rebuilds system without it. Save and re-prepend so the signed
-      // block reaches the wire.
-      const billingBlock = Array.isArray(body.system) && body.system[0]?.text?.startsWith?.("x-anthropic-billing-header:")
-        ? body.system[0]
-        : null;
-      const oai = claudeToOpenAIRequest(model, body, false);
-      if (!Array.isArray(oai?.messages)) {
-        setDiagnostic(diagnostics, "Claude request did not translate to messages[]");
+      const projection = collectClaudeHeadroomMessages(body);
+      if (!projection) {
+        setDiagnostic(diagnostics, "Claude request has no eligible text content");
         return null;
       }
-      const data = await callCompress(url, oai.messages, model, timeoutMs, compressUserMessages, diagnostics || {});
+      const data = await callCompress(url, projection.messages, model, timeoutMs, compressUserMessages, diagnostics || {});
       if (!data) return null;
-      const claudeBody = openaiToClaudeRequest(model, { ...oai, messages: data.messages }, false);
-      if (Array.isArray(claudeBody?.messages)) body.messages = claudeBody.messages;
-      if (claudeBody?.system !== undefined) {
-        body.system = billingBlock
-          ? [billingBlock, ...(Array.isArray(claudeBody.system) ? claudeBody.system : [{ type: "text", text: String(claudeBody.system) }])]
-          : claudeBody.system;
-      }
+      if (!applyProjectedHeadroomMessages(projection, data.messages, diagnostics, "Claude")) return null;
       if (diagnostics) diagnostics.after = captureSizeSnapshot(body);
       return data;
     }

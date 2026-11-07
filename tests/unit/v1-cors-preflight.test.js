@@ -43,7 +43,7 @@ const { OPTIONS: geminiPathOptions } = await import(
 const { OPTIONS: geminiListOptions } = await import("../../src/app/api/v1beta/models/route.js");
 const { OPTIONS: ollamaOptions } = await import("../../src/app/api/v1/api/chat/route.js");
 const { OPTIONS: modelsInfoOptions } = await import("../../src/app/api/v1/models/info/route.js");
-const { OPTIONS: modelsKindOptions } = await import("../../src/app/api/v1/models/[kind]/route.js");
+const { OPTIONS: modelsKindOptions } = await import("../../src/app/api/v1/models/[...model]/route.js");
 
 const GATEWAY = "http://127.0.0.1:22128";
 const BROWSER_ORIGIN = "http://127.0.0.1:22129";

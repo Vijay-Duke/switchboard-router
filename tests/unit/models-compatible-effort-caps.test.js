@@ -60,7 +60,9 @@ function effortLevels(entry) {
 }
 
 describe("/v1/models static effort advertisement for compatible providers", () => {
-  it("exposes registry fallback levels without nesting effort twice", async () => {
+  // Cold import of the full models route + SQLite seed takes ~4-5s; the 5s
+  // default flaked on base too. Same budget as the sibling test below.
+  it("exposes registry fallback levels without nesting effort twice", { timeout: 20000 }, async () => {
     await seedCompatibleConnection();
     const byId = await modelsById();
     expect(effortLevels(byId.get("claude-api/gpt-5.2"))).toEqual(

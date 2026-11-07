@@ -11,6 +11,7 @@ import { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER } from "./sseConstants.js"
 import { createThinkExtractor } from "./thinkExtractor.js";
 import { streamToJsonMaxBytes } from "../transformer/streamToJsonConverter.js";
 import { createBoundedTextAccumulator } from "./boundedText.js";
+import { resolveCloakedToolName } from "./claudeCloaking.js";
 
 export { COLORS, formatSSE };
 export { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER };
@@ -205,8 +206,8 @@ export function createSSEStream(options = {}) {
           // toolNameMap in TRANSLATE mode), so without this the client gets
           // suffixed OAuth names (e.g. "Execute_ide"). Switchboard#2391 / PR#2392.
           let toolNameDecloaked = false;
-          if (toolNameMap?.size > 0 && parsed?.type === "content_block_start" && parsed?.content_block?.type === "tool_use") {
-            const original = toolNameMap.get(parsed.content_block.name);
+          if ((toolNameMap?.size > 0 || provider === "claude") && parsed?.type === "content_block_start" && parsed?.content_block?.type === "tool_use") {
+            const original = resolveCloakedToolName(parsed.content_block.name, toolNameMap, provider === "claude");
             if (original) {
               parsed.content_block = { ...parsed.content_block, name: original };
               toolNameDecloaked = true;

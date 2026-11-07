@@ -11,6 +11,8 @@ import { U, parseResetTime } from "./shared.js";
 // Claude API config (urls from registry, apiVersion is header logic kept here)
 const CLAUDE_CONFIG = {
   oauthUsageUrl: U("claude").oauthUrl,
+  profileUrl: U("claude").profileUrl,
+  resetUrl: U("claude").resetUrl,
   apiVersion: ANTHROPIC_API_VERSION,
 };
 
@@ -203,10 +205,14 @@ async function fetchClaudeUsageRaw(accessToken, proxyOptions = null, cacheKey = 
         }
       }
 
+      const resetCredits = parseClaudeResetGrants(data.cedar_ember);
       return {
         plan: "Claude Code",
         observedAt: new Date().toISOString(),
         extraUsage: data.extra_usage ?? null,
+        // Only present when the account has free limit resets (keeps the
+        // durable quota-state round trip byte-identical otherwise).
+        ...(resetCredits ? { resetCredits } : {}),
         quotas,
       };
     }
@@ -234,4 +240,77 @@ async function fetchClaudeUsageRaw(accessToken, proxyOptions = null, cacheKey = 
   } catch (error) {
     return { message: `Claude connected. Unable to fetch usage: ${error.message}` };
   }
+}
+
+// Free "limit reset" grants (Anthropic program id "cedar_ember").
+// Shape: { eligible, next_grant_id, grants: [{ id, resets_left, ends_at, paused, clears }] }
+export function parseClaudeResetGrants(block) {
+  if (!block?.eligible || !Array.isArray(block.grants)) return null;
+  const grants = block.grants.filter((g) => g?.id && !g.paused && Number(g.resets_left) > 0);
+  const next = grants.find((g) => g.id === block.next_grant_id) || grants[0] || null;
+  return {
+    availableCount: grants.reduce((sum, g) => sum + Number(g.resets_left), 0),
+    nextGrantId: next?.id || null,
+    expiresAt: next?.ends_at || null,
+    clears: next?.clears || [],
+    cooldownUntil: block.cooldown_until || null,
+    weeklyResetsAt: block.weekly_resets_at || null,
+    grants: block.grants.filter((g) => g?.id).map((g) => ({
+      id: g.id,
+      label: g.label || "",
+      resetsLeft: Number(g.resets_left) || 0,
+      resetsTotal: Number(g.resets_total) || 0,
+      startsAt: g.starts_at || null,
+      endsAt: g.ends_at || null,
+      clears: Array.isArray(g.clears) ? g.clears : [],
+      paused: g.paused === true,
+      usableNow: g.usable_now === true,
+      useRequiresLimit: g.use_requires_limit !== false,
+    })),
+  };
+}
+
+// Spend one reset grant: refills the limits listed in grant.clears. Irreversible.
+// Reset grants are gated by surface — only the "(external, cli)" Claude Code
+// identity is eligible, which the claude-cli identity wrap supplies.
+export async function consumeClaudeResetGrant(accessToken, grantId, proxyOptions = null, options = {}) {
+  if (!accessToken) throw new Error("No Claude access token available. Please re-authorize the connection.");
+  if (!/^[a-z0-9_-]{1,40}$/.test(grantId || "")) throw new Error("Invalid reset grant id.");
+
+  const headers = {
+    "Authorization": `Bearer ${accessToken}`,
+    "anthropic-beta": "oauth-2025-04-20",
+    "anthropic-version": CLAUDE_CONFIG.apiVersion,
+    "Content-Type": "application/json",
+  };
+  const identity = { identity: "claude-cli", provider: "claude", format: "claude" };
+
+  const profileRes = await proxyAwareFetch(CLAUDE_CONFIG.profileUrl, { method: "GET", headers, ...identity }, proxyOptions);
+  const profile = await profileRes.json().catch(() => null);
+  const orgId = profile?.organization?.uuid;
+  if (!profileRes.ok || !orgId) throw new Error(`Cannot resolve Claude organization (${profileRes.status}).`);
+
+  const res = await proxyAwareFetch(CLAUDE_CONFIG.resetUrl.replace("{org_id}", encodeURIComponent(orgId)), {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ program: "cedar_ember", grant_id: grantId, request_id: crypto.randomUUID() }),
+    ...identity,
+  }, proxyOptions);
+  const data = await res.json().catch(() => null);
+
+  // Next read must show refilled limits: drop every cache entry for this
+  // account (keyed by quota identity, connection id or token).
+  const identityKey = options?.quotaIdentity?.connectionId && options.quotaIdentity.createdAt
+    ? JSON.stringify(options.quotaIdentity) : null;
+  for (const key of [identityKey, options?.connectionId, accessToken]) {
+    if (key) usageCache.delete(key);
+  }
+  return {
+    ok: res.ok && data?.result === "reset",
+    status: res.status,
+    result: data?.result || null,
+    reason: data?.reason || null,
+    resetsLeft: data?.resets_left ?? null,
+    message: data?.error?.message || null,
+  };
 }

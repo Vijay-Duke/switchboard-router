@@ -43,7 +43,7 @@ vi.mock("@/shared/claudeGateway.js", async (importOriginal) => ({
 }));
 
 const { GET } = await import("../../src/app/api/v1/models/route.js");
-const kindRoute = await import("../../src/app/api/v1/models/[kind]/route.js");
+const kindRoute = await import("../../src/app/api/v1/models/[...model]/route.js");
 
 function get(url) {
   return new Request(url, { headers: { host: "localhost:20128" } });

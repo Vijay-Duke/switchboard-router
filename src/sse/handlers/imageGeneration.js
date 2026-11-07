@@ -8,6 +8,7 @@ import { getSettings } from "@/lib/db/index.js";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { applyScheduleGate } from "../services/scheduleGate.js";
 import { handleImageGenerationCore } from "open-sse/handlers/imageGenerationCore.js";
+import { getImageAdapter } from "open-sse/handlers/imageProviders/index.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
@@ -15,9 +16,25 @@ import { handleComboChat } from "open-sse/services/combo.js";
 import * as log from "../utils/logger.js";
 import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
 import { withConnectionInFlight } from "../services/connectionInFlight.js";
+import { settleUsageStats } from "open-sse/handlers/chatCore/requestDetail.js";
 
 // Providers that don't require credentials (noAuth)
 const NO_AUTH_PROVIDERS = new Set(["sdwebui", "comfyui"]);
+
+// Persist exact provider-reported image usage (currently Codex image_generation
+// via Responses). Client-keyed requests await the write so spend caps see it.
+function recordImageRequestUsage({ provider, model, connectionId, clientKeyId, endpoint, usage }) {
+  if (!usage || typeof usage !== "object") return;
+  const promptTokens = usage.prompt_tokens;
+  const completionTokens = usage.completion_tokens;
+  if (!Number.isSafeInteger(promptTokens) || promptTokens < 0
+    || !Number.isSafeInteger(completionTokens) || completionTokens < 0) {
+    return;
+  }
+  return settleUsageStats({
+    provider, model, tokens: usage, connectionId, clientKeyId, endpoint, label: "IMAGE USAGE",
+  });
+}
 
 /**
  * Handle image generation request
@@ -69,7 +86,7 @@ export async function handleImageGeneration(request) {
     return handleComboChat({
       body,
       models: scheduleGate.models,
-      handleSingleModel: (b, m, callOpts) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, signal: callOpts?.signal }),
+      handleSingleModel: (b, m, callOpts) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, endpoint: url.pathname, signal: callOpts?.signal }),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -78,11 +95,11 @@ export async function handleImageGeneration(request) {
     });
   }
 
-  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, signal: request?.signal || null });
+  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, endpoint: url.pathname, signal: request?.signal || null });
   });
 }
 
-async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, signal = null } = {}) {
+async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, strictPreferredConnection, clientKeyId, endpoint = null, signal = null } = {}) {
   const modelInfo = await getModelInfo(modelStr);
   if (!modelInfo.provider) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid model format");
 
@@ -133,6 +150,13 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
       connectionId: credentials.connectionId,
     }, async () => {
       const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
+      // Skip accounts the adapter knows cannot generate images (e.g. ChatGPT Free on codex)
+      // without locking them: they stay usable for chat.
+      const adapter = getImageAdapter(provider);
+      if (adapter?.canUseCredentials && !adapter.canUseCredentials(refreshedCredentials)) {
+        log.info("IMAGE", `[${provider}/${model}] skip connection ${String(credentials.connectionId).slice(0, 8)}: plan not entitled to image generation`);
+        return { skip: true };
+      }
       const result = await handleImageGenerationCore({
         clientKeyId,
         body,
@@ -149,6 +173,14 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
             testStatus: "active"
           });
         },
+        onUsage: (usage) => recordImageRequestUsage({
+          provider,
+          model,
+          connectionId: credentials.connectionId,
+          clientKeyId,
+          endpoint,
+          usage,
+        }),
         onRequestSuccess: async () => {
           await clearAccountError(credentials.connectionId, credentials, model);
         }
@@ -171,6 +203,11 @@ async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutpu
     if (attempt instanceof Response) return attempt;
     if (attempt.finalResponse) return attempt.finalResponse;
     excludeConnectionIds.add(credentials.connectionId);
+    if (attempt.skip) {
+      lastError = lastError || "No account entitled to image generation (ChatGPT Free plans are not supported)";
+      lastStatus = lastStatus || HTTP_STATUS.FORBIDDEN;
+      continue;
+    }
     lastError = attempt.error;
     lastStatus = attempt.status;
   }

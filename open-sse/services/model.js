@@ -145,6 +145,8 @@ export async function getModelInfoCore(modelStr, aliasesOrGetter) {
 
 // Config-driven prefix → provider inference (first match wins, fallback "openai").
 const MODEL_PREFIX_PROVIDERS = [
+  // Codex CLI sends this bare virtual model for auto-review - keep it on OAuth Codex (#1398).
+  [/^codex-auto-review$/, "codex"],
   [/^grok-build$/, "grok-cli"],
   [/^muse-/, "muse"],
   [/^claude-/, "anthropic"],
@@ -161,5 +163,27 @@ const MODEL_PREFIX_PROVIDERS = [
 function inferProviderFromModelName(modelName) {
   if (!modelName) return "openai";
   const m = modelName.toLowerCase();
+  if (isCodexOnlyGptModel(m)) return "codex";
   return MODEL_PREFIX_PROVIDERS.find(([re]) => re.test(m))?.[1] || "openai";
+}
+
+// Bare Codex-only GPT slugs (e.g. "gpt-5.6-terra" from the Codex CLI /model
+// picker) would otherwise fall to the generic gpt-* → openai rule and 404 for
+// users with only a Codex OAuth account (#4405). Upstream routes every
+// gpt-5.x / gpt-6.x id to codex; Switchboard only does so for ids the Codex
+// registry lists and the OpenAI registry does not, so OpenAI API models such
+// as bare "gpt-5.4" keep going to OpenAI.
+function registryModelIds(providerId) {
+  const entry = REGISTRY.find((p) => p.id === providerId);
+  return new Set((entry?.models || []).map((model) => String(model.id).toLowerCase()));
+}
+
+let codexOnlyGptIds;
+function isCodexOnlyGptModel(model) {
+  if (!model.startsWith("gpt-")) return false;
+  if (!codexOnlyGptIds) {
+    const openaiIds = registryModelIds("openai");
+    codexOnlyGptIds = new Set([...registryModelIds("codex")].filter((id) => !openaiIds.has(id)));
+  }
+  return codexOnlyGptIds.has(model);
 }

@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { BaseExecutor, streamIsTransportControlled } from "./base.js";
 import { PROVIDERS, PROVIDER_OAUTH } from "../config/providers.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE, selectAnthropicBeta } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType, getTargetFormat } from "../services/provider.js";
-import { OAUTH_ENDPOINTS, buildKimiHeaders } from "../config/appConstants.js";
+import { OAUTH_ENDPOINTS, buildKimiHeaders, NOUS_ATTRIBUTION } from "../config/appConstants.js";
 import { buildClineHeaders } from "../shared/clineAuth.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
@@ -53,6 +54,22 @@ export function isOfficialAnthropicUpstream(provider, credentials) {
 
 // Provider-specific header quirks kept as small hooks (not pure auth).
 const HEADER_HOOKS = {
+  // CodeBuddy: the gateway runs a channel check per request and
+  // rejects anything that does not carry the conversation/request identifiers
+  // the official plugin sends. Without them upstream answers
+  // 400 {"code":11128,"msg":"request illegal"} with
+  // "This call failed channel verification, possibly because it was not sent
+  // from an official client" — the request never reaches the model.
+  // The same request WITH these headers passes channel verification and gets
+  // as far as the real rate limiter (429 / 6004).
+  codebuddyHeaders: (h) => {
+    const requestId = randomUUID();
+    h["X-Request-ID"] = requestId;
+    h["X-Conversation-ID"] = randomUUID();
+    h["X-Conversation-Request-ID"] = requestId;
+    h["X-Conversation-Message-ID"] = requestId;
+  },
+  // Stable device_id from OAuth connection (CLIProxyAPI KimiTokenStorage.DeviceID)
   kimiHeaders: (h, c) => Object.assign(h, buildKimiHeaders(c?.providerSpecificData?.deviceId)),
   clineHeaders: (h, c) => Object.assign(h, buildClineHeaders(c.apiKey || c.accessToken)),
   kilocodeOrg: (h, c) => { if (c.providerSpecificData?.orgId) h["X-Kilocode-OrganizationID"] = c.providerSpecificData.orgId; },
@@ -85,7 +102,7 @@ export class DefaultExecutor extends BaseExecutor {
     // Base injects stream_options / body.stream for usage + Accept consistency.
     super.transformRequest(model, body, stream, credentials);
 
-    const transformed = this.applyJsonSchemaFallback(body);
+    const transformed = this.applyJsonSchemaFallback(this.applyNousAttribution(model, body, stream, credentials));
 
     if (transformed && typeof transformed === "object") {
       // `safeguards` (server-side classifier review) only exists on the
@@ -123,6 +140,29 @@ export class DefaultExecutor extends BaseExecutor {
     }
 
     return injectReasoningContent({ provider: this.provider, model, body: transformed });
+  }
+
+  applyNousAttribution(model, body, stream, credentials) {
+    if (!this.provider?.startsWith?.("openai-compatible-") || !credentials?.apiKey
+      || !body || typeof body !== "object" || Array.isArray(body)
+      || (body.tags != null && !Array.isArray(body.tags))) return body;
+
+    try {
+      const url = new URL(this.buildUrl(model, stream, 0, credentials));
+      if (url.protocol !== "https:" || url.hostname !== NOUS_ATTRIBUTION.hostname
+        || url.pathname !== NOUS_ATTRIBUTION.chatCompletionsPath) return body;
+    } catch {
+      return body;
+    }
+
+    let tags = Array.isArray(body.tags) ? [...body.tags] : [];
+    for (const fallback of NOUS_ATTRIBUTION.tags) {
+      const prefix = fallback.slice(0, fallback.indexOf("=") + 1);
+      // Empty attribution values do not satisfy the upstream requirement.
+      tags = tags.filter((tag) => typeof tag !== "string" || !tag.startsWith(prefix) || tag.slice(prefix.length).trim());
+      if (!tags.some((tag) => typeof tag === "string" && tag.startsWith(prefix))) tags.push(fallback);
+    }
+    return { ...body, tags: [...new Set(tags)] };
   }
 
   // Fallback json_schema → json_object for openai-compatible providers without native Structured Output.

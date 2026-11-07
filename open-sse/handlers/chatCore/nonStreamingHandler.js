@@ -264,7 +264,8 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
   }
 
   // Decloak tool_use names once on raw Claude body, before any translation (INPUT side)
-  responseBody = decloakToolNames(responseBody, toolNameMap);
+  // Claude OAuth cloaks tools; if the map was lost (retry/reconnect), strip the suffix.
+  responseBody = decloakToolNames(responseBody, toolNameMap, { fallback: provider === "claude" });
 
   const usage = extractUsageFromResponse(responseBody);
   appendLog({ tokens: usage, status: "200 OK" });
