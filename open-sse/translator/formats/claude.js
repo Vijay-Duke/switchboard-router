@@ -361,6 +361,34 @@ function markLastCacheableBlock(msg) {
   return false;
 }
 
+// Total blocks carrying cache_control across system, tools, and messages — the
+// Messages API allows at most 4 markers per request.
+function countCacheControlBlocks(body) {
+  let n = 0;
+  const count = (arr) => {
+    if (!Array.isArray(arr)) return;
+    for (const item of arr) if (item && typeof item === "object" && item.cache_control) n++;
+  };
+  count(body?.system);
+  count(body?.tools);
+  if (Array.isArray(body?.messages)) for (const msg of body.messages) count(msg?.content);
+  return n;
+}
+
+// In an agent's tool loop a request ends with the results of the last
+// assistant turn's tool calls — after that turn's breakpoint, so they bill as
+// uncached input and only the next request writes them. When the 4-marker
+// budget has room, a 5m breakpoint on that final user turn caches them now.
+function markFinalToolResults(body) {
+  const messages = body?.messages;
+  const last = Array.isArray(messages) ? messages[messages.length - 1] : null;
+  if (last?.role !== ROLE.USER || !Array.isArray(last.content)) return false;
+  if (!last.content.some((block) => block?.type === CLAUDE_BLOCK.TOOL_RESULT)) return false;
+  if (last.content.some((block) => block?.cache_control)) return false;
+  if (countCacheControlBlocks(body) >= 4) return false;
+  return markLastCacheableBlock(last);
+}
+
 // Re-anchor cache breakpoints on a Claude passthrough body (same policy as
 // prepareClaudeRequest): last tool + last system block at 1h, last assistant at 5m.
 // The client's own markers point at pre-normalization offsets, so they are dropped.
@@ -409,6 +437,9 @@ export function anchorClaudeCache(body) {
         anchored = markLastCacheableBlock(body.messages[i]);
       }
     }
+
+    // ...and a tool loop's final tool results, so the next step reads them.
+    markFinalToolResults(body);
   }
 
   return body;
@@ -652,6 +683,9 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
       delete body.tool_choice;
     }
   }
+
+  // A tool loop's final tool results: cached now, so the next step reads them.
+  markFinalToolResults(body);
 
   // Apply cloaking for OAuth tokens (billing header + fake user ID)
   // session_id in user_id must match X-Claude-Code-Session-Id for fingerprint consistency
