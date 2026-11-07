@@ -110,7 +110,7 @@ export function normalizeKiroUpstreamModelId(model) {
 
 /**
  * Resolve a Kiro model after consuming the generic model(level) suffix.
- * The suffix is a 9router request override, not part of Kiro's upstream model id.
+ * The suffix is a Switchboard request override, not part of Kiro's upstream model id.
  */
 export function resolveKiroModelIntent(model) {
   const { cleanModel, override } = parseSuffix(model);
