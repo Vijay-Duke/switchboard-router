@@ -21,7 +21,7 @@ vi.mock("@/sse/services/tokenRefresh", () => ({
 }));
 
 const { GET: getChatModels } = await import("@/app/api/v1/models/route.js");
-const { GET: getModelsByKind } = await import("@/app/api/v1/models/[kind]/route.js");
+const { GET: getModelsByKind } = await import("@/app/api/v1/models/[...model]/route.js");
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getProviderConnections.mockResolvedValue([{

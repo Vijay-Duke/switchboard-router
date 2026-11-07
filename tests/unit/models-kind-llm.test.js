@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({ buildModelsList: vi.fn() }));
 
 vi.mock("@/app/api/v1/models/route.js", () => ({ buildModelsList: mocks.buildModelsList }));
 
-const { GET } = await import("../../src/app/api/v1/models/[kind]/route.js");
+const { GET } = await import("../../src/app/api/v1/models/[...model]/route.js");
 
 const LLM_LIST = [
   { id: "qa-openai/qa-chat", object: "model", owned_by: "qa-openai" },
