@@ -151,6 +151,13 @@ export const PROVIDER_CAPABILITIES = {
     // contract). maxOutput 128000 per the server's product-config payload.
     "deepseek-v4.1-flash": { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 128000 },
   },
+  // Ollama Cloud — the generic *deepseek-v4* pattern misses the vision badge
+  // the library page publishes for this model (text+image in, 1M context).
+  // thinkingFormat stays "deepseek" to preserve today's body shape; Ollama's
+  // native toggle is the top-level `think` field, which no format emits yet.
+  "ollama": {
+    "deepseek-v4.1-flash:cloud": { vision: true, reasoning: true, thinkingFormat: "deepseek", contextWindow: 1000000, maxOutput: 384000 },
+  },
 };
 
 /**
