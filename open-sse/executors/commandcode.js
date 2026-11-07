@@ -39,11 +39,23 @@ export class CommandCodeExecutor extends BaseExecutor {
     return headers;
   }
 
+  // A transient upstream error surfaced as the stream's first event (502/503/504
+  // after inspection) is retried in place before the client sees anything.
   async execute(opts) {
-    const result = await super.execute(opts);
-    if (!result?.response?.ok || !result.response.body) return result;
-    result.response = await inspectAndWrapCommandCodeResponse(result.response, opts.model);
-    return result;
+    const maxRetries = 2;
+    for (let attempt = 0; ; attempt++) {
+      const result = await super.execute(opts);
+      if (!result?.response?.ok || !result.response.body) return result;
+      const wrapped = await inspectAndWrapCommandCodeResponse(result.response, opts.model);
+      const retryable = wrapped.status === 502 || wrapped.status === 503 || wrapped.status === 504;
+      if (!wrapped.ok && retryable && attempt < maxRetries && !opts.signal?.aborted) {
+        opts.log?.debug?.("RETRY", `CommandCode upstream returned ${wrapped.status}, retrying ${attempt + 1}/${maxRetries}`);
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      result.response = wrapped;
+      return result;
+    }
   }
 
   parseError(response, bodyText) {

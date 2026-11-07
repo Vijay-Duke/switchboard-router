@@ -116,12 +116,17 @@ describe("commandcode-to-openai — finish", () => {
 });
 
 describe("commandcode-to-openai — error event", () => {
-  it("stringifies object errors so client sees readable message", () => {
-    const { chunks } = feed([
+  // A mid-stream error fails the stream (the stream handler emits the client-
+  // format abort terminal) instead of a fake content + finish_reason "stop"
+  // (upstream 092c84ea). The thrown message stays readable.
+  it("throws a readable error instead of emitting a fake stop", () => {
+    expect(() => feed([
       { type: "error", error: { type: "server_error", message: "Boom" } },
-    ]);
-    const text = chunks[0].choices[0].delta.content;
-    expect(text).toContain("Boom");
-    expect(text).not.toContain("[object Object]");
+    ])).toThrow(/CommandCode error: .*Boom/);
+    try {
+      feed([{ type: "error", error: { type: "server_error", message: "Boom" } }]);
+    } catch (err) {
+      expect(err.message).not.toContain("[object Object]");
+    }
   });
 });
