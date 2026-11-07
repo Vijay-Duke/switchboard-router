@@ -17,7 +17,8 @@ describe("checkFallbackError credit exhaustion", () => {
   });
 
   it("does not fall back for an ordinary bad request", () => {
-    expect(checkFallbackError(400, "Bad request")).toEqual({ shouldFallback: false, cooldownMs: 0 });
+    // Not an account fallback, but flagged request-scoped so combos may try the next member.
+    expect(checkFallbackError(400, "Bad request")).toEqual({ shouldFallback: false, cooldownMs: 0, requestScoped: true });
   });
 });
 
@@ -25,7 +26,9 @@ describe("combo credit fallback", () => {
   it.each([
     ["You have insufficient credits to make this request.", true],
     ["Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.", true],
-    ["Bad request", false],
+    // A plain request-scoped 400 also advances (upstream 5cdcddf5): the next
+    // member may accept the request; if none does, the first failure returns.
+    ["Bad request", true],
   ])("routes a 400 response correctly: %s", async (message, shouldContinue) => {
     const body = { messages: [{ role: "user", content: "Hello" }] };
     const models = ["cmc/deepseek/deepseek-v4-pro", "mistral/mistral-medium-latest"];
