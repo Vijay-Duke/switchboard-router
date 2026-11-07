@@ -165,12 +165,17 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
   const transformStream = buildTransformStream({ provider, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, model, connectionId, body, onStreamComplete: complete, clientKeyId, terminateOnResponsesTerminal, onStreamProgress });
 
   // Abort/stall terminals: never close a client stream without a terminal event.
-  // Responses passthrough: response.failed + [DONE]. Chat-completions wire
-  // (passthrough or translated): finish_reason:"stream_timeout" chunk + [DONE].
-  const isResponsesPassthrough = sourceFormat === FORMATS.OPENAI_RESPONSES && targetFormat === FORMATS.OPENAI_RESPONSES;
-  const onAbortTerminal = isResponsesPassthrough
+  // Framed in the CLIENT's wire format (sourceFormat), not the upstream's: a
+  // Claude client behind an OpenAI upstream must get `event: error`, not a
+  // chat-completions chunk it cannot parse.
+  //   Responses clients: response.failed + [DONE]
+  //   Claude clients: event: error
+  //   Chat-completions clients: finish_reason:"stream_timeout" chunk + [DONE]
+  // Gemini-family clients get none (they reject the [DONE] sentinel).
+  const onAbortTerminal = sourceFormat === FORMATS.OPENAI_RESPONSES
     ? buildAbortedResponsesTerminalBytes
-    : isNativeClaude ? buildAbortedClaudeTerminalBytes : targetFormat === FORMATS.OPENAI ? buildAbortedChatCompletionsTerminalBytes : null;
+    : sourceFormat === FORMATS.CLAUDE ? buildAbortedClaudeTerminalBytes
+      : sourceFormat === FORMATS.OPENAI ? buildAbortedChatCompletionsTerminalBytes : null;
   const stallTimeoutMs = PROVIDERS[provider]?.stallTimeoutMs || STREAM_STALL_TIMEOUT_MS;
   const transformedBody = pipeWithDisconnect(providerResponse, transformStream, streamController, onAbortTerminal, stallTimeoutMs, firstChunkTimeoutMs, fail, progressWatchdog);
 
