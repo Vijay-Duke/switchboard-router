@@ -103,6 +103,10 @@ export const MODEL_CAPABILITIES = {
 /**
  * Provider-specific capability overrides. Keyed by provider alias/id.
  */
+const CODEX_GPT_56_SOL_CAPS  = { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 372000, maxOutput: 128000 };
+const CODEX_GPT_56_DEFAULT_CAPS = { vision: true, reasoning: true, search: true, thinkingFormat: "openai", contextWindow: 272000, maxOutput: 128000 };
+const CODEX_EXTENDED_CAPS = { ...CODEX_GPT_56_DEFAULT_CAPS, contextWindow: 872000 };
+
 export const PROVIDER_CAPABILITIES = {
   // NVIDIA NIM is OpenAI-compatible → rejects MiniMax/GLM native `thinking` field.
   // Force openai reasoning_effort format for its reasoning models. #issue
@@ -151,7 +155,26 @@ export const PROVIDER_CAPABILITIES = {
     // contract). maxOutput 128000 per the server's product-config payload.
     "deepseek-v4.1-flash": { vision: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1000000, maxOutput: 128000 },
   },
+  // Codex (ChatGPT OAuth) caps the default window below the API model's;
+  // the "[1m]" registry variants map to the same upstream id with an
+  // extended 872k window (codex-rs/models-manager/models.json).
+  "codex": {
+    "gpt-6-astra[1m]":           CODEX_EXTENDED_CAPS,
+    "gpt-6-sol[1m]":             CODEX_EXTENDED_CAPS,
+    "gpt-6-luna[1m]":            CODEX_EXTENDED_CAPS,
+    "gpt-5.6-sol[1m]":           CODEX_EXTENDED_CAPS,
+    "gpt-5.6-terra[1m]":         CODEX_EXTENDED_CAPS,
+    "gpt-5.6-luna[1m]":          CODEX_EXTENDED_CAPS,
+    "gpt-5.6-sol":               CODEX_GPT_56_SOL_CAPS,
+    "gpt-5.6-sol-review":        CODEX_GPT_56_SOL_CAPS,
+    "gpt-5.6-terra":             CODEX_GPT_56_DEFAULT_CAPS,
+    "gpt-5.6-terra-review":      CODEX_GPT_56_DEFAULT_CAPS,
+    "gpt-5.6-luna":              CODEX_GPT_56_DEFAULT_CAPS,
+    "gpt-5.6-luna-review":       CODEX_GPT_56_DEFAULT_CAPS,
+  },
 };
+// The registry alias resolves to the same table.
+PROVIDER_CAPABILITIES.cx = PROVIDER_CAPABILITIES.codex;
 
 /**
  * Pattern fallback — glob (* = wildcard), matched case-insensitively and

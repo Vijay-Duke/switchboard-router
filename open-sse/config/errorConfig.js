@@ -60,6 +60,8 @@ const COOLDOWN = {
 export const ERROR_RULES = [
   // --- Text-based rules (checked first, order = priority) ---
   // shouldFallback:false = request shape bug, not account health — don't rotate (wave12).
+  // Codex rejects some models per ChatGPT plan; another account may serve it.
+  { provider: "codex", text: "model is not supported when using codex with a chatgpt account", cooldownMs: MAX_RATE_LIMIT_COOLDOWN_MS },
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
   { text: "request not allowed",      cooldownMs: COOLDOWN.short, shouldFallback: false },
   { text: "improperly formed request", cooldownMs: COOLDOWN.long, shouldFallback: false },
