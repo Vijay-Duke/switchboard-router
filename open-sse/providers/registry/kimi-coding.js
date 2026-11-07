@@ -50,6 +50,13 @@ const moduleDefault = {
       headers: { ...CLAUDE_API_HEADERS },
       auth: { combined: true, header: "x-api-key", scheme: "raw", hooks: ["kimiHeaders"] },
     },
+    // Kimi Code natively serves the OpenAI Responses API (Codex wire_api = "responses").
+    {
+      identity: "kimi",
+      format: "openai-responses",
+      baseUrl: "https://api.kimi.com/coding/v1/responses",
+      auth: { combined: true, header: "Authorization", scheme: "bearer", hooks: ["kimiHeaders"] },
+    },
   ],
   models: [
     { id: "kimi-k2.6", name: "Kimi K2.6" },
