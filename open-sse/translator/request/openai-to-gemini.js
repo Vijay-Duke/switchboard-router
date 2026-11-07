@@ -15,8 +15,10 @@ import {
   generateRequestId,
   generateSessionId,
   generateProjectId,
-  cleanJSONSchemaForAntigravity
+  cleanJSONSchemaForAntigravity,
+  normalizeGeminiContents
 } from "../formats/gemini.js";
+import { isGemini4Model } from "../../providers/modelFamilies.js";
 import { deriveSessionId, toNumericSessionId } from "../../utils/sessionManager.js";
 import { clampSampling } from "../concerns/params.js";
 import { ROLE, GEMINI_ROLE, OPENAI_BLOCK, CLAUDE_BLOCK } from "../schema/index.js";
@@ -36,15 +38,27 @@ function sanitizeGeminiFunctionName(name) {
   return sanitized.substring(0, 64);
 }
 
-function normalizeGeminiContents(contents) {
-  const out = [];
-  for (const c of contents || []) {
-    if (!c?.role || !Array.isArray(c.parts) || c.parts.length === 0) continue;
-    const last = out.at(-1);
-    if (last?.role === c.role) last.parts.push(...c.parts);
-    else out.push({ ...c, parts: [...c.parts] });
-  }
-  return out;
+// Gemini validates functionCall id uniqueness across the WHOLE history (400
+// INVALID_ARGUMENT otherwise), but an OpenAI tool_call_id is only unique within
+// its own assistant turn — long agent sessions replay ids (#4532). Uniqueness is
+// per occurrence: each emitted functionCall takes the next free id, and its
+// functionResponse reuses it. Already-unique ids pass through untouched.
+function createToolCallIdUniquifier() {
+  const used = new Set();
+  return {
+    next(id) {
+      if (!id) return id;
+      if (!used.has(id)) {
+        used.add(id);
+        return id;
+      }
+      let n = 2;
+      let candidate = `${id}-${n}`;
+      while (used.has(candidate)) candidate = `${id}-${++n}`;
+      used.add(candidate);
+      return candidate;
+    },
+  };
 }
 
 // Core: Convert OpenAI request to Gemini format (base for all variants)
@@ -56,14 +70,15 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
     safetySettings: DEFAULT_SAFETY_SETTINGS
   };
 
-  // Generation config
-  if (body.temperature !== undefined) {
+  // Generation config — Gemini 4 removed the sampling params; forwarding them fails the request
+  const allowSampling = !isGemini4Model(model);
+  if (allowSampling && body.temperature !== undefined) {
     result.generationConfig.temperature = body.temperature;
   }
-  if (body.top_p !== undefined) {
+  if (allowSampling && body.top_p !== undefined) {
     result.generationConfig.topP = body.top_p;
   }
-  if (body.top_k !== undefined) {
+  if (allowSampling && body.top_k !== undefined) {
     result.generationConfig.topK = body.top_k;
   }
   const maxTokens = body.max_tokens ?? body.max_completion_tokens ?? body.max_output_tokens;
@@ -101,15 +116,20 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
   }
 
   // Build tool responses cache. Use Map so empty-string stubs from
-  // fixMissingToolResponses still count as present (wave11 P0).
+  // fixMissingToolResponses still count as present (wave11 P0). Results are
+  // queued per id: a reused tool_call_id would otherwise answer the earlier
+  // turn with the later turn's output (#4273). Each functionCall consumes the
+  // oldest unconsumed result for its id.
   const toolResponses = new Map();
   if (body.messages && Array.isArray(body.messages)) {
     for (const msg of body.messages) {
       if (msg.role === ROLE.TOOL && msg.tool_call_id) {
-        toolResponses.set(msg.tool_call_id, msg.content ?? "");
+        if (!toolResponses.has(msg.tool_call_id)) toolResponses.set(msg.tool_call_id, []);
+        toolResponses.get(msg.tool_call_id).push(msg.content ?? "");
       }
     }
   }
+  const toolCallIdUniquifier = createToolCallIdUniquifier();
 
   // Convert messages
   if (body.messages && Array.isArray(body.messages)) {
@@ -163,18 +183,21 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
             if (tc.type !== OPENAI_BLOCK.FUNCTION) continue;
 
             const args = tryParseJSON(tc.function?.arguments || "{}") ?? {};
+            const emitId = toolCallIdUniquifier.next(tc.id);
             // `id` is part of the Gemini API FunctionCall/FunctionResponse schema
             // and pairs the call with its functionResponse.id below (the
             // post-translate orphan strip keys on it; Vertex strips both).
             parts.push({
               thoughtSignature: signature,
               functionCall: {
-                id: tc.id,
+                id: emitId,
                 name: sanitizeGeminiFunctionName(tc.function.name),
                 args: args
               }
             });
-            toolCallIds.push(tc.id);
+            // Name travels with the pair: tcID2Name is conversation-wide, so a
+            // later call reusing the id would otherwise rename this response.
+            toolCallIds.push({ origId: tc.id, emitId, name: tc.function?.name });
           }
 
           if (parts.length > 0) {
@@ -182,14 +205,15 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
           }
 
           // Check if there are tool responses (including empty stubs)
-          const hasActualResponses = toolCallIds.some(fid => toolResponses.has(fid));
+          const hasActualResponses = toolCallIds.some(({ origId }) => toolResponses.get(origId)?.length > 0);
 
           if (hasActualResponses) {
             const toolParts = [];
-            for (const fid of toolCallIds) {
-              if (!toolResponses.has(fid)) continue;
+            for (const { origId: fid, emitId, name: callName } of toolCallIds) {
+              const queue = toolResponses.get(fid);
+              if (!queue?.length) continue;
 
-              let name = tcID2Name[fid];
+              let name = callName || tcID2Name[fid];
               if (!name) {
                 const idParts = fid.split("-");
                 if (idParts.length > 2) {
@@ -199,12 +223,12 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
                 }
               }
 
-              const resp = toolResponses.get(fid);
+              const resp = queue.shift();
               const parsedResp = tryParseJSON(resp);
 
               toolParts.push({
                 functionResponse: {
-                  id: fid,
+                  id: emitId,
                   name: sanitizeGeminiFunctionName(name),
                   response: { result: parsedResp === null ? (resp ?? "") : parsedResp }
                 }
@@ -259,7 +283,7 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
     };
   }
 
-  result.contents = normalizeGeminiContents(result.contents);
+  result.contents = normalizeGeminiContents(result.contents, model);
   clampSampling(result.generationConfig);
   return result;
 }
@@ -334,10 +358,10 @@ function wrapInCloudCodeEnvelope(model, geminiCLI, credentials = null, isAntigra
     envelope.request.toolConfig = geminiCLI.toolConfig;
   }
 
-  // Antigravity specific fields
+  // Antigravity specific fields. No requestType: the official client omits it
+  // on the agent (chat) path, and sending "agent" makes Google bucket the
+  // request and return a detail-free 429 RESOURCE_EXHAUSTED with quota left.
   if (isAntigravity) {
-    envelope.requestType = "agent";
-
     // Inject required default system prompt for Antigravity
     // Inject required default system prompt for Antigravity (double injection)
     const systemParts = [
@@ -375,7 +399,7 @@ function wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentials = nu
     model: model,
     userAgent: "antigravity",
     requestId: `agent-${generateUUID()}`,
-    requestType: "agent",
+    // No requestType — see wrapInCloudCodeEnvelope (false 429s).
     request: {
       sessionId: toNumericSessionId(credentials?._clientSessionId) || deriveSessionId(credentials?.email || credentials?.connectionId),
       contents: [],
@@ -497,7 +521,7 @@ function wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentials = nu
     envelope.request.systemInstruction = { role: GEMINI_ROLE.USER, parts: systemParts };
   }
 
-  envelope.request.contents = normalizeGeminiContents(envelope.request.contents);
+  envelope.request.contents = normalizeGeminiContents(envelope.request.contents, model);
   return envelope;
 }
 
