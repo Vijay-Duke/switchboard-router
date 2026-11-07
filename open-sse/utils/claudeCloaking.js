@@ -133,14 +133,34 @@ export function cloakClaudeTools(body) {
   };
 }
 
+// Strip a trailing CLAUDE_TOOL_SUFFIX from a cloaked name as a last-resort
+// fallback when the name isn't in toolNameMap (e.g. map lost across a retry/
+// reconnect). Never strips decoy names — those are meant to reach the client
+// unresolved so it can see "tool unavailable" instead of silently no-oping.
+export function stripCloakSuffix(name) {
+  if (typeof name !== "string" || !name.endsWith(CLAUDE_TOOL_SUFFIX)) return null;
+  if (CC_DEFAULT_TOOLS.has(name)) return null;
+  const original = name.slice(0, -CLAUDE_TOOL_SUFFIX.length);
+  return original.length > 0 ? original : null;
+}
+
+/**
+ * Resolve a cloaked tool name back to the client's original.
+ * The suffix-strip fallback only applies when `fallback` is set (the caller
+ * knows the response came from a cloaking provider), so a genuine client
+ * tool literally named "*_ide" on another provider is never renamed.
+ */
+export function resolveCloakedToolName(name, toolNameMap, fallback = false) {
+  return toolNameMap?.get(name) || (fallback ? stripCloakSuffix(name) : null);
+}
+
 // Decloak tool_use names in non-streaming Claude response body (INPUT side)
-export function decloakToolNames(body, toolNameMap) {
-  if (!toolNameMap?.size || !Array.isArray(body?.content)) return body;
+export function decloakToolNames(body, toolNameMap, { fallback = false } = {}) {
+  if ((!toolNameMap?.size && !fallback) || !Array.isArray(body?.content)) return body;
   const content = body.content.map(block => {
-    if (block?.type === "tool_use" && toolNameMap.has(block.name)) {
-      return { ...block, name: toolNameMap.get(block.name) };
-    }
-    return block;
+    if (block?.type !== "tool_use") return block;
+    const original = resolveCloakedToolName(block.name, toolNameMap, fallback);
+    return original ? { ...block, name: original } : block;
   });
   return { ...body, content };
 }
