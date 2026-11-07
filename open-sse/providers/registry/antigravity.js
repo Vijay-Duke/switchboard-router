@@ -54,6 +54,8 @@ const moduleDefault = {
     clientSecret: "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",
   },
   models: [
+    // Wire id per upstream catalog; "(high)" pins thinkingLevel HIGH on this tier.
+    { id: "gemini-4-argon-high", name: "Gemini 4 Argon (High)", upstreamModelId: "gemini-4-argon-high(high)" },
     { id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash (High)" },
     { id: "gemini-3.7-flash-high", name: "Gemini 3.7 Flash (High)" },
     { id: "gemini-3.6-flash-high", name: "Gemini 3.6 Flash (High)" },
