@@ -39,7 +39,8 @@ describe("db driver init retry", () => {
     expect(closeFirst).toHaveBeenCalledTimes(1);
 
     const db = await getAdapter();
-    expect(db).toBe(secondAdapter);
+    // getAdapter() returns a NUL-safe wrapper around the driver adapter.
+    expect(db.close).toBe(secondAdapter.close);
     expect(creates).toBe(2);
     expect(migrates).toBe(2);
   });
