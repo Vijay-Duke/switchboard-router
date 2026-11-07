@@ -67,7 +67,17 @@ const moduleDefault = {
 
     if (!result.response.ok) {
       const text = await result.response.text();
-      throw new Error(text || `HTTP ${result.response.status}`);
+      const err = new Error(text || `HTTP ${result.response.status}`);
+      err.status = result.response.status;
+      // Google quota errors carry the exact reset in error.details[].metadata.
+      try {
+        const details = JSON.parse(text).error?.details || [];
+        for (const d of details) {
+          const ms = d?.metadata?.quotaResetTimeStamp ? new Date(d.metadata.quotaResetTimeStamp).getTime() : NaN;
+          if (ms > Date.now()) { err.resetsAtMs = ms; break; }
+        }
+      } catch { /* non-JSON error body */ }
+      throw err;
     }
 
     return result.response.json();

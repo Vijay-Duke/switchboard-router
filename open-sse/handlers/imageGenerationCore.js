@@ -110,9 +110,12 @@ export async function handleImageGenerationCore({
         }),
       };
     } catch (error) {
-      const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
+      // Adapters attach the upstream status (and quota reset) so 429s lock the
+      // account precisely instead of surfacing as a generic 502.
+      const status = error.status || HTTP_STATUS.BAD_GATEWAY;
+      const errMsg = formatProviderError(error, provider, model, status);
       log?.debug?.("IMAGE", `Executor error: ${errMsg}`);
-      return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
+      return createErrorResult(status, errMsg, error.resetsAtMs);
     }
   }
 
