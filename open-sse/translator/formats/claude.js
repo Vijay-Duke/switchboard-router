@@ -457,6 +457,21 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
     delete body.output_config;
   }
 
+  // Models whose API rejects thinking "disabled" and forced tool use with a 400
+  // (Sonnet 5.5). Runs on every Claude-bound body, so OpenAI clients, native
+  // passthrough and the provider-level "off" override are all covered.
+  const offCaps = getCapabilitiesForModel(provider, body.model);
+  if (offCaps.thinkingOffType && body.thinking?.type === "disabled") {
+    body.thinking = { type: offCaps.thinkingOffType };
+    // between_tools only accepts effort up to high.
+    const effort = body.output_config?.effort;
+    if (effort === "xhigh" || effort === "max") body.output_config.effort = "high";
+  }
+  if (offCaps.forcedToolChoice === false && (body.tool_choice?.type === "any" || body.tool_choice?.type === "tool")) {
+    const { disable_parallel_tool_use } = body.tool_choice;
+    body.tool_choice = { type: "auto", ...(disable_parallel_tool_use !== undefined ? { disable_parallel_tool_use } : {}) };
+  }
+
   // Clamp max_tokens to the model's real output ceiling. Models whose caps
   // declare a higher maxOutput (e.g. Opus 4.8 / Sonnet 4.6 = 128000) are allowed
   // up to it, so max-effort thinking gets full budget; others fall back to the
