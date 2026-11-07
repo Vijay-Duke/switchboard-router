@@ -136,7 +136,28 @@ export function extractThinking(body) {
 
 // Capture thinking intent from a body. Alias of extractThinking, named for clarity
 // at the call-site where intent is snapshotted before format translation.
-export const captureThinking = extractThinking;
+// Capture thinking intent from a body before format translation strips it.
+// Besides the effort, records whether an OpenAI-shaped client wants the thinking
+// text itself: Claude returns it only with thinking.display "summarized" (the
+// default on newer models is "omitted"), a field OpenAI has no equivalent for.
+export function captureThinking(body) {
+  const cfg = extractThinking(body);
+  if (!cfg || cfg.mode === "none") return cfg;
+  const display = openAIThinkingDisplay(body);
+  return display ? { ...cfg, display } : cfg;
+}
+
+function openAIThinkingDisplay(body) {
+  // Responses API: reasoning.summary is the explicit request for reasoning text.
+  if (body.reasoning && typeof body.reasoning === "object") {
+    const summary = body.reasoning.summary;
+    return typeof summary === "string" && summary && summary !== "none" ? "summarized" : undefined;
+  }
+  // Chat Completions has no summary knob. A client setting reasoning_effort is
+  // asking for reasoning, and reasoning_content is how it would receive it.
+  if (typeof body.reasoning_effort === "string") return "summarized";
+  return undefined;
+}
 
 // Thinking shapes that only exist on a model's native wire (Gemini
 // generationConfig, Claude thinking/output_config, Kiro tags). A Gemini or
@@ -219,7 +240,7 @@ function stripAll(body) {
 }
 
 // Apply unified thinking config to body in the resolved provider-native format.
-function applyFormat(fmt, body, cfg, caps, supportedLevels = null) {
+function applyFormat(fmt, body, cfg, caps, supportedLevels = null, display = undefined, model = "") {
   const none = cfg.mode === "none";
   const canDisable = caps.thinkingCanDisable !== false;
   // Model cannot disable thinking → clamp "none" to minimal effort instead.
@@ -263,7 +284,11 @@ function applyFormat(fmt, body, cfg, caps, supportedLevels = null) {
       // accepts either alone; keeping both is harmless and maximally compatible.
       // Permanently adaptive models (Fable 5.1) take effort alone; the
       // redundant switch is dropped for them.
-      if (canDisable) body.thinking = { type: "adaptive" };
+      // Claude's own always-on models still get the switch when it carries a
+      // requested display (it defaults to "omitted", hiding the thinking text);
+      // a thinking-off request (clamped to minimal) asks for no text.
+      if (canDisable) body.thinking = { type: "adaptive", ...(display ? { display } : {}) };
+      else if (display && level !== "minimal" && /claude/i.test(model)) body.thinking = { type: "adaptive", display };
       else delete body.thinking;
       // Claude effort has no "minimal" (always-on models clamp "none" to it).
       // Anthropic has no "auto" effort (HTTP 400) — dynamic requests get "high".
@@ -276,7 +301,8 @@ function applyFormat(fmt, body, cfg, caps, supportedLevels = null) {
     case "claude-budget": {
       if (none && canDisable) { body.thinking = { type: "disabled" }; break; }
       const budget = toBudget(eff, caps.thinkingRange);
-      body.thinking = budget === -1 ? { type: "enabled" } : { type: "enabled", budget_tokens: budget || 8192 };
+      const disp = display ? { display } : {};
+      body.thinking = budget === -1 ? { type: "enabled", ...disp } : { type: "enabled", budget_tokens: budget || 8192, ...disp };
       break;
     }
     case "gemini-level": {
@@ -419,7 +445,11 @@ export function applyThinking(targetFormat, model, body, provider = null, intent
   }
   if (!cfg) return body;
 
+  // Anthropic's `display` (summarized | omitted) decides whether thinking text
+  // comes back at all; keep what the client asked for instead of resetting it.
+  // An OpenAI-shaped client's ask arrives via the captured intent instead.
+  const display = typeof body.thinking?.display === "string" ? body.thinking.display : intent?.display;
   stripAll(body);
-  applyFormat(fmt, body, cfg, caps, supported);
+  applyFormat(fmt, body, cfg, caps, supported, display, cleanModel);
   return body;
 }

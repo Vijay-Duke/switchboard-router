@@ -1,4 +1,5 @@
 import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS, MAX_TOTAL_RETRY_WAIT_MS } from "../config/runtimeConfig.js";
+import { ANTHROPIC_BETA_REDACT_THINKING, wantsThinkingSummaries } from "../providers/shared.js";
 import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
@@ -213,7 +214,7 @@ export class BaseExecutor {
       // the URL (e.g. Codex _isCompact → /compact). Wave 13 P0.
       const transformedBody = this.transformRequest(model, body, stream, credentials);
       const url = this.buildUrl(model, stream, urlIndex, credentials);
-      const headers = this.buildHeaders(credentials, stream, url, model);
+      const headers = this.buildHeaders(credentials, stream, url, model, transformedBody);
       if (this.config?.format === "claude" && credentials?._clientSessionId) {
         headers["X-Claude-Code-Session-Id"] = credentials._clientSessionId;
       }
@@ -276,6 +277,9 @@ export class BaseExecutor {
           credentialId: credentials?.connectionId || credentials?.apiKey || credentials?.accessToken,
           stream,
           retryCount: retryAttemptsByUrl[urlIndex] || 0,
+          // The identity layer re-adds snapshot betas at egress; drop the one
+          // that would blank thinking summaries the request asked for.
+          dropBetas: wantsThinkingSummaries(transformedBody) ? [ANTHROPIC_BETA_REDACT_THINKING] : undefined,
         }, proxyOptions);
         clearTimeout(connectTimer);
         if (signal?.aborted) {
