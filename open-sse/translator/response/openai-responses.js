@@ -47,7 +47,14 @@ function toResponsesUsage(usage) {
   };
   const cached = usage.prompt_tokens_details?.cached_tokens;
   if (cached) out.input_tokens_details = { cached_tokens: cached };
+  const reasoning = usage.completion_tokens_details?.reasoning_tokens;
+  if (reasoning) out.output_tokens_details = { reasoning_tokens: reasoning };
   return out;
+}
+
+// Real counts, not the zeroed placeholders some upstreams attach to every chunk.
+function hasRealUsage(usage) {
+  return !!usage && ((usage.prompt_tokens || 0) + (usage.completion_tokens || 0)) > 0;
 }
 
 export function openaiToOpenAIResponsesResponse(chunk, state) {
@@ -55,12 +62,18 @@ export function openaiToOpenAIResponsesResponse(chunk, state) {
     return flushEvents(state);
   }
 
-  // Harvest usage even on choiceless chunks (split-usage upstreams).
+  // Harvest usage even on choiceless chunks (split-usage upstreams). Zeroed
+  // placeholders must not overwrite real counts already seen.
   if (chunk.usage && typeof chunk.usage === "object") {
-    state.usage = buildUsage(openAIUsageArgs(chunk.usage));
+    const next = buildUsage(openAIUsageArgs(chunk.usage));
+    if (hasRealUsage(next) || !hasRealUsage(state.usage)) state.usage = next;
   }
 
-  if (!chunk.choices?.length) return [];
+  // A deferred response.completed (finish_reason arrived before usage) goes out
+  // with the usage trailer.
+  if (!chunk.choices?.length) {
+    return state.completionPending && hasRealUsage(state.usage) ? flushEvents(state) : [];
+  }
 
   const events = [];
   const nextSeq = () => ++state.seq;
@@ -158,8 +171,14 @@ export function openaiToOpenAIResponsesResponse(chunk, state) {
     if (!pendingTool && (choice.finish_reason === OPENAI_FINISH.LENGTH ||
         choice.finish_reason === OPENAI_FINISH.CONTENT_FILTER)) {
       sendIncomplete(state, emit, choice.finish_reason);
-    } else {
+    } else if (hasRealUsage(state.usage) || !state.deferCompletionForUsage) {
       sendCompleted(state, emit);
+    } else {
+      // Usage usually trails finish_reason in its own chunk (OpenAI); emitting
+      // now would freeze response.completed without it, and Responses clients
+      // (Codex) then never auto-compact. stream.js flushes on the trailer,
+      // [DONE], connection close, or a 3s watchdog — whichever comes first.
+      state.completionPending = true;
     }
   }
 
@@ -221,15 +240,17 @@ function closeReasoning(state, emit) {
       part: { type: RESPONSES_ITEM.SUMMARY_TEXT, text: state.reasoningBuf }
     });
 
+    const doneItem = {
+      id: state.reasoningId,
+      type: RESPONSES_ITEM.REASONING,
+      summary: [{ type: RESPONSES_ITEM.SUMMARY_TEXT, text: state.reasoningBuf }]
+    };
     emit("response.output_item.done", {
       type: "response.output_item.done",
       output_index: state.reasoningIndex,
-      item: {
-        id: state.reasoningId,
-        type: RESPONSES_ITEM.REASONING,
-        summary: [{ type: RESPONSES_ITEM.SUMMARY_TEXT, text: state.reasoningBuf }]
-      }
+      item: doneItem
     });
+    recordCompletedOutputItem(state, state.reasoningIndex, doneItem);
   }
 }
 
@@ -295,16 +316,18 @@ function closeMessage(state, emit, idx) {
       part: { type: RESPONSES_ITEM.OUTPUT_TEXT, annotations: [], logprobs: [], text: fullText }
     });
 
+    const doneItem = {
+      id: msgId,
+      type: RESPONSES_ITEM.MESSAGE,
+      content: [{ type: RESPONSES_ITEM.OUTPUT_TEXT, annotations: [], logprobs: [], text: fullText }],
+      role: ROLE.ASSISTANT
+    };
     emit("response.output_item.done", {
       type: "response.output_item.done",
       output_index: outIdx,
-      item: {
-        id: msgId,
-        type: RESPONSES_ITEM.MESSAGE,
-        content: [{ type: RESPONSES_ITEM.OUTPUT_TEXT, annotations: [], logprobs: [], text: fullText }],
-        role: ROLE.ASSISTANT
-      }
+      item: doneItem
     });
+    recordCompletedOutputItem(state, outIdx, doneItem);
   }
 }
 
@@ -377,17 +400,19 @@ function closeToolCall(state, emit, idx) {
       arguments: args
     });
 
+    const doneItem = {
+      id: `fc_${callId}`,
+      type: RESPONSES_ITEM.FUNCTION_CALL,
+      arguments: args,
+      call_id: callId,
+      name: state.funcNames[idx] || ""
+    };
     emit("response.output_item.done", {
       type: "response.output_item.done",
       output_index: outIdx,
-      item: {
-        id: `fc_${callId}`,
-        type: RESPONSES_ITEM.FUNCTION_CALL,
-        arguments: args,
-        call_id: callId,
-        name: state.funcNames[idx] || ""
-      }
+      item: doneItem
     });
+    recordCompletedOutputItem(state, outIdx, doneItem);
 
     state.funcItemDone[idx] = true;
     state.funcArgsDone[idx] = true;
@@ -409,12 +434,29 @@ function terminalPayload(state, status, extra = {}) {
   return response;
 }
 
+// response.completed carries the finished Response object, so response.output
+// must repeat the items already delivered in response.output_item.done. Clients
+// that build their result from the terminal event (GitHub Copilot CLI, OpenAI
+// SDK "final response" helpers) otherwise see an empty turn (#4307). Keyed and
+// ordered by output_index so a repeated close overwrites instead of duplicating.
+function recordCompletedOutputItem(state, outputIndex, item) {
+  state.completedOutputItems ??= new Map();
+  const index = Number.isInteger(outputIndex) ? outputIndex : Number.parseInt(outputIndex, 10) || 0;
+  state.completedOutputItems.set(index, item);
+}
+
+function collectCompletedOutputItems(state) {
+  const recorded = state.completedOutputItems;
+  if (!(recorded instanceof Map) || recorded.size === 0) return [];
+  return [...recorded.entries()].sort((a, b) => a[0] - b[0]).map(([, item]) => item);
+}
+
 function sendCompleted(state, emit) {
   if (!state.completedSent) {
     state.completedSent = true;
     emit("response.completed", {
       type: "response.completed",
-      response: terminalPayload(state, "completed")
+      response: terminalPayload(state, "completed", { output: collectCompletedOutputItems(state) })
     });
   }
 }

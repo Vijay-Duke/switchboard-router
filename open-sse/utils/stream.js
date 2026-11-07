@@ -85,7 +85,20 @@ export function createSSEStream(options = {}) {
     }
   }
 
-  const state = mode === STREAM_MODE.TRANSLATE ? { ...initState(sourceFormat), provider, toolNameMap, model } : null;
+  // Direct chat→Responses route: the response translator may defer
+  // response.completed until the usage trailer (only safe here — on a pivoted
+  // route the terminal null chunk never reaches that translator).
+  const deferCompletionForUsage = targetFormat === FORMATS.OPENAI && sourceFormat === FORMATS.OPENAI_RESPONSES;
+  const state = mode === STREAM_MODE.TRANSLATE
+    ? { ...initState(sourceFormat), provider, toolNameMap, model, deferCompletionForUsage }
+    : null;
+  // Bound the deferred-completion wait: a broken upstream can stall after
+  // finish_reason with no usage trailer and no [DONE], holding the socket open.
+  const PENDING_COMPLETION_FLUSH_MS = 3000;
+  let completionFlushTimer = null;
+  function clearCompletionTimer() {
+    if (completionFlushTimer) { clearTimeout(completionFlushTimer); completionFlushTimer = null; }
+  }
 
   let totalContentLength = 0;
   // Observability previews only: saveRequestDetail truncates stored fields
@@ -127,6 +140,7 @@ export function createSSEStream(options = {}) {
   let streamFinalized = false;
   let streamCompletion = null;
   function finalizeStream() {
+    clearCompletionTimer();
     if (streamFinalized) return streamCompletion;
     streamFinalized = true;
     releasePending();
@@ -143,6 +157,22 @@ export function createSSEStream(options = {}) {
     }
     streamCompletion = Promise.resolve(onStreamComplete?.({ content: contentPreview.text(), thinking: thinkingPreview.text() }, finalUsage, ttftAt)).catch(() => {});
     return streamCompletion;
+  }
+
+  // Emit a deferred response.completed now — on [DONE], or when the watchdog
+  // gives up on a usage trailer that never arrives.
+  function flushPendingCompletion(controller) {
+    clearCompletionTimer();
+    if (!state?.completionPending || state.completedSent) return;
+    const completed = translateResponse(targetFormat, sourceFormat, null, state);
+    for (const item of completed || []) {
+      if (item === null || item === undefined) continue;
+      const output = formatSSE(item, sourceFormat);
+      reqLogger?.appendConvertedChunk?.(output);
+      controller.enqueue(sharedEncoder.encode(output));
+      sseEmittedCount++;
+    }
+    finalizeStream();
   }
 
   function finalizeNativeClaude(outcome) {
@@ -470,6 +500,9 @@ export function createSSEStream(options = {}) {
         // For Ollama: done=true is the final chunk with finish_reason/usage, must translate
         // For other formats: done=true is the [DONE] sentinel, skip
         if (parsed && parsed.done && targetFormat !== FORMATS.OLLAMA) {
+          // [DONE] ends any wait for a usage trailer, even if the upstream
+          // keeps the HTTP connection open.
+          if (deferCompletionForUsage) flushPendingCompletion(controller);
           // Synthesize response.failed if the Responses stream never sent a terminal event
           if (keepsOpenAIResponsesFormat && !openAIResponsesTerminalSeen) {
             const failedOutput = formatIncompleteOpenAIResponsesStreamFailure();
@@ -579,7 +612,16 @@ export function createSSEStream(options = {}) {
             reqLogger?.appendConvertedChunk?.(output);
             controller.enqueue(sharedEncoder.encode(output));
             sseEmittedCount++;
+            // Responses clients (codex) close on response.completed instead of [DONE]
+            if (deferCompletionForUsage && item?.event === "response.completed") finalizeStream();
           }
+        }
+        if (deferCompletionForUsage && state.completionPending && !state.completedSent && !completionFlushTimer) {
+          completionFlushTimer = setTimeout(() => {
+            completionFlushTimer = null;
+            try { flushPendingCompletion(controller); } catch { /* controller already closed */ }
+          }, PENDING_COMPLETION_FLUSH_MS);
+          completionFlushTimer.unref?.();
         }
         if (openAIResponsesTerminal && sourceFormat === FORMATS.OPENAI && !streamDoneSent) {
           const doneOutput = "data: [DONE]\n\n";
@@ -602,6 +644,7 @@ export function createSSEStream(options = {}) {
       const evtSummary = Object.entries(eventTypeCounts).map(([k, v]) => `${k}=${v}`).join(",") || "none";
       dbg("SSE", `flush | provider=${provider} | model=${model} | recvLines=${sseLineCount} | emitted=${sseEmittedCount} | events=[${evtSummary}]`);
       releasePending();
+      clearCompletionTimer();
       try {
         const remaining = decoder.decode();
         if (remaining) buffer += remaining;
@@ -726,6 +769,7 @@ export function createSSEStream(options = {}) {
 
     // Client abort / pipe error: flush never runs, so release chunk logs here.
     cancel() {
+      clearCompletionTimer();
       reqLogger?.close?.();
     }
   });
