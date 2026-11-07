@@ -30,8 +30,8 @@ vi.mock("@/lib/db/index.js", () => ({
 }));
 vi.mock("@/lib/disabledModelsDb", () => ({ getDisabledModels: mocks.getDisabledModels }));
 // Exercise the static catalog contract without making upstream discovery calls.
-vi.mock("open-sse/services/providerModels.js", () => ({
-  resolveProviderModels: vi.fn(async () => null),
+vi.mock("@/lib/providerModelDiscovery", () => ({
+  discoverConnectionModels: vi.fn(async () => ({ error: "discovery disabled in test", status: 503 })),
 }));
 vi.mock("@/sse/services/tokenRefresh", () => ({
   updateProviderCredentials: mocks.updateProviderCredentials,

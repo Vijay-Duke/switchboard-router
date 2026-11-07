@@ -49,52 +49,59 @@ afterEach(() => {
 });
 
 describe("/v1/models compatible-provider discovery", () => {
-  function savedCompatibleSnapshot() {
-    mocks.getProviderConnections.mockResolvedValueOnce([{
-      id: "compatible-connection",
-      provider: "openai-compatible-responses-5f69ccc9-f1e2-4faa-acf6-d5551eab7cce",
-      apiKey: "secret",
-      isActive: true,
-      providerSpecificData: {
-        baseUrl: "https://litellm.example/v1",
-        prefix: "lite-llm",
-        enabledModels: ["removed-model"],
-      },
-    }]);
+  const PROVIDER_ID = "openai-compatible-responses-5f69ccc9-f1e2-4faa-acf6-d5551eab7cce";
+  function savedModels(...ids) {
+    mocks.getCustomModels.mockResolvedValueOnce(
+      ids.map((id) => ({ providerAlias: PROVIDER_ID, id, type: "llm" })),
+    );
   }
 
-  it.each([[[]], [{ data: [] }], [{ models: [] }], [{ results: [] }]])(
-    "uses a successful empty compatible catalog instead of a stale snapshot (%j)",
+  it.each([[[]], [{ data: [] }], [{ models: [] }], [{ results: [] }], [{ data: [{ id: "unsaved-model" }] }]])(
+    "never advertises upstream models the dashboard has not saved (%j)",
     async (catalog) => {
-      savedCompatibleSnapshot();
-      const fetchMock = vi.fn().mockResolvedValue(Response.json(catalog));
-      global.fetch = fetchMock;
+      global.fetch = vi.fn().mockResolvedValue(Response.json(catalog));
       const { buildModelsList } = await import("../../src/app/api/v1/models/route.js");
       expect(await buildModelsList(["llm"])).toEqual([]);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
     },
   );
 
   it.each([
     [503, { data: [] }],
     [200, {}],
-    [200, { data: { invalid: "shape" } }],
-    [200, { data: [{ id: 42 }, {}] }],
-  ])("preserves the stored compatible snapshot for failed or invalid discovery (%i, %j)", async (status, catalog) => {
-    savedCompatibleSnapshot();
+    [200, { data: [] }],
+    [200, { data: [{ id: "other-model" }] }],
+  ])("serves saved models whatever the upstream catalog returns (%i, %j)", async (status, catalog) => {
+    savedModels("saved-model");
     global.fetch = vi.fn().mockResolvedValue(Response.json(catalog, { status }));
     const { buildModelsList } = await import("../../src/app/api/v1/models/route.js");
     const models = await buildModelsList(["llm"]);
-    expect(models.map((model) => model.id)).toEqual(["lite-llm/removed-model"]);
+    expect(models.map((model) => model.id)).toEqual(["lite-llm/saved-model"]);
   });
 
-  it("preserves the stored snapshot without requesting an intentionally skipped compatible catalog", async () => {
-    savedCompatibleSnapshot();
+  it("serves saved models without requesting an intentionally skipped compatible catalog", async () => {
+    savedModels("saved-model");
     global.fetch = vi.fn();
     const { buildModelsList } = await import("../../src/app/api/v1/models/route.js");
     const models = await buildModelsList(["llm"], { skipCompatibleDiscovery: true });
-    expect(models.map((model) => model.id)).toEqual(["lite-llm/removed-model"]);
+    expect(models.map((model) => model.id)).toEqual(["lite-llm/saved-model"]);
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("ignores a legacy enabledModels snapshot the dashboard does not show", async () => {
+    mocks.getProviderConnections.mockResolvedValueOnce([{
+      id: "compatible-connection",
+      provider: PROVIDER_ID,
+      apiKey: "secret",
+      isActive: true,
+      providerSpecificData: {
+        baseUrl: "https://litellm.example/v1",
+        prefix: "lite-llm",
+        enabledModels: ["stale-model"],
+      },
+    }]);
+    global.fetch = vi.fn().mockResolvedValue(Response.json({ data: [] }));
+    const { buildModelsList } = await import("../../src/app/api/v1/models/route.js");
+    expect(await buildModelsList(["llm"])).toEqual([]);
   });
 
   it("advertises Claude-shaped aliases for Claude Code gateway discovery", { timeout: 20000 }, async () => {
@@ -297,11 +304,13 @@ describe("/v1/models compatible-provider discovery", () => {
     }));
   });
 
-  it("discovers models for UUID-backed custom providers and preserves nested IDs", async () => {
+  it("serves saved nested IDs for UUID-backed custom providers", async () => {
+    savedModels("openai/gpt-5.6-sol", "vertex_ai/gemini-3.1-flash-lite");
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       data: [
         { id: "openai/gpt-5.6-sol" },
         { id: "vertex_ai/gemini-3.1-flash-lite" },
+        { id: "openai/not-saved" },
       ],
     }), { status: 200, headers: { "content-type": "application/json" } }));
     global.fetch = fetchMock;
@@ -313,6 +322,7 @@ describe("/v1/models compatible-provider discovery", () => {
       "lite-llm/openai/gpt-5.6-sol",
       "lite-llm/vertex_ai/gemini-3.1-flash-lite",
     ]);
+    // The upstream catalog is still read, to relay per-model capabilities.
     expect(fetchMock).toHaveBeenCalledWith(
       "https://litellm.example/v1/models",
       expect.objectContaining({
@@ -324,18 +334,12 @@ describe("/v1/models compatible-provider discovery", () => {
     );
   });
 
-  it("keeps probe-removed compatible models out of live discovery", async () => {
-    const providerId = "openai-compatible-responses-5f69ccc9-f1e2-4faa-acf6-d5551eab7cce";
+  it("keeps removed (disabled) saved models out of /v1/models", async () => {
+    savedModels("bedrock/stale-model", "MixedCase/Model", "bedrock/available-model");
     mocks.getDisabledModels.mockResolvedValueOnce({
-      [providerId]: ["bedrock/stale-model", "mixedcase/model"],
+      [PROVIDER_ID]: ["bedrock/stale-model", "mixedcase/model"],
     });
-    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: [
-        { id: "bedrock/stale-model" },
-        { id: "models/MixedCase/Model" },
-        { id: "bedrock/available-model" },
-      ],
-    }), { status: 200, headers: { "content-type": "application/json" } }));
+    global.fetch = vi.fn().mockResolvedValue(Response.json({ data: [] }));
 
     const { buildModelsList } = await import("../../src/app/api/v1/models/route.js");
     const models = await buildModelsList(["llm"]);
@@ -343,28 +347,6 @@ describe("/v1/models compatible-provider discovery", () => {
     expect(models.map((model) => model.id)).toEqual([
       "lite-llm/bedrock/available-model",
     ]);
-  });
-
-  it("replaces a stale enabled-model snapshot with the current live catalog", async () => {
-    mocks.getProviderConnections.mockResolvedValueOnce([{
-      id: "compatible-connection",
-      provider: "openai-compatible-responses-5f69ccc9-f1e2-4faa-acf6-d5551eab7cce",
-      apiKey: "secret",
-      isActive: true,
-      providerSpecificData: {
-        baseUrl: "https://litellm.example/v1",
-        prefix: "lite-llm",
-        enabledModels: ["openai/gpt-5.5"],
-      },
-    }]);
-    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      data: [{ id: "openai/gpt-5.6-sol" }],
-    }), { status: 200, headers: { "content-type": "application/json" } }));
-
-    const { buildModelsList } = await import("../../src/app/api/v1/models/route.js");
-    const models = await buildModelsList(["llm"]);
-
-    expect(models.map((model) => model.id)).toEqual(["lite-llm/openai/gpt-5.6-sol"]);
   });
 
   it("suppresses another compatible discovery hop for marked catalog requests", async () => {

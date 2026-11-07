@@ -9,8 +9,8 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/db/index.js", () => mocks);
 vi.mock("@/lib/disabledModelsDb", () => ({ getDisabledModels: mocks.getDisabledModels }));
-vi.mock("open-sse/services/providerModels.js", () => ({
-  resolveProviderModels: vi.fn(async () => null),
+vi.mock("@/lib/providerModelDiscovery", () => ({
+  discoverConnectionModels: vi.fn(async () => ({ error: "discovery disabled in test", status: 503 })),
 }));
 vi.mock("@/sse/services/tokenRefresh", () => ({
   refreshImportedCursorCredentials: vi.fn(async (connection) => connection),
