@@ -36,18 +36,29 @@ export function normalizeMessageContent(msg) {
   return msg;
 }
 
-// Check if message has valid non-empty content
+// Check if message has valid non-empty content.
+// A block type outside this list makes the whole message count as empty and be
+// dropped by prepareClaudeRequest, so anything a caller can legitimately send
+// alone must be listed. container_upload (Files API): a user turn whose only
+// block is a file reference is valid Anthropic input (#4316).
+const CONTENTFUL_BLOCKS = new Set([
+  CLAUDE_BLOCK.TOOL_USE,
+  CLAUDE_BLOCK.TOOL_RESULT,
+  CLAUDE_BLOCK.IMAGE,
+  CLAUDE_BLOCK.DOCUMENT,
+  CLAUDE_BLOCK.CONTAINER_UPLOAD,
+]);
+
+function isContentfulBlock(block) {
+  if (!block) return false;
+  if (block.type === CLAUDE_BLOCK.TEXT) return !!block.text?.trim();
+  return CONTENTFUL_BLOCKS.has(block.type);
+}
+
 export function hasValidContent(msg) {
   if (typeof msg.content === "string" && msg.content.trim()) return true;
-  if (Array.isArray(msg.content)) {
-    return msg.content.some(block =>
-      (block.type === CLAUDE_BLOCK.TEXT && block.text?.trim()) ||
-      block.type === CLAUDE_BLOCK.TOOL_USE ||
-      block.type === CLAUDE_BLOCK.TOOL_RESULT ||
-      block.type === CLAUDE_BLOCK.IMAGE ||
-      block.type === CLAUDE_BLOCK.DOCUMENT
-    );
-  }
+  if (Array.isArray(msg.content)) return msg.content.some(isContentfulBlock);
+  if (msg.content && typeof msg.content === "object") return isContentfulBlock(msg.content);
   return false;
 }
 
@@ -183,6 +194,8 @@ export function normalizeClaudePassthrough(body, model = "") {
     else delete body.output_config;
   }
 
+  const originalLastRole = Array.isArray(body.messages) ? body.messages[body.messages.length - 1]?.role : undefined;
+
   // Bare-object content → one-block array before the fold below reads it.
   if (Array.isArray(body.messages)) {
     for (const msg of body.messages) normalizeMessageContent(msg);
@@ -316,9 +329,22 @@ export function normalizeClaudePassthrough(body, model = "") {
         !(block?.type === CLAUDE_BLOCK.TEXT && !String(block.text ?? "").trim()));
       return msg.content.length > 0;
     });
+    body.messages = ensureTrailingUserTurn(body.messages, originalLastRole);
   }
 
   return body;
+}
+
+// Newer Claude models reject a body that ends on an assistant turn (prefill).
+// Empty-turn cleanup can drop the client's final user turn and leave the
+// previous assistant turn last; restore a minimal user turn then. A client that
+// itself ended on assistant (intentional prefill) is left alone.
+const TRAILING_USER_PLACEHOLDER = "Continue.";
+
+export function ensureTrailingUserTurn(messages, originalLastRole) {
+  if (!Array.isArray(messages) || originalLastRole === ROLE.ASSISTANT) return messages;
+  if (messages[messages.length - 1]?.role !== ROLE.ASSISTANT) return messages;
+  return [...messages, { role: ROLE.USER, content: [{ type: CLAUDE_BLOCK.TEXT, text: TRAILING_USER_PLACEHOLDER }] }];
 }
 
 // Put a 5m breakpoint on the last cache-eligible block of a message.
@@ -461,6 +487,7 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
     }
 
     const len = body.messages.length;
+    const originalLastRole = body.messages[len - 1]?.role;
     let filtered = [];
 
     // Pass 1: remove cache_control + filter empty messages
@@ -485,6 +512,7 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
     // Pass 1.5: Fix tool_use/tool_result ordering
     // Each tool_use must have tool_result in the NEXT message (not same message with other content)
     filtered = fixToolUseOrdering(filtered);
+    filtered = ensureTrailingUserTurn(filtered, originalLastRole);
 
     body.messages = filtered;
 

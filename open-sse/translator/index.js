@@ -1,6 +1,7 @@
 import { FORMATS } from "./formats.js";
 import { ensureToolCallIds, fixMissingToolResponses } from "./concerns/toolCall.js";
-import { prepareClaudeRequest } from "./formats/claude.js";
+import { prepareClaudeRequest, ensureTrailingUserTurn } from "./formats/claude.js";
+import { ROLE, GEMINI_ROLE } from "./schema/roles.js";
 import { cloakClaudeTools, decloakStreamChunk } from "../utils/claudeCloaking.js";
 import { filterToOpenAIFormat } from "./formats/openai.js";
 import { normalizeThinkingConfig } from "../services/provider.js";
@@ -31,10 +32,26 @@ function stripContentTypes(body, stripList = []) {
   }
 }
 
+// Role the client's conversation actually ended on, in the source format's own
+// shape (Gemini/Antigravity: contents[], Responses/Codex: input[]). Only an
+// explicit trailing model/assistant turn is real prefill and maps to
+// ROLE.ASSISTANT; any other tail stays undefined so the emptied-turn fix applies.
+function detectClientLastRole(body) {
+  if (Array.isArray(body?.messages)) return body.messages[body.messages.length - 1]?.role;
+  const items = Array.isArray(body?.contents) ? body.contents
+    : Array.isArray(body?.request?.contents) ? body.request.contents
+    : Array.isArray(body?.input) ? body.input : null;
+  if (!items) return undefined;
+  const role = items[items.length - 1]?.role;
+  return role === ROLE.ASSISTANT || role === GEMINI_ROLE.MODEL ? ROLE.ASSISTANT : undefined;
+}
+
 // Translate request: source -> openai -> target
 export function translateRequest(sourceFormat, targetFormat, model, body, stream = true, credentials = null, provider = null, reqLogger = null, stripList = [], connectionId = null, clientTool = null) {
   ensureInitialized();
   let result = body;
+  // Role the client actually ended on, before any translator drops an emptied turn.
+  const clientLastRole = detectClientLastRole(body);
 
   // Strip explicit content types (opt-in via strip[] in PROVIDER_MODELS entry)
   stripContentTypes(result, stripList);
@@ -101,6 +118,7 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
   if (targetFormat === FORMATS.CLAUDE) {
     const apiKey = credentials?.accessToken || credentials?.apiKey || null;
     result = prepareClaudeRequest(result, provider, apiKey, connectionId, credentials?.rawHeaders, clientSessionId, credentials?.connectionId || apiKey);
+    if (Array.isArray(result?.messages)) result.messages = ensureTrailingUserTurn(result.messages, clientLastRole);
   }
 
   // Claude cloaking: rename client tools with CLAUDE_TOOL_SUFFIX (anti-ban)
