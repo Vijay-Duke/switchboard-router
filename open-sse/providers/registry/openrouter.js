@@ -58,6 +58,7 @@ const moduleDefault = {
   // Async video jobs (POST /videos → { id, status }, GET /videos/{id} polls).
   // Docs: https://openrouter.ai/docs/api/api-reference/videos
   videoConfig: {
+    identity: "openai-node",
     baseUrl: "https://openrouter.ai/api/v1/videos",
     headers: {"HTTP-Referer":"https://endpoint-proxy.local","X-Title":"Endpoint Proxy"},
   },

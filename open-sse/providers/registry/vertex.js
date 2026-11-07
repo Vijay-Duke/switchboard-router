@@ -36,7 +36,7 @@ const moduleDefault = {
   serviceKinds: ["llm","imageToText","video"],
   // Veo via predictLongRunning + fetchPredictOperation (adapter: handlers/videoProviders/vertex.js).
   // Docs: https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/veo-video-generation
-  videoConfig: { baseUrl: "https://aiplatform.googleapis.com" },
+  videoConfig: { identity: "openai-node", baseUrl: "https://aiplatform.googleapis.com" },
 };
 
 export default moduleDefault;
