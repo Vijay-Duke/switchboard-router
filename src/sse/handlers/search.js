@@ -180,8 +180,14 @@ async function handleSingleProviderSearch(body, providerInput, request, clientKe
   let lastError = null;
   let lastStatus = null;
 
+  // Lock scope for search (upstream ec669280). With model=null,
+  // markAccountUnavailable writes an account-wide `__all` lock, so one failed
+  // search would take the same key offline for chat too. Read and write the
+  // lock under the same search-only key.
+  const searchLockKey = `websearch:${providerId}`;
+
   while (true) {
-    const credentials = await getProviderCredentials(providerId, excludeConnectionIds, null, {
+    const credentials = await getProviderCredentials(providerId, excludeConnectionIds, searchLockKey, {
       clientKeyId,
     });
 
@@ -226,7 +232,7 @@ async function handleSingleProviderSearch(body, providerInput, request, clientKe
           });
         },
         onRequestSuccess: async () => {
-          await clearAccountError(credentials.connectionId, credentials);
+          await clearAccountError(credentials.connectionId, credentials, searchLockKey);
         }
       });
 
@@ -236,6 +242,7 @@ async function handleSingleProviderSearch(body, providerInput, request, clientKe
         result.status,
         result.error,
         providerId,
+        searchLockKey,
       );
       if (shouldFallback) {
         return { retry: true, error: result.error, status: result.status };
