@@ -62,6 +62,31 @@ function decryptSecrets(obj) {
   return mapSecrets(obj, (stored) => decryptSecret(stored) ?? stored);
 }
 
+const MODEL_LOCK_PREFIX = "modelLock_";
+
+/**
+ * Clear stale health state (model locks, backoff, rate-limit, error code) when
+ * a connection is explicitly re-validated or re-authenticated as active
+ * (upstream #3830). Deliberately NOT applied to every `testStatus: "active"`
+ * write: token-refresh hooks also write that, and must not wipe a live
+ * 429/quota cooldown.
+ */
+function resetHealthStateOnActivation(existing, patch) {
+  if (patch?.testStatus !== "active") return patch;
+  const normalized = {
+    ...patch,
+    lastError: Object.hasOwn(patch, "lastError") ? patch.lastError : null,
+    lastErrorAt: Object.hasOwn(patch, "lastErrorAt") ? patch.lastErrorAt : null,
+    errorCode: null,
+    rateLimitedUntil: null,
+    backoffLevel: 0,
+  };
+  for (const key of Object.keys(existing || {})) {
+    if (key.startsWith(MODEL_LOCK_PREFIX)) normalized[key] = null;
+  }
+  return normalized;
+}
+
 function rowToConn(row) {
   if (!row) return null;
   const extra = decryptSecrets(parseJson(row.data, {}));
@@ -238,7 +263,9 @@ export async function createProviderConnection(data) {
         throw err;
       }
       const { allowOverwrite: _allowOverwrite, ...updateData } = data;
-      const merged = { ...existing, ...updateData, updatedAt: now };
+      // Re-login / re-import onto an existing connection is an explicit
+      // re-authentication: drop stale locks if it comes back active.
+      const merged = { ...existing, ...resetHealthStateOnActivation(existing, updateData), updatedAt: now };
       upsert(db, merged);
       result = merged;
       return;
@@ -291,7 +318,11 @@ export async function updateProviderConnection(id, data) {
     const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
     if (!row) { result = null; return; }
     const existing = rowToConn(row);
-    const merged = { ...existing, ...data, updatedAt: new Date().toISOString() };
+    // `resetHealthState: true` = explicit validation said the connection is
+    // healthy (connection test); clears stale locks. Never persisted.
+    const { resetHealthState, ...patch } = data;
+    const normalized = resetHealthState === true ? resetHealthStateOnActivation(existing, patch) : patch;
+    const merged = { ...existing, ...normalized, updatedAt: new Date().toISOString() };
     const identityChanged = JSON.stringify(getQuotaStateIdentity(existing)) !== JSON.stringify(getQuotaStateIdentity(merged));
     const credentialReplaced = ["accessToken", "apiKey", "refreshToken"].some(key => data[key] !== undefined && data[key] !== existing[key]);
     if (identityChanged || credentialReplaced) merged.lastQuota = null;
