@@ -188,6 +188,10 @@ export const PROVIDER_CAPABILITIES = {
     "qmodel":         { vision: true, reasoning: true, thinkingFormat: "qwen", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 65536 },  // Qwen3.7-Plus
     "qfmodel":        { vision: true, reasoning: true, thinkingFormat: "qwen", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 65536 },  // Qwen3.8-Flash
     "qmodel_38max":   { vision: true, reasoning: true, thinkingFormat: "qwen", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 65536 },      // Qwen3.8-Max
+    // Frontier reasoning pair; absent from many per-account catalogs, so they are
+    // routed through a static model_config (see shared/qoder/constants.js).
+    "smodel":         { vision: true, reasoning: true, thinkingCanDisable: false, contextWindow: 180000, maxOutput: 65536 }, // Sonus
+    "cmodel":         { vision: true, reasoning: true, thinkingCanDisable: false, contextWindow: 180000, maxOutput: 65536 }, // Cantus
   },
 };
 
