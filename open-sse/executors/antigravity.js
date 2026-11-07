@@ -246,7 +246,9 @@ export class AntigravityExecutor extends BaseExecutor {
     return {
       ...body,
       project: projectId,
-      model: model,
+      // body.model carries the resolved upstream id (e.g. gemini-3.7-flash-tiered);
+      // `model` is the public alias the client asked for.
+      model: body.model || model,
       userAgent: "antigravity",
       requestType: "agent",
       requestId: `agent-${crypto.randomUUID()}`,
