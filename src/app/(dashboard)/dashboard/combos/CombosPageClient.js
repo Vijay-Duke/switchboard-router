@@ -85,6 +85,7 @@ export default function CombosPageClient({ initialData }) {
     return normalized;
   });
   const [confirmState, setConfirmState] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const { copied, copy } = useCopyToClipboard();
 
   const fetchData = useCallback(async () => {
@@ -320,6 +321,9 @@ export default function CombosPageClient({ initialData }) {
     }
   };
 
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredCombos = filterCombos(combos, searchQuery);
+
   if (loading) {
     return (
       <div className="flex flex-col gap-6">
@@ -369,6 +373,39 @@ export default function CombosPageClient({ initialData }) {
         </Button>
       </div>
 
+      {combos.length > 0 && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative w-full sm:w-64">
+            <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-text-muted">
+              search
+            </span>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search combos…"
+              aria-label="Search combos"
+              className="w-full rounded-lg border border-border bg-surface py-2 pl-10 pr-9 text-sm text-text-main placeholder-text-muted/70 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-text-muted transition-colors hover:text-text-main"
+              >
+                <span className="material-symbols-outlined text-[16px]">close</span>
+              </button>
+            )}
+          </div>
+          {normalizedQuery && (
+            <span className="text-xs text-text-muted">
+              {filteredCombos.length} of {combos.length} shown
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Combos List */}
       {combos.length === 0 ? (
         <Card>
@@ -385,9 +422,19 @@ export default function CombosPageClient({ initialData }) {
             </Button>
           </div>
         </Card>
+      ) : filteredCombos.length === 0 ? (
+        <Card>
+          <div className="text-center py-10">
+            <p className="text-text-main font-medium mb-1">No combos match “{searchQuery.trim()}”</p>
+            <p className="text-sm text-text-muted mb-4">Try a shorter query, or clear the search to see all {combos.length} combos.</p>
+            <Button variant="secondary" onClick={() => setSearchQuery("")}>
+              Clear search
+            </Button>
+          </div>
+        </Card>
       ) : (
         <div className="flex flex-col gap-4">
-          {combos.map((combo) => (
+          {filteredCombos.map((combo) => (
             <ComboCard
               key={combo.id}
               combo={combo}
@@ -492,6 +539,21 @@ function strategyPatchFromForm(form) {
     patch.explorationRate = "";
   }
   return patch;
+}
+
+/**
+ * Case-insensitive search over the combo name and its model ids, so both
+ * "deepseek" and "deepseek-v4.1-flash" find the right rows.
+ * @param {Array<{ name?: string, models?: unknown[] }>} combos
+ * @param {string} query
+ */
+export function filterCombos(combos, query) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return combos;
+  return combos.filter((c) => (
+    String(c.name || "").toLowerCase().includes(q)
+    || (c.models || []).some((m) => String(m).toLowerCase().includes(q))
+  ));
 }
 
 /** Return true when a non-empty Auto worker pool has no vision-capable model. */
