@@ -1,3 +1,13 @@
+# v0.9.66 (2026-11-08)
+
+## Fixes
+- **`/v1/models` matches the provider dashboard**: every provider now serves exactly the models its dashboard page lists as enabled. Live-discovered and imported models are served (`cx/gpt-6.1-terra` was missing because `/v1/models` never ran Codex discovery), removed models stay out, and bare-name aliases such as `gpt-4o -> codex/gpt-4o` no longer advertise provider models the page never lists (they still route). Discovery moved into `src/lib/providerModelDiscovery.js`, shared by the dashboard route and `/v1/models`, with a 10-second budget per connection.
+- **Behaviour change, compatible providers**: OpenAI- and Anthropic-compatible providers now list only the models saved on their dashboard page instead of the whole upstream catalog. Import the models you want listed.
+
+## Tests
+- `v1-models-serves-dashboard-selection`: live-only model served, only enabled models served, bare aliases add no rows, imported models served when discovery is down, removed models stay out, untyped live rows count as chat models.
+- `v1-models-compatible-discovery` / `models-compatible-effort-caps`: compatible providers serve saved models only, while upstream capabilities are still relayed.
+
 # v0.9.65 (2026-11-05)
 
 ## Fixes
