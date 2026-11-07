@@ -134,7 +134,7 @@ export async function refreshAccessToken(provider, refreshToken, credentials, lo
   }, log);
 }
 
-export async function refreshClaudeOAuthToken(refreshToken, log) {
+export async function refreshClaudeOAuthToken(refreshToken, log, proxyOptions = null) {
   if (!refreshToken) return null;
   return dedupRefresh("claude", refreshToken, async () => {
   try {
@@ -152,7 +152,7 @@ export async function refreshClaudeOAuthToken(refreshToken, log) {
       identity: PROVIDERS.claude?.identity,
       provider: "claude",
       format: PROVIDERS.claude?.format,
-    });
+    }, proxyOptions);
 
     if (!response.ok) {
       const errorText = await response.text();

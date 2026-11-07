@@ -1,6 +1,8 @@
 const REFRESH_RESULT_TTL_MS = 10_000;
 const MAX_DEDUP_ENTRIES = 256;
-const refreshDedupCache = new Map();
+// Shared across Next.js module graphs in one process; see
+// oauthCredentialManager.js for why a module-level map is not enough.
+const refreshDedupCache = (globalThis.__switchboardRefreshDedupCache ??= new Map());
 
 function trimDedupCache() {
   while (refreshDedupCache.size > MAX_DEDUP_ENTRIES) {
