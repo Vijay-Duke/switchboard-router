@@ -41,6 +41,10 @@ const moduleDefault = {
       format: "openai-responses",
       baseUrl: "https://opencode.ai/zen/go/v1/responses",
       auth: { combined: true, header: "Authorization", scheme: "bearer" },
+      // /responses rejects the Chat-shaped thinking fields (reasoning_effort,
+      // thinking:{type}) with 503 "Endpoint is unavailable"; it accepts the
+      // nested reasoning:{effort,summary} for every model it serves.
+      thinkingFormat: "openai-responses",
     },
   ],
   models: [

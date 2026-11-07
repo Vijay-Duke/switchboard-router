@@ -228,3 +228,16 @@ describe("extractReasoningText (response shapes)", () => {
     expect(extractReasoningText({ content: "hello" })).toBe("");
   });
 });
+
+describe("per-transport thinkingFormat (upstream d07e5bc3)", () => {
+  it("OpenCode Go /responses gets nested reasoning, not Chat-shaped fields", () => {
+    const out = apply("openai-responses", "deepseek-v4-flash", { reasoning_effort: "high" }, "opencode-go");
+    expect(out.reasoning).toEqual({ effort: "high", summary: "auto" });
+    expect(out.reasoning_effort).toBeUndefined();
+    expect(out.thinking).toBeUndefined();
+  });
+  it("OpenCode Go chat wire keeps the model's own thinking shape", () => {
+    const out = apply("openai", "deepseek-v4-flash", { reasoning_effort: "high" }, "opencode-go");
+    expect(out.thinking).toEqual({ type: "enabled" });
+  });
+});
