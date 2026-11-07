@@ -184,6 +184,11 @@ function claudeDocumentToOpenAI(block, preserveUrl = false) {
 
 // Convert single Claude message - returns single message or array of messages
 function convertClaudeMessage(msg, preserveToolDocumentUrls = false) {
+  // Bare-object content (some clients) → one-block array, before the role
+  // branch: systemReminderText only reads arrays and strings.
+  if (msg.content && typeof msg.content === "object" && !Array.isArray(msg.content)) {
+    msg.content = [msg.content];
+  }
   // Mid-conversation system message -> user (per Anthropic placement rules)
   if (msg.role === ROLE.SYSTEM) {
     const text = systemReminderText(msg.content);

@@ -24,6 +24,18 @@ export function lastCacheableToolIndex(tools) {
   return -1;
 }
 
+// Some clients send content as a single block object instead of a one-element
+// array; every leg that reads messages expects an array (or string), so the
+// turn was dropped or zeroed. Wrap it, dropping any client marker on it.
+export function normalizeMessageContent(msg) {
+  const c = msg?.content;
+  if (c && typeof c === "object" && !Array.isArray(c)) {
+    delete c.cache_control;
+    msg.content = [c];
+  }
+  return msg;
+}
+
 // Check if message has valid non-empty content
 export function hasValidContent(msg) {
   if (typeof msg.content === "string" && msg.content.trim()) return true;
@@ -169,6 +181,11 @@ export function normalizeClaudePassthrough(body, model = "") {
     const { effort, ...outputConfig } = body.output_config;
     if (Object.keys(outputConfig).length > 0) body.output_config = outputConfig;
     else delete body.output_config;
+  }
+
+  // Bare-object content → one-block array before the fold below reads it.
+  if (Array.isArray(body.messages)) {
+    for (const msg of body.messages) normalizeMessageContent(msg);
   }
 
   // 2. Fold mid-conversation system messages into the neighbouring turn.
@@ -325,6 +342,9 @@ function markLastCacheableBlock(msg) {
 // (normalize, tool dedupe, token savers) — otherwise the anchor drifts off the tail.
 export function anchorClaudeCache(body) {
   if (!body || typeof body !== "object") return body;
+  if (Array.isArray(body.messages)) {
+    for (const msg of body.messages) normalizeMessageContent(msg);
+  }
 
   if (Array.isArray(body.system)) {
     const last = body.system.length - 1;
@@ -446,6 +466,7 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
     // Pass 1: remove cache_control + filter empty messages
     for (let i = 0; i < len; i++) {
       const msg = body.messages[i];
+      normalizeMessageContent(msg);
 
       // Remove cache_control from content blocks
       if (Array.isArray(msg.content)) {
