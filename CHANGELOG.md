@@ -1,3 +1,13 @@
+# v0.9.67 (2026-11-08)
+
+## Fixes
+- **Claude accounts no longer need re-adding every few days**: Claude connections were dying with `OAuth access token has expired` and had to be deleted and re-added. Next.js loads the route handlers and the background jobs (token refresh, quota auto-ping) as separate module graphs, so the OAuth refresh lock and dedup cache existed twice in one server process. A chat-time refresh and a background refresh could both spend the same single-use Claude refresh token, and Anthropic revokes the whole login when a token is replayed. The refresh state now lives on `globalThis`, so every bundle shares one lock.
+- **Claude 401 refresh**: the executor's on-401 refresh goes through the shared credential manager (lock, dedup, a logged and classified `invalid_grant`, a stored expiry) instead of an unlocked direct call that failed silently.
+- **Connection test**: the provider "Test" button refreshes Claude through the same lock and saves rotated tokens only if no newer pair has been stored (compare-and-set), so it can no longer restore a spent token.
+
+## Tests
+- `oauth-refresh-shared-across-bundles`: two separately loaded module instances spend one single-use token exactly once, the Claude 401 path joins the shared lock, and a replayed token is reported as unrecoverable. All three fail on v0.9.66.
+
 # v0.9.66 (2026-11-08)
 
 ## Fixes
