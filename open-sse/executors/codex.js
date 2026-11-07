@@ -161,8 +161,11 @@ function resolveCacheSessionId(body, credentials) {
 }
 
 // Responses Lite models have no "none"/"minimal" tier; clamp to their floor.
+// Codex-only "ultra" maps to their top tier ("max").
 function liteEffort(value, responsesLite) {
-  if (responsesLite && (value === "none" || value === "minimal")) return "low";
+  if (!responsesLite) return value;
+  if (value === "none" || value === "minimal") return "low";
+  if (value === "ultra") return "max";
   return value;
 }
 
