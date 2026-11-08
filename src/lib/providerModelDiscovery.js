@@ -7,7 +7,7 @@
  * registry catalog (with a `warning`) or returns `error` + `status`.
  */
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
-import { GEMINI_CONFIG, ANTIGRAVITY_CONFIG } from "@/lib/oauth/constants/oauth";
+import { GEMINI_CONFIG, ANTIGRAVITY_CONFIG, ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
 import {
   refreshGoogleToken,
   refreshImportedCursorCredentials,
@@ -22,6 +22,7 @@ import { resolveProviderModels, parseGoogleAvailableModels } from "open-sse/serv
 import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
 import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { NOUS_MODELS_URL, normalizeNousModels } from "open-sse/services/nous.js";
+import { resolveZedModels } from "open-sse/shared/zedAuth.js";
 import { MODEL_CATALOG_HEADER } from "@/lib/modelCatalogDiscovery";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
@@ -479,7 +480,46 @@ const PROVIDER_MODELS_CONFIG = {
         "Cursor model discovery failed",
       );
     },
-  }
+  },
+
+  // Zed has no static catalog by design (live /models only) — same cursor
+  // direct pattern: resolve with the connection's own credentials (never
+  // exposed to the browser), return rich metadata, drop disabled entries.
+  // Empty/failure yields an explicit warning, never a silent zero list.
+  zed: {
+    customResolver: async (connection) => {
+      try {
+        const result = await resolveZedModels({
+          accessToken: connection.accessToken,
+          providerSpecificData: connection.providerSpecificData || {},
+        }, { config: ZED_HOSTED_CONFIG, forceRefresh: true });
+        const models = (result?.models || [])
+          .filter((m) => m && !m.isDisabled)
+          .map((m) => ({
+            id: m.id,
+            name: m.name || m.id,
+            provider: m.provider,
+            contextLength: m.contextLength,
+            contextLengthInMaxMode: m.contextLengthInMaxMode,
+            maxOutputTokens: m.maxOutputTokens,
+            supportsTools: m.supportsTools,
+            supportsImages: m.supportsImages,
+            supportsThinking: m.supportsThinking,
+            supportsDisablingThinking: m.supportsDisablingThinking,
+            supportsFastMode: m.supportsFastMode,
+            supportsServerSideCompaction: m.supportsServerSideCompaction,
+            supportedEffortLevels: m.supportedEffortLevels || [],
+            supportsStreamingTools: m.supportsStreamingTools,
+            supportsParallelToolCalls: m.supportsParallelToolCalls,
+          }));
+        if (models.length > 0) return { models };
+        return { models: [], warning: "Zed returned no live models." };
+      } catch (error) {
+        console.log("Failed to fetch Zed models dynamically:", error.message);
+        return { models: [], warning: `Failed to fetch Zed models: ${error.message}` };
+      }
+    },
+  },
 };
 
 

@@ -264,10 +264,11 @@ export async function POST(request, { params }) {
     if (action === "register-session") {
       // Register proxy session out of URL query (state) + body (codeVerifier).
       // Zed's codeVerifier encodes the RSA private key — must stay out of URL/logs.
-      const state = searchParams.get("state") || body?.state;
+      const { searchParams: registerParams } = new URL(request.url);
+      const state = registerParams.get("state") || body?.state;
       if (!state) return NextResponse.json({ error: "Missing state" }, { status: 400 });
       let ok = false;
-      if (provider === "zed") ok = registerZedSession({ state, codeVerifier: body?.codeVerifier });
+      if (provider === "zed") ok = registerZedSession({ state, codeVerifier: body?.codeVerifier, systemId: body?.systemId });
       else return NextResponse.json({ error: "register-session only supported for zed" }, { status: 400 });
       return NextResponse.json({ success: ok });
     }
@@ -309,7 +310,7 @@ export async function POST(request, { params }) {
     }
 
     if (action === "exchange") {
-      const { code, redirectUri, codeVerifier, state, meta } = body;
+      const { code, redirectUri, codeVerifier, state, meta, systemId } = body;
 
       // Cline and ClinePass use authorization_code without PKCE. Kimchi returns a browser token.
       // None of them carry our `state` through the upstream, so there is no
@@ -425,8 +426,13 @@ export async function POST(request, { params }) {
         return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
       }
 
-      // Exchange code for tokens (meta carries provider-specific params, e.g. gitlab clientId/baseUrl)
-      const tokenData = await exchangeTokens(provider, code, effectiveRedirectUri, effectiveVerifier, state, meta);
+      // Exchange code for tokens (meta carries provider-specific params, e.g. gitlab clientId/baseUrl).
+      // systemId (Zed) is merged into meta so the login attempt's own id is
+      // used instead of a freshly prepared one. Ignored by other providers.
+      const exchangeMeta = (meta || systemId)
+        ? { ...(meta || {}), ...(systemId ? { systemId } : {}) }
+        : undefined;
+      const tokenData = await exchangeTokens(provider, code, effectiveRedirectUri, effectiveVerifier, state, exchangeMeta);
 
       // Save to database
       const connection = await createProviderConnection({

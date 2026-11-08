@@ -29,6 +29,15 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const pollingAbortRef = useRef(false);
   const flowGenerationRef = useRef(0);
   const openedRef = useRef(false);
+  // Proxy-flow session ledger: which provider's proxy THIS modal session
+  // started, and whether its stop was already sent. Every stop-proxy call is
+  // gated on this — parent re-renders can never spam it, and a close stops
+  // the owned proxy exactly once.
+  const flowRef = useRef({ proxyStarted: false, proxyProvider: null, stopSent: false });
+  // isOpen is mirrored into a ref so in-flight proxy flows can notice a
+  // mid-flight close and clean up after themselves.
+  const isOpenRef = useRef(isOpen);
+  useEffect(() => { isOpenRef.current = isOpen; }, [isOpen]);
   const { copied, copy } = useCopyToClipboard();
 
   // State for client-only values to avoid hydration mismatch
@@ -60,6 +69,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
           redirectUri: authData.redirectUri,
           codeVerifier: authData.codeVerifier,
           state,
+          // Zed: thread the login attempt's system_id so the stored
+          // connection keeps the id sent to zed.dev (see register-session).
+          ...(authData.systemId ? { systemId: authData.systemId } : {}),
           ...(oauthMeta ? { meta: oauthMeta } : {}),
         }),
       });
@@ -158,12 +170,23 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     setPolling(false);
   }, [provider, onSuccess]);
 
+  // Stop the proxy owned by THIS modal session, at most once. Re-renders,
+  // repeated closes, and post-completion calls are all no-ops by construction.
+  const stopOwnedProxy = useCallback(() => {
+    const flow = flowRef.current;
+    if (flow.proxyStarted && !flow.stopSent && flow.proxyProvider) {
+      flow.stopSent = true;
+      fetch(`/api/oauth/${flow.proxyProvider}/stop-proxy`).catch(() => {});
+    }
+  }, []);
+
   // Proxy OAuth flow (Zed): dynamic-port local callback → auto exchange.
   // 1. Start the local callback server (returns a dynamic port + callback URL).
   // 2. Build the authorize URL with redirect_uri = proxy callback URL.
   // 3. Register the session so the proxy can match the incoming callback.
-  //    code_verifier encodes the RSA private key for decrypt; sent via POST
-  //    body so the private key never lands in URL/query logs.
+  //    code_verifier encodes the RSA private key for decrypt (+ system_id so
+  //    the stored connection keeps the login attempt's id); sent via POST
+  //    body so secrets never land in URL/query logs.
   // 4. Open popup; proxy auto-exchanges on callback, modal polls poll-status.
   const startProxyFlow = useCallback(async (providerId, generation) => {
     const startRes = await fetch(`/api/oauth/${providerId}/start-proxy`);
@@ -172,25 +195,53 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     if (!startRes.ok || !startData.success || !startData.callbackUrl) {
       throw new Error(startData.reason || startData.error || `Failed to start ${providerId} callback server`);
     }
+    // Take ownership immediately so a close during the remaining flight still
+    // cleans this proxy up (via the close effect or the abort below).
+    flowRef.current.proxyStarted = true;
+    flowRef.current.proxyProvider = providerId;
+    flowRef.current.stopSent = false;
+    if (!isOpenRef.current) {
+      stopOwnedProxy();
+      return;
+    }
     const authorizeUrl = new URL(`/api/oauth/${providerId}/authorize`, window.location.origin);
     authorizeUrl.searchParams.set("redirect_uri", startData.callbackUrl);
     const authRes = await fetch(authorizeUrl);
     const authData = await authRes.json();
     if (generation !== flowGenerationRef.current) return;
-    if (!authRes.ok) throw new Error(authData.error);
+    if (!authRes.ok) {
+      stopOwnedProxy();
+      throw new Error(authData.error);
+    }
+    if (!isOpenRef.current) {
+      stopOwnedProxy();
+      return;
+    }
     const regBody = { state: authData.state };
     if (authData.codeVerifier) regBody.codeVerifier = authData.codeVerifier;
-    await fetch(`/api/oauth/${providerId}/register-session`, {
+    if (authData.systemId) regBody.systemId = authData.systemId;
+    const regRes = await fetch(`/api/oauth/${providerId}/register-session`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(regBody),
     });
+    let regData = null;
+    try {
+      regData = await regRes.json();
+    } catch {
+      regData = null;
+    }
+    if (!regRes.ok || regData?.success === false) {
+      stopOwnedProxy();
+      throw new Error(regData?.error || "Failed to register login session; please retry");
+    }
     if (generation !== flowGenerationRef.current) return;
+    if (!isOpenRef.current) return; // closed mid-flight: close effect owns cleanup now
     setAuthData({ ...authData, redirectUri: startData.callbackUrl, proxyProvider: providerId });
     setStep("waiting");
     popupRef.current = window.open(authData.authUrl, "oauth_popup", "width=600,height=700");
     if (!popupRef.current) setStep("input"); // popup blocked → fall back to manual paste
-  }, []);
+  }, [stopOwnedProxy]);
 
   // Start OAuth flow
   const startOAuthFlow = useCallback(async () => {
@@ -343,6 +394,14 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       if (generation !== flowGenerationRef.current) return;
       setAuthData({ ...data, redirectUri, codexServerSide, xaiServerSide });
 
+      // Take ownership of server-side proxies so close stops them exactly once
+      // (replaces the per-provider stop branches; same behavior, one ledger).
+      if ((provider === "codex" && codexProxyActive) || (provider === "xai" && xaiProxyActive)) {
+        flowRef.current.proxyStarted = true;
+        flowRef.current.proxyProvider = provider;
+        flowRef.current.stopSent = false;
+      }
+
       if (provider === "codex" && codexProxyActive) {
         // Proxy active: callback will be handled server-side (auto-exchange) or via channels (fallback)
         setStep("waiting");
@@ -388,21 +447,18 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       setDeviceData(null);
       setPolling(false);
       pollingAbortRef.current = false;
+      flowRef.current = { proxyStarted: false, proxyProvider: null, stopSent: false };
       startOAuthFlow();
     } else if (!isOpen) {
-      // Abort polling and cleanup proxy when modal closes
+      // Abort polling and stop the proxy THIS modal session started, exactly
+      // once. Unrelated parent re-renders cannot reach the stop call.
       flowGenerationRef.current += 1;
       pollingAbortRef.current = true;
       openedRef.current = false;
-      if (provider === "codex") {
-        fetch("/api/oauth/codex/stop-proxy").catch(() => {});
-      } else if (provider === "xai") {
-        fetch("/api/oauth/xai/stop-proxy").catch(() => {});
-      } else if (PROXY_OAUTH_PROVIDERS.has(provider)) {
-        fetch(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
-      }
+      stopOwnedProxy();
+      flowRef.current = { proxyStarted: false, proxyProvider: null, stopSent: false };
     }
-  }, [isOpen, provider, startOAuthFlow]);
+  }, [isOpen, provider, startOAuthFlow, stopOwnedProxy]);
 
   // Fixed-port server-side mode: poll status (proxy auto-exchanges + saves DB)
   useEffect(() => {
@@ -562,14 +618,19 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             code: input,
-            ...(authData?.state ? { state: authData.state } : {}),
+            state: authData?.state,
+            // Zed manual fallback needs the same attempt material as the
+            // automatic path (redirectUri + RSA verifier + system_id).
+            ...(authData?.redirectUri ? { redirectUri: authData.redirectUri } : {}),
+            ...(authData?.codeVerifier ? { codeVerifier: authData.codeVerifier } : {}),
+            ...(authData?.systemId ? { systemId: authData.systemId } : {}),
           }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error);
         setStep("success");
         onSuccess?.();
-        fetch(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
+        stopOwnedProxy();
         return;
       }
 
@@ -600,19 +661,15 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     }
   };
 
-  // Clear session on modal close + cleanup proxy
+  // Clear session on modal close + cleanup proxy (idempotent: the owned
+  // proxy is stopped at most once across effect-close, button-close, and
+  // Escape/backdrop-close — all funnel through here or the close effect).
   const handleClose = useCallback(() => {
     flowGenerationRef.current += 1;
     pollingAbortRef.current = true;
-    if (provider === "codex") {
-      fetch("/api/oauth/codex/stop-proxy").catch(() => {});
-    } else if (provider === "xai") {
-      fetch("/api/oauth/xai/stop-proxy").catch(() => {});
-    } else if (PROXY_OAUTH_PROVIDERS.has(provider)) {
-      fetch(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
-    }
+    stopOwnedProxy();
     onClose();
-  }, [onClose, provider]);
+  }, [onClose, stopOwnedProxy]);
 
   if (!provider || !providerInfo) return null;
   const isXaiProvider = provider === "xai";

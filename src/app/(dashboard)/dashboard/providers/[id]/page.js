@@ -71,6 +71,9 @@ export default function ProviderDetailPage() {
   const [headerImgError, setHeaderImgError] = useState(false);
   const [modelTestResults, setModelTestResults] = useState({});
   const [modelsTestError, setModelsTestError] = useState("");
+  // Live-catalog fetch warning/error (surfaced for zed only; other providers
+  // fall back to the static registry silently).
+  const [liveModelsError, setLiveModelsError] = useState(null);
   const [testingModelIds, setTestingModelIds] = useState(() => new Set());
   const [showAddCustomModel, setShowAddCustomModel] = useState(false);
   const [providerStrategy, setProviderStrategy] = useState(null);
@@ -541,23 +544,39 @@ export default function ProviderDetailPage() {
     const activeConnection = connections.find((connection) => connection.isActive !== false);
     if (!activeConnection) {
       setDiscoveredModels([]);
+      if (providerId === "zed") setLiveModelsError(null);
       return;
     }
 
     let cancelled = false;
+    if (providerId === "zed") setLiveModelsError(null);
     fetch(`/api/providers/${activeConnection.id}/models`, { cache: "no-store" })
       .then((response) => response.json().catch(() => ({})))
       .then((data) => {
-        if (!cancelled && Array.isArray(data.models) && data.models.length > 0) {
+        if (cancelled) return;
+        // Zed has no static catalog to fall back to: an empty or failed live
+        // list must surface as an explicit error, never a silent zero list.
+        if (Array.isArray(data.models) && data.models.length > 0) {
           setDiscoveredModels(data.models);
+          if (providerId === "zed" && data?.warning) setLiveModelsError(data.warning);
+          return;
+        }
+        if (providerId === "zed") {
+          setDiscoveredModels([]);
+          setLiveModelsError(data?.warning || data?.error || "Zed returned no live models.");
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled && providerId === "zed") {
+          setDiscoveredModels([]);
+          setLiveModelsError("Failed to reach the Zed model catalog.");
+        }
+      });
 
     return () => {
       cancelled = true;
     };
-  }, [connections, isCompatible]);
+  }, [connections, isCompatible, providerId]);
 
   // Fetch suggested models from provider's public API (if configured)
   useEffect(() => {
@@ -1899,6 +1918,9 @@ export default function ProviderDetailPage() {
         </div>
         {!!modelsTestError && (
           <p className="text-xs text-red-500 mb-3 break-words">{modelsTestError}</p>
+        )}
+        {providerId === "zed" && !!liveModelsError && (
+          <p className="text-xs text-red-500 mb-3 break-words">{liveModelsError}</p>
         )}
         {importModelsMessage && (
           <div className="mb-3 flex items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary/10 px-3.5 py-2 text-xs font-medium text-text-main">
