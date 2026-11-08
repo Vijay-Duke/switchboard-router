@@ -63,3 +63,16 @@ AWS profile resolution uses the lazily imported optional
 
 Web-cookie/browser-pool providers, Xiaomi desktop login and relay proxy pools
 are intentionally outside this port's scope.
+
+## Release validation
+
+The combined Linux suite passes 781 test files and 6,439 tests, with 14 files
+and 63 tests skipped. Lint, locale coverage, generated-provider checks and
+package-version parity pass. The docs dependency audit reports no vulnerabilities,
+and the docs production build passes.
+
+The final v0.9.69 CLI archive builds successfully. An isolated extraction starts
+the packaged server, reports version 0.9.69, returns healthy application/database
+checks and the expected 307 root redirect, and loads the AWS credential SDK and
+standalone configuration writers. Provider protocol tests use offline fixtures;
+these checks do not establish live connectivity for every provider account.
