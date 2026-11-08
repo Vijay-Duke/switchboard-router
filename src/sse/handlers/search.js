@@ -187,10 +187,25 @@ async function handleSingleProviderSearch(body, providerInput, request, clientKe
   // lock under the same search-only key.
   const searchLockKey = `websearch:${providerId}`;
 
+  // Credential fallback: some search providers reuse the API key of a related
+  // chat provider (e.g. ollama-search reuses the `ollama` chat key). When the
+  // search provider has no connection of its own, fall back to the linked
+  // chat provider's credentials.
+  const fallbackProviderId = resolvedProvider.credentialFallback;
+
   while (true) {
-    const credentials = await getProviderCredentials(providerId, excludeConnectionIds, searchLockKey, {
+    let credentials = await getProviderCredentials(providerId, excludeConnectionIds, searchLockKey, {
       clientKeyId,
     });
+
+    if (!credentials && fallbackProviderId) {
+      credentials = await getProviderCredentials(fallbackProviderId, excludeConnectionIds, searchLockKey, {
+        clientKeyId,
+      });
+      if (credentials) {
+        log.info("AUTH", `\x1b[32m${providerId} reusing ${fallbackProviderId} credentials\x1b[0m`);
+      }
+    }
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
