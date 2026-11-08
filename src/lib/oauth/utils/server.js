@@ -1,6 +1,6 @@
 import http from "http";
 import { URL } from "url";
-import { CODEX_CONFIG } from "../constants/oauth.js";
+import { CODEX_CONFIG, ZED_HOSTED_CONFIG } from "../constants/oauth.js";
 
 /**
  * Start a local HTTP server to receive OAuth callback
@@ -465,3 +465,130 @@ export function stopXaiProxy() {
   }
 }
 
+
+// True for loopback browser origins (or plain navigations with no Origin at
+// all). Local-callback proxies reject everything else as cross-site probing.
+function isLoopbackOrigin(origin) {
+  if (!origin) return true; // navigation redirect — allow
+  return /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/.test(origin);
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Zed RSA native-app proxy. Singleton session.
+// Callback: GET http://127.0.0.1:<port>/?user_id=...&access_token=<RSA-encrypted>
+// The proxy decrypts the access token using the private key stored in session.codeVerifier.
+// ───────────────────────────────────────────────────────────────────────────
+
+let zedProxyServer = null;
+let zedProxyTimeout = null;
+let zedProxyPort = null;
+let zedSession = null;
+
+export function registerZedSession({ state, codeVerifier }) {
+  if (!state || !codeVerifier) return false;
+  zedSession = { state, codeVerifier, status: "pending", createdAt: Date.now() };
+  return true;
+}
+
+export function getZedSessionStatus(state) {
+  if (!zedSession) return null;
+  if (state && zedSession.state !== state) return null;
+  return zedSession;
+}
+
+export function clearZedSession(state) {
+  if (!state || (zedSession && zedSession.state === state)) zedSession = null;
+}
+
+export function startZedProxy(preferredPort = 0) {
+  return new Promise((resolve) => {
+    if (zedProxyServer) {
+      resolve({ success: true, port: zedProxyPort, callbackUrl: `http://127.0.0.1:${zedProxyPort}/` });
+      return;
+    }
+    const server = http.createServer(async (req, res) => {
+      const url = new URL(req.url, "http://localhost");
+      // Log path + redacted params (access_token is the RSA-encrypted credential).
+      const redacted = Object.fromEntries(url.searchParams);
+      for (const k of ["access_token", "user_id", "code_verifier", "state"]) {
+        if (redacted[k]) redacted[k] = "<redacted>";
+      }
+      console.log("[Zed proxy]", req.method, url.pathname, JSON.stringify(redacted));
+      if (url.pathname !== "/" && url.pathname !== "/callback") {
+        res.writeHead(404);
+        res.end("Not found");
+        return;
+      }
+      const session = zedSession;
+      if (!session) {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(renderCodexResultPage(false, "No active Zed login session"));
+        return;
+      }
+      // Anti-CSRF: Zed tokens are RSA-encrypted to our keypair so they can't be
+      // forged cross-site, but still reject cross-origin fetches for defense-in-depth.
+      if (!isLoopbackOrigin(req.headers.origin)) {
+        res.writeHead(403, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(renderCodexResultPage(false, "Cross-origin callback rejected"));
+        return;
+      }
+      // Pass raw callback path+query to exchangeTokens → parseZedCallbackPayload.
+      // codeVerifier carries the encoded RSA private key for decryption.
+      const rawCallback = url.search ? `${url.pathname}?${url.searchParams.toString()}` : url.pathname;
+      try {
+        const { exchangeTokens } = await import("../providers.js");
+        const { createProviderConnection } = await import("@/models");
+        const tokenData = await exchangeTokens("zed", rawCallback, null, session.codeVerifier, session.state);
+        const connection = await createProviderConnection({
+          provider: "zed",
+          authType: "oauth",
+          ...tokenData,
+          testStatus: "active",
+        });
+        session.status = "done";
+        session.connectionId = connection.id;
+        session.email = connection.email;
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(renderCodexResultPage(true, "You can close this window."));
+      } catch (err) {
+        session.status = "error";
+        session.error = err.message;
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(renderCodexResultPage(false, err.message));
+      } finally {
+        stopZedProxy();
+      }
+    });
+    const tryPort = Number(preferredPort) || 0;
+    server.on("error", (err) => {
+      // If the preferred port (e.g. 58443) is busy, fall back to a random port.
+      if (err.code === "EADDRINUSE" && tryPort !== 0) {
+        console.log(`[Zed proxy] port ${tryPort} busy, falling back to random`);
+        server.listen(0, "127.0.0.1", () => {
+          zedProxyServer = server;
+          zedProxyPort = server.address().port;
+          zedProxyTimeout = setTimeout(() => stopZedProxy(), ZED_HOSTED_CONFIG.oauthTimeoutMs);
+          console.log(`[Zed proxy] listening on random port ${zedProxyPort}`);
+          resolve({ success: true, port: zedProxyPort, callbackUrl: `http://127.0.0.1:${zedProxyPort}/` });
+        });
+      } else {
+        console.log(`[Zed proxy] listen error: ${err.message}`);
+        resolve({ success: false, reason: err.message });
+      }
+    });
+    server.listen(tryPort, "127.0.0.1", () => {
+      zedProxyServer = server;
+      zedProxyPort = server.address().port;
+      zedProxyTimeout = setTimeout(() => { console.log("[Zed proxy] timeout, stopping"); stopZedProxy(); }, ZED_HOSTED_CONFIG.oauthTimeoutMs);
+      console.log(`[Zed proxy] listening on port ${zedProxyPort}`);
+      resolve({ success: true, port: zedProxyPort, callbackUrl: `http://127.0.0.1:${zedProxyPort}/` });
+    });
+  });
+}
+
+export function stopZedProxy() {
+  console.log(`[Zed proxy] stopping (port ${zedProxyPort || "-"})`);
+  if (zedProxyTimeout) { clearTimeout(zedProxyTimeout); zedProxyTimeout = null; }
+  if (zedProxyServer) { zedProxyServer.close(); zedProxyServer = null; }
+  zedProxyPort = null;
+}

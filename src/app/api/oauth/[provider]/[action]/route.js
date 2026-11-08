@@ -20,9 +20,15 @@ import {
   registerXaiSession,
   getXaiSessionStatus,
   clearXaiSession,
+  startZedProxy,
+  stopZedProxy,
+  registerZedSession,
+  getZedSessionStatus,
+  clearZedSession,
   getOAuthState,
   clearOAuthState,
 } from "@/lib/oauth/utils/server";
+import { ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
 import { PROVIDER_OAUTH } from "open-sse/providers/index.js";
 
 /**
@@ -118,13 +124,26 @@ export async function GET(request, { params }) {
       const reservedParams = new Set(["redirect_uri"]);
       const meta = {};
       searchParams.forEach((value, key) => { if (!reservedParams.has(key)) meta[key] = value; });
+      // Zed: derive native_app_port from the local callback URL so the RSA keypair
+      // is bound to the port the proxy is actually listening on.
+      if (provider === "zed") {
+        try { const p = new URL(redirectUri).port; if (p) meta.nativeAppPort = p; } catch { /* ignore */ }
+      }
       const authData = await generateAuthData(provider, redirectUri, Object.keys(meta).length ? meta : undefined);
       return NextResponse.json(authData);
     }
 
     if (action === "start-proxy") {
+      // Zed uses a dynamic-port local callback server (singleton session,
+      // state is registered separately via /register-session after /authorize).
+      if (provider === "zed") {
+        // Prefer ZED_HOSTED_CONFIG.defaultNativeAppPort (58443) so the browser redirect
+        // matches what Zed expects; falls back to a random port if it's busy.
+        const result = await startZedProxy(searchParams.get("native_app_port") || ZED_HOSTED_CONFIG.defaultNativeAppPort);
+        return NextResponse.json(result);
+      }
       if (!["codex", "xai"].includes(provider)) {
-        return NextResponse.json({ error: "Proxy only supported for codex/xai" }, { status: 400 });
+        return NextResponse.json({ error: "Proxy only supported for codex/xai/zed" }, { status: 400 });
       }
       const appPort = searchParams.get("app_port");
       if (!appPort) {
@@ -146,18 +165,21 @@ export async function GET(request, { params }) {
     }
 
     if (action === "poll-status") {
-      if (!["codex", "xai"].includes(provider)) {
-        return NextResponse.json({ error: "Poll only supported for codex/xai" }, { status: 400 });
+      if (!["codex", "xai", "zed"].includes(provider)) {
+        return NextResponse.json({ error: "Poll only supported for codex/xai/zed" }, { status: 400 });
       }
       const state = searchParams.get("state");
       if (!state) {
         return NextResponse.json({ error: "Missing state" }, { status: 400 });
       }
-      const session = provider === "xai" ? getXaiSessionStatus(state) : getCodexSessionStatus(state);
+      let session;
+      if (provider === "zed") session = getZedSessionStatus(state);
+      else session = provider === "xai" ? getXaiSessionStatus(state) : getCodexSessionStatus(state);
       if (!session) return NextResponse.json({ status: "unknown" });
       if (session.status === "done" || session.status === "error") {
         const payload = { ...session };
-        if (provider === "xai") clearXaiSession(state);
+        if (provider === "zed") clearZedSession(state);
+        else if (provider === "xai") clearXaiSession(state);
         else clearCodexSession(state);
         return NextResponse.json(payload);
       }
@@ -165,10 +187,11 @@ export async function GET(request, { params }) {
     }
 
     if (action === "stop-proxy") {
-      if (!["codex", "xai"].includes(provider)) {
-        return NextResponse.json({ error: "Proxy only supported for codex/xai" }, { status: 400 });
+      if (!["codex", "xai", "zed"].includes(provider)) {
+        return NextResponse.json({ error: "Proxy only supported for codex/xai/zed" }, { status: 400 });
       }
-      if (provider === "xai") stopXaiProxy();
+      if (provider === "zed") stopZedProxy();
+      else if (provider === "xai") stopXaiProxy();
       else stopCodexProxy();
       return NextResponse.json({ success: true });
     }
@@ -236,6 +259,17 @@ export async function POST(request, { params }) {
       body = await request.json();
     } catch {
       return NextResponse.json({ error: "Invalid or empty request body" }, { status: 400 });
+    }
+
+    if (action === "register-session") {
+      // Register proxy session out of URL query (state) + body (codeVerifier).
+      // Zed's codeVerifier encodes the RSA private key — must stay out of URL/logs.
+      const state = searchParams.get("state") || body?.state;
+      if (!state) return NextResponse.json({ error: "Missing state" }, { status: 400 });
+      let ok = false;
+      if (provider === "zed") ok = registerZedSession({ state, codeVerifier: body?.codeVerifier });
+      else return NextResponse.json({ error: "register-session only supported for zed" }, { status: 400 });
+      return NextResponse.json({ success: ok });
     }
 
     if (action === "lease-connect") {

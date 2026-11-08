@@ -8,6 +8,10 @@ import Input from "./Input";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 
+// Providers using the dynamic-port local callback proxy: the local callback
+// server auto-exchanges and the modal polls poll-status for the result.
+const PROXY_OAUTH_PROVIDERS = new Set(["zed"]);
+
 /**
  * OAuth Modal Component
  * - Localhost: Auto callback via popup message
@@ -154,12 +158,52 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     setPolling(false);
   }, [provider, onSuccess]);
 
+  // Proxy OAuth flow (Zed): dynamic-port local callback → auto exchange.
+  // 1. Start the local callback server (returns a dynamic port + callback URL).
+  // 2. Build the authorize URL with redirect_uri = proxy callback URL.
+  // 3. Register the session so the proxy can match the incoming callback.
+  //    code_verifier encodes the RSA private key for decrypt; sent via POST
+  //    body so the private key never lands in URL/query logs.
+  // 4. Open popup; proxy auto-exchanges on callback, modal polls poll-status.
+  const startProxyFlow = useCallback(async (providerId, generation) => {
+    const startRes = await fetch(`/api/oauth/${providerId}/start-proxy`);
+    const startData = await startRes.json();
+    if (generation !== flowGenerationRef.current) return;
+    if (!startRes.ok || !startData.success || !startData.callbackUrl) {
+      throw new Error(startData.reason || startData.error || `Failed to start ${providerId} callback server`);
+    }
+    const authorizeUrl = new URL(`/api/oauth/${providerId}/authorize`, window.location.origin);
+    authorizeUrl.searchParams.set("redirect_uri", startData.callbackUrl);
+    const authRes = await fetch(authorizeUrl);
+    const authData = await authRes.json();
+    if (generation !== flowGenerationRef.current) return;
+    if (!authRes.ok) throw new Error(authData.error);
+    const regBody = { state: authData.state };
+    if (authData.codeVerifier) regBody.codeVerifier = authData.codeVerifier;
+    await fetch(`/api/oauth/${providerId}/register-session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(regBody),
+    });
+    if (generation !== flowGenerationRef.current) return;
+    setAuthData({ ...authData, redirectUri: startData.callbackUrl, proxyProvider: providerId });
+    setStep("waiting");
+    popupRef.current = window.open(authData.authUrl, "oauth_popup", "width=600,height=700");
+    if (!popupRef.current) setStep("input"); // popup blocked → fall back to manual paste
+  }, []);
+
   // Start OAuth flow
   const startOAuthFlow = useCallback(async () => {
     if (!provider) return;
     const generation = ++flowGenerationRef.current;
     try {
       setError(null);
+
+      // Zed's RSA keypair flow is handled by the local callback proxy.
+      if (PROXY_OAUTH_PROVIDERS.has(provider)) {
+        await startProxyFlow(provider, generation);
+        return;
+      }
 
       // Device code flow providers
       const deviceCodeProviders = ["github", "qwen", "kiro", "kimi-coding", "kilocode", "codebuddy-cn", "qoder", "grok-cli", "muse", "nous", "minimax-code", "minimax-code-global", "glm"];
@@ -329,7 +373,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       setError(err.message);
       setStep("error");
     }
-  }, [provider, isLocalhost, startPolling, oauthMeta, idcConfig]);
+  }, [provider, isLocalhost, startPolling, startProxyFlow, oauthMeta, idcConfig]);
 
   // Reset state and start OAuth when modal opens
   useEffect(() => {
@@ -354,18 +398,22 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         fetch("/api/oauth/codex/stop-proxy").catch(() => {});
       } else if (provider === "xai") {
         fetch("/api/oauth/xai/stop-proxy").catch(() => {});
+      } else if (PROXY_OAUTH_PROVIDERS.has(provider)) {
+        fetch(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
       }
     }
   }, [isOpen, provider, startOAuthFlow]);
 
   // Fixed-port server-side mode: poll status (proxy auto-exchanges + saves DB)
   useEffect(() => {
-    const pollProvider = authData?.codexServerSide ? "codex" : authData?.xaiServerSide ? "xai" : null;
+    const pollProvider = authData?.codexServerSide ? "codex" : authData?.xaiServerSide ? "xai" : authData?.proxyProvider || null;
     if (!pollProvider || !authData?.state) return;
     if (callbackProcessedRef.current) return;
     let cancelled = false;
     const POLL_INTERVAL_MS = 1500;
-    const MAX_ATTEMPTS = 200; // ~5 minutes
+    // Zed's flow can take up to 10 minutes (users log into zed.dev in the
+    // popup); codex/xai stay at ~5 minutes.
+    const MAX_ATTEMPTS = pollProvider === "zed" ? 420 : 200;
     let attempts = 0;
 
     const tick = async () => {
@@ -505,6 +553,26 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         return;
       }
 
+      // Zed paste fallback: the full callback URL (or raw query string) carries
+      // the RSA-encrypted token; the server decrypts it with the state-bound
+      // verifier from the authorize step.
+      if (PROXY_OAUTH_PROVIDERS.has(provider)) {
+        const res = await fetch(`/api/oauth/${provider}/exchange`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            code: input,
+            ...(authData?.state ? { state: authData.state } : {}),
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        setStep("success");
+        onSuccess?.();
+        fetch(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
+        return;
+      }
+
       const url = new URL(input);
       const code = url.searchParams.get("code");
       const token = url.searchParams.get("token");
@@ -540,6 +608,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       fetch("/api/oauth/codex/stop-proxy").catch(() => {});
     } else if (provider === "xai") {
       fetch("/api/oauth/xai/stop-proxy").catch(() => {});
+    } else if (PROXY_OAUTH_PROVIDERS.has(provider)) {
+      fetch(`/api/oauth/${provider}/stop-proxy`).catch(() => {});
     }
     onClose();
   }, [onClose, provider]);

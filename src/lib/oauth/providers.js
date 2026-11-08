@@ -32,6 +32,7 @@ import {
   MUSE_CONFIG,
   GLM_OAUTH_CONFIG,
   NOUS_CONFIG,
+  ZED_HOSTED_CONFIG,
   getOAuthClientMetadata,
 } from "./constants/oauth";
 import { XAI_CONFIG, XAI_PKCE_VERIFIER_BYTES } from "./constants/xai";
@@ -46,6 +47,13 @@ import {
 import { parseKiroProfileArn } from "open-sse/utils/kiroProfileArn.js";
 import { registerOAuthState } from "./utils/server.js";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
+import {
+  createZedNativeAuthData,
+  parseZedCallbackPayload,
+  decryptZedAccessToken,
+  fetchZedAuthenticatedUser,
+  resolveZedOrganizationId,
+} from "open-sse/shared/zedAuth.js";
 import {
   fetchGrokCliUser,
   mapGrokCliTokens,
@@ -2149,6 +2157,60 @@ const PROVIDERS = {
     };
   },
 },
+
+// Zed — RSA keypair native-app flow (NOT OAuth). prepareConfig generates a fresh
+// keypair; buildAuthUrl returns the native_app_signin URL; exchangeToken decrypts
+// the RSA-encrypted access token from the local callback. codeVerifier carries the
+// encoded private key (see generateAuthData) so the proxy/paste paths can decrypt.
+zed: {
+  config: ZED_HOSTED_CONFIG,
+  flowType: "authorization_code",
+  callbackPath: "/",
+  prepareConfig: async (config, meta) => {
+    // native_app_port is the local callback port (derived from the proxy's
+    // redirect_uri and passed via meta from the authorize step).
+    const nativeAppPort = Number(meta?.nativeAppPort) || ZED_HOSTED_CONFIG.defaultNativeAppPort;
+    const auth = createZedNativeAuthData(config, { nativeAppPort });
+    return { ...config, ...auth };
+  },
+  buildAuthUrl: (config, redirectUri, state) => config.authUrl,
+  exchangeToken: async (config, code, redirectUri, codeVerifier, state) => {
+    // code = raw callback URL/query; codeVerifier = encoded private key verifier.
+    const { userId, encryptedAccessToken } = parseZedCallbackPayload(code);
+    const accessToken = decryptZedAccessToken(encryptedAccessToken, codeVerifier);
+    return { accessToken, userId, systemId: config.systemId };
+  },
+  postExchange: async (tokens) => {
+    const credentials = {
+      accessToken: tokens.accessToken,
+      providerSpecificData: { userId: tokens.userId, systemId: tokens.systemId },
+    };
+    let userInfo = null;
+    try {
+      userInfo = await fetchZedAuthenticatedUser(credentials, { config: ZED_HOSTED_CONFIG });
+    } catch { /* best-effort */ }
+    const organizationId = resolveZedOrganizationId(credentials, userInfo);
+    return {
+      userInfo,
+      organizationId,
+      email: userInfo?.email || null,
+      name: userInfo?.name || userInfo?.display_name || null,
+    };
+  },
+  mapTokens: (tokens, extra) => ({
+    accessToken: tokens.accessToken,
+    refreshToken: null,
+    expiresIn: null,
+    email: extra?.email || undefined,
+    displayName: extra?.name || undefined,
+    providerSpecificData: {
+      authMethod: "oauth",
+      userId: tokens.userId,
+      systemId: tokens.systemId,
+      organizationId: extra?.organizationId || "",
+    },
+  }),
+},
 };
 
 /**
@@ -2178,7 +2240,10 @@ export async function generateAuthData(providerName, redirectUri, meta) {
   const config = provider.prepareConfig
     ? await provider.prepareConfig(provider.config, meta || {})
     : provider.config;
-  const { codeVerifier, codeChallenge, state } = generatePKCE(provider.pkceVerifierBytes);
+  const { codeVerifier: pkceVerifier, codeChallenge, state } = generatePKCE(provider.pkceVerifierBytes);
+  // Zed: codeVerifier carries the encoded RSA private key (from prepareConfig),
+  // not a PKCE verifier — the key decrypts the browser-delivered token.
+  const codeVerifier = config.privateKeyVerifier || pkceVerifier;
 
   let authUrl;
   if (provider.flowType === "device_code") {
