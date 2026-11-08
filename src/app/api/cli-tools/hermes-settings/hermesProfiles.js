@@ -13,6 +13,7 @@
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import { parse as parseYaml } from "yaml";
 import { readHermesSettings } from "@/lib/cli/hermesConfig.js";
 
 export const PROFILE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -58,6 +59,10 @@ export const dirExists = async (dir) => {
 
 // Recognised as a profile only when one identity file is present (Hermes ignores bare dirs).
 export const isProfileHome = async (dir) => {
+  try {
+    const stat = await fs.lstat(dir);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+  } catch { return false; }
   for (const file of IDENTITY_FILES) {
     try {
       await fs.stat(path.join(dir, file));
@@ -80,8 +85,10 @@ const readText = async (file) => {
 
 // `display_name` in profile.yaml — presentation only, the canonical id stays the directory name.
 const parseDisplayName = (yaml) => {
-  const m = (yaml || "").match(/^display_name:[ \t]*["']?([^"'\r\n]+)["']?/m);
-  return m ? m[1].trim() : null;
+  try {
+    const value = parseYaml(yaml || "")?.display_name;
+    return typeof value === "string" ? value : null;
+  } catch { return null; }
 };
 
 const buildEntry = async (name, dir, isDefault) => {

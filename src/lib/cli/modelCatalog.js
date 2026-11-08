@@ -384,8 +384,11 @@ export function buildHermesYaml(yaml, { baseUrl, models: rawModels, defaultModel
     models: modelMap,
   });
   doc.setIn(["custom_providers"], remaining);
+  const modelSettings = previousModel && typeof previousModel === "object" ? { ...previousModel } : {};
+  delete modelSettings.base_url;
+  delete modelSettings.api_key;
   doc.setIn(["model"], {
-    ...(previousModel && typeof previousModel === "object" ? previousModel : {}),
+    ...modelSettings,
     default: activeModel,
     provider: HERMES_PROVIDER_REF,
   });
@@ -394,7 +397,7 @@ export function buildHermesYaml(yaml, { baseUrl, models: rawModels, defaultModel
   // credentials; the backup restores any foreign delegation wholesale.
   const delegationModel = typeof delegation === "string" && delegation.trim()
     ? delegation.trim()
-    : current?.delegation?.provider === HERMES_PROVIDER_REF && current.delegation.model
+    : delegation === undefined && current?.delegation?.provider === HERMES_PROVIDER_REF && current.delegation.model
       ? current.delegation.model
       : null;
   if (delegationModel) doc.setIn(["delegation"], { model: delegationModel, provider: HERMES_PROVIDER_REF });
@@ -447,7 +450,7 @@ export function removeHermesYaml(yaml) {
   }
   const currentProvider = yamlValue(doc.getIn(["model", "provider"]));
   if (currentProvider === HERMES_PROVIDER_REF) {
-    if (backup?.previousModel != null && backup.previousModel !== "") doc.setIn(["model"], backup.previousModel);
+    if (backup?.previousModel != null) doc.setIn(["model"], backup.previousModel);
     else doc.deleteIn(["model"]);
   }
   // Only restore slots that still carry OUR wiring — a block the user has since
@@ -469,8 +472,17 @@ export function removeHermesYaml(yaml) {
   const stt = yamlValue(doc.getIn(["stt"])) || {};
   const sttOpenai = stt.openai && typeof stt.openai === "object" ? stt.openai : {};
   if (isSwitchboardStt({ provider: stt.provider ?? null, ...sttOpenai })) {
-    if (backup?.previousStt != null) doc.setIn(["stt"], backup.previousStt);
-    else doc.deleteIn(["stt"]);
+    const previous = backup?.previousStt || {};
+    for (const key of ["enabled", "provider"]) {
+      if (Object.hasOwn(previous, key)) doc.setIn(["stt", key], previous[key]);
+      else doc.deleteIn(["stt", key]);
+    }
+    for (const key of ["model", "base_url", "api_key"]) {
+      if (Object.hasOwn(previous.openai || {}, key)) doc.setIn(["stt", "openai", key], previous.openai[key]);
+      else doc.deleteIn(["stt", "openai", key]);
+    }
+    if (!doc.getIn(["stt", "openai"])?.items?.length) doc.deleteIn(["stt", "openai"]);
+    if (!doc.getIn(["stt"])?.items?.length) doc.deleteIn(["stt"]);
   }
   return doc.toString();
 }

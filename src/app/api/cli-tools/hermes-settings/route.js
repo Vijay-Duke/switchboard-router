@@ -26,7 +26,7 @@ import {
   removeLegacyModelBlock,
   upsertEnvVar,
 } from "@/lib/cli/hermesConfig.js";
-import { dirExists, listProfiles, resolveHermesHome } from "./hermesProfiles.js";
+import { isProfileHome, listProfiles, resolveHermesHome } from "./hermesProfiles.js";
 
 const execAsync = promisify(exec);
 
@@ -71,7 +71,7 @@ const readEnvFile = (home) => readTextFile(home.envPath);
 // without identity files is not a profile, and we must not fabricate one.
 const writeHomeConfig = async (home, yaml) => {
   if (home.isDefault) await fs.mkdir(home.dir, { recursive: true });
-  await writeCliFile(home.configPath, yaml);
+  await writeCliFile(home.configPath, yaml, { secret: true });
 };
 
 // Only ever upserts the SWITCHBOARD_API_KEY line — per-profile .env files also carry bot
@@ -108,7 +108,7 @@ export async function GET(request) {
 
     const { home, error } = resolveHome(getQueryParam(request, "profile"));
     if (error) return NextResponse.json({ error }, { status: 400 });
-    if (!home.isDefault && !(await dirExists(home.dir))) {
+    if (!home.isDefault && !(await isProfileHome(home.dir))) {
       return NextResponse.json({ error: `Hermes profile "${home.name}" not found` }, { status: 404 });
     }
 
@@ -122,7 +122,8 @@ export async function GET(request) {
         defaultModel: settings.defaultModel,
         delegation: settings.delegation,
         auxiliary: settings.auxiliary,
-        stt: settings.stt,
+        stt: settings.stt ? { enabled: settings.stt.enabled, provider: settings.stt.provider,
+          model: settings.stt.model, base_url: settings.stt.base_url, hasApiKey: !!settings.stt.api_key } : null,
       },
       hasSwitchboard: settings.hasSwitchboard,
       hasSwitchboardStt: settings.hasSwitchboardStt,
@@ -146,20 +147,17 @@ const applyToAllProfiles = async ({ normalizedBaseUrl, apiKey, model }) => {
     try {
       const yaml = await readConfigYaml(home);
       const settings = readHermesSettings(yaml);
-      const providerManaged = settings.models.length > 0 || settings.model?.provider === HERMES_PROVIDER_REF;
+      const providerManaged = settings.hasSwitchboard;
       const legacyManaged = !providerManaged && hasLegacySwitchboardModel(settings.model);
 
       if (providerManaged || legacyManaged) {
         // buildHermesYaml keeps role/stt wiring that is already ours when the
         // corresponding params are absent, so this refresh only moves the
         // endpoint (and migrates a legacy model block onto the named provider).
-        let baseYaml = yaml;
+        const baseYaml = yaml;
         let models = settings.models;
-        let defaultModel = settings.defaultModel;
-        if (legacyManaged) {
-          baseYaml = removeLegacyModelBlock(yaml);
-          models = settings.defaultModel ? [settings.defaultModel] : [];
-        }
+        const defaultModel = settings.defaultModel;
+        if (legacyManaged) models = settings.defaultModel ? [settings.defaultModel] : [];
         await writeHomeConfig(home, buildHermesYaml(baseYaml, {
           baseUrl: normalizedBaseUrl,
           models,
@@ -238,13 +236,26 @@ export async function POST(request) {
     if (!isNonEmptyString(baseUrl) || !isOptionalString(apiKey) || models.length === 0) {
       return NextResponse.json({ error: "baseUrl and at least one model are required" }, { status: 400 });
     }
-    for (const role of Object.keys(effectiveAuxiliary || {})) {
+    if (effectiveDelegation != null && typeof effectiveDelegation !== "string") {
+      return NextResponse.json({ error: "delegation must be a model ID or null" }, { status: 400 });
+    }
+    if (effectiveAuxiliary != null && (typeof effectiveAuxiliary !== "object" || Array.isArray(effectiveAuxiliary))) {
+      return NextResponse.json({ error: "auxiliary must be a role mapping" }, { status: 400 });
+    }
+    for (const [role, value] of Object.entries(effectiveAuxiliary || {})) {
+      if (value != null && typeof value !== "string") return NextResponse.json({ error: "role models must be strings or null" }, { status: 400 });
       if (!AUX_ROLE_KEY_RE.test(role)) {
         return NextResponse.json({ error: `Invalid Hermes role name "${role}"` }, { status: 400 });
       }
     }
 
-    const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+    let parsedBase;
+    try { parsedBase = new URL(baseUrl); } catch { return NextResponse.json({ error: "Invalid baseUrl" }, { status: 400 }); }
+    if (!["http:", "https:"].includes(parsedBase.protocol) || parsedBase.username || parsedBase.password) {
+      return NextResponse.json({ error: "baseUrl must be an HTTP(S) endpoint without credentials" }, { status: 400 });
+    }
+    const cleanBase = baseUrl.trim().replace(/\/+$/, "");
+    const normalizedBaseUrl = cleanBase.endsWith("/v1") ? cleanBase : `${cleanBase}/v1`;
 
     // applyToAll refreshes endpoint + API key only (and the blocks those belong to);
     // role and stt wiring is per-profile and follows the single-profile path below.
@@ -255,15 +266,14 @@ export async function POST(request) {
     // Profile target: JSON body first, then ?profile= — callers reach for either.
     const { home, error } = resolveHome(body.profile ?? getQueryParam(request, "profile"));
     if (error) return NextResponse.json({ error }, { status: 400 });
-    if (!home.isDefault && !(await dirExists(home.dir))) {
+    if (!home.isDefault && !(await isProfileHome(home.dir))) {
       return NextResponse.json({ error: `Hermes profile "${home.name}" not found` }, { status: 404 });
     }
 
     // Migrate a legacy (pre custom_providers) Switchboard model block off the file
     // before writing — buildHermesYaml snapshots everything still present.
     const existingYaml = await readConfigYaml(home);
-    const legacyModel = parseLegacyModelBlock(existingYaml);
-    const baseYaml = hasLegacySwitchboardModel(legacyModel) ? removeLegacyModelBlock(existingYaml) : existingYaml;
+    const baseYaml = existingYaml;
     const newYaml = buildHermesYaml(baseYaml, {
       baseUrl: normalizedBaseUrl,
       models,
@@ -303,7 +313,7 @@ export async function DELETE(request) {
 
     const { home, error } = resolveHome(body?.profile ?? getQueryParam(request, "profile"));
     if (error) return NextResponse.json({ error }, { status: 400 });
-    if (!home.isDefault && !(await dirExists(home.dir))) {
+    if (!home.isDefault && !(await isProfileHome(home.dir))) {
       return NextResponse.json({ error: `Hermes profile "${home.name}" not found` }, { status: 404 });
     }
 

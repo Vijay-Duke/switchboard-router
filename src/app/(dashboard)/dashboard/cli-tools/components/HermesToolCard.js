@@ -1,7 +1,7 @@
 "use client";
 // @ts-check
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Card, Button, ModelSelectModal, ManualConfigModal } from "@/shared/components";
 import Image from "next/image";
 import BaseUrlSelect from "./BaseUrlSelect";
@@ -10,7 +10,8 @@ import ApiKeySelect from "./ApiKeySelect";
 import { matchKnownEndpoint } from "./cliEndpointMatch";
 import ModelCatalogInput from "./ModelCatalogInput";
 import { reportClientError } from "@/shared/utils/clientFeedback";
-import { quoteShellValue } from "@/lib/cli/shellEnv";
+import { CLI_TOOLS } from "@/shared/constants/cliTools";
+import { stringify as stringifyYaml } from "yaml";
 
 const ENDPOINT = "/api/cli-tools/hermes-settings";
 
@@ -29,6 +30,13 @@ export default function HermesToolCard({
   tailscaleEnabled,
   tailscaleUrl,
 }) {
+  const [profiles, setProfiles] = useState([]);
+  const [activeProfile, setActiveProfile] = useState("default");
+  const [roleModels, setRoleModels] = useState({});
+  const [audioEnabled, setAudioEnabled] = useState(false);
+  const [sttModel, setSttModel] = useState("");
+  const [modalTarget, setModalTarget] = useState("catalog");
+  const statusSequence = useRef(0);
   const [hermesStatus, setHermesStatus] = useState(initialStatus || null);
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -54,25 +62,18 @@ export default function HermesToolCard({
 
   const configStatus = getConfigStatus();
 
-  useEffect(() => {
-    if (apiKeys?.length > 0 && !selectedApiKey) {
-      setSelectedApiKey(apiKeys[0].keySecret);
+  const fetchProfiles = useCallback(async () => {
+    try {
+      const res = await fetch("/api/cli-tools/hermes-profiles");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to list profiles");
+      setProfiles(data.profiles || []);
+    } catch (error) {
+      reportClientError("Error fetching Hermes profiles:", error);
     }
-  }, [apiKeys, selectedApiKey]);
+  }, []);
 
-  useEffect(() => {
-    if (initialStatus) setHermesStatus(initialStatus);
-  }, [initialStatus]);
-
-  useEffect(() => {
-    if (isExpanded && !hermesStatus) {
-      checkStatus();
-      fetchModelAliases();
-    }
-    if (isExpanded) fetchModelAliases();
-  }, [isExpanded, hermesStatus]);
-
-  const fetchModelAliases = async () => {
+  const fetchModelAliases = useCallback(async () => {
     try {
       const res = await fetch("/api/models/alias");
       const data = await res.json();
@@ -80,7 +81,7 @@ export default function HermesToolCard({
     } catch (error) {
       reportClientError("Error fetching model aliases:", error);
     }
-  };
+  }, []);
 
   useEffect(() => {
     if (hermesStatus?.installed && !hasInitializedModel.current) {
@@ -88,22 +89,39 @@ export default function HermesToolCard({
       const cfg = hermesStatus.settings?.model;
       const models = Array.isArray(hermesStatus.settings?.models) ? hermesStatus.settings.models : [];
       setSelectedModels(models.length ? models : (cfg?.default ? [cfg.default] : []));
-      if (cfg?.default) setSelectedModel(cfg.default);
+      setSelectedModel(cfg?.default || "");
+      setRoleModels(Object.fromEntries((CLI_TOOLS.hermes.roles || []).map(({ id }) => {
+        const cfg = id === "delegation" ? hermesStatus.settings?.delegation : hermesStatus.settings?.auxiliary?.[id];
+        return [id, cfg?.provider === "custom:switchboard" ? cfg.model || "" : ""];
+      })));
+      setAudioEnabled(!!hermesStatus.hasSwitchboardStt);
+      setSttModel(hermesStatus.hasSwitchboardStt ? hermesStatus.settings?.stt?.model || "" : "");
     }
   }, [hermesStatus]);
 
-  const checkStatus = async () => {
+  const checkStatus = useCallback(async (profile = activeProfile) => {
+    const sequence = ++statusSequence.current;
     setChecking(true);
     try {
-      const res = await fetch(ENDPOINT);
+      const res = await fetch(`${ENDPOINT}?profile=${encodeURIComponent(profile)}`);
       const data = await res.json();
-      setHermesStatus(data);
+      if (sequence === statusSequence.current) setHermesStatus(data);
     } catch (error) {
-      setHermesStatus({ installed: false, error: error.message });
+      if (sequence === statusSequence.current) setHermesStatus({ installed: false, error: error.message });
     } finally {
-      setChecking(false);
+      if (sequence === statusSequence.current) setChecking(false);
     }
-  };
+  }, [activeProfile]);
+
+  useEffect(() => {
+    if (!isExpanded) return;
+    hasInitializedModel.current = false;
+    setCustomBaseUrl("");
+    setMessage(null);
+    checkStatus(activeProfile);
+    fetchModelAliases();
+    fetchProfiles();
+  }, [isExpanded, activeProfile, checkStatus, fetchModelAliases, fetchProfiles]);
 
   const normalizeLocalhost = (url) => url.replace("://localhost", "://127.0.0.1");
 
@@ -133,18 +151,26 @@ export default function HermesToolCard({
     setSelectedModels(next);
   };
 
-  const handleApply = async () => {
+  const handleApply = async (applyToAll = false) => {
+    if (applyToAll && !matchKnownEndpoint(getEffectiveBaseUrl(), { tunnelPublicUrl, tailscaleUrl })) {
+      setMessage({ type: "error", text: "Choose a Switchboard endpoint before applying to all profiles." });
+      return;
+    }
     setApplying(true);
     setMessage(null);
     try {
       const keyToUse = selectedApiKey?.trim()
-        || (apiKeys?.length > 0 ? apiKeys[0].keySecret : null)
         || (!cloudEnabled ? "sk_switchboard" : null);
 
       const res = await fetch(ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          profile: activeProfile,
+          applyToAll,
+          delegation: roleModels.delegation || null,
+          auxiliary: Object.fromEntries(Object.entries(roleModels).filter(([role]) => role !== "delegation").map(([role, value]) => [role, value || null])),
+          audio: { enabled: audioEnabled, model: sttModel },
           baseUrl: getEffectiveBaseUrl(),
           apiKey: keyToUse,
           model: selectedModel || selectedModels[0],
@@ -153,9 +179,14 @@ export default function HermesToolCard({
         }),
       });
       const data = await res.json();
-      if (res.ok) {
-        setMessage({ type: "success", text: "Settings applied successfully!" });
+      if (res.ok && data.success) {
+        const skipped = (data.results || []).filter((result) => result.status !== "updated");
+        setMessage({ type: skipped.length ? "error" : "success", text: data.bulk
+          ? `${data.message}${skipped.length ? ": " + skipped.map((result) => `${result.profile}: ${result.reason}`).join("; ") : ""}`
+          : `Settings applied to ${activeProfile}.` });
+        hasInitializedModel.current = false;
         checkStatus();
+        fetchProfiles();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to apply settings" });
       }
@@ -170,13 +201,15 @@ export default function HermesToolCard({
     setRestoring(true);
     setMessage(null);
     try {
-      const res = await fetch(ENDPOINT, { method: "DELETE" });
+      const res = await fetch(ENDPOINT, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profile: activeProfile }) });
       const data = await res.json();
       if (res.ok) {
         setMessage({ type: "success", text: "Settings reset successfully!" });
         setSelectedModel("");
         setSelectedModels([]);
+        hasInitializedModel.current = false;
         checkStatus();
+        fetchProfiles();
       } else {
         setMessage({ type: "error", text: data.error || "Failed to reset settings" });
       }
@@ -188,7 +221,12 @@ export default function HermesToolCard({
   };
 
   const handleModelSelect = (model) => {
-    addModel(model.value);
+    if (modalTarget === "catalog") addModel(model.value);
+    else {
+      if (modalTarget === "stt") setSttModel(model.value);
+      else setRoleModels((current) => ({ ...current, [modalTarget]: model.value }));
+      setModalOpen(false);
+    }
   };
 
   const getManualConfigs = () => {
@@ -198,23 +236,18 @@ export default function HermesToolCard({
 
     const models = selectedModels.length ? selectedModels : ["provider/model-id"];
     const activeModel = selectedModel || models[0];
-    const modelMap = models.map((model) => `      "${model}": {}`).join("\n");
-    const yamlContent = `custom_providers:
-  - name: switchboard
-    base_url: "${getEffectiveBaseUrl()}"
-    key_env: SWITCHBOARD_API_KEY
-    api_mode: chat_completions
-    models:
-${modelMap}
-model:
-  default: "${activeModel}"
-  provider: "custom:switchboard"
-`;
-    const envContent = `SWITCHBOARD_API_KEY=${quoteShellValue(keyToUse)}\n`;
-
+    const config = {
+      custom_providers: [{ name: "switchboard", base_url: getEffectiveBaseUrl(), key_env: "SWITCHBOARD_API_KEY", api_mode: "chat_completions", models: Object.fromEntries(models.map((model) => [model, {}])) }],
+      model: { default: activeModel, provider: "custom:switchboard" },
+    };
+    if (roleModels.delegation) config.delegation = { model: roleModels.delegation, provider: "custom:switchboard" };
+    const auxiliary = Object.fromEntries(Object.entries(roleModels).filter(([role, model]) => role !== "delegation" && model).map(([role, model]) => [role, { model, provider: "custom:switchboard" }]));
+    if (Object.keys(auxiliary).length) config.auxiliary = auxiliary;
+    if (audioEnabled && sttModel) config.stt = { enabled: true, provider: "openai", openai: { model: sttModel, base_url: getEffectiveBaseUrl(), api_key: "${SWITCHBOARD_API_KEY}" } };
+    const home = activeProfile === "default" ? "~/.hermes" : `~/.hermes/profiles/${activeProfile}`;
     return [
-      { filename: "~/.hermes/config.yaml", content: yamlContent },
-      { filename: "~/.hermes/.env", content: envContent },
+      { filename: `${home}/config.yaml`, content: stringifyYaml(config) },
+      { filename: `${home}/.env`, content: `SWITCHBOARD_API_KEY=${JSON.stringify(keyToUse)}\n` },
     ];
   };
 
@@ -240,6 +273,15 @@ model:
 
       {isExpanded && (
         <div className="mt-4 pt-4 border-t border-border flex flex-col gap-4">
+          {profiles.length > 1 && (
+            <label className="flex flex-col gap-1 text-xs text-text-muted">
+              Hermes profile
+              <select aria-label="Hermes profile" value={activeProfile} onChange={(event) => setActiveProfile(event.target.value)} disabled={applying || restoring} className="rounded border border-border bg-surface p-2 text-text-main">
+                {profiles.map((profile) => <option key={profile.name} value={profile.name}>{profile.displayName || profile.name}{profile.hasSwitchboard ? " · Connected" : ""}</option>)}
+              </select>
+              <code>{profiles.find((profile) => profile.name === activeProfile)?.command || "hermes"}</code>
+            </label>
+          )}
           {checking && (
             <div className="flex items-center gap-2 text-text-muted">
               <span className="material-symbols-outlined animate-spin">progress_activity</span>
@@ -307,12 +349,35 @@ model:
                   onDraftChange={setModelDraft}
                   onAdd={() => addModel()}
                   onRemove={removeModel}
-                  onOpenPicker={() => setModalOpen(true)}
+                  onOpenPicker={() => { setModalTarget("catalog"); setModalOpen(true); }}
                   canOpenPicker={Boolean(hasActiveProviders)}
                   defaultModel={selectedModel}
                   onDefaultChange={setSelectedModel}
                 />
               </div>
+
+              <details className="rounded border border-border p-3">
+                <summary className="cursor-pointer text-xs font-medium">Model roles</summary>
+                <div className="mt-3 flex flex-col gap-2">
+                  {(CLI_TOOLS.hermes.roles || []).map((role) => (
+                    <label key={role.id} className="flex flex-col gap-1 text-xs text-text-muted">
+                      {role.label}
+                      <div className="flex gap-2">
+                        <input aria-label={role.label} value={roleModels[role.id] || ""} onChange={(event) => setRoleModels((current) => ({ ...current, [role.id]: event.target.value }))} placeholder="Inherit default model" className="min-w-0 flex-1 rounded border border-border bg-surface p-2" />
+                        <Button size="sm" variant="ghost" onClick={() => { setModalTarget(role.id); setModalOpen(true); }} disabled={!hasActiveProviders}>Select</Button>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </details>
+              <label className="flex items-center gap-2 text-xs text-text-muted">
+                <input type="checkbox" checked={audioEnabled} onChange={(event) => setAudioEnabled(event.target.checked)} />
+                Transcribe voice and audio through Switchboard
+              </label>
+              {audioEnabled && <div className="flex gap-2">
+                <input aria-label="Transcription model" value={sttModel} onChange={(event) => setSttModel(event.target.value)} placeholder="provider/transcription-model" className="min-w-0 flex-1 rounded border border-border bg-surface p-2 text-xs" />
+                <Button size="sm" variant="ghost" onClick={() => { setModalTarget("stt"); setModalOpen(true); }}>Select</Button>
+              </div>}
 
               {message && (
                 <div className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${message.type === "success" ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}>
@@ -322,9 +387,10 @@ model:
               )}
 
               <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                <Button variant="primary" size="sm" onClick={handleApply} disabled={selectedModels.length === 0} loading={applying} className="w-full sm:w-auto">
+                <Button variant="primary" size="sm" onClick={() => handleApply(false)} disabled={selectedModels.length === 0 || (audioEnabled && !sttModel.trim())} loading={applying} className="w-full sm:w-auto">
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>Apply
                 </Button>
+                {profiles.length > 1 && <Button variant="secondary" size="sm" onClick={() => handleApply(true)} disabled={selectedModels.length === 0} loading={applying}>Apply endpoint to all profiles</Button>}
                 <Button variant="outline" size="sm" onClick={handleReset} disabled={!hermesStatus?.hasSwitchboard} loading={restoring} className="w-full sm:w-auto">
                   <span className="material-symbols-outlined text-[14px] mr-1">restore</span>Reset
                 </Button>
@@ -341,13 +407,14 @@ model:
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         onSelect={handleModelSelect}
-        onDeselect={(model) => removeModel(model.value)}
-        selectedModel={null}
+        onDeselect={modalTarget === "catalog" ? (model) => removeModel(model.value) : undefined}
+        selectedModel={modalTarget === "stt" ? sttModel : modalTarget === "catalog" ? null : roleModels[modalTarget] || null}
+        kindFilter={modalTarget === "stt" ? "stt" : undefined}
         activeProviders={activeProviders}
         modelAliases={modelAliases}
-        addedModelValues={selectedModels}
-        closeOnSelect={false}
-        title="Add Models for Hermes Agent"
+        addedModelValues={modalTarget === "catalog" ? selectedModels : []}
+        closeOnSelect={modalTarget !== "catalog"}
+        title={modalTarget === "stt" ? "Select Hermes transcription model" : modalTarget === "catalog" ? "Add Models for Hermes Agent" : "Select role model"}
       />
 
       <ManualConfigModal

@@ -35,7 +35,7 @@
 // Reading is Document/plain-parse based (no regex) except for the legacy
 // pre-provider `model:` block our fork wrote before custom_providers existed.
 
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, parseDocument } from "yaml";
 
 export const HERMES_PROVIDER_NAME = "switchboard";
 export const HERMES_PROVIDER_REF = "custom:switchboard";
@@ -48,29 +48,30 @@ export const AUX_ROLE_KEY_RE = /^[A-Za-z0-9_]+$/;
 // ── legacy model block (pre custom_providers writes) ─────────────────────────
 // Old shape: `model:\n  default: "..."\n  provider: "custom"\n  base_url: "http://127.0.0.1:PORT/v1"`.
 // Match top-level "model:" mapping block; does NOT match the `model: ""` sentinel.
-const LEGACY_MODEL_BLOCK_RE = /^model:[ \t]*\r?\n((?:[ \t]+.*\r?\n?|[ \t]*\r?\n)*)/m;
-
-/** @param {string} yaml */
 export function parseLegacyModelBlock(yaml) {
-  const match = (yaml || "").match(LEGACY_MODEL_BLOCK_RE);
-  if (!match) return null;
-  const body = match[1] || "";
-  const get = (key) => {
-    const m = body.match(new RegExp(`^[ \\t]+${key}:[ \\t]*["']?([^"'\\r\\n]+)["']?`, "m"));
-    return m ? m[1].trim() : null;
-  };
-  return { default: get("default"), provider: get("provider"), base_url: get("base_url") };
+  try {
+    const model = parseYaml(yaml || "")?.model;
+    if (!model || typeof model !== "object" || Array.isArray(model)) return null;
+    return { default: model.default ?? null, provider: model.provider ?? null, base_url: model.base_url ?? null };
+  } catch {
+    return null;
+  }
 }
 
-/** @param {string} yaml */
-export const removeLegacyModelBlock = (yaml) =>
-  (yaml || "").replace(LEGACY_MODEL_BLOCK_RE, "").replace(/^\n+/, "");
+export function removeLegacyModelBlock(yaml) {
+  const doc = parseDocument(yaml || "");
+  if (doc.errors.length) throw new Error(`Invalid Hermes YAML: ${doc.errors[0].message}`);
+  doc.deleteIn(["model"]);
+  return doc.toString();
+}
 
-// Local-endpoint detection for the legacy block only — the custom_providers
-// shape is recognised by provider name/reference and covers tunnel endpoints.
 export const hasLegacySwitchboardModel = (modelCfg) => {
-  if (!modelCfg?.base_url) return false;
-  return modelCfg.provider === "custom" && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(modelCfg.base_url);
+  if (modelCfg?.provider !== "custom" || !modelCfg?.base_url) return false;
+  try {
+    return ["localhost", "127.0.0.1", "0.0.0.0", "[::1]"].includes(new URL(modelCfg.base_url).hostname);
+  } catch {
+    return false;
+  }
 };
 
 // ── stt ───────────────────────────────────────────────────────────────────────
