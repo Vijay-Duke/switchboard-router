@@ -1,4 +1,4 @@
-# v0.9.69 (2026-11-08)
+# v0.9.70 (2026-11-08)
 
 ## Features
 - Complete the remaining in-scope upstream ports: Smart Router/System One, per-key model/combo policies and token quotas, scheduled auto-ping, Cline/Airforce free-model discovery, and provider custom headers.
@@ -9,6 +9,7 @@
 - Add Grok CLI bulk imports, Requests analytics, provider/model charts, custom-model capability toggles and lazy chart loading.
 
 ## Fixes
+- Install CLI build dependencies in CI before exercising standalone config writers. The v0.9.69 tag was withheld from publication when this missing dependency failed the macOS gate.
 - Persist Gemini thought signatures across restarts, hydrate them before translation, isolate client/account/session lookups and preserve nonstream tool-call signatures.
 - Apply headroom compression to native Gemini, Responses and CommandCode tool outputs.
 - Enforce key restrictions through aliases, nested combos, discovery and search/fetch targets; reject paused or exhausted keys consistently.

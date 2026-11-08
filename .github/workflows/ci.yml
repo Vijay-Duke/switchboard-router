@@ -29,6 +29,7 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             tests/package-lock.json
+            cli/package-lock.json
 
       - uses: actions/setup-go@v6
         with:
@@ -40,6 +41,12 @@ jobs:
 
       - name: Install test deps
         working-directory: tests
+        run: npm ci --no-audit --no-fund
+
+      # The standalone-writer regression builds the CLI's esbuild bundle.
+      # Install that workspace explicitly rather than relying on a hoisted tool.
+      - name: Install CLI deps (standalone writer build)
+        working-directory: cli
         run: npm ci --no-audit --no-fund
 
       - name: Audit production dependencies

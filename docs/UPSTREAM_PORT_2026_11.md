@@ -15,7 +15,7 @@ sessions and client tools, with a TLS client loaded on demand. OpenCode Free/Go
 also support the Muse Responses chain, model-specific endpoint routing, strict
 tool payload normalization, thinking metadata, and terminal-event output recovery.
 
-## Completed for v0.9.69
+## Completed for v0.9.70
 
 - Per-key model and combo restrictions, wildcard allow/deny rules, token quotas,
   catalog filtering, and paused-key enforcement. Rules apply to aliases, nested
@@ -71,7 +71,7 @@ and 63 tests skipped. Lint, locale coverage, generated-provider checks and
 package-version parity pass. The docs dependency audit reports no vulnerabilities,
 and the docs production build passes.
 
-The final v0.9.69 CLI archive builds successfully. An isolated extraction starts
+The final v0.9.70 CLI archive builds successfully. An isolated extraction starts
 the packaged server, reports version 0.9.69, returns healthy application/database
 checks and the expected 307 root redirect, and loads the AWS credential SDK and
 standalone configuration writers. Provider protocol tests use offline fixtures;
