@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CLIENT_KEY_POLICY_BOUNDS } from "@/lib/db/repos/apiKeysRepo.js";
 
 const mocks = vi.hoisted(() => ({
   createApiKey: vi.fn(),
@@ -11,7 +12,8 @@ const mocks = vi.hoisted(() => ({
   getClientKeySpend: vi.fn(),
 }));
 
-vi.mock("@/lib/db/index.js", () => ({
+vi.mock("@/lib/db/index.js", async () => ({
+  CLIENT_KEY_POLICY_BOUNDS: (await import("@/lib/db/repos/apiKeysRepo.js")).CLIENT_KEY_POLICY_BOUNDS,
   createApiKey: mocks.createApiKey,
   deleteApiKey: mocks.deleteApiKey,
   getApiKeyById: mocks.getApiKeyById,
@@ -124,6 +126,18 @@ describe("client key routes", () => {
 
     expect((await collection.POST(createRequest({ name: "Bad", tokenLimit: -5 }))).status).toBe(400);
     expect((await collection.POST(createRequest({ name: "Bad", tokenLimit: 1.5 }))).status).toBe(400);
+  });
+
+  it("enforces the repository token-quota maximum before creating a key", async () => {
+    const maximum = CLIENT_KEY_POLICY_BOUNDS.maxTokenQuota;
+    const atLimit = await collection.POST(jsonRequest({ name: "Maximum", tokenLimit: maximum }));
+    expect(atLimit.status).toBe(201);
+    expect(mocks.createApiKey).toHaveBeenLastCalledWith("Maximum", "machine-1", { tokenLimit: maximum });
+    mocks.createApiKey.mockClear();
+    const overLimit = await collection.POST(jsonRequest({ name: "Too large", tokenLimit: maximum + 1 }));
+    expect(overLimit.status).toBe(400);
+    expect(await overLimit.json()).toEqual({ error: `tokenLimit must be an integer from 0 through ${maximum}` });
+    expect(mocks.createApiKey).not.toHaveBeenCalled();
   });
 
   it("preserves 404 and 500 behavior", async () => {

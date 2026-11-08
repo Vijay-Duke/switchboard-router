@@ -72,7 +72,32 @@ package-version parity pass. The docs dependency audit reports no vulnerabilitie
 and the docs production build passes.
 
 The final v0.9.70 CLI archive builds successfully. An isolated extraction starts
-the packaged server, reports version 0.9.69, returns healthy application/database
+the packaged server, reports version 0.9.70, returns healthy application/database
 checks and the expected 307 root redirect, and loads the AWS credential SDK and
 standalone configuration writers. Provider protocol tests use offline fixtures;
 these checks do not establish live connectivity for every provider account.
+
+## v0.9.71 regression audit
+
+The v0.9.70 Endpoint & keys page crashed because KeyPolicyModal evaluated a
+non-optional usedTokens access while its selected key was null. The initial
+release checks exercised server health but did not render this page. The fix
+adds full-page server rendering and real dialog open/close coverage, plus
+open/closed render checks for the new credential, schedule, bulk-import,
+Smart Router and Zed dialogs.
+
+The audit also fixes custom-header save failures leaving an unhandled promise
+rejection, and token quotas above the repository maximum returning HTTP 500
+instead of HTTP 400. Regression checks cover network recovery without losing
+edits and the exact accepted/rejected quota boundary.
+
+The Linux full suite passes 6,444 tests (782 files), with 63 tests (14 files)
+skipped. The subsequently added custom-header and dialog suites pass another
+25 tests; all five focused suites pass 38 tests together. Lint has zero errors
+and three pre-existing warnings; locale parity, provider generation and release
+version checks pass. The CLI archive builds and its isolated server reports
+v0.9.71, passes application/database health and loads the AWS credential SDK
+and standalone configuration writers. Headless Chrome visits 48 dashboard
+routes in the built archive without error boundaries, page exceptions or
+server errors, including Endpoint & keys and the new provider/media pages.
+Populated interaction and deployment results are recorded separately.

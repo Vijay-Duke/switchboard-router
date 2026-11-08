@@ -1,3 +1,13 @@
+# v0.9.71 (2026-11-08)
+
+## Fixes
+- Fix the Endpoint & keys page crashing before a key is selected: the closed policy dialog now safely renders without a key.
+- Keep custom-header edits available for retry and show an error notification when saving fails because the network is unavailable.
+- Reject token quotas above the supported maximum with a validation error instead of a server error.
+
+## Validation
+- Add full endpoint-page render and policy-dialog interaction regressions, open/closed rendering checks for the newly added dialogs, custom-header network retry coverage and quota boundary checks.
+
 # v0.9.70 (2026-11-08)
 
 ## Features

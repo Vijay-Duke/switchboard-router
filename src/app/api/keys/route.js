@@ -1,6 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { createApiKey, getApiKeys, getClientKeySpend } from "@/lib/db/index.js";
+import { createApiKey, getApiKeys, getClientKeySpend, CLIENT_KEY_POLICY_BOUNDS } from "@/lib/db/index.js";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 
 export const dynamic = "force-dynamic";
@@ -47,8 +47,8 @@ export async function POST(request) {
     let tokenLimit = null;
     if (body.tokenLimit != null && body.tokenLimit !== "") {
       tokenLimit = body.tokenLimit;
-      if (!Number.isInteger(tokenLimit) || tokenLimit < 0) {
-        return NextResponse.json({ error: "tokenLimit must be a non-negative integer" }, { status: 400 });
+      if (!Number.isInteger(tokenLimit) || tokenLimit < 0 || tokenLimit > CLIENT_KEY_POLICY_BOUNDS.maxTokenQuota) {
+        return NextResponse.json({ error: `tokenLimit must be an integer from 0 through ${CLIENT_KEY_POLICY_BOUNDS.maxTokenQuota}` }, { status: 400 });
       }
       tokenLimit = tokenLimit === 0 ? null : tokenLimit;
     }

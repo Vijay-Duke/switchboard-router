@@ -118,7 +118,7 @@ export default function KeyPolicyModal({ apiKey, isOpen, isSaving, onClose, onSa
             <p className="text-xs text-text-muted">
               {apiKey?.tokenLimit > 0
                 ? `${Number(apiKey.usedTokens || 0).toLocaleString()} / ${Number(apiKey.tokenLimit).toLocaleString()} tokens (${Math.min(100, Math.round(((Number(apiKey.usedTokens || 0)) / apiKey.tokenLimit) * 100))}%)`
-                : `${Number(apiKey.usedTokens || 0).toLocaleString()} tokens used (no limit)`}
+                : `${Number(apiKey?.usedTokens || 0).toLocaleString()} tokens used (no limit)`}
             </p>
           </div>
           <Toggle

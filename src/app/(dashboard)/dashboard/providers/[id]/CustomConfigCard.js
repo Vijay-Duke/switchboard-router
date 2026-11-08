@@ -74,6 +74,8 @@ export default function CustomConfigCard({ providerId }) {
       }
       setHasOverride(Object.keys(headers).length > 0);
       notify.success("Custom headers saved");
+    } catch {
+      notify.error("Failed to save custom headers. Check your connection and try again.");
     } finally {
       setSaving(false);
     }
