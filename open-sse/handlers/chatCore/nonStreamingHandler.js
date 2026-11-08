@@ -11,6 +11,7 @@ import { appendRequestLog, saveRequestDetail } from "../../runtimeDeps.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
 import { restoreToolNames } from "../../utils/opencodeFingerprint.js";
 import { extractThinkTags } from "../../utils/thinkExtractor.js";
+import { unwrapClineEnvelope } from "../../shared/clineEnvelope.js";
 
 // Read a JSON body without ever holding more than `limit` bytes: the byte
 // count is checked per chunk, so an oversized (chunked, no content-length)
@@ -255,6 +256,11 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
       return createErrorResult(HTTP_STATUS.BAD_GATEWAY, `Invalid JSON response from ${provider}`);
     }
   }
+
+  // Unwrap before any consumer reads choices/usage so non-stream clients get a
+  // bare OpenAI body and usage tracking sees data.usage. No-op unless the
+  // provider opts in via transport.quirks.clineEnvelope.
+  responseBody = unwrapClineEnvelope(responseBody, provider);
 
   reqLogger.logProviderResponse(providerResponse.status, providerResponse.statusText, providerResponse.headers, responseBody);
   if (onRequestSuccess) {

@@ -57,7 +57,7 @@ export async function handleFetch(request) {
     settings,
     rawKey: extractApiKey(request),
     request,
-    target: { kind: comboModels ? "combo" : "model", id: providerInput },
+    target: { kind: comboModels ? "combo" : "model", id: providerInput, role: "provider", comboModels },
   });
   if (!auth.ok) return auth.response;
   return runWithClientKeyLease(auth.lease, async () => {

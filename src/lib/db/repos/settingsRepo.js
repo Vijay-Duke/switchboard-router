@@ -40,6 +40,8 @@ const DEFAULT_SETTINGS = {
   pxpipeAutoInstall: true,
   pxpipeMinChars: 25000,
   pxpipeTimeoutMs: 15000,
+  // Per-provider user header overrides applied at dispatch: { [providerId]: { headers: {..} } }
+  providerOverrides: {},
   // C1: non-loopback /v1 requires an API key by default (LAN-open was the prior insecure default)
   requireApiKey: true,
   // Hosts the user has explicitly trusted past the SSRF guard (e.g. an internal

@@ -96,9 +96,18 @@ export default function ConnectionRow({ connection, isOAuth, isFirst, isLast, on
   const proxyDisplayText = hasLegacyProxy
     ? `Proxy: ${connection.providerSpecificData?.connectionProxyUrl}`
     : "";
-  const autoPingTooltip = autoPing?.provider === "codex"
-    ? "Auto-starts the next 5h Codex window after reset by sending a tiny request. Consumes a small amount of quota."
-    : "When your 5h quota runs out, auto-sends a request the moment it resets so a new window starts right away.";
+  const autoPingTooltip = (() => {
+    if (!autoPing) return "";
+    const activeModes = [];
+    if (autoPing.reactiveOn) activeModes.push("On reset");
+    if (autoPing.scheduleOn) activeModes.push(`Scheduled (${autoPing.scheduleSummary || "active"})`);
+    if (activeModes.length > 0) {
+      return `Auto-ping active: ${activeModes.join(" + ")}. Click to configure.`;
+    }
+    return autoPing.provider === "codex"
+      ? "Auto-starts the next 5h Codex window after reset or on schedule. Click to configure."
+      : "Auto-starts a new window on quota reset or fixed schedule. Click to configure.";
+  })();
 
   let maskedProxyUrl = "";
   if (connection.providerSpecificData?.connectionProxyUrl) {
@@ -209,8 +218,8 @@ export default function ConnectionRow({ connection, isOAuth, isFirst, isLast, on
               {autoPing && (
                 <Tooltip text={autoPingTooltip}>
                   <button
-                    onClick={() => autoPing.onToggle(!autoPing.on)}
-                    className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs transition-colors hover:bg-white/5 ${autoPing.on ? "text-primary bg-primary/10 font-medium" : "text-text-muted hover:text-primary"}`}
+                    onClick={autoPing.onConfigure}
+                    className={`flex items-center gap-1 rounded-lg px-2 py-1 text-xs transition-colors hover:bg-white/5 ${autoPing.isActive ? "text-primary bg-primary/10 font-medium" : "text-text-muted hover:text-primary"}`}
                   >
                     <span className="material-symbols-outlined text-[16px]">bolt</span>
                     <span className="hidden sm:inline text-xs">Auto-ping</span>
@@ -353,8 +362,11 @@ ConnectionRow.propTypes = {
     error: PropTypes.string,
   }),
   autoPing: PropTypes.shape({
-    on: PropTypes.bool,
-    onToggle: PropTypes.func,
+    isActive: PropTypes.bool,
     provider: PropTypes.string,
+    reactiveOn: PropTypes.bool,
+    scheduleOn: PropTypes.bool,
+    scheduleSummary: PropTypes.string,
+    onConfigure: PropTypes.func,
   }),
 };

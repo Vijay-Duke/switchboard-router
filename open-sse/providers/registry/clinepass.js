@@ -22,6 +22,8 @@ const moduleDefault = {
   transport: {
     identity: "cline",
     baseUrl: "https://api.cline.bot/api/v1/chat/completions",
+    // Non-stream chat completions come back wrapped in {"success":true,"data":{...}}
+    quirks: { clineEnvelope: true },
     auth: {
       combined: true,
       header: "Authorization",

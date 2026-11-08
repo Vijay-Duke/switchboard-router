@@ -8,6 +8,7 @@ import {
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
 import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/db/index.js";
+import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { isModelCatalogDiscoveryRequest, MODEL_CATALOG_HEADER } from "@/lib/modelCatalogDiscovery";
 import {
@@ -644,7 +645,8 @@ export async function GET(request) {
       signal: request?.signal,
       skipCompatibleDiscovery: isModelCatalogDiscoveryRequest(request),
     });
-    const data = models;
+    // A restricted key sees only the combos and models it may call.
+    const data = await filterModelsListForKey(await getKeyAccessContext(request), models);
     return Response.json({ object: "list", data }, {
     });
   } catch (error) {

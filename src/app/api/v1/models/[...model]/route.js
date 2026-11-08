@@ -1,5 +1,6 @@
 // @ts-check
 import { buildModelsList } from "../route.js";
+import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
 import { corsPreflightResponse } from "@/shared/utils/cors.js";
 
 // URL slug → service kind(s). `llm` is the default chat kind (same list as
@@ -35,9 +36,10 @@ export async function GET(request, { params }) {
     const path = (Array.isArray(raw) ? raw : [raw]).filter(Boolean).map(String);
     const identifier = path.join("/");
     const kindFilter = path.length === 1 ? KIND_SLUG_MAP[identifier] : null;
+    const keyAccess = await getKeyAccessContext(request);
 
     if (kindFilter) {
-      const data = await buildModelsList(kindFilter, { signal: request?.signal });
+      const data = await filterModelsListForKey(keyAccess, await buildModelsList(kindFilter, { signal: request?.signal }));
       return Response.json({ object: "list", data });
     }
 
@@ -56,7 +58,7 @@ export async function GET(request, { params }) {
     }
 
     // Match the same LLM catalog exposed by GET /v1/models.
-    const models = await buildModelsList([LLM_KIND], { signal: request?.signal });
+    const models = await filterModelsListForKey(keyAccess, await buildModelsList([LLM_KIND], { signal: request?.signal }));
     const matchedModel = models.find((candidate) => candidate.id === identifier);
     if (!matchedModel) {
       return Response.json(

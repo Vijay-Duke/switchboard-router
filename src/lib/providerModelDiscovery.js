@@ -19,7 +19,7 @@ import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveProviderModels, parseGoogleAvailableModels } from "open-sse/services/providerModels.js";
-import { resolveClinepassModels } from "open-sse/services/clinepassModels.js";
+import { resolveClinepassModels, resolveClineModels } from "open-sse/services/clinepassModels.js";
 import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { MODEL_CATALOG_HEADER } from "@/lib/modelCatalogDiscovery";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
@@ -349,6 +349,18 @@ const PROVIDER_MODELS_CONFIG = {
         warning: "Kimchi returned no live models; falling back to static catalog.",
       };
     }
+  },
+  cline: {
+    customResolver: async (connection) => {
+      const result = await resolveClineModels({
+        accessToken: connection.accessToken,
+        apiKey: connection.apiKey,
+      });
+      return result || {
+        models: [],
+        warning: "Cline returned no live models; falling back to static catalog.",
+      };
+    },
   },
   clinepass: {
     customResolver: async (connection) => {

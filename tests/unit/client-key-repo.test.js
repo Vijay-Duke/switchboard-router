@@ -213,6 +213,11 @@ describe("client key repository", () => {
     expect(() => normalize({ spendLimitUsd: -1 })).toThrow(/spendLimitUsd/i);
     expect(() => normalize({ spendLimitUsd: bounds.maxSpendUsd + 1 })).toThrow(/spendLimitUsd/i);
     expect(() => normalize({ spendLimitUsd: Number.POSITIVE_INFINITY })).toThrow(/spendLimitUsd/i);
+    expect(() => normalize({ tokenLimit: -1 })).toThrow(/tokenLimit/i);
+    expect(() => normalize({ tokenLimit: 1.5 })).toThrow(/tokenLimit/i);
+    expect(() => normalize({ tokenLimit: bounds.maxTokenQuota + 1 })).toThrow(/tokenLimit/i);
+    expect(() => normalize({ usedTokens: -1 })).toThrow(/usedTokens/i);
+    expect(() => normalize({ usedTokens: 1.5 })).toThrow(/usedTokens/i);
 
     expect(normalize({
       allowedModels: ["gpt-5"],
@@ -227,6 +232,48 @@ describe("client key repository", () => {
       concurrencyLimit: 1,
       spendLimitUsd: 0,
     });
+
+    // Token quota fields: 0 normalizes to unlimited (null); usedTokens is
+    // only ever set to reset the counter.
+    expect(normalize({ tokenLimit: 0, usedTokens: 0 })).toEqual({ tokenLimit: null, usedTokens: 0 });
+    expect(normalize({ tokenLimit: "" })).toEqual({ tokenLimit: null });
+    expect(normalize({ tokenLimit: 5_000 })).toEqual({ tokenLimit: 5_000 });
+  });
+
+  it("stores, patches, and resets the per-key token quota", async () => {
+    const created = await repo.createApiKey("Quota", "machine-quota", { tokenLimit: 10_000 });
+    expect(created.tokenLimit).toBe(10_000);
+    expect(created.usedTokens).toBe(0);
+
+    // saveRequestUsage increments usedTokens atomically by client key ID.
+    db.run(`INSERT INTO usageHistory(timestamp, clientKeyId, promptTokens, completionTokens, cost) VALUES ('2026-08-22T00:00:00.000Z', ?, 120, 30, 0.01)`, [created.id]);
+    db.run(`UPDATE apiKeys SET usedTokens = usedTokens + 150 WHERE id = ?`, [created.id]);
+    const afterUse = await repo.getApiKeyById(created.id);
+    expect(afterUse.usedTokens).toBe(150);
+    expect(afterUse.tokenLimit).toBe(10_000);
+
+    // Dashboard reset: usedTokens back to 0, limit unchanged.
+    const reset = await repo.updateApiKey(created.id, { usedTokens: 0 });
+    expect(reset.usedTokens).toBe(0);
+    expect(reset.tokenLimit).toBe(10_000);
+
+    // Clearing the limit makes the key unlimited again.
+    const unlimited = await repo.updateApiKey(created.id, { tokenLimit: null });
+    expect(unlimited.tokenLimit).toBeNull();
+  });
+
+  it("keeps a paused key discoverable as KNOWN via includeInactive without authenticating it", async () => {
+    const created = await repo.createApiKey("Paused", "machine-paused");
+    db.run(`UPDATE apiKeys SET isActive = 0 WHERE id = ?`, [created.id]);
+
+    expect(await repo.authenticateApiKey(created.key)).toBeNull();
+    const known = await repo.authenticateApiKey(created.key, { includeInactive: true });
+    expect(known).not.toBeNull();
+    expect(known.isActive).toBe(false);
+    expect(known.id).toBe(created.id);
+
+    // Unknown keys stay null in both modes.
+    expect(await repo.authenticateApiKey("sk-unknown-key-material-000", { includeInactive: true })).toBeNull();
   });
 
   it("attributes persisted spend by stable client key ID", async () => {

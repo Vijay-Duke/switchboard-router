@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   authenticateApiKey: vi.fn(),
   getClientKeySpend: vi.fn(),
+  getCombos: vi.fn(),
+  getModelInfo: vi.fn(),
+  getComboModels: vi.fn(),
   isLocalRequest: vi.fn(),
   hasValidCliToken: vi.fn(),
 }));
@@ -10,6 +13,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/db/index.js", () => ({
   authenticateApiKey: mocks.authenticateApiKey,
   getClientKeySpend: mocks.getClientKeySpend,
+  getCombos: mocks.getCombos,
+}));
+vi.mock("@/sse/services/model.js", () => ({
+  getModelInfo: mocks.getModelInfo,
+  getComboModels: mocks.getComboModels,
 }));
 vi.mock("@/dashboardGuard", () => ({ isLocalRequest: mocks.isLocalRequest }));
 vi.mock("@/shared/utils/cliToken.js", () => ({ hasValidCliToken: mocks.hasValidCliToken }));
@@ -31,6 +39,8 @@ const baseKey = {
   concurrencyLimit: null,
   spendLimitUsd: null,
   spentUsd: 0,
+  tokenLimit: null,
+  usedTokens: 0,
 };
 
 function request() {
@@ -56,6 +66,20 @@ beforeEach(() => {
   policy.__resetClientKeyPolicyStateForTests();
   mocks.authenticateApiKey.mockReset().mockResolvedValue({ ...baseKey });
   mocks.getClientKeySpend.mockReset().mockResolvedValue(0);
+  mocks.getCombos.mockReset().mockResolvedValue([{ name: "fast" }]);
+  mocks.getModelInfo.mockReset().mockImplementation(async (modelStr) => {
+    // Bare names resolve through the default provider; provider-prefixed ids
+    // resolve to that provider (mirrors src/sse/services/model.js semantics).
+    if (typeof modelStr !== "string" || !modelStr) return null;
+    if (modelStr.includes("/")) {
+      const [provider, model] = modelStr.split("/");
+      return { provider, model };
+    }
+    return { provider: "openai", model: modelStr };
+  });
+  mocks.getComboModels.mockReset().mockImplementation(async (modelStr) =>
+    modelStr === "fast" ? ["openai/gpt-5"] : null
+  );
   mocks.isLocalRequest.mockReset().mockReturnValue(false);
   mocks.hasValidCliToken.mockReset().mockResolvedValue(false);
 });
@@ -112,6 +136,44 @@ describe("authorizeClientKeyRequest", () => {
     expect(body).not.toContain(RAW_KEY);
     expect(body).not.toContain(baseKey.name);
     expect(body).not.toContain("5");
+  });
+
+  it("rejects a KNOWN paused key even when keys are optional; unknown keys keep the local pass", async () => {
+    // includeInactive lookup surfaces paused keys as KNOWN (mirrors the repo).
+    mocks.authenticateApiKey.mockImplementation(async (raw, { includeInactive } = {}) =>
+      includeInactive ? { ...baseKey, isActive: false } : null);
+    const pausedOptional = await authorize({ settings: { requireApiKey: false } });
+    expect(pausedOptional.ok).toBe(false);
+    expect(pausedOptional.response.status).toBe(401);
+    expect(await errorCode(pausedOptional)).toBe("client_key_paused");
+
+    const pausedRequired = await authorize({ settings: { requireApiKey: true } });
+    expect(await errorCode(pausedRequired)).toBe("client_key_paused");
+
+    // Unknown key: optional-auth local pass is preserved.
+    mocks.authenticateApiKey.mockResolvedValue(null);
+    expect(await authorize({ settings: { requireApiKey: false } })).toEqual({
+      ok: true, mode: "local", clientKey: null, clientKeyId: null, lease: null,
+    });
+  });
+
+  it("enforces the per-key token quota with 429 at equality and discloses only counts", async () => {
+    mocks.authenticateApiKey.mockResolvedValue({ ...baseKey, tokenLimit: 1_000, usedTokens: 999 });
+    expect((await authorize()).ok).toBe(true);
+
+    mocks.authenticateApiKey.mockResolvedValue({ ...baseKey, tokenLimit: 1_000, usedTokens: 1_000 });
+    const exhausted = await authorize();
+    expect(exhausted.response.status).toBe(429);
+    const body = await exhausted.response.text();
+    expect(JSON.parse(body).error.code).toBe("client_key_token_quota_exceeded");
+    expect(body).toContain("1,000");
+    expect(body).not.toContain(RAW_KEY);
+    expect(body).not.toContain(baseKey.name);
+
+    // Quota applies to known keys even in optional-auth mode.
+    const optionalAuth = await authorize({ settings: { requireApiKey: false } });
+    expect(optionalAuth.ok).toBe(false);
+    expect(await errorCode(optionalAuth)).toBe("client_key_token_quota_exceeded");
   });
 
   it("enforces concurrency before rate and releases with an idempotent lease", async () => {

@@ -88,3 +88,47 @@ describe("/v1/models advertising vs connection state", () => {
     expect(await ids()).toContain("combo-node");
   });
 });
+
+describe("/v1/models filtered by client-key access", () => {
+  async function modelsFor(rawKey) {
+    const { GET } = await import("@/app/api/v1/models/route.js");
+    const headers = rawKey ? { Authorization: `Bearer ${rawKey}` } : {};
+    const response = await GET(new Request("https://router.test/v1/models", { headers }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.object).toBe("list");
+    return body.data.map((m) => m.id);
+  }
+
+  it("hides everything a restricted key may not call, including whole providers", { timeout: 20000 }, async () => {
+    const { createApiKey, createCombo } = await import("@/lib/db/index.js");
+    await seedConnection("deepseek", true);
+    await seedConnection("glm", true);
+    await createCombo({ name: "combo-ds", models: [DS_MODEL] });
+
+    // Unrestricted caller sees both providers and the combo.
+    const open = await modelsFor(null);
+    expect(open).toContain(DS_MODEL);
+    expect(open).toContain(GLM_MODEL);
+    expect(open).toContain("combo-ds");
+
+    // Restricted to glm/* + combo-ds: deepseek disappears, combo stays.
+    const key = await createApiKey("Restricted", "machine-models", {
+      allowedModels: ["glm/*"],
+      allowedCombos: ["combo-ds"],
+    });
+    expect(key.key).toMatch(/^sk-/);
+    const restricted = await modelsFor(key.key);
+    expect(restricted).not.toContain(DS_MODEL);
+    expect(restricted).toContain(GLM_MODEL);
+    expect(restricted).toContain("combo-ds");
+
+    // Deny entry removes the one denied model but keeps the rest of the provider.
+    const denyKey = await createApiKey("Deny", "machine-models-2", {
+      allowedModels: ["glm/*", "-glm-4.7"],
+    });
+    const denied = await modelsFor(denyKey.key);
+    expect(denied).not.toContain(GLM_MODEL);
+    expect(denied.some((id) => id.startsWith("glm/"))).toBe(true);
+  });
+});

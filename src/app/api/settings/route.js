@@ -4,7 +4,7 @@ import { jsonError } from "@/lib/jsonError.js";
 import { getSettings, updateSettings, updateSettingsKeyAtomic } from "@/lib/db/index.js";
 import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
 import { resetComboRotation } from "open-sse/services/combo.js";
-import { runQuotaAutoPingTick } from "@/shared/services/quotaAutoPing";
+import { configureQuotaAutoPing } from "@/shared/services/quotaAutoPing";
 import { findAutoComboMissingRouter } from "@/lib/combos/comboWrites.js";
 import {
   normalizeModelAvailabilityForStorage,
@@ -319,9 +319,13 @@ export async function PATCH(request) {
       Object.prototype.hasOwnProperty.call(body, "claudeAutoPing") ||
       Object.prototype.hasOwnProperty.call(body, "codexAutoPing")
     ) {
-      runQuotaAutoPingTick().catch((error) => {
-        console.warn("[AutoPing] settings-triggered tick failed:", error.message);
-      });
+      // Start/stop the scheduler to match the new config: an account or an
+      // anchored schedule opted in keeps it running, otherwise it stops.
+      try {
+        configureQuotaAutoPing(settings);
+      } catch (error) {
+        console.warn("[AutoPing] settings-triggered reconfigure failed:", error.message);
+      }
     }
 
     return NextResponse.json(sanitizeSettings(settings), { headers: SETTINGS_RESPONSE_HEADERS });

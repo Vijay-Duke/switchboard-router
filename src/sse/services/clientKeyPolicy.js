@@ -1,6 +1,12 @@
 import { authenticateApiKey, getClientKeySpend } from "@/lib/db/index.js";
 import { isLocalRequest } from "@/dashboardGuard";
 import { hasValidCliToken } from "@/shared/utils/cliToken.js";
+import {
+  buildKeyAccessContext,
+  isProviderTargetAllowed,
+  isResolvedTargetAllowed,
+  isTargetAllowed,
+} from "./keyAccess.js";
 
 const WINDOW_MS = 60_000;
 
@@ -13,22 +19,34 @@ function state() {
 
 function allowed(target, clientKey) {
   if (!target) return true;
-  const models = clientKey.allowedModels || [];
-  const combos = clientKey.allowedCombos || [];
-  if (models.length === 0 && combos.length === 0) return true;
-  return target.kind === "combo"
-    ? combos.includes(target.id)
-    : models.includes(target.id);
+  const ctx = buildKeyAccessContext(clientKey);
+  if (!ctx) return true;
+  if (target.resolved) {
+    return isResolvedTargetAllowed(ctx, target.id, target.provider, target.model);
+  }
+  if (target.role === "provider") {
+    return isProviderTargetAllowed(ctx, target.id, target.comboModels || null);
+  }
+  return isTargetAllowed(ctx, target.id);
 }
 
-function rejection(status, code, retryAfter = null) {
+/**
+ * Post-authorization target check for handlers that only learn their target
+ * after authorizing (e.g. video proxies reading a multipart body). Returns
+ * the 403 rejection object, or null when the key may call this target.
+ */
+export async function clientKeyTargetDenied(clientKey, target) {
+  return (await allowed(target, clientKey)) ? null : rejection(403, "client_key_target_not_allowed");
+}
+
+function rejection(status, code, retryAfter = null, message = null) {
   const headers = { "content-type": "application/json" };
   if (retryAfter != null) headers["retry-after"] = String(retryAfter);
   return {
     ok: false,
     response: new Response(JSON.stringify({
       error: {
-        message: "API key policy rejected this request",
+        message: message || "API key policy rejected this request",
         type: "client_key_policy_error",
         code,
       },
@@ -56,18 +74,23 @@ export async function authorizeClientKeyRequest({ settings, rawKey, request, tar
       : bypass("local");
   }
 
-  const clientKey = await authenticateApiKey(rawKey);
+  const clientKey = await authenticateApiKey(rawKey, { includeInactive: true });
   if (!clientKey) {
     return settings?.requireApiKey
       ? rejection(401, "invalid_api_key")
       : bypass("local");
+  }
+  // A KNOWN key is subject to its own pause even when keys are optional; an
+  // unknown key keeps the deliberate local pass (see bypass above).
+  if (clientKey.isActive === false) {
+    return rejection(401, "client_key_paused");
   }
 
   const now = Date.now();
   if (clientKey.expiresAt && new Date(clientKey.expiresAt).getTime() <= now) {
     return rejection(403, "client_key_expired");
   }
-  if (!allowed(target, clientKey)) {
+  if (!(await allowed(target, clientKey))) {
     return rejection(403, "client_key_target_not_allowed");
   }
 
@@ -76,6 +99,20 @@ export async function authorizeClientKeyRequest({ settings, rawKey, request, tar
     clientKey.spentUsd = spentUsd;
     if (spentUsd >= clientKey.spendLimitUsd) {
       return rejection(429, "client_key_spend_limit_exceeded");
+    }
+  }
+
+  // Per-key token quota: 429 once the counter reaches the limit. The counter
+  // is incremented atomically from saveRequestUsage on every keyed request.
+  if (clientKey.tokenLimit != null && clientKey.tokenLimit > 0) {
+    const usedTokens = Number(clientKey.usedTokens || 0);
+    if (usedTokens >= clientKey.tokenLimit) {
+      return rejection(
+        429,
+        "client_key_token_quota_exceeded",
+        null,
+        `Token limit exceeded for this API key (${usedTokens.toLocaleString()} / ${clientKey.tokenLimit.toLocaleString()} tokens used)`
+      );
     }
   }
 

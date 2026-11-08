@@ -2,6 +2,8 @@
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 import { CLI_TOKEN_HEADER, getCliToken } from "@/shared/utils/cliToken.js";
 import { mergeAbortSignals } from "open-sse/utils/abort.js";
+import { unwrapClineEnvelope } from "open-sse/shared/clineEnvelope.js";
+import { resolveProviderId } from "@/shared/constants/providers.js";
 
 const DEFAULT_MODEL_TEST_TIMEOUT_MS = 60_000;
 
@@ -186,6 +188,11 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
   const rawText = await res.text().catch(() => "");
   let parsed = null;
   try { parsed = rawText ? JSON.parse(rawText) : null; } catch {}
+
+  // Unwrap before the choices checks below. No-op for providers that do not
+  // opt in via transport.quirks.clineEnvelope.
+  const providerId = resolveProviderId(String(model).split("/")[0]);
+  parsed = unwrapClineEnvelope(parsed, providerId);
 
   if (!res.ok) {
     const detail = parsed?.error?.message || parsed?.msg || parsed?.message || parsed?.error || rawText;

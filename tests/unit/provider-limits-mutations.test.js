@@ -93,14 +93,20 @@ describe("auto-ping toggle (O7)", () => {
     const { container } = await mountWithRow({
       "PATCH /api/settings": () => jsonResponse({ error: "settings write failed" }, 500),
     });
-    const bolt = container.querySelector('[aria-label="Toggle auto-ping"]');
+    const bolt = container.querySelector('[aria-label="Configure auto-ping"]');
     expect(bolt).not.toBeNull();
     expect(bolt.className).toContain("text-text-muted");
 
+    // 3-way mode: the bolt now opens the mode modal; saving "On reset"
+    // PATCHes settings and must revert optimistically on failure.
     await click(bolt);
+    await settle(() => container.querySelector('[role="dialog"]'), "auto-ping modal");
+    const modal = container.querySelector('[role="dialog"]');
+    await click([...modal.querySelectorAll("button")].find((b) => b.textContent.trim().endsWith("On reset")));
+    await click([...modal.querySelectorAll("button")].find((b) => b.textContent.trim() === "Save"));
     await settle(() => toasts().some((m) => m.includes("settings write failed")), "auto-ping error toast");
 
-    expect(container.querySelector('[aria-label="Toggle auto-ping"]').className).toContain("text-text-muted");
+    expect(container.querySelector('[aria-label="Configure auto-ping"]').className).toContain("text-text-muted");
   });
 });
 

@@ -154,6 +154,43 @@ describe("client key usage attribution", () => {
     expect(db.get(`SELECT spentUsd FROM apiKeys WHERE id = 'client-1'`).spentUsd).toBe(5);
   });
 
+  it("increments the per-key token counter atomically and once per request", async () => {
+    const base = {
+      timestamp: new Date().toISOString(), provider: "openai", model: "gpt-5",
+      clientKeyId: "client-1", tokens: { prompt_tokens: 120, completion_tokens: 30 },
+    };
+    await usage.saveRequestUsage({ ...base, requestId: "tokens-1" });
+    // A replayed save (same requestId) must not double-count tokens.
+    await usage.saveRequestUsage({ ...base, requestId: "tokens-1" });
+    await usage.saveRequestUsage({ ...base, requestId: "tokens-2", tokens: { prompt_tokens: 7, completion_tokens: 3 } });
+    expect(db.get(`SELECT usedTokens FROM apiKeys WHERE id = 'client-1'`).usedTokens).toBe(160);
+
+    // Unkeyed requests never touch the counter.
+    await usage.saveRequestUsage({ ...base, clientKeyId: null, requestId: "tokens-3" });
+    expect(db.get(`SELECT usedTokens FROM apiKeys WHERE id = 'client-1'`).usedTokens).toBe(160);
+  });
+
+  it("makes completed token usage block the immediately following authorization", async () => {
+    policy.__resetClientKeyPolicyStateForTests();
+    db.run(`UPDATE apiKeys SET tokenLimit = 150 WHERE id = 'client-1'`);
+    const args = {
+      settings: { requireApiKey: true },
+      rawKey: RAW_KEY,
+      request: new Request("https://router.test/v1/chat/completions"),
+      target: { kind: "model", id: "gpt-5" },
+    };
+    const first = await policy.authorizeClientKeyRequest(args);
+    expect(first.ok).toBe(true);
+    await usage.saveRequestUsage({
+      provider: "openai", model: "gpt-5", clientKeyId: "client-1",
+      tokens: { prompt_tokens: 100, completion_tokens: 60 }, requestId: "quota-1",
+    });
+    first.lease.release();
+    const next = await policy.authorizeClientKeyRequest(args);
+    expect(next.ok).toBe(false);
+    expect((await next.response.json()).error.code).toBe("client_key_token_quota_exceeded");
+  });
+
   it("makes completed spend visible to the immediately following authorization", async () => {
     policy.__resetClientKeyPolicyStateForTests();
     db.run(`UPDATE apiKeys SET spendLimitUsd = 2.5 WHERE id = 'client-1'`);

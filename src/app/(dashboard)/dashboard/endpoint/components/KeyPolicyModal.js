@@ -34,6 +34,8 @@ export default function KeyPolicyModal({ apiKey, isOpen, isSaving, onClose, onSa
   const [rateLimitPerMinute, setRateLimitPerMinute] = useState("");
   const [concurrencyLimit, setConcurrencyLimit] = useState("");
   const [spendLimitUsd, setSpendLimitUsd] = useState("");
+  const [tokenLimit, setTokenLimit] = useState("");
+  const [resetTokens, setResetTokens] = useState(false);
 
   useEffect(() => {
     if (!isOpen || !apiKey) return;
@@ -45,6 +47,8 @@ export default function KeyPolicyModal({ apiKey, isOpen, isSaving, onClose, onSa
     setRateLimitPerMinute(apiKey.rateLimitPerMinute ?? "");
     setConcurrencyLimit(apiKey.concurrencyLimit ?? "");
     setSpendLimitUsd(apiKey.spendLimitUsd ?? "");
+    setTokenLimit(apiKey.tokenLimit ?? "");
+    setResetTokens(false);
   }, [apiKey, isOpen]);
 
   const save = () => onSave({
@@ -56,6 +60,8 @@ export default function KeyPolicyModal({ apiKey, isOpen, isSaving, onClose, onSa
     rateLimitPerMinute: optionalNumber(rateLimitPerMinute),
     concurrencyLimit: optionalNumber(concurrencyLimit),
     spendLimitUsd: optionalNumber(spendLimitUsd),
+    tokenLimit: optionalNumber(tokenLimit),
+    ...(resetTokens ? { usedTokens: 0 } : {}),
   });
 
   return (
@@ -75,9 +81,11 @@ export default function KeyPolicyModal({ apiKey, isOpen, isSaving, onClose, onSa
             className="min-h-24 rounded-lg border border-border bg-surface-2 p-3 font-mono text-sm"
             value={allowedModels}
             onChange={(event) => setAllowedModels(event.target.value)}
-            placeholder="openai/gpt-5\nanthropic/claude-sonnet"
+            placeholder={"openai/gpt-5\noc/*\n*claude*\n!opus"}
           />
-          <span className="text-xs font-normal text-text-muted">One exact model ID per line. Empty allows all targets.</span>
+          <span className="text-xs font-normal text-text-muted">
+            One entry per line, matched on resolved identities. Wildcards (oc/*, *claude*, *) and deny entries (!opus, -haiku) are supported; a deny-only list allows everything except the denied. Empty allows all targets.
+          </span>
         </label>
         <label className="flex flex-col gap-1.5 text-sm font-medium">
           Allowed combo names
@@ -87,13 +95,38 @@ export default function KeyPolicyModal({ apiKey, isOpen, isSaving, onClose, onSa
             onChange={(event) => setAllowedCombos(event.target.value)}
             placeholder="fast\nquality"
           />
-          <span className="text-xs font-normal text-text-muted">One exact combo name per line.</span>
+          <span className="text-xs font-normal text-text-muted">One combo name per line (exact match).</span>
         </label>
         <Input label="Expires at" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Input label="Requests / minute" type="number" min="1" step="1" value={rateLimitPerMinute} onChange={(event) => setRateLimitPerMinute(event.target.value)} />
           <Input label="Concurrent requests" type="number" min="1" step="1" value={concurrencyLimit} onChange={(event) => setConcurrencyLimit(event.target.value)} />
           <Input label="Spend ceiling (USD)" type="number" min="0" step="0.01" value={spendLimitUsd} onChange={(event) => setSpendLimitUsd(event.target.value)} />
+        </div>
+        <Input
+          label="Token limit"
+          type="number"
+          min="0"
+          step="1"
+          value={tokenLimit}
+          onChange={(event) => setTokenLimit(event.target.value)}
+          placeholder="Unlimited"
+        />
+        <div className="flex items-center justify-between rounded-lg border border-border p-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">Token usage</p>
+            <p className="text-xs text-text-muted">
+              {apiKey?.tokenLimit > 0
+                ? `${Number(apiKey.usedTokens || 0).toLocaleString()} / ${Number(apiKey.tokenLimit).toLocaleString()} tokens (${Math.min(100, Math.round(((Number(apiKey.usedTokens || 0)) / apiKey.tokenLimit) * 100))}%)`
+                : `${Number(apiKey.usedTokens || 0).toLocaleString()} tokens used (no limit)`}
+            </p>
+          </div>
+          <Toggle
+            checked={resetTokens}
+            onChange={setResetTokens}
+            title="Reset the used-token counter to 0 on save"
+          />
+          <span className="ml-3 whitespace-nowrap text-xs text-text-muted">Reset counter</span>
         </div>
         <p className="text-sm text-text-muted">
           Current spend: <span className="font-mono text-text-main">${Number(apiKey?.spentUsd || 0).toFixed(4)}</span>

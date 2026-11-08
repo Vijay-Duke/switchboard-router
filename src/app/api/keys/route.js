@@ -43,6 +43,16 @@ export async function POST(request) {
     }
     const name = body.name.trim();
 
+    // Optional token quota at creation (empty/absent = unlimited).
+    let tokenLimit = null;
+    if (body.tokenLimit != null && body.tokenLimit !== "") {
+      tokenLimit = body.tokenLimit;
+      if (!Number.isInteger(tokenLimit) || tokenLimit < 0) {
+        return NextResponse.json({ error: "tokenLimit must be a non-negative integer" }, { status: 400 });
+      }
+      tokenLimit = tokenLimit === 0 ? null : tokenLimit;
+    }
+
     // Always get machineId from server
     const machineId = await getConsistentMachineId();
     if (body.findOrCreate === true) {
@@ -53,7 +63,7 @@ export async function POST(request) {
       return NextResponse.json(apiKey, { status: created ? 201 : 200 });
     }
 
-    const apiKey = await createApiKey(name, machineId);
+    const apiKey = await createApiKey(name, machineId, { tokenLimit });
 
     return NextResponse.json(apiKey, { status: 201 });
   } catch (error) {

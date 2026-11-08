@@ -78,6 +78,8 @@ describe("client key routes", () => {
       rateLimitPerMinute: 10,
       concurrencyLimit: null,
       spendLimitUsd: 25,
+      tokenLimit: 100_000,
+      usedTokens: 0,
     };
     mocks.normalizeClientKeyPatch.mockReturnValue(patch);
     const response = await detail.PUT(jsonRequest(patch), { params: Promise.resolve({ id: "client-1" }) });
@@ -103,6 +105,25 @@ describe("client key routes", () => {
     expect(mocks.updateApiKey).not.toHaveBeenCalled();
     expect(JSON.stringify(log.mock.calls)).not.toContain("never-log-this-secret");
     log.mockRestore();
+  });
+
+  it("accepts a token quota at creation and rejects non-integer limits", async () => {
+    const createRequest = (body) => new Request("https://router.test/api/keys", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const created = await collection.POST(createRequest({ name: "Quota key", tokenLimit: 50_000 }));
+    expect(created.status).toBe(201);
+    expect(mocks.createApiKey).toHaveBeenCalledWith("Quota key", "machine-1", { tokenLimit: 50_000 });
+
+    const unlimited = await collection.POST(createRequest({ name: "No quota" }));
+    expect(unlimited.status).toBe(201);
+    expect(mocks.createApiKey).toHaveBeenLastCalledWith("No quota", "machine-1", { tokenLimit: null });
+
+    expect((await collection.POST(createRequest({ name: "Bad", tokenLimit: -5 }))).status).toBe(400);
+    expect((await collection.POST(createRequest({ name: "Bad", tokenLimit: 1.5 }))).status).toBe(400);
   });
 
   it("preserves 404 and 500 behavior", async () => {
