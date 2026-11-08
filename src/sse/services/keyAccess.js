@@ -119,7 +119,7 @@ function isDeniedByRules(sets, requested, canonical) {
     if (matchesWildcardPattern(requested, deny) || matchesWildcardPattern(canonical, deny)) return true;
     const r = String(requested || "").toLowerCase();
     const nameOnly = r.includes("/") ? r.split("/").slice(1).join("/") : r;
-    if (r.includes(deny) || nameOnly.includes(deny)) return true;
+    if (!deny.includes("*") && (r.includes(deny) || nameOnly.includes(deny) || String(canonical || "").toLowerCase().includes(deny))) return true;
   }
   return false;
 }
@@ -177,9 +177,32 @@ export async function isTargetAllowed(ctx, requested) {
   if (typeof requested !== "string" || !requested) return false;
   const sets = await getAllowSets(ctx);
   const comboModels = await getComboModels(requested);
-  return comboModels
-    ? (sets.combos.has(lower(requested)) || sets.openExceptDenied)
-    : await isModelStringAllowed(ctx, requested);
+  if (comboModels) {
+    if (isDeniedByRules(sets, requested, requested)) return false;
+    if (!(sets.combos.has(lower(requested)) || sets.openExceptDenied || anyWildcardMatches(requested, requested, ctx.allow))) return false;
+    return !await comboContainsDenied(sets, comboModels, new Set([requested]));
+  }
+  return await isModelStringAllowed(ctx, requested);
+}
+
+// A granted combo includes its members, but explicit denies still apply to
+// every resolved leaf. Refuse cyclic/unverifiable graphs rather than bypassing
+// the policy via nested combo names.
+async function comboContainsDenied(sets, members, seen, providerOnly = false) {
+  for (const member of members) {
+    if (typeof member !== "string" || seen.has(member)) return true;
+    if (isDeniedByRules(sets, member, member)) return true;
+    const nested = await getComboModels(member);
+    if (nested) {
+      if (await comboContainsDenied(sets, nested, new Set([...seen, member]), providerOnly)) return true;
+    } else if (providerOnly) {
+      if (isDeniedByRules(sets, member, resolveProviderId(member))) return true;
+    } else {
+      const info = await getModelInfo(member);
+      if (!info?.provider || !info.model || isDeniedByRules(sets, member, canonicalModel(info.provider, info.model))) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -208,9 +231,13 @@ export async function isProviderTargetAllowed(ctx, requested, comboModels) {
   if (!ctx) return true;
   if (typeof requested !== "string" || !requested) return false;
   const sets = await getAllowSets(ctx);
-  return comboModels
-    ? (sets.combos.has(lower(requested)) || sets.openExceptDenied)
-    : (sets.providers.has(lower(resolveProviderId(requested))) || sets.openExceptDenied);
+  const canonical = lower(resolveProviderId(requested));
+  if (isDeniedByRules(sets, requested, canonical)) return false;
+  if (comboModels) {
+    if (!(sets.combos.has(lower(requested)) || sets.openExceptDenied || anyWildcardMatches(requested, requested, ctx.allow))) return false;
+    return !await comboContainsDenied(sets, comboModels, new Set([requested]), true);
+  }
+  return sets.providers.has(canonical) || sets.openExceptDenied || anyWildcardMatches(canonical, requested, ctx.allow);
 }
 
 /**
@@ -225,13 +252,13 @@ export async function filterModelsListForKey(ctx, list) {
   for (const entry of list) {
     if (!entry?.id) continue;
     if (entry.owned_by === "combo") {
-      if (sets.combos.has(lower(entry.id)) || sets.openExceptDenied || anyWildcardMatches(entry.id, entry.id, ctx.allow)) out.push(entry);
+      if (await isTargetAllowed(ctx, entry.id)) out.push(entry);
       continue;
     }
     const info = await getModelInfo(entry.id);
     if (!info?.provider) continue;
     if (entry.kind === "webSearch" || entry.kind === "webFetch") {
-      if (sets.providers.has(lower(info.provider)) || sets.openExceptDenied || anyWildcardMatches(entry.id, entry.id, ctx.allow)) out.push(entry);
+      if (!isDeniedByRules(sets, entry.id, info.provider) && (sets.providers.has(lower(info.provider)) || sets.openExceptDenied || anyWildcardMatches(entry.id, entry.id, ctx.allow))) out.push(entry);
       continue;
     }
     const canonical = canonicalModel(info.provider, info.model);

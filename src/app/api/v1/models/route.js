@@ -8,7 +8,8 @@ import {
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
 import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/db/index.js";
-import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
+import { filterModelsListForKey } from "@/sse/services/keyAccess.js";
+import { withModelCatalogPolicy } from "@/sse/services/modelCatalogPolicy.js";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { isModelCatalogDiscoveryRequest, MODEL_CATALOG_HEADER } from "@/lib/modelCatalogDiscovery";
 import {
@@ -631,13 +632,14 @@ export function buildClaudeFullCatalogDiscoveryModels(selectedModelIds, pickerLa
  * For other capabilities use /v1/models/{kind} (image, tts, stt, embedding, image-to-text, web).
  */
 export async function GET(request) {
+  return withModelCatalogPolicy(request, async (keyAccess) => {
   try {
     if (isClaudeFullCatalogRequest(request?.headers)) {
       const selectedModelIds = readClaudeCatalogSelectionFromHeaders(request?.headers);
-      const data = buildClaudeFullCatalogDiscoveryModels(
+      const data = await filterModelsListForKey(keyAccess, buildClaudeFullCatalogDiscoveryModels(
         selectedModelIds,
         readClaudeCatalogPickerLabelsFromHeaders(request?.headers),
-      );
+      ));
       return Response.json({ object: "list", data });
     }
 
@@ -646,7 +648,7 @@ export async function GET(request) {
       skipCompatibleDiscovery: isModelCatalogDiscoveryRequest(request),
     });
     // A restricted key sees only the combos and models it may call.
-    const data = await filterModelsListForKey(await getKeyAccessContext(request), models);
+    const data = await filterModelsListForKey(keyAccess, models);
     return Response.json({ object: "list", data }, {
     });
   } catch (error) {
@@ -656,4 +658,5 @@ export async function GET(request) {
       { status: 500 }
     );
   }
+  });
 }

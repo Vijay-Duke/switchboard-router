@@ -132,3 +132,34 @@ describe("/v1/models filtered by client-key access", () => {
     expect(denied.some((id) => id.startsWith("glm/"))).toBe(true);
   });
 });
+
+describe("catalog policy before discovery", () => {
+  it("rejects paused and exhausted known keys on both catalog routes in optional-auth mode", async () => {
+    const { createApiKey, updateApiKey } = await import("@/lib/db/index.js");
+    const { GET } = await import("@/app/api/v1/models/route.js");
+    const { GET: filtered } = await import("@/app/api/v1/models/[...model]/route.js");
+    const key = await createApiKey("catalog-policy", "catalog-machine");
+    const request = () => new Request("http://localhost/v1/models", { headers: { Authorization: `Bearer ${key.key}` } });
+    await updateApiKey(key.id, { isActive: false });
+    expect((await GET(request())).status).toBe(401);
+    expect((await filtered(request(), { params: Promise.resolve({ model: ["llm"] }) })).status).toBe(401);
+    await updateApiKey(key.id, { isActive: true, tokenLimit: 10, usedTokens: 10 });
+    expect((await GET(request())).status).toBe(429);
+    expect((await filtered(request(), { params: Promise.resolve({ model: ["llm"] }) })).status).toBe(429);
+  });
+  it("filters Claude full-catalog shortcut by the same resolved key policy", async () => {
+    const { createApiKey } = await import("@/lib/db/index.js");
+    const gateway = await import("@/shared/claudeGateway.js");
+    const { GET } = await import("@/app/api/v1/models/route.js");
+    const key = await createApiKey("catalog-filter", "catalog-machine", { allowedModels: [DS_MODEL] });
+    expect(key.allowedModels).toEqual([DS_MODEL]);
+    const headers = { Authorization: `Bearer ${key.key}`,
+      [gateway.CLAUDE_ROUTING_MODE_HEADER]: gateway.CLAUDE_ROUTING_MODES.FULL_CATALOG,
+      [gateway.CLAUDE_CATALOG_SELECTION_HEADER]: gateway.buildClaudeCatalogSelectionHeader([DS_MODEL, GLM_MODEL]),
+    };
+    const response = await GET(new Request("http://localhost/v1/models", { headers }));
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.data.map(m => gateway.decodeClaudeCatalogModelId(m.id))).toEqual([DS_MODEL]);
+  });
+});

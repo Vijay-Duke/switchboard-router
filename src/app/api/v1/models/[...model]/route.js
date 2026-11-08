@@ -1,6 +1,7 @@
 // @ts-check
 import { buildModelsList } from "../route.js";
-import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
+import { filterModelsListForKey } from "@/sse/services/keyAccess.js";
+import { withModelCatalogPolicy } from "@/sse/services/modelCatalogPolicy.js";
 import { corsPreflightResponse } from "@/shared/utils/cors.js";
 
 // URL slug → service kind(s). `llm` is the default chat kind (same list as
@@ -30,13 +31,13 @@ export async function OPTIONS(request) {
  * contain a slash (e.g. cc/claude-sonnet-5).
  */
 export async function GET(request, { params }) {
+  return withModelCatalogPolicy(request, async (keyAccess) => {
   try {
     const resolved = await params;
     const raw = resolved?.model ?? resolved?.kind;
     const path = (Array.isArray(raw) ? raw : [raw]).filter(Boolean).map(String);
     const identifier = path.join("/");
     const kindFilter = path.length === 1 ? KIND_SLUG_MAP[identifier] : null;
-    const keyAccess = await getKeyAccessContext(request);
 
     if (kindFilter) {
       const data = await filterModelsListForKey(keyAccess, await buildModelsList(kindFilter, { signal: request?.signal }));
@@ -80,4 +81,5 @@ export async function GET(request, { params }) {
       { status: 500 }
     );
   }
+  });
 }

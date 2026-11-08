@@ -16,6 +16,7 @@ vi.mock("@/lib/db/index.js", () => ({
 vi.mock("@/sse/services/model.js", () => ({
   // "oc/x" resolves to provider id "opencode" like the real alias map.
   getModelInfo: async (s) => {
+    if (s === "harmless-alias") return { provider: "anthropic", model: "claude-haiku" };
     if (typeof s !== "string" || !s.includes("/")) return null;
     const [rawProvider, ...rest] = s.split("/");
     const provider = rawProvider === "oc" ? "opencode" : rawProvider;
@@ -156,5 +157,29 @@ describe("extractClientApiKey", () => {
     expect(extract({ "x-switchboard-key": "sk-d" })).toBe("sk-d");
     expect(keyAccess.extractClientApiKey(new Request("https://router.test/v1/models?key=sk-e"))).toBe("sk-e");
     expect(extract({})).toBeNull();
+  });
+});
+
+
+describe("deny rules across routing indirection", () => {
+  it("denies canonical model names hidden behind aliases", async () => {
+    expect(await allowed(ctx(["!haiku"]), "harmless-alias")).toBe(false);
+  });
+  it("denies combo names and resolved members, including nested combos", async () => {
+    expect(await allowed(ctx(["!*"], ["Main"]), "Main")).toBe(false);
+    expect(await allowed(ctx(["!model-a"], ["Main"]), "Main")).toBe(false);
+    expect(await allowed(ctx(["Main*"]), "Main")).toBe(true);
+    fx.combos.push({ name: "Nested", models: ["Main"] });
+    try { expect(await allowed(ctx(["!model-a"], ["Nested"]), "Nested")).toBe(false); }
+    finally { fx.combos.pop(); }
+  });
+  it("applies wildcard and deny rules to provider-as-model calls and their catalog entries", async () => {
+    const c = ctx(["*", "!brave"]);
+    expect(await keyAccess.isProviderTargetAllowed(c, "brave-search", null)).toBe(false);
+    expect(await keyAccess.isProviderTargetAllowed(ctx(["*"]), "brave-search", null)).toBe(true);
+    expect(await keyAccess.isProviderTargetAllowed(c, "Main", ["brave-search"])).toBe(false);
+    const list = [{ id: "Main", owned_by: "combo" }, { id: "brave/search", kind: "webSearch" }];
+    expect(await keyAccess.filterModelsListForKey(ctx(["!*"], ["Main"]), list)).toEqual([]);
+    expect(await keyAccess.filterModelsListForKey(c, list)).toEqual([{ id: "Main", owned_by: "combo" }]);
   });
 });
