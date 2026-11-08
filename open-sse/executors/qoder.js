@@ -289,6 +289,7 @@ async function buildQoderRequestBody({ model, body, credentials, log, proxyOptio
       proxyOptions,
       signal,
       uploadFn,
+      region,
       fetchInit,
     });
   } catch (err) {
@@ -869,12 +870,18 @@ export class QoderExecutor extends BaseExecutor {
                 machineId: psd.machineId || deriveMachineId(psd.userId),
               }),
             },
-            signal,
+            signal: AbortSignal.any([
+              ...(signal ? [signal] : []),
+              AbortSignal.timeout(Math.max(1, Math.min(FETCH_CONNECT_TIMEOUT_MS, maxQueueWaitMs - (Date.now() - waitStartedAt)))),
+            ]),
             ...fetchInit,
           },
           proxyOptions,
         );
-        if (!statusResponse.ok) return { endpointOk: false, info: null };
+        if (!statusResponse.ok) {
+          await statusResponse.body?.cancel().catch(() => {});
+          return { endpointOk: false, info: null };
+        }
         const info = parseQoderQueueStatus(await statusResponse.text().catch(() => ""));
         return info ? { endpointOk: true, info } : { endpointOk: false, info: null };
       } catch (err) {
@@ -899,99 +906,105 @@ export class QoderExecutor extends BaseExecutor {
     // The queue is keyed by request_set_id, and qodercli keeps ONE request_id
     // for the whole recovery. A fresh id per replay makes the status poll look
     // at a queue entry nobody is waiting on, so it reports queued forever.
-    let attemptPayload = payload;
+    const attemptPayload = payload;
+    let queuedAttempt = null;
 
     for (;;) {
-      const sent = await sendOnce(attemptPayload);
-      if (sent.error) return { response: sent.error, url: sent.url, headers: sent.headers, transformedBody: sent.transformedBody };
-      if (!sent.response.ok) {
-        // Pass error response through unchanged so chatCore can capture it.
-        return { response: sent.response, url: sent.url, headers: sent.headers, transformedBody: sent.transformedBody };
-      }
-
-      // Peek the first frame without consuming the stream: a queued model
-      // announces itself there, and wrapQoderSSE would read the body to
-      // completion — which loses the ability to hand the same response back
-      // when it turns out to be a normal completion.
-      const reader = sent.response.body.getReader();
-      const decoder = new TextDecoder();
-      const peek = await peekFirstQoderFrame(reader, decoder);
-
-      const queueInfo = peek.isError
-        ? parseQoderQueueInfo(peek.message || "")
-        : null;
-
-      if (!queueInfo) {
-        // Not a queue signal. A first-frame error is a genuine failure (billing
-        // block, upstream error) — surface it so chatCore can fall back. A
-        // successful peek means we consumed the head of a real completion, so
-        // replay to get an intact stream.
-        if (peek.isError) {
-          const status = peek.isBilling ? HTTP_STATUS.FORBIDDEN
-            : Number.isInteger(peek.statusVal) && peek.statusVal >= 400 && peek.statusVal <= 599
-              ? peek.statusVal : HTTP_STATUS.BAD_GATEWAY;
-          return {
-            response: new Response(
-              JSON.stringify({ error: { message: peek.message || "qoder upstream error", code: peek.statusVal } }),
-              { status, headers: { "Content-Type": "application/json" } },
-            ),
-            url: sent.url,
-            headers: sent.headers,
-            transformedBody: sent.transformedBody,
-          };
+      let sent = queuedAttempt;
+      let queueInfo = lastQueueInfo;
+      queuedAttempt = null;
+      if (!sent) {
+        sent = await sendOnce(attemptPayload);
+        if (sent.error) return { response: sent.error, url: sent.url, headers: sent.headers, transformedBody: sent.transformedBody };
+        if (!sent.response.ok) {
+          // Pass error response through unchanged so chatCore can capture it.
+          return { response: sent.response, url: sent.url, headers: sent.headers, transformedBody: sent.transformedBody };
         }
-        // Clean stream. The peek consumed the head, so hand the already-read
-        // bytes back instead of re-sending — one upstream call per attempt.
-        const reconstructed = new Response(
-          new ReadableStream({
-            start(controller) {
-              // The consumer may close or cancel before we finish pumping (it
-              // stops at the terminal frame), so every controller call has to
-              // be guarded — close() twice throws ERR_INVALID_STATE.
-              let closed = false;
-              const finish = () => {
-                if (closed) return;
-                closed = true;
-                try { controller.close(); } catch { /* already closed */ }
-              };
-              const push = (chunk) => {
-                if (closed) return false;
-                try {
-                  controller.enqueue(chunk);
-                  return true;
-                } catch {
+
+        // Peek the first frame without consuming the stream: a queued model
+        // announces itself there, and wrapQoderSSE would read the body to
+        // completion — which loses the ability to hand the same response back
+        // when it turns out to be a normal completion.
+        const reader = sent.response.body.getReader();
+        const decoder = new TextDecoder();
+        const peek = await peekFirstQoderFrame(reader, decoder);
+
+        queueInfo = peek.isError
+          ? parseQoderQueueInfo(peek.message || "")
+          : null;
+        if (peek.isError) await reader.cancel().catch(() => {});
+
+        if (!queueInfo) {
+          // Not a queue signal. A first-frame error is a genuine failure (billing
+          // block, upstream error) — surface it so chatCore can fall back. A
+          // successful peek is reconstructed below without another inference call.
+          if (peek.isError) {
+            const status = peek.isBilling ? HTTP_STATUS.FORBIDDEN
+              : Number.isInteger(peek.statusVal) && peek.statusVal >= 400 && peek.statusVal <= 599
+                ? peek.statusVal : HTTP_STATUS.BAD_GATEWAY;
+            return {
+              response: new Response(
+                JSON.stringify({ error: { message: peek.message || "qoder upstream error", code: peek.statusVal } }),
+                { status, headers: { "Content-Type": "application/json" } },
+              ),
+              url: sent.url,
+              headers: sent.headers,
+              transformedBody: sent.transformedBody,
+            };
+          }
+          // Clean stream. The peek consumed the head, so hand the already-read
+          // bytes back instead of re-sending — one upstream call per attempt.
+          const reconstructed = new Response(
+            new ReadableStream({
+              start(controller) {
+                // The consumer may close or cancel before we finish pumping (it
+                // stops at the terminal frame), so every controller call has to
+                // be guarded — close() twice throws ERR_INVALID_STATE.
+                let closed = false;
+                const finish = () => {
+                  if (closed) return;
                   closed = true;
-                  return false;
+                  try { controller.close(); } catch { /* already closed */ }
+                };
+                const push = (chunk) => {
+                  if (closed) return false;
+                  try {
+                    controller.enqueue(chunk);
+                    return true;
+                  } catch {
+                    closed = true;
+                    return false;
+                  }
+                };
+
+                const enc = new TextEncoder();
+                if (peek.consumed && !push(enc.encode(peek.consumed))) return;
+                if (peek.upstreamDone) {
+                  finish();
+                  return;
                 }
-              };
+                // Forward the remainder untouched.
+                const pump = () => {
+                  if (closed) return;
+                  reader.read().then(({ done, value }) => {
+                    if (done) { finish(); return; }
+                    if (!push(value)) return;
+                    pump();
+                  }).catch(() => finish());
+                };
+                pump();
+              },
+              cancel() {
+                return reader.cancel().catch(() => {});
+              },
+            }),
+            { status: sent.response.status, statusText: sent.response.statusText, headers: sent.response.headers },
+          );
+          const wrapped = await wrapQoderSSE(reconstructed, label, log);
+          return { response: wrapped, url: sent.url, headers: sent.headers, transformedBody: sent.transformedBody };
+        }
 
-              const enc = new TextEncoder();
-              if (peek.consumed && !push(enc.encode(peek.consumed))) return;
-              if (peek.upstreamDone) {
-                finish();
-                return;
-              }
-              // Forward the remainder untouched.
-              const pump = () => {
-                if (closed) return;
-                reader.read().then(({ done, value }) => {
-                  if (done) { finish(); return; }
-                  if (!push(value)) return;
-                  pump();
-                }).catch(() => finish());
-              };
-              pump();
-            },
-            cancel() {
-              return reader.cancel().catch(() => {});
-            },
-          }),
-          { status: sent.response.status, statusText: sent.response.statusText, headers: sent.response.headers },
-        );
-        const wrapped = await wrapQoderSSE(reconstructed, label, log);
-        return { response: wrapped, url: sent.url, headers: sent.headers, transformedBody: sent.transformedBody };
       }
-
       lastQueueInfo = queueInfo;
       const waitedMs = Date.now() - waitStartedAt;
       if (waitedMs >= maxQueueWaitMs) {
@@ -1048,6 +1061,8 @@ export class QoderExecutor extends BaseExecutor {
             delayMs = 0;
           }
         } else {
+          queuedAttempt = sent;
+          lastQueueInfo = { ...queueInfo, ...polled.info };
           delayMs = computeQoderQueueDelayMs(polled.info, { fromStatus: true });
           log?.info?.(
             "QODER",
@@ -1057,7 +1072,7 @@ export class QoderExecutor extends BaseExecutor {
         }
       }
 
-      if (delayMs > 0) await sleep(delayMs, signal);
+      if (delayMs > 0) await sleep(Math.min(delayMs, Math.max(0, maxQueueWaitMs - (Date.now() - waitStartedAt))), signal);
     }
   }
 

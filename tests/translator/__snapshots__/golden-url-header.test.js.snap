@@ -1163,6 +1163,28 @@ exports[`GOLDEN buildHeaders (default executor providers) > perplexity → heade
 }
 `;
 
+exports[`GOLDEN buildHeaders (default executor providers) > qoder-cn → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "User-Agent": "OpenAI/NodeJS/<NODE_VERSION>",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "User-Agent": "OpenAI/NodeJS/<NODE_VERSION>",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "User-Agent": "OpenAI/NodeJS/<NODE_VERSION>",
+  },
+}
+`;
+
 exports[`GOLDEN buildHeaders (default executor providers) > sensenova → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
@@ -1616,6 +1638,13 @@ exports[`GOLDEN buildUrl (default executor providers) > perplexity → url (stre
 {
   "nonStream": "https://api.perplexity.ai/chat/completions",
   "stream": "https://api.perplexity.ai/chat/completions",
+}
+`;
+
+exports[`GOLDEN buildUrl (default executor providers) > qoder-cn → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://gateway.qoder.com.cn/algo/api/v2/service/pro/sse/agent_chat_generation",
+  "stream": "https://gateway.qoder.com.cn/algo/api/v2/service/pro/sse/agent_chat_generation",
 }
 `;
 
