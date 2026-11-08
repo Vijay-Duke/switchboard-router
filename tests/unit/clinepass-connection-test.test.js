@@ -157,7 +157,7 @@ describe("ClinePass connection tests", () => {
     expect(mocks.updateProviderConnectionCredentialsIfCurrent).toHaveBeenCalledWith(
       "clinepass-refresh",
       expect.objectContaining({ refreshToken: "refresh-token" }),
-      expect.objectContaining({ accessToken: "fresh-token", refreshToken: "next-refresh" }),
+      expect.objectContaining({ accessToken: "eyJfresh.eyJtoken", refreshToken: "next-refresh" }),
     );
     expect(mocks.updateProviderConnection).toHaveBeenCalledWith(
       "clinepass-refresh",
