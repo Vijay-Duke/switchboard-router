@@ -11,11 +11,23 @@ import { PROVIDER_OAUTH } from "../providers/index.js";
 // Single source: codex.oauth.maxRefreshAgeMs (8 days) — proactive refresh window
 export const CODEX_MAX_REFRESH_AGE_MS = PROVIDER_OAUTH["codex"]?.maxRefreshAgeMs;
 
-const refreshLocks = new Map();
-const successfulRefreshes = new Map();
-const refreshContext = new AsyncLocalStorage();
-const providerSpecificRefreshUpdates = new WeakMap();
-const receiptSources = new WeakMap();
+// Next.js bundles route handlers and instrumentation (background refresh,
+// quota auto-ping) as separate module graphs, so this file can load more than
+// once in one server process. Module-level maps would then give each copy its
+// own lock, and a chat request plus a background job could both spend one
+// single-use refresh token. Anthropic treats that replay as token theft and
+// revokes the whole login. Keep the state on globalThis so every copy shares it.
+const sharedRefreshState = (globalThis.__switchboardOAuthRefreshState ??= {
+  refreshLocks: new Map(),
+  successfulRefreshes: new Map(),
+  refreshContext: new AsyncLocalStorage(),
+  providerSpecificRefreshUpdates: new WeakMap(),
+  receiptSources: new WeakMap(),
+});
+const {
+  refreshLocks, successfulRefreshes, refreshContext,
+  providerSpecificRefreshUpdates, receiptSources,
+} = sharedRefreshState;
 
 // Central refresh results include historical metadata for execution. Persisting
 // callers need the actual upstream delta, not the merged initiating snapshot.

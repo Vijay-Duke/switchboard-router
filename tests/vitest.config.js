@@ -17,6 +17,9 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
+    // OAuth refresh locks live on globalThis so every Next.js module graph
+    // shares them; reset them so vi.resetModules() still means a fresh process.
+    setupFiles: ["./setup/reset-oauth-refresh-state.js"],
     include: ["**/*.test.js"],
     // Don't scan into git worktrees nested under .claude/ — they carry their
     // own copies of the test files but lack an installed node_modules (open-sse,
