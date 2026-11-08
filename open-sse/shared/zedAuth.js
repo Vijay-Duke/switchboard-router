@@ -189,8 +189,21 @@ function getSystemId(credentials) {
   );
 }
 
+// Egress metadata for EVERY zedAuth hop (mirrors registry/zed.js transport).
+// proxyAwareFetch needs explicit provider/identity/format so the identity +
+// proxy layers classify the request even when the URL host is overridden.
+const ZED_EGRESS = Object.freeze({
+  provider: "zed",
+  identity: "openai-node",
+  format: "openai",
+});
+
 async function fetchJson(url, options, proxyOptions = null) {
-  const res = await proxyAwareFetch(url, options, proxyOptions);
+  const res = await proxyAwareFetch(
+    url,
+    { ...ZED_EGRESS, redirect: "error", ...options },
+    proxyOptions,
+  );
   const text = await res.text();
   let data = null;
   if (text) {
@@ -319,14 +332,20 @@ export async function zedLlmFetch(credentials, path, options = {}) {
   const url = zedUrl(config, "llmBaseUrl", path, ZED_LLM_BASE_URL);
   const buildRequest = async (forceRefresh) => {
     const token = await fetchZedLlmToken(credentials, { ...options, forceRefresh });
-    return proxyAwareFetch(url, {
-      ...options.fetchOptions,
-      headers: {
-        ...(options.fetchOptions?.headers || {}),
-        Authorization: `Bearer ${token}`,
+    return proxyAwareFetch(
+      url,
+      {
+        ...options.fetchOptions,
+        headers: {
+          ...(options.fetchOptions?.headers || {}),
+          Authorization: `Bearer ${token}`,
+        },
+        signal: options.signal ?? undefined,
+        ...ZED_EGRESS,
+        redirect: "error",
       },
-      signal: options.signal ?? undefined,
-    });
+      options.proxyOptions ?? null,
+    );
   };
 
   let response = await buildRequest(false);

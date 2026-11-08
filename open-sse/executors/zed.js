@@ -244,7 +244,7 @@ class ZedExecutor extends BaseExecutor {
     }
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, providerOverrides = null }) {
     const { provider } = await this.resolveModel(model, credentials, signal, log);
     const providerRequest = buildProviderRequest(provider, model, body, stream, credentials);
     const bodyRecord = body || {};
@@ -256,9 +256,18 @@ class ZedExecutor extends BaseExecutor {
       provider_request: providerRequest,
     };
 
+    // Validated per-connection overrides (allowlisted by the API layer) ride
+    // on top of the executor's own headers; Authorization is stamped by
+    // zedLlmFetch after the merge and always wins.
+    const overrideHeaders = {
+      ...(credentials?.providerOverrides?.headers || {}),
+      ...(providerOverrides?.headers || {}),
+    };
+
     const response = await zedLlmFetch(credentials, "/completions", {
       config: this.config,
       signal,
+      proxyOptions,
       fetchOptions: {
         method: "POST",
         headers: {
@@ -268,6 +277,7 @@ class ZedExecutor extends BaseExecutor {
           "x-zed-version": this.config?.appVersion?.toString() || "0.200.0",
           [ZED_HEADERS.clientSupportsStatus]: "true",
           [ZED_HEADERS.clientSupportsStreamEnded]: "true",
+          ...overrideHeaders,
         },
         body: JSON.stringify(payload),
       },
