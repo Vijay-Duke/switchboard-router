@@ -92,3 +92,19 @@ describe("Responses API client over a Chat Completions provider", () => {
     await expect(result.response.json()).resolves.toMatchObject({ choices: [{ message: { content: "OK" } }] });
   });
 });
+
+
+it.each(["text/event-stream", ""])("aggregates a per-model Responses upstream with content-type %s", async contentType => {
+  const completed = { id: "resp_muse", object: "response", status: "completed", output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "Muse answer" }] }], usage: { input_tokens: 3, output_tokens: 2 } };
+  const raw = `event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: completed })}\n\n`;
+  const result = await handleForcedSSEToJson({
+    providerResponse: new Response(raw, { headers: { "content-type": contentType } }),
+    sourceFormat: FORMATS.OPENAI,
+    targetFormat: FORMATS.OPENAI_RESPONSES,
+    provider: "opencode", model: "muse-spark-1.3-contributor-free",
+    body: { stream: false }, stream: false,
+    requestStartTime: Date.now(), trackDone: vi.fn(), appendLog: vi.fn(),
+  });
+  expect(result.success).toBe(true);
+  expect(await result.response.json()).toMatchObject({ choices: [{ message: { content: "Muse answer" } }], usage: { prompt_tokens: 3, completion_tokens: 2 } });
+});

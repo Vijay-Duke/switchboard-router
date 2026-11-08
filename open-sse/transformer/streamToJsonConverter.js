@@ -29,6 +29,12 @@ function processSSEMessage(msg, state) {
     state.items.set(parsed.output_index ?? 0, parsed.item);
   } else if (eventType === "response.completed" || eventType === "response.done") {
     state.status = "completed";
+    state.responseId = parsed.response?.id || state.responseId;
+    state.created = parsed.response?.created_at || state.created;
+    // Some Responses backends send the complete output only at completion.
+    if (Array.isArray(parsed.response?.output)) {
+      parsed.response.output.forEach((item, index) => state.items.set(index, item));
+    }
     harvestResponsesUsage(state, parsed);
   } else if (eventType === "response.incomplete") {
     state.status = "incomplete";

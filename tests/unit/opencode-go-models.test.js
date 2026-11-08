@@ -5,6 +5,7 @@ import {
   getModelTargetFormat,
 } from "../../open-sse/config/providerModels.js";
 import { DefaultExecutor } from "../../open-sse/executors/default.js";
+import { OpenCodeGoExecutor } from "../../open-sse/executors/opencode-go.js";
 import { getExecutor, hasSpecializedExecutor } from "../../open-sse/executors/index.js";
 import { resolveTransport } from "../../open-sse/services/provider.js";
 import opencodeGoRegistry from "../../open-sse/providers/registry/opencode-go.js";
@@ -54,7 +55,7 @@ const MESSAGES_MODELS = [
 const TRAILING_CHAT_MODELS = ["hy4-preview", "hy3", "hy3-preview", "omen-alpha"];
 
 // Served by /zen/go/v1/responses only
-const RESPONSES_ONLY_MODELS = ["grok-4.7", "grok-4.6", "grok-4.5", "gpt-5.6-luna", "gpt-6-luna"];
+const RESPONSES_ONLY_MODELS = ["grok-4.7", "grok-4.6", "grok-4.5", "gpt-5.6-luna", "gpt-6-luna", "muse-spark-1.3-contributor", "muse-spark-1.2-contributor"];
 
 const MULTI_TRANSPORT_MODELS = ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4.1-flash"];
 
@@ -62,7 +63,7 @@ describe("OpenCode Go official model catalog", () => {
   it("matches the documented OpenCode Go model IDs", () => {
     const ids = (PROVIDER_MODELS["opencode-go"] || []).map((model) => model.id);
 
-    expect(ids).toEqual([...CHAT_MODELS, ...MESSAGES_MODELS, ...TRAILING_CHAT_MODELS, ...RESPONSES_ONLY_MODELS]);
+    expect(ids).toEqual([...CHAT_MODELS, ...MESSAGES_MODELS, ...TRAILING_CHAT_MODELS, ...RESPONSES_ONLY_MODELS, "claude-haiku-5-5"]);
   });
 
   it("marks documented Qwen and MiniMax models as Anthropic messages format", () => {
@@ -126,8 +127,9 @@ describe("OpenCode Go family fallback for live-catalogue ids", () => {
 });
 
 describe("OpenCode Go endpoint routing", () => {
-  it("uses the stateless config-driven executor", () => {
-    expect(hasSpecializedExecutor("opencode-go")).toBe(false);
+  it("uses the session-aware Responses adapter over the config-driven executor", () => {
+    expect(hasSpecializedExecutor("opencode-go")).toBe(true);
+    expect(getExecutor("opencode-go")).toBeInstanceOf(OpenCodeGoExecutor);
     expect(getExecutor("opencode-go")).toBeInstanceOf(DefaultExecutor);
   });
 

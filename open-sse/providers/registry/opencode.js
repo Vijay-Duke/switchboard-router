@@ -28,10 +28,22 @@ const moduleDefault = {
     reasoningInject: {
       scope: "all",
     },
+    quirks: {
+      forceAutoToolChoiceModels: ["muse-spark-1.3-contributor-free"],
+      // The free lane's MiMo route (OpenRouter-backed) streams thinking as
+      // `reasoning` + `reasoning_details[]`, not reasoning_content. stream.js lifts
+      // the alias into reasoning_content for OpenAI-shaped clients; every other
+      // model on the lane already emits reasoning_content, so the lift is a no-op.
+      reasoningAliasFields: true,
+    },
   },
   models: [
     // Endpoint formats differ per model, so declare non-chat models explicitly.
     { id: "union-alpha", name: "Union Alpha Free", targetFormat: "claude" },
+    // Muse Spark models are served by /inference/v1/responses; the rest stay on
+    // /chat/completions, so the format is declared per-model, not per-provider.
+    { id: "muse-spark-1.2-contributor-free", name: "Muse Spark 1.2 Contributor Free", targetFormat: "openai-responses" },
+    { id: "muse-spark-1.3-contributor-free", name: "Muse Spark 1.3 Contributor Free", targetFormat: "openai-responses" },
   ],
   modelsFetcher: { url: "https://opencode.ai/zen/v1/models", type: "opencode-free" },
   passthroughModels: true,

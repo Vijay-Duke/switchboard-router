@@ -44,6 +44,10 @@ const PATTERN_THINKING = [
   { pattern: "*claude*4.6*", levels: CLAUDE_NO_XHIGH },
   { pattern: "*claude*4-6*", levels: CLAUDE_NO_XHIGH },
   { pattern: "*codex*", levels: ["low", "medium", "high", "xhigh"] }, // codex cannot disable thinking
+  // OpenCode Free (oc) MiMo rides the same OpenRouter-backed route as the rest of
+  // that lane and takes the full OpenAI effort enum verbatim (probed live: all
+  // seven values 200, anything else 400 "Invalid option").
+  { provider: "opencode", pattern: "*mimo*v2.6*", levels: ["none", "minimal", "low", "medium", "high", "xhigh", "max"] },
   // DeepSeek v4.* (Alibaba MaaS, probed live): effort low|medium|high|xhigh|max
   // all 200 via output_config.effort; "none" is a 400 on the anthropic route
   // (disable thinking instead). none kept for the picker = disable. Scoped to
@@ -63,6 +67,10 @@ const PATTERN_THINKING = [
   { provider: "codebuddy-cn", pattern: "deepseek-v4-pro",     levels: ["low", "high", "xhigh"] },
   // The 2026-09-30 snapshot changed v4.1-flash's published efforts to low/high/max.
   { provider: "codebuddy-cn", pattern: "deepseek-v4.1-flash", levels: ["low", "high", "max"] },
+  // OpenCode Zen free tier (oc) — the free id of the same v4.1-flash model
+  // publishes low|high|max as well, and unlike DeepSeek's own API the upstream
+  // forwards the level verbatim (no low→high collapse).
+  { pattern: "*deepseek-v4.1-flash-free*", levels: ["low", "high", "max"] },
   { provider: "codebuddy-cn", pattern: "kimi-k2.8-preview",  levels: ["low", "medium", "high"] },
   { provider: "codebuddy-cn", pattern: "hy3",          levels: ["low", "high"] },
   { provider: "codebuddy-cn", pattern: "hy4-preview",  levels: ["high"] },

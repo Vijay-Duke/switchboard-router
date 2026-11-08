@@ -1,5 +1,7 @@
 import { translateResponse, initState } from "../translator/index.js";
 import { FORMATS } from "../translator/formats.js";
+import { PROVIDERS } from "../config/providers.js";
+import { liftReasoningAliases } from "../translator/concerns/reasoning.js";
 import { trackPendingRequest, appendRequestLog } from "../runtimeDeps.js";
 import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
 import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE, ensureStreamToolCallIds } from "./streamHelpers.js";
@@ -103,6 +105,12 @@ export function createSSEStream(options = {}) {
   function clearCompletionTimer() {
     if (completionFlushTimer) { clearTimeout(completionFlushTimer); completionFlushTimer = null; }
   }
+
+  // Lane quirk: upstream streams thinking under the OpenRouter aliases
+  // (`reasoning` / `reasoning_details[]`) instead of reasoning_content — OpenCode
+  // Free's MiMo route does. Lift it on every passthrough delta so OpenAI-shaped
+  // clients, the thinking accumulation below and usage accounting see the text.
+  const liftAliases = mode === STREAM_MODE.PASSTHROUGH && !!PROVIDERS[provider]?.quirks?.reasoningAliasFields;
 
   let totalContentLength = 0;
   // Observability previews only: saveRequestDetail truncates stored fields
@@ -315,6 +323,20 @@ export function createSSEStream(options = {}) {
               if (choice.content_filter_results !== undefined) {
                 delete choice.content_filter_results;
                 fieldsInjected = true;
+              }
+            }
+          }
+
+          // Alias lanes: expose thinking as reasoning_content (additive) before
+          // the valuable-content check, so reasoning-only chunks survive.
+          if (liftAliases && parsed?.choices) {
+            for (const choice of parsed.choices) {
+              if (choice?.delta) {
+                const lifted = liftReasoningAliases(choice.delta);
+                if (lifted !== choice.delta) {
+                  choice.delta = lifted;
+                  fieldsInjected = true;
+                }
               }
             }
           }

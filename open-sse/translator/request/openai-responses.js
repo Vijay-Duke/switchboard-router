@@ -6,15 +6,14 @@
  */
 import { register } from "../registry.js";
 import { FORMATS } from "../formats.js";
-import { normalizeResponsesInput } from "../formats/responsesApi.js";
+import { normalizeResponsesInput, clampResponsesCallId, coerceResponsesArguments } from "../formats/responsesApi.js";
 import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM } from "../schema/index.js";
 import { coerceSchemaNumericConstraints } from "../formats/openai.js";
 import { openaiToClaudeRequest } from "./openai-to-claude.js";
 import { claudeToOpenAIRequest } from "./claude-to-openai.js";
 
 // Responses API enforces max 64 chars on call_id (#393)
-const MAX_CALL_ID_LEN = 64;
-const clampCallId = (id) => (typeof id === "string" && id.length > MAX_CALL_ID_LEN ? id.substring(0, MAX_CALL_ID_LEN) : id);
+const MAX_TOOL_NAME_LEN = 128;
 
 // Responses messages and function outputs share the same content schema.
 function responsesContentToOpenAI(content) {
@@ -331,7 +330,17 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
   const wantStream = stream !== false;
 
   // Body already in Responses API format (e.g. Cursor CLI calling /chat/completions with input[])
-  if (body.input) return { ...body, model, stream: wantStream };
+  if (body.input) {
+    const out = { ...body, model, stream: wantStream };
+    // Responses names the output cap max_output_tokens, not max_tokens.
+    if (out.max_output_tokens === undefined) {
+      if (out.max_completion_tokens !== undefined) out.max_output_tokens = out.max_completion_tokens;
+      else if (out.max_tokens !== undefined) out.max_output_tokens = out.max_tokens;
+    }
+    delete out.max_tokens;
+    delete out.max_completion_tokens;
+    return out;
+  }
 
   const result = {
     model,
@@ -418,25 +427,35 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
     // Convert tool calls
     if (msg.role === ROLE.ASSISTANT && msg.tool_calls) {
       for (const tc of msg.tool_calls) {
+        // Skip nameless calls — strict Responses upstreams reject them (#444)
+        const name = typeof tc.function?.name === "string" ? tc.function.name.trim() : "";
+        if (!name) continue;
         result.input.push({
           type: RESPONSES_ITEM.FUNCTION_CALL,
-          call_id: clampCallId(tc.id),
-          name: tc.function?.name || "_unknown",
-          arguments: tc.function?.arguments || "{}"
+          call_id: clampResponsesCallId(tc.id),
+          name: name.slice(0, MAX_TOOL_NAME_LEN),
+          arguments: coerceResponsesArguments(tc.function?.arguments)
         });
       }
     }
 
     // Responses tool outputs accept text or typed text/image/file arrays.
     if (msg.role === ROLE.TOOL) {
-      const output = typeof msg.content === "string"
-        ? msg.content
-        : Array.isArray(msg.content)
-          ? chatToolContentToResponses(msg.content)
-          : JSON.stringify(msg.content);
+      let output;
+      if (typeof msg.content === "string") output = msg.content;
+      else if (Array.isArray(msg.content)) output = chatToolContentToResponses(msg.content);
+      else {
+        // Fail-soft like coerceResponsesOutput: circular/unstringifiable values
+        // must not throw here (11222eff).
+        try {
+          output = JSON.stringify(msg.content);
+        } catch {
+          output = String(msg.content);
+        }
+      }
       result.input.push({
         type: RESPONSES_ITEM.FUNCTION_CALL_OUTPUT,
-        call_id: clampCallId(msg.tool_call_id),
+        call_id: clampResponsesCallId(msg.tool_call_id),
         output
       });
     }
@@ -448,32 +467,33 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
   // Convert tools format
   if (body.tools && Array.isArray(body.tools)) {
     result.tools = body.tools.map(tool => {
-      if (tool.type === OPENAI_BLOCK.FUNCTION && tool.function) {
+      // Strict upstreams reject nameless/overlong tool declarations
+      const decl = tool.type === OPENAI_BLOCK.FUNCTION && tool.function ? tool.function
+        : tool.function ? tool.function : null;
+      if (decl) {
+        const name = typeof decl.name === "string" ? decl.name.trim() : "";
+        if (!name) return null;
         return {
           type: OPENAI_BLOCK.FUNCTION,
-          name: tool.function.name,
-          description: typeof tool.function.description === "string" ? tool.function.description : String(tool.function.description || ""),
-          parameters: coerceSchemaNumericConstraints(normalizeToolParameters(tool.function.parameters)),
-          strict: tool.function.strict
-        };
-      }
-      // Loose shape: { function: { name, ... } } without parent type
-      if (tool.function) {
-        return {
-          type: OPENAI_BLOCK.FUNCTION,
-          name: tool.function.name,
-          description: typeof tool.function.description === "string" ? tool.function.description : String(tool.function.description || ""),
-          parameters: coerceSchemaNumericConstraints(normalizeToolParameters(tool.function.parameters)),
-          strict: tool.function.strict
+          name: name.slice(0, MAX_TOOL_NAME_LEN),
+          description: typeof decl.description === "string" ? decl.description : String(decl.description || ""),
+          parameters: coerceSchemaNumericConstraints(normalizeToolParameters(decl.parameters)),
+          strict: decl.strict
         };
       }
       return tool;
-    });
+    }).filter(Boolean);
   }
 
   // Pass through other relevant fields
   if (body.temperature !== undefined) result.temperature = body.temperature;
-  if (body.max_tokens !== undefined) result.max_tokens = body.max_tokens;
+  if (body.max_output_tokens !== undefined) {
+    result.max_output_tokens = body.max_output_tokens;
+  } else if (body.max_completion_tokens !== undefined) {
+    result.max_output_tokens = body.max_completion_tokens;
+  } else if (body.max_tokens !== undefined) {
+    result.max_output_tokens = body.max_tokens;
+  }
   if (body.top_p !== undefined) result.top_p = body.top_p;
   if (body.reasoning !== undefined) result.reasoning = body.reasoning;
   if (body.reasoning_effort !== undefined) result.reasoning = { effort: body.reasoning_effort, summary: "auto" };

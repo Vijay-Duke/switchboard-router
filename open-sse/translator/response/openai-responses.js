@@ -662,6 +662,8 @@ export function openaiResponsesToOpenAIResponse(chunk, state) {
     if (!argsDelta) return null;
     const deltaCallId = respCallIdFromItemId(state, data.item_id) || state.currentToolCallId;
     const deltaIdx = deltaCallId ? respToolIndex(state, deltaCallId) : state.toolCallIndex;
+    state.respToolArgsEmitted ??= new Set();
+    state.respToolArgsEmitted.add(deltaIdx);
 
     return buildChunk(
       { id: state.chatId, created: state.created, model: state.model || MODEL_FALLBACK },
@@ -670,8 +672,22 @@ export function openaiResponsesToOpenAIResponse(chunk, state) {
   }
 
   // Function call done (standard or custom_tool_call variant). Indices were
-  // assigned at added time — nothing to advance here.
+  // assigned at added time — nothing to advance here. Some upstreams send
+  // complete arguments only here (no deltas) — emit them once in that case.
   if (eventType === "response.output_item.done" && (data.item?.type === RESPONSES_ITEM.FUNCTION_CALL || data.item?.type === "custom_tool_call")) {
+    const fullArgs = data.item?.arguments;
+    if (typeof fullArgs === "string" && fullArgs) {
+      const doneCallId = data.item?.call_id || respCallIdFromItemId(state, data.item_id || data.item?.id) || state.currentToolCallId;
+      const doneIdx = doneCallId ? respToolIndex(state, doneCallId) : state.toolCallIndex;
+      state.respToolArgsEmitted ??= new Set();
+      if (!state.respToolArgsEmitted.has(doneIdx)) {
+        state.respToolArgsEmitted.add(doneIdx);
+        return buildChunk(
+          { id: state.chatId, created: state.created, model: state.model || MODEL_FALLBACK },
+          { tool_calls: [{ index: doneIdx, function: { arguments: fullArgs } }] }
+        );
+      }
+    }
     return null;
   }
 

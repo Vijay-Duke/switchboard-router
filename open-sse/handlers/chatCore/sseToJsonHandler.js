@@ -61,9 +61,12 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel) {
  * Handle case: provider forced streaming but client wants JSON.
  * Supports both Codex/Responses API SSE and standard Chat Completions SSE.
  */
-export async function handleForcedSSEToJson({ providerResponse, sourceFormat, provider, model, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, requestId, clientRawRequest, onRequestSuccess, toolNameMap, trackDone, appendLog, streamSignal }) {
+export async function handleForcedSSEToJson({ providerResponse, sourceFormat, targetFormat, provider, model, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, requestId, clientRawRequest, onRequestSuccess, toolNameMap, trackDone, appendLog, streamSignal }) {
   const contentType = providerResponse.headers.get("content-type") || "";
-  const isSSE = contentType.includes("text/event-stream") || (contentType === "" && isResponsesProvider(provider));
+  const responsesUpstream = targetFormat
+    ? targetFormat === FORMATS.OPENAI_RESPONSES
+    : isResponsesProvider(provider);
+  const isSSE = contentType.includes("text/event-stream") || (contentType === "" && responsesUpstream);
   if (!isSSE) return null; // not handled here
 
   trackDone();
@@ -74,11 +77,8 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, pr
     providerRequest: finalBody || translatedBody || null
   };
 
-  // The parser is selected by the provider's wire format, not the client's.
-  // A Responses API client can still be routed to a Chat Completions provider;
-  // parsing that upstream SSE as Responses events produces an in_progress JSON
-  // response with no output.
-  if (isResponsesProvider(provider)) {
+  // Per-model transports can differ from the provider default.
+  if (responsesUpstream) {
     try {
       const jsonResponse = await convertResponsesStreamToJson(providerResponse.body, { signal: streamSignal });
       markRequestSuccess(onRequestSuccess);

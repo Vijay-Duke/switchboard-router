@@ -159,6 +159,10 @@ export const MODEL_CAPABILITIES = {
   "kimi-k3.1-pro":     { vision: true, videoInput: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 1048576, maxOutput: 131072 },
   // OpenCode Free Union Alpha — multimodal (text+vision), 262K context, 131K max output
   "union-alpha": { vision: true, contextWindow: 262144, maxOutput: 131072 },
+  // OpenCode Free Muse Spark — multimodal (text+image per models.dev meta/muse-spark)
+  // via OpenAI Responses input_image; reasoning supports up to xhigh.
+  "muse-spark-1.2-contributor-free": { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
+  "muse-spark-1.3-contributor-free": { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
   // ── OpenCode Free (reasoning: true in models.dev, ids newer than the tables above) ──
   // Without these entries getCapabilitiesForModel() falls through to
   // DEFAULT_CAPABILITIES (reasoning: false) and applyThinking() strips the client's
@@ -199,12 +203,29 @@ export const PROVIDER_CAPABILITIES = {
   // Overrides the global entry, whose z.ai shape is correct for z.ai itself.
   "opencode-go": {
     "glm-5.3-flash": { vision: true, videoInput: true, pdf: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 131072 },
+    // OpenCode Go's claude-haiku-5-5 rejects `thinking.type.enabled` — the shape the
+    // global *claude*haiku* → claude-budget pattern sends — with 400. Use "thinking.type.adaptive"
+    // and "output_config.effort": claude-adaptive emits exactly that (adaptive switch +
+    // output_config.effort), so override the global haiku pattern for this provider only.
+    // Limits follow the model, not the pattern: the upstream catalog reports
+    // context_length 1000000 and the synced catalog maxOutput 128000 for this id
+    // (the provider override short-circuits before the catalog overlay, so maxOutput
+    // must be stated here too).
+    "claude-haiku-5-5": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
   },
   // OpenCode Free (oc). deepseek-v4.1-flash-free: the backend rejects requests
   // above ~330k prompt tokens (issue #5097). Cap the published context window at
   // 330000 so clients (VS Code Copilot etc.) compact correctly instead of
   // hard-failing mid-session.
   "opencode": {
+    // The free lane's MiMo route is OpenRouter-backed and takes the plain OpenAI
+    // reasoning_effort enum verbatim (live probe on oc/mimo-v2.6-flash-free:
+    // none|minimal|low|medium|high|xhigh|max all 200, any other value 400
+    // "Invalid option"; "none" really drops thinking). The global *mimo*v2.6*
+    // pattern describes Xiaomi's own API (DeepSeek-shaped `thinking` object,
+    // always on), which this lane ignores. Limits repeat the family pattern
+    // deliberately (1M/131k).
+    "mimo-v2.6-flash-free": { vision: true, audioInput: true, videoInput: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1048576, maxOutput: 131072 },
     "deepseek-v4.1-flash-free": { vision: true, reasoning: true, thinkingFormat: "deepseek", thinkingEffortSupported: true, contextWindow: 330000, maxOutput: 128000 },
   },
   // CodeBuddy.cn — authoritative per-model metadata from the gateway's model
@@ -492,8 +513,12 @@ export const PATTERN_CAPABILITIES = [
   { pattern: "*pplx*",          caps: { search: true, contextWindow: 128000 } },
   { pattern: "*perplexity*",    caps: { search: true, contextWindow: 128000 } },
 
-  // ── Meta Muse (vision + reasoning, 1M ctx) ────────────────────────
-  { pattern: "*muse-spark*",    caps: { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 65536 } },
+  // ── Meta Muse (vision + reasoning, 1M ctx) ──────────────────────
+  // Muse's own registry pins these limits (maxOutput 65536); scope the exact
+  // family pattern to the muse provider so it does not override the
+  // OpenCode/Go free-lane limits below.
+  { provider: "muse", pattern: "*muse-spark*", caps: { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 65536 } },
+  { pattern: "*muse*spark*",    caps: { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 } },
   { pattern: "*muse*",          caps: { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 65536 } },
 
   // ── Others ───────────────────────────────────────────────────────
@@ -520,8 +545,11 @@ export function resolveHandCaps(provider, model) {
   const modelCaps = MODEL_CAPABILITIES[baseModel] || MODEL_CAPABILITIES[model];
   if (modelCaps) return modelCaps;
 
-  for (const { pattern, caps } of PATTERN_CAPABILITIES) {
-    if (matchPattern(pattern, baseModel || model)) return caps;
+  for (const p of PATTERN_CAPABILITIES) {
+    // Provider-scoped patterns (e.g. muse-spark limits) must not leak onto the
+    // same model family served by other providers (opencode/opencode-go free lanes).
+    if (p.provider && p.provider !== provider) continue;
+    if (matchPattern(p.pattern, baseModel || model)) return p.caps;
   }
 
   return null;
@@ -608,7 +636,9 @@ export function getCapabilitiesForModel(provider, model) {
  */
 export const EFFORT_LEVEL_PATTERNS = [
   // Muse Spark (Meta): top tier carries max (registry muse.js thinking.levels).
-  { pattern: "*muse-spark*", levels: ["minimal", "low", "medium", "high", "xhigh", "max"] },
+  // Scoped to the muse provider: the opencode/opencode-go muse-spark lanes run
+  // the OpenAI Responses reasoning enum, whose ceiling is xhigh.
+  { provider: "muse", pattern: "*muse-spark*", levels: ["minimal", "low", "medium", "high", "xhigh", "max"] },
   { pattern: "*muse-wonder*", levels: ["minimal", "low", "medium", "high", "xhigh", "max"] },
   // Claude 5.x / late 4.x: five levels (matches the live Claude Code catalog)
   { pattern: "*claude*opus-5*",     levels: ["low", "medium", "high", "xhigh", "max"] },
