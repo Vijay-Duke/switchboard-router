@@ -1,38 +1,11 @@
 import { describe, it, expect } from "vitest";
+import { encodeEventFrame } from "../../open-sse/utils/awsEventStream.js";
 import { KiroExecutor } from "../../open-sse/executors/kiro.js";
 
+// Exercise thinking stripping with valid AWS EventStream CRCs. The decoder
+// now refuses zero-checksum fixtures before their payload reaches the mapper.
 function createMockFrame(eventType, payloadObj) {
-  const payloadStr = JSON.stringify(payloadObj);
-  const payloadBytes = new TextEncoder().encode(payloadStr);
-
-  const headerName = ":event-type";
-  const headerNameBytes = new TextEncoder().encode(headerName);
-  const headerValueBytes = new TextEncoder().encode(eventType);
-
-  // nameLen(1) + name + type(1) + valueLen(2) + value
-  const headerLength = 1 + headerNameBytes.length + 1 + 2 + headerValueBytes.length;
-  const totalLength = 12 + headerLength + payloadBytes.length + 4;
-
-  const buffer = new Uint8Array(totalLength);
-  const view = new DataView(buffer.buffer);
-
-  view.setUint32(0, totalLength, false);
-  view.setUint32(4, headerLength, false);
-
-  let offset = 12;
-  buffer[offset++] = headerNameBytes.length;
-  buffer.set(headerNameBytes, offset);
-  offset += headerNameBytes.length;
-
-  buffer[offset++] = 7; // String type
-  view.setUint16(offset, headerValueBytes.length, false);
-  offset += 2;
-  buffer.set(headerValueBytes, offset);
-  offset += headerValueBytes.length;
-
-  buffer.set(payloadBytes, offset);
-  
-  return buffer;
+  return encodeEventFrame({ ":event-type": eventType }, payloadObj);
 }
 
 async function readAllSSE(stream) {
