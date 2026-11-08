@@ -333,6 +333,22 @@ describe("dashboard guard local-only access", () => {
     expect(response.body.error).toBe("Local only");
   });
 
+  it("treats zed IDE auto-import as local-only (returns the keyring token)", async () => {
+    const response = await proxy(request("/api/oauth/zed/auto-import", {
+      host: "router.example.com",
+    }));
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe("Local only");
+
+    // …while the loopback dashboard still reaches it.
+    const local = await proxy(request("/api/oauth/zed/auto-import", {
+      host: "localhost:20128",
+      origin: "http://localhost:20128",
+    }));
+    expect(local).toBe(mocks.nextResponse);
+  });
+
   it("allows local-only route on loopback", async () => {
     const response = await proxy(request("/api/cli-tools/antigravity-mitm", {
       host: "localhost:20128",

@@ -242,6 +242,17 @@ export async function GET(request, { params }) {
       }
     }
 
+    if (action === "auto-import") {
+      // Zed IDE keyring/keychain session detection (loopback-guarded in the
+      // dashboard guard — it returns the IDE's access token to the caller).
+      if (provider !== "zed") {
+        return NextResponse.json({ error: "auto-import only supported for zed" }, { status: 400 });
+      }
+      const { readZedIdeCredentials } = await import("@/lib/oauth/zedCredentials");
+      const result = await readZedIdeCredentials();
+      return NextResponse.json(result);
+    }
+
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (error) {
     console.log("OAuth GET error:", error);
@@ -271,6 +282,58 @@ export async function POST(request, { params }) {
       if (provider === "zed") ok = registerZedSession({ state, codeVerifier: body?.codeVerifier, systemId: body?.systemId });
       else return NextResponse.json({ error: "register-session only supported for zed" }, { status: 400 });
       return NextResponse.json({ success: ok });
+    }
+
+    if (action === "import") {
+      // Zed IDE auto-import: create a connection from the keyring-read session
+      // (accessToken + userId pair) after verifying it against cloud.zed.dev.
+      if (provider !== "zed") {
+        return NextResponse.json({ error: "import only supported for zed" }, { status: 400 });
+      }
+      const accessToken = typeof body?.accessToken === "string" ? body.accessToken.trim() : "";
+      const userId = typeof body?.userId === "string" ? body.userId.trim() : "";
+      if (!accessToken || !userId) {
+        return NextResponse.json({ error: "accessToken and userId are required" }, { status: 400 });
+      }
+      const systemId = typeof body?.systemId === "string" && body.systemId.trim() ? body.systemId.trim() : null;
+
+      const { fetchZedAuthenticatedUser, resolveZedOrganizationId } = await import("open-sse/shared/zedAuth.js");
+      const credentials = {
+        accessToken,
+        providerSpecificData: {
+          ...(userId ? { userId } : {}),
+          ...(systemId ? { systemId } : {}),
+        },
+      };
+      let userInfo = null;
+      try {
+        userInfo = await fetchZedAuthenticatedUser(credentials, { config: ZED_HOSTED_CONFIG });
+      } catch (error) {
+        return NextResponse.json(
+          { error: `Zed session is not valid: ${error.message}` },
+          { status: 400 },
+        );
+      }
+      const organizationId = resolveZedOrganizationId(credentials, userInfo);
+
+      const connection = await createProviderConnection({
+        provider,
+        authType: "oauth",
+        accessToken,
+        email: userInfo?.email || null,
+        name: userInfo?.name || userInfo?.display_name || null,
+        providerSpecificData: {
+          authMethod: "oauth",
+          ...(userId ? { userId } : {}),
+          ...(systemId ? { systemId } : {}),
+          organizationId: organizationId || "",
+        },
+        testStatus: "active",
+      });
+      return NextResponse.json({
+        success: true,
+        connection: { id: connection.id, provider: connection.provider, email: connection.email },
+      });
     }
 
     if (action === "lease-connect") {
