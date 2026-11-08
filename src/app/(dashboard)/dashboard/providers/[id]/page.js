@@ -24,6 +24,7 @@ import PassthroughModelsSection from "./PassthroughModelsSection";
 import CompatibleModelsSection from "./CompatibleModelsSection";
 import ConnectionRow from "./ConnectionRow";
 import AddApiKeyModal from "./AddApiKeyModal";
+import MinimaxLeaseButton from "../components/MinimaxLeaseButton.js";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
@@ -36,6 +37,8 @@ import { fetchJson } from "@/shared/query/fetchJson";
 import { patchProviderStrategy } from "@/shared/utils/providerStrategySettings";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
+
+const MCODE_LEASE_PROVIDERS = new Set(["minimax-code", "minimax-code-global"]);
 
 const AUTO_PING_SETTINGS_KEYS = {
   claude: "claudeAutoPing",
@@ -1697,6 +1700,9 @@ export default function ProviderDetailPage() {
                   </>
                 ) : (
                   <>
+                    {!isCompatible && MCODE_LEASE_PROVIDERS.has(providerId) && (
+                      <MinimaxLeaseButton providerId={providerId} onConnected={fetchConnections} />
+                    )}
                     {!isCompatible && providerId === "iflow" && (
                       <Button size="sm" icon="cookie" variant="secondary" onClick={() => setShowIFlowCookieModal(true)}>
                         Cookie
@@ -1797,14 +1803,19 @@ export default function ProviderDetailPage() {
                       </Button>
                     </>
                   ) : (
-                    <Button
-                      size="sm"
-                      icon="add"
-                      onClick={triggerAddConnection}
-                      className="w-full sm:w-auto"
-                    >
-                      Add
-                    </Button>
+                    <>
+                      {MCODE_LEASE_PROVIDERS.has(providerId) && (
+                        <MinimaxLeaseButton providerId={providerId} onConnected={fetchConnections} />
+                      )}
+                      <Button
+                        size="sm"
+                        icon="add"
+                        onClick={triggerAddConnection}
+                        className="w-full sm:w-auto"
+                      >
+                        Add
+                      </Button>
+                    </>
                   )}
                 </div>
               )}

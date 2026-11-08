@@ -17,6 +17,8 @@ const LOCAL_ONLY_PATHS = [
   "/api/mcp/",
   "/api/oauth/cursor/auto-import",
   "/api/oauth/kiro/auto-import",
+  "/api/oauth/minimax-code/lease",
+  "/api/oauth/minimax-code-global/lease",
   "/api/headroom/start",
   "/api/headroom/stop",
   "/api/headroom/proxy",
