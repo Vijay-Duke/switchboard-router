@@ -10,7 +10,7 @@ import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLock
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import * as log from "../utils/logger.js";
-import { getAntigravityQuotaCache } from "./antigravityQuota.js";
+import { getAntigravityQuotaCache, getAntigravityModelQuota } from "./antigravityQuota.js";
 import { extractGatewayApiKey } from "@/shared/utils/gatewayApiKey.js";
 import { selectScheduledConnection } from "./accountScheduler.js";
 
@@ -114,14 +114,19 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
 
     // Antigravity quota cache is lazy: only populated after that account returns 409/429.
+    // Tier variants (e.g. claude-opus-5-5-high) share their family's quota key.
     const antigravityQuotaCache = providerId === "antigravity" && model ? getAntigravityQuotaCache() : null;
+    const antigravityQuotaFor = (c) => {
+      const connQuotas = antigravityQuotaCache?.get(c.id);
+      return getAntigravityModelQuota(connQuotas, model) || connQuotas?.[model];
+    };
     const antigravityQuotaResetAt = (c) => {
-      const quota = antigravityQuotaCache?.get(c.id)?.[model];
+      const quota = antigravityQuotaFor(c);
       if (!quota?.resetAt || new Date(quota.resetAt).getTime() <= Date.now()) return null;
       return quota.resetAt;
     };
     const isAntigravityQuotaBlocked = (c) => {
-      const quota = antigravityQuotaCache?.get(c.id)?.[model];
+      const quota = antigravityQuotaFor(c);
       if (!quota || quota.remainingPercentage > 0 || !antigravityQuotaResetAt(c)) return false;
       log.info("AG_QUOTA", `${c.id?.slice(0, 8) || "unknown"} | CACHE_BLOCK ${model} — skip upstream until ${quota.resetAt}`);
       return true;
