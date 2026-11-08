@@ -63,11 +63,11 @@ beforeEach(() => {
 });
 
 describe("search credential fallback", () => {
-  it("reuses the linked chat provider's credentials when the search provider has none", async () => {
+  it.each(["ollama-search", "ollama-search/search"])("routes %s to the linked chat credentials when the search provider has none", async (model) => {
     mocks.get.mockImplementation(async (providerId) =>
       providerId === "ollama" ? ollamaCredentials : null);
 
-    const response = await handleSearch(searchRequest("ollama-search"));
+    const response = await handleSearch(searchRequest(model));
 
     expect(response.status).toBe(200);
     expect(mocks.get).toHaveBeenNthCalledWith(1, "ollama-search", expect.any(Set), "websearch:ollama-search", expect.anything());

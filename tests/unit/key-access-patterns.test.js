@@ -96,12 +96,34 @@ describe("keyAccess wildcard + deny patterns", () => {
   it("provider-as-model targets match bare provider entries and combos", async () => {
     const c = ctx(["brave-search"]);
     expect(await keyAccess.isProviderTargetAllowed(c, "brave-search", null)).toBe(true);
-    expect(await keyAccess.isProviderTargetAllowed(c, "brave-search/search", null)).toBe(false);
+    expect(await keyAccess.isProviderTargetAllowed(c, "brave-search/search", null)).toBe(true);
     expect(await keyAccess.isProviderTargetAllowed(c, "Main", ["openai/model-a"])).toBe(false);
 
     const comboCtx = ctx([], ["Main"]);
     expect(await keyAccess.isProviderTargetAllowed(comboCtx, "Main", ["openai/model-a"])).toBe(true);
     expect(await keyAccess.isProviderTargetAllowed(comboCtx, "brave-search", null)).toBe(false);
+  });
+
+  it.each([["search", "webSearch"], ["fetch", "webFetch"]])("preserves exact advertised /%s grants without granting the other operation", async (operation, kind) => {
+    const c = ctx([`tavily/${operation}`]);
+    expect(await keyAccess.isProviderTargetAllowed(c, `tavily/${operation}`, null, kind)).toBe(true);
+    expect(await keyAccess.isProviderTargetAllowed(c, "tavily", null, kind)).toBe(true);
+    const other = operation === "search" ? "fetch" : "search";
+    const otherKind = kind === "webSearch" ? "webFetch" : "webSearch";
+    expect(await keyAccess.isProviderTargetAllowed(c, `tavily/${other}`, null, otherKind)).toBe(false);
+    expect(await keyAccess.isProviderTargetAllowed(c, "tavily", null, otherKind)).toBe(false);
+    const list = [{ id: "tavily/search", kind: "webSearch" }, { id: "tavily/fetch", kind: "webFetch" }];
+    expect(await keyAccess.filterModelsListForKey(c, list)).toEqual([list.find((entry) => entry.kind === kind)]);
+  });
+
+  it("canonicalizes service aliases and preserves operation-specific denies", async () => {
+    const c = ctx(["brave/search"]);
+    expect(await keyAccess.isProviderTargetAllowed(c, "brave-search", null, "webSearch")).toBe(true);
+    expect(await keyAccess.isProviderTargetAllowed(c, "brave-search/search", null, "webSearch")).toBe(true);
+    const denied = ctx(["tavily", "!tavily/search"]);
+    expect(await keyAccess.isProviderTargetAllowed(denied, "tavily", null, "webSearch")).toBe(false);
+    expect(await keyAccess.isProviderTargetAllowed(denied, "tavily", null, "webFetch")).toBe(true);
+    expect(await keyAccess.isProviderTargetAllowed(ctx(["tavily/*"]), "tavily", null, "webSearch")).toBe(true);
   });
 
   it("filterModelsListForKey keeps only allowed, non-denied entries", async () => {
@@ -162,6 +184,14 @@ describe("extractClientApiKey", () => {
 
 
 describe("deny rules across routing indirection", () => {
+  it("preserves operation-specific denies through nested service combos", async () => {
+    fx.combos.push({ name: "Search Services", models: ["tavily"] }, { name: "Nested Services", models: ["Search Services"] });
+    try {
+      const c = ctx(["!tavily/search"], ["Nested Services"]);
+      expect(await keyAccess.isProviderTargetAllowed(c, "Nested Services", ["Search Services"], "webSearch")).toBe(false);
+      expect(await keyAccess.isProviderTargetAllowed(c, "Nested Services", ["Search Services"], "webFetch")).toBe(true);
+    } finally { fx.combos.splice(-2); }
+  });
   it("denies canonical model names hidden behind aliases", async () => {
     expect(await allowed(ctx(["!haiku"]), "harmless-alias")).toBe(false);
   });

@@ -127,6 +127,15 @@ export function resolveProviderId(aliasOrId) {
   return provider?.id || aliasOrId;
 }
 
+// The model catalog advertises provider-only services as alias/search and
+// alias/fetch. Accept those IDs on the corresponding endpoint as well as the
+// bare provider spelling used by dashboard examples.
+export function resolveServiceProviderId(aliasOrId, kind) {
+  const suffix = kind === "webSearch" ? "search" : kind === "webFetch" ? "fetch" : null;
+  const match = typeof aliasOrId === "string" && /^([^/]+)\/(search|fetch)$/.exec(aliasOrId);
+  return resolveProviderId(match && match[2] === suffix ? match[1] : aliasOrId);
+}
+
 // Helper: Get alias from provider ID
 export function getProviderAlias(providerId) {
   const provider = AI_PROVIDERS[providerId];

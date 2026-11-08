@@ -14,6 +14,7 @@ vi.mock("@/lib/db/index.js", () => ({
   authenticateApiKey: mocks.authenticateApiKey,
   getClientKeySpend: mocks.getClientKeySpend,
   getCombos: mocks.getCombos,
+  getSettings: async () => ({ requireApiKey: true }),
 }));
 vi.mock("@/sse/services/model.js", () => ({
   getModelInfo: mocks.getModelInfo,
@@ -23,6 +24,7 @@ vi.mock("@/dashboardGuard", () => ({ isLocalRequest: mocks.isLocalRequest }));
 vi.mock("@/shared/utils/cliToken.js", () => ({ hasValidCliToken: mocks.hasValidCliToken }));
 
 const policy = await import("@/sse/services/clientKeyPolicy.js");
+const { withModelCatalogPolicy } = await import("@/sse/services/modelCatalogPolicy.js");
 
 const RAW_KEY = "sk-policy-super-secret";
 const baseKey = {
@@ -85,6 +87,38 @@ beforeEach(() => {
 });
 
 describe("authorizeClientKeyRequest", () => {
+  it("catalog reads neither consume the inference rate budget nor require spare quota", async () => {
+    mocks.authenticateApiKey.mockResolvedValue({ ...baseKey, rateLimitPerMinute: 1, tokenLimit: 10, usedTokens: 10, spendLimitUsd: 0 });
+    const catalogRequest = () => new Request("https://switchboard.example/v1/models", { headers: { Authorization: `Bearer ${RAW_KEY}` } });
+    for (let i = 0; i < 3; i++) {
+      const result = await withModelCatalogPolicy(catalogRequest(), async () => new Response("catalog"));
+      expect(result.status).toBe(200);
+    }
+    mocks.authenticateApiKey.mockResolvedValue({ ...baseKey, rateLimitPerMinute: 1 });
+    const inference = await authorize();
+    expect(inference.ok).toBe(true);
+    inference.lease.release();
+    expect(await errorCode(await authorize())).toBe("client_key_rate_limit_exceeded");
+  });
+
+  it("catalog reads do not reserve or require an inference concurrency slot", async () => {
+    mocks.authenticateApiKey.mockResolvedValue({ ...baseKey, concurrencyLimit: 1 });
+    let finish;
+    let signalStarted;
+    const started = new Promise((resolve) => { signalStarted = resolve; });
+    const catalog = withModelCatalogPolicy(new Request("https://switchboard.example/v1/models", { headers: { Authorization: `Bearer ${RAW_KEY}` } }), async () => {
+      signalStarted();
+      return new Promise((resolve) => { finish = () => resolve(new Response("catalog")); });
+    });
+    await started;
+    const inference = await authorize();
+    expect(inference.ok).toBe(true);
+    const secondCatalog = await withModelCatalogPolicy(new Request("https://switchboard.example/v1/models", { headers: { Authorization: `Bearer ${RAW_KEY}` } }), async () => new Response("catalog"));
+    expect(secondCatalog.status).toBe(200);
+    inference.lease.release();
+    finish();
+    expect((await catalog).status).toBe(200);
+  });
   it("bypasses policy for verified loopback and CLI traffic before inspecting a supplied key", async () => {
     mocks.isLocalRequest.mockReturnValue(true);
     expect(await authorize()).toEqual({ ok: true, mode: "local", clientKey: null, clientKeyId: null, lease: null });

@@ -6,7 +6,7 @@ import {
   extractApiKey,
 } from "../services/auth.js";
 import { getSettings, getCombos } from "@/lib/db/index.js";
-import { AI_PROVIDERS, resolveProviderId } from "@/shared/constants/providers.js";
+import { AI_PROVIDERS, resolveServiceProviderId } from "@/shared/constants/providers.js";
 import { handleSearchCore } from "open-sse/handlers/search/index.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -54,7 +54,7 @@ export async function handleSearch(request) {
     settings,
     rawKey: extractApiKey(request),
     request,
-    target: { kind: comboModels ? "combo" : "model", id: providerInput, role: "provider", comboModels },
+    target: { kind: comboModels ? "combo" : "model", id: providerInput, role: "provider", comboModels, serviceKind: "webSearch" },
   });
   if (!auth.ok) return auth.response;
   return runWithClientKeyLease(auth.lease, async () => {
@@ -123,7 +123,7 @@ export async function handleSearch(request) {
 
 async function handleSingleProviderSearch(body, providerInput, request, clientKeyId, settings, callOpts = null) {
   const query = body.query;
-  const providerId = resolveProviderId(providerInput);
+  const providerId = resolveServiceProviderId(providerInput, "webSearch");
   const resolvedProvider = AI_PROVIDERS[providerId];
 
   if (!resolvedProvider) {

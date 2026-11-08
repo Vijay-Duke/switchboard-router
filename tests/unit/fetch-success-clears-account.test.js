@@ -65,8 +65,8 @@ beforeEach(() => {
 });
 
 describe("web fetch account state", () => {
-  it("clears the web-fetch lock on success and never marks the account", async () => {
-    const response = await handleFetch(request());
+  it.each(["jina-reader", "jina-reader/fetch"])("routes %s and clears the web-fetch lock on success", async (provider) => {
+    const response = await handleFetch(request(provider));
 
     expect(response.status).toBe(200);
     expect(mocks.clear).toHaveBeenCalledWith(

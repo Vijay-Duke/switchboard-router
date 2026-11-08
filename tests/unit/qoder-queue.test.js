@@ -197,10 +197,10 @@ describe("parseQoderQueueStatus", () => {
 });
 
 describe("qoderQueueMaxWaitMs", () => {
-  it("defaults to 10 minutes", () => {
+  it("defaults to the documented 3 minute gateway wait", () => {
     const prev = process.env.QODER_MODEL_QUEUE_MAX_WAIT_MS;
     delete process.env.QODER_MODEL_QUEUE_MAX_WAIT_MS;
-    expect(qoderQueueMaxWaitMs()).toBe(600_000);
+    expect(qoderQueueMaxWaitMs()).toBe(180_000);
     if (prev !== undefined) process.env.QODER_MODEL_QUEUE_MAX_WAIT_MS = prev;
   });
 
@@ -215,7 +215,7 @@ describe("qoderQueueMaxWaitMs", () => {
   it("ignores a nonsensical override", () => {
     const prev = process.env.QODER_MODEL_QUEUE_MAX_WAIT_MS;
     process.env.QODER_MODEL_QUEUE_MAX_WAIT_MS = "not-a-number";
-    expect(qoderQueueMaxWaitMs()).toBe(600_000);
+    expect(qoderQueueMaxWaitMs()).toBe(180_000);
     if (prev === undefined) delete process.env.QODER_MODEL_QUEUE_MAX_WAIT_MS;
     else process.env.QODER_MODEL_QUEUE_MAX_WAIT_MS = prev;
   });

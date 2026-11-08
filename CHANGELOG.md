@@ -1,4 +1,4 @@
-# v0.9.71 (2026-11-08)
+# v0.9.72 (2026-11-08)
 
 ## Fixes
 - Fix the Endpoint & keys page crashing before a key is selected: the closed policy dialog now safely renders without a key.
@@ -6,6 +6,13 @@
 - Reject token quotas above the supported maximum with a validation error instead of a server error.
 - Restore missing provider logos for API.airforce, Grok CLI, Muse, Vercel AI Gateway, Ollama Search, OpenCode Zen and Venice.
 - Keep Antigravity model discovery on its authenticated connection path instead of probing it through anonymous suggestions.
+- Preserve exact advertised search/fetch grants for restricted keys and accept those service IDs at their endpoints.
+- Keep model catalog reads outside inference rate, concurrency and spending budgets while enforcing authentication and target filtering.
+- Restore the documented three-minute Qoder queue timeout and preserve supplied Antigravity sibling signatures.
+
+## Compatibility
+- v0.9.71 was withheld from publication while the backend review was completed; v0.9.72 includes its dashboard fixes.
+- New built-in provider prefixes `br`, `brx` and `zd` are reserved. Existing custom provider nodes using those prefixes require a distinct prefix before using those routes.
 
 ## Validation
 - Add full endpoint-page render and policy-dialog interaction regressions, open/closed rendering checks for the newly added dialogs, custom-header network retry coverage and quota boundary checks.

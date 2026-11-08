@@ -134,7 +134,7 @@ describe("/v1/models filtered by client-key access", () => {
 });
 
 describe("catalog policy before discovery", () => {
-  it("rejects paused and exhausted known keys on both catalog routes in optional-auth mode", async () => {
+  it("rejects paused keys but allows exhausted keys to browse both catalog routes", async () => {
     const { createApiKey, updateApiKey } = await import("@/lib/db/index.js");
     const { GET } = await import("@/app/api/v1/models/route.js");
     const { GET: filtered } = await import("@/app/api/v1/models/[...model]/route.js");
@@ -144,8 +144,8 @@ describe("catalog policy before discovery", () => {
     expect((await GET(request())).status).toBe(401);
     expect((await filtered(request(), { params: Promise.resolve({ model: ["llm"] }) })).status).toBe(401);
     await updateApiKey(key.id, { isActive: true, tokenLimit: 10, usedTokens: 10 });
-    expect((await GET(request())).status).toBe(429);
-    expect((await filtered(request(), { params: Promise.resolve({ model: ["llm"] }) })).status).toBe(429);
+    expect((await GET(request())).status).toBe(200);
+    expect((await filtered(request(), { params: Promise.resolve({ model: ["llm"] }) })).status).toBe(200);
   });
   it("filters Claude full-catalog shortcut by the same resolved key policy", async () => {
     const { createApiKey } = await import("@/lib/db/index.js");

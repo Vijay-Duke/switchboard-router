@@ -6,7 +6,7 @@ import {
   extractApiKey,
 } from "../services/auth.js";
 import { getSettings, getCombos } from "@/lib/db/index.js";
-import { AI_PROVIDERS, resolveProviderId } from "@/shared/constants/providers.js";
+import { AI_PROVIDERS, resolveServiceProviderId } from "@/shared/constants/providers.js";
 import { handleFetchCore } from "open-sse/handlers/fetch/index.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
@@ -57,7 +57,7 @@ export async function handleFetch(request) {
     settings,
     rawKey: extractApiKey(request),
     request,
-    target: { kind: comboModels ? "combo" : "model", id: providerInput, role: "provider", comboModels },
+    target: { kind: comboModels ? "combo" : "model", id: providerInput, role: "provider", comboModels, serviceKind: "webFetch" },
   });
   if (!auth.ok) return auth.response;
   return runWithClientKeyLease(auth.lease, async () => {
@@ -153,7 +153,7 @@ async function handleSingleProviderFetch(body, providerInput, request, clientKey
   const targetUrl = body.url;
   const format = body.format;
   const maxCharacters = body.max_characters;
-  const providerId = resolveProviderId(providerInput);
+  const providerId = resolveServiceProviderId(providerInput, "webFetch");
   const resolvedProvider = AI_PROVIDERS[providerId];
 
   if (!resolvedProvider) {

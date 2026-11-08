@@ -28,7 +28,7 @@
 // `*` denies everything.
 import { getCombos, authenticateApiKey } from "@/lib/db/index.js";
 import { getModelInfo, getComboModels } from "./model.js";
-import { resolveProviderId } from "@/shared/constants/providers.js";
+import { resolveProviderId, resolveServiceProviderId } from "@/shared/constants/providers.js";
 import { extractGatewayApiKey } from "@/shared/utils/gatewayApiKey.js";
 
 const lower = (s) => String(s).toLowerCase();
@@ -132,6 +132,7 @@ async function getAllowSets(ctx) {
   const combos = new Set();
   const models = new Set();
   const providers = new Set();
+  const serviceTargets = new Set();
   const deny = [];
   let positives = 0;
   for (const entry of ctx.allow) {
@@ -149,10 +150,12 @@ async function getAllowSets(ctx) {
     const info = await getModelInfo(entry);
     if (info?.provider && info.model) models.add(canonicalModel(info.provider, info.model));
     if (!entry.includes("/")) providers.add(lower(resolveProviderId(entry)));
+    const service = /^([^/]+)\/(search|fetch)$/.exec(key);
+    if (service) serviceTargets.add(`${lower(resolveProviderId(service[1]))}/${service[2]}`);
   }
   // A deny-only list (no positive entries) allows everything not denied;
   // an EMPTY list still denies everything (handled earlier: empty = unrestricted).
-  ctx._sets = { combos, models, providers, deny, openExceptDenied: deny.length > 0 && positives === 0 };
+  ctx._sets = { combos, models, providers, serviceTargets, deny, openExceptDenied: deny.length > 0 && positives === 0 };
   return ctx._sets;
 }
 
@@ -188,15 +191,16 @@ export async function isTargetAllowed(ctx, requested) {
 // A granted combo includes its members, but explicit denies still apply to
 // every resolved leaf. Refuse cyclic/unverifiable graphs rather than bypassing
 // the policy via nested combo names.
-async function comboContainsDenied(sets, members, seen, providerOnly = false) {
+async function comboContainsDenied(sets, members, seen, providerOnly = false, serviceKind = null) {
   for (const member of members) {
     if (typeof member !== "string" || seen.has(member)) return true;
     if (isDeniedByRules(sets, member, member)) return true;
     const nested = await getComboModels(member);
     if (nested) {
-      if (await comboContainsDenied(sets, nested, new Set([...seen, member]), providerOnly)) return true;
+      if (await comboContainsDenied(sets, nested, new Set([...seen, member]), providerOnly, serviceKind)) return true;
     } else if (providerOnly) {
-      if (isDeniedByRules(sets, member, resolveProviderId(member))) return true;
+      const { canonical } = providerServiceTarget(member, serviceKind);
+      if (isDeniedByRules(sets, member, canonical)) return true;
     } else {
       const info = await getModelInfo(member);
       if (!info?.provider || !info.model || isDeniedByRules(sets, member, canonicalModel(info.provider, info.model))) return true;
@@ -227,17 +231,25 @@ export async function isResolvedTargetAllowed(ctx, requested, provider, model) {
  * Gate for search/fetch, where the provider IS the model.
  * @param {string[]|null} comboModels - routing's own combo resolution for `requested`
  */
-export async function isProviderTargetAllowed(ctx, requested, comboModels) {
+function providerServiceTarget(requested, serviceKind) {
+  const suffix = /\/(search|fetch)$/.exec(requested)?.[1];
+  const kind = serviceKind || (suffix === "search" ? "webSearch" : suffix === "fetch" ? "webFetch" : null);
+  const provider = lower(resolveServiceProviderId(requested, kind));
+  const operation = kind === "webSearch" ? "search" : kind === "webFetch" ? "fetch" : null;
+  return { provider, canonical: operation ? `${provider}/${operation}` : provider };
+}
+
+export async function isProviderTargetAllowed(ctx, requested, comboModels, serviceKind = null) {
   if (!ctx) return true;
   if (typeof requested !== "string" || !requested) return false;
   const sets = await getAllowSets(ctx);
-  const canonical = lower(resolveProviderId(requested));
+  const { provider, canonical } = providerServiceTarget(requested, serviceKind);
   if (isDeniedByRules(sets, requested, canonical)) return false;
   if (comboModels) {
     if (!(sets.combos.has(lower(requested)) || sets.openExceptDenied || anyWildcardMatches(requested, requested, ctx.allow))) return false;
-    return !await comboContainsDenied(sets, comboModels, new Set([requested]), true);
+    return !await comboContainsDenied(sets, comboModels, new Set([requested]), true, serviceKind);
   }
-  return sets.providers.has(canonical) || sets.openExceptDenied || anyWildcardMatches(canonical, requested, ctx.allow);
+  return sets.providers.has(provider) || sets.serviceTargets.has(canonical) || sets.openExceptDenied || anyWildcardMatches(canonical, requested, ctx.allow);
 }
 
 /**
@@ -255,12 +267,12 @@ export async function filterModelsListForKey(ctx, list) {
       if (await isTargetAllowed(ctx, entry.id)) out.push(entry);
       continue;
     }
-    const info = await getModelInfo(entry.id);
-    if (!info?.provider) continue;
     if (entry.kind === "webSearch" || entry.kind === "webFetch") {
-      if (!isDeniedByRules(sets, entry.id, info.provider) && (sets.providers.has(lower(info.provider)) || sets.openExceptDenied || anyWildcardMatches(entry.id, entry.id, ctx.allow))) out.push(entry);
+      if (await isProviderTargetAllowed(ctx, entry.id, null, entry.kind)) out.push(entry);
       continue;
     }
+    const info = await getModelInfo(entry.id);
+    if (!info?.provider) continue;
     const canonical = canonicalModel(info.provider, info.model);
     if (isDeniedByRules(sets, entry.id, canonical)) continue;
     if (sets.models.has(canonical) || sets.openExceptDenied || anyWildcardMatches(canonical, entry.id, ctx.allow)) out.push(entry);

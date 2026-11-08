@@ -77,7 +77,7 @@ checks and the expected 307 root redirect, and loads the AWS credential SDK and
 standalone configuration writers. Provider protocol tests use offline fixtures;
 these checks do not establish live connectivity for every provider account.
 
-## v0.9.71 regression audit
+## v0.9.72 regression audit (v0.9.71 publication withheld)
 
 The v0.9.70 Endpoint & keys page crashed because KeyPolicyModal evaluated a
 non-optional usedTokens access while its selected key was null. The initial
@@ -110,3 +110,11 @@ coverage using the real registry configuration. Twelve catalog-discovery tests
 pass. Browser interactions also verify policy save/reload/close, pause/resume,
 remote-path quota/target enforcement, five populated provider credential dialogs,
 a Smart Router combo and populated usage-chart mode switching.
+
+The independent backend review found search/fetch exact grants and catalog
+budget consumption regressions. Service IDs are now canonicalized per operation,
+and catalogs authenticate/filter without inference accounting. Nested service
+combo denies and concurrent catalog/inference reads have regression coverage.
+Qoder queue polling defaults to the documented three minutes; valid Antigravity
+sibling signatures remain intact. New reserved prefixes br/brx/zd can collide
+with custom provider nodes; deployment must check existing nodes before upgrade.

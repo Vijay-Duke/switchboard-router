@@ -227,7 +227,8 @@ export class AntigravityExecutor extends BaseExecutor {
       // Gemini 3+ rejects functionCall parts without thoughtSignature. Clients (Claude Code, IDE)
       // don't persist thoughtSignature in their history, so backfill from the cached signature
       // (scoped to the model family) or the default one. In parallel function calls only the
-      // first call needs a signature; siblings stay unsigned.
+      // first call needs a default signature; preserve any supplied or cached
+      // signatures, and leave unsigned siblings without an injected default.
       let firstFunctionCallSeen = false;
       const modifiedParts = parts?.map(p => {
         if (!p.functionCall) return p;
@@ -237,11 +238,6 @@ export class AntigravityExecutor extends BaseExecutor {
         firstFunctionCallSeen = true;
         if (callSig) {
           return { ...p, thoughtSignature: callSig };
-        }
-        if (p.thoughtSignature && !cachedSig) {
-          // Unsigned sibling call
-          const { thoughtSignature: _staleSig, ...rest } = p;
-          return rest;
         }
         return p;
       });

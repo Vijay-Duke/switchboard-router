@@ -25,7 +25,7 @@ function allowed(target, clientKey) {
     return isResolvedTargetAllowed(ctx, target.id, target.provider, target.model);
   }
   if (target.role === "provider") {
-    return isProviderTargetAllowed(ctx, target.id, target.comboModels || null);
+    return isProviderTargetAllowed(ctx, target.id, target.comboModels || null, target.serviceKind);
   }
   return isTargetAllowed(ctx, target.id);
 }
@@ -58,7 +58,7 @@ function bypass(mode) {
   return { ok: true, mode, clientKey: null, clientKeyId: null, lease: null };
 }
 
-export async function authorizeClientKeyRequest({ settings, rawKey, request, target }) {
+export async function authorizeClientKeyRequest({ settings, rawKey, request, target, metered = true }) {
   if (request && isLocalRequest(request)) return bypass("local");
   if (request) {
     try {
@@ -93,6 +93,10 @@ export async function authorizeClientKeyRequest({ settings, rawKey, request, tar
   if (!(await allowed(target, clientKey))) {
     return rejection(403, "client_key_target_not_allowed");
   }
+
+  // Catalog reads authenticate and filter targets without consuming inference
+  // budgets or holding a concurrency slot. Exhaustion must not hide the picker.
+  if (!metered) return { ok: true, mode: "api-key", clientKey, clientKeyId: clientKey.id, lease: null };
 
   if (clientKey.spendLimitUsd != null) {
     const spentUsd = await getClientKeySpend(clientKey.id);

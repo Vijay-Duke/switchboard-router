@@ -28,7 +28,7 @@ export const QODER_MODEL_QUEUE_MAX_WAIT_ENV = "QODER_MODEL_QUEUE_MAX_WAIT_MS";
 // client request. The queue clears in ~30s windows, so 3 minutes covers several
 // of them and still returns a retryable error instead of hanging. Raise it with
 // QODER_MODEL_QUEUE_MAX_WAIT_MS when the caller can afford to wait.
-const DEFAULT_MAX_WAIT_MS = 600_000;
+const DEFAULT_MAX_WAIT_MS = 180_000;
 const DEFAULT_RETRY_MS = 30_000;
 // A sub-second floor came from qodercli, but Qoder's queue now answers
 // retryAfterSeconds:2 while still refusing the request. Replaying that fast
