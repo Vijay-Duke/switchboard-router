@@ -74,13 +74,9 @@ describe("provider model discovery", () => {
     ]));
   });
 
-  it("does not query authenticated catalogs through the anonymous suggestions helper", async () => {
+  it.each([commandcode, antigravity])("does not query $id through the anonymous suggestions helper", async (provider) => {
     global.fetch = vi.fn();
-    await expect(fetchSuggestedModels({
-      url: "https://api.commandcode.ai/provider/v1/models",
-      type: "openai",
-      requiresAuth: true,
-    })).resolves.toEqual([]);
+    await expect(fetchSuggestedModels(provider.modelsFetcher)).resolves.toEqual([]);
     expect(global.fetch).not.toHaveBeenCalled();
   });
 

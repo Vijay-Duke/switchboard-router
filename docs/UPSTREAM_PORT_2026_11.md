@@ -101,3 +101,12 @@ and standalone configuration writers. Headless Chrome visits 48 dashboard
 routes in the built archive without error boundaries, page exceptions or
 server errors, including Endpoint & keys and the new provider/media pages.
 Populated interaction and deployment results are recorded separately.
+
+The stricter browser pass (including HTTP 4xx assets) found missing provider
+logos and an unnecessary anonymous Antigravity catalog probe. All visible
+registry providers now have logo assets; authenticated Antigravity discovery
+is explicitly excluded from the anonymous suggestions path, with regression
+coverage using the real registry configuration. Twelve catalog-discovery tests
+pass. Browser interactions also verify policy save/reload/close, pause/resume,
+remote-path quota/target enforcement, five populated provider credential dialogs,
+a Smart Router combo and populated usage-chart mode switching.

@@ -20,6 +20,7 @@ const moduleDefault = {
   // appear in /v1/models without a registry update. Static `models` below is
   // the offline fallback. Body project id is injected per-connection at fetch time.
   modelsFetcher: {
+    requiresAuth: true,
     url: "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
     method: "POST",
     type: "google-available-models",
