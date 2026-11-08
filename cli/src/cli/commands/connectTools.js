@@ -1,10 +1,8 @@
 /**
  * Tool registry for `switchboard connect` / `switchboard show`.
  *
- * Unlike the dashboard (browser → writer routes), the CLI talks to the SAME
- * writer routes on the local management API (POST/DELETE /api/cli-tools/
- * <tool>-settings), so a tool configured here is byte-identical to one
- * applied from the dashboard. Each entry describes:
+ * The standalone CLI bundles the dashboard's file writers and invokes them
+ * locally, without starting a server. Each entry describes:
  *
  *   - id / name / aliases    how the user selects the tool on the command line
  *   - needsModel             whether apply() requires at least one model id
@@ -45,7 +43,7 @@ const claude = {
     for (const tier of CLAUDE_TIERS) {
       if (claudeModels?.[tier.envKey]) env[tier.envKey] = claudeModels[tier.envKey];
     }
-    return { env };
+    return { env, removeEnvKeys: CLAUDE_TIERS.filter(tier => !env[tier.envKey]).map(tier => tier.envKey) };
   },
   summarize: (data) => {
     const env = data?.settings?.env || {};
@@ -305,7 +303,7 @@ const tools = [
         baseUrl: provider.baseUrl || provider.base_url,
         apiKey: provider.apiKey,
         models: Array.isArray(provider.models) && provider.models.length
-          ? { main: provider.models[0], available: provider.models.join(", ") }
+          ? { main: provider.models[0]?.id || provider.models[0], available: provider.models.map(m => m?.id || m).join(", ") }
           : {},
       };
     },

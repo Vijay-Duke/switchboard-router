@@ -1,46 +1,32 @@
-/**
- * `switchboard connect` — point local CLI tools (Claude Code, Codex, …) at
- * the LOCAL Switchboard gateway.
- *
- * Flow: authenticate to the local management API with the machine-bound CLI
- * token (no passwords), MINT A NEW client API key (POST /api/keys returns the
- * full secret exactly once — stored secrets are never readable back), then
- * apply each tool's settings through the server's own writer routes
- * (POST /api/cli-tools/<tool>-settings) passing that fresh one-time secret.
- *
- * Security rules honored here:
- *   - existing keys are never listed to reuse them (GET /api/keys is not
- *     called; every run mints a new key so no stored secret is ever read back)
- *   - the minted key is written into the tool configs (owner-only files, done
- *     by the server writers) and is otherwise only ever displayed masked
- *   - nothing is stored in browser localStorage (this is a CLI; state files
- *     are none) and secrets never enter the log output
- *
- * `--reset` removes Switchboard settings from the selected tools instead.
- */
+/** Configure local tool files using a newly minted gateway key. */
 
 const os = require("os");
 const api = require("../api/client");
+const localConfig = require("./localConfig");
+const { authenticate, normalizeServerUrl } = require("./remoteConnection");
 const { TOOLS, TOOL_IDS, CLAUDE_TIERS, resolveTools } = require("./connectTools");
 
 const DEFAULT_PORT = 20128;
 const DEFAULT_HOST = "localhost";
 
 const HELP = `
-Usage: switchboard connect [options]
+Usage: switchboard connect [server-url] [options]
 
-Configure CLI tools on THIS machine to use the local Switchboard gateway.
-Talks to the management API of an already-running gateway, mints a NEW client
-API key for the tools (existing stored secrets are never read back), and
-writes each tool's config through the server's own writer routes — the same
-code the dashboard uses.
+Configure tools on this machine for a local or remote Switchboard gateway.
+A remote connection signs in with your dashboard API key and mints a fresh
+client key. Configuration is written locally; no local server is started.
 
+  switchboard connect https://gateway.example --tools claude,codex
   switchboard connect                          # interactive: pick tools + models
   switchboard connect --tools claude,codex     # non-interactive tool selection
   switchboard connect --tools all --model cc/claude-sonnet-5
   switchboard connect --reset --tools claude   # remove Switchboard settings
 
 Options:
+  --api-key <key>        Dashboard sign-in key (or SWITCHBOARD_CONNECT_KEY;
+                         prompted in a terminal). Tools receive a NEW key.
+  --save                Save this server's dashboard session with mode 600
+                         in the Switchboard data directory (no API key saved)
   --tools <list>         Comma-separated tools (prompted in a terminal when
                          omitted; default: claude). Supported:
                          ${TOOL_IDS.join(", ")}, all
@@ -56,8 +42,8 @@ Options:
   --key-name <name>      Name for the freshly minted API key
                          (default: cli-<hostname>)
   --base-url <url>       Base URL written into the tool configs (default:
-                         http://localhost:<port>)
-  --host <host>          Management API host (default: ${DEFAULT_HOST})
+                         selected server, or http://localhost:<port>)
+  --host <host>          Local management API host (default: ${DEFAULT_HOST})
   --port <port>          Management API port (default: ${DEFAULT_PORT})
   --print-env            Print OpenAI-compatible env vars for other CLIs
                          (includes the freshly minted key — copy it somewhere
@@ -66,7 +52,7 @@ Options:
   --reset                Remove Switchboard settings from the selected tools
   -h, --help             Show this help
 
-Every run mints a NEW API key (one-time secret). Remove unused ones in the
+Connections mint a NEW API key (one-time secret). Remove unused ones in the
 dashboard or the API Keys terminal menu.
 
 Undo:  switchboard connect --reset --tools <same list>
@@ -78,6 +64,7 @@ const runPrompt = (p) => p.run().catch((err) => { throw err || new Cancelled("Ca
 
 function parseArgs(argv) {
   const opts = {
+    authKey: process.env.SWITCHBOARD_CONNECT_KEY || null,
     host: DEFAULT_HOST,
     port: DEFAULT_PORT,
     tools: null,
@@ -97,14 +84,16 @@ function parseArgs(argv) {
       if (v === undefined || v.startsWith("--")) throw new Error(`Missing value for ${a}`);
       return v;
     };
-    if (a === "--tools") opts.tools = next().split(",").map((s) => s.trim()).filter(Boolean);
+    if (a === "--api-key") opts.authKey = next();
+    else if (a === "--save") opts.save = true;
+    else if (a === "--tools") opts.tools = next().split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--model" || a === "-m") opts.model = next();
     else if (a === "--key-name") opts.keyName = next();
     else if (a === "--base-url") {
       const v = next();
       try {
         const u = new URL(v);
-        if (!/^https?:$/.test(u.protocol)) throw new Error();
+        if (!/^https?:$/.test(u.protocol) || u.username || u.password) throw new Error();
         opts.baseUrl = u.origin;
       } catch {
         throw new Error("--base-url must be a valid HTTP(S) URL");
@@ -121,8 +110,22 @@ function parseArgs(argv) {
     else if (a === "--list-tools") opts.listTools = true;
     else if (a === "-h" || a === "--help") opts.help = true;
     else if (a.startsWith("--") && tierFlags.has(a)) opts.models[a.slice(2)] = next();
+    else if (!a.startsWith("-") && !opts.url) opts.url = normalizeServerUrl(a);
     else throw new Error(`Unknown option: ${a}`);
   }
+  if (!["localhost", "127.0.0.1", "::1", "[::1]"].includes(opts.host.toLowerCase())) {
+    throw new Error("--host is the local management host; pass a remote server URL as the first argument");
+  }
+  if (opts.codexProfiles.length) {
+    if (!opts.tools || !resolveTools(opts.tools).some(tool => tool.id === "codex")) throw new Error("--codex-profile requires --tools codex (or all)");
+    for (const profile of opts.codexProfiles) {
+      const eq = profile.indexOf("=");
+      const name = profile.slice(0, eq).toLowerCase();
+      const model = profile.slice(eq + 1);
+      if (eq < 1 || !/^[a-z0-9_-]{1,64}$/.test(name) || name === "config" || !model.trim() || model.length > 256 || /[\r\n"\\]/.test(model)) throw new Error("--codex-profile expects a valid <name>=<model>");
+    }
+  }
+  if (opts.save && !opts.url) throw new Error("--save requires a remote server URL");
   return opts;
 }
 
@@ -183,35 +186,15 @@ async function resolveModel(tool, opts, serverModels, deps) {
   return null;
 }
 
-function cliTokenNote() {
-  return "Authenticated with the machine-bound CLI token (no password needed).";
-}
-
-async function mintApiKey(opts) {
-  const result = await api.createApiKey(opts.keyName);
-  if (!result.success) {
-    const unreachable = /network error/i.test(String(result.error || ""));
-    throw new Error(
-      unreachable
-        ? `Cannot reach Switchboard at ${opts.host}:${opts.port} — is it running? Start it with: switchboard start`
-        : `Minting a new API key failed: ${result.error}`,
-    );
-  }
-  if (!result.data?.key) {
-    throw new Error("The server created a key but did not return its one-time secret");
-  }
-  return result.data;
-}
-
 function claudeEnvModels(opts) {
   const out = {};
   for (const tier of CLAUDE_TIERS) {
-    if (opts.models[tier.flag]) out[tier.envKey] = opts.models[tier.flag];
+    if (opts.models[tier.flag] || opts.model) out[tier.envKey] = opts.models[tier.flag] || opts.model;
   }
   return out;
 }
 
-async function applyCodexProfiles(profiles) {
+async function applyCodexProfiles(profiles, writer = localConfig) {
   const results = [];
   for (const raw of profiles) {
     const eq = raw.indexOf("=");
@@ -221,119 +204,95 @@ async function applyCodexProfiles(profiles) {
       results.push({ input: raw, ok: false, error: "expected <name>=<model>" });
       continue;
     }
-    const res = await api.saveCodexProfile(name.trim(), model.trim());
+    const res = await writer.saveCodexProfile(name.trim(), model.trim());
     results.push({ input: raw, name: name.trim(), model: model.trim(), ok: res.success, error: res.success ? null : res.error });
   }
   return results;
 }
 
 async function runConnect(opts, deps) {
-  api.configure({ host: opts.host, port: opts.port });
+  const writer = deps.writer || localConfig;
   const tools = await selectTools(opts, deps);
-
   if (opts.reset) {
-    let failed = 0;
+    let failed = false;
     for (const tool of tools) {
-      try {
-        const res = await api.resetCliToolSettings(tool.id);
-        if (!res.success) throw new Error(stripControl(res.error) || `HTTP ${res.statusCode}`);
-        console.log(`✅ ${tool.name}: ${stripControl(res.data?.message) || "Switchboard settings removed"}`);
-      } catch (err) {
-        failed++;
-        console.log(`❌ ${tool.name}: ${err.message}`);
-      }
+      const result = await writer.resetCliToolSettings(tool.id);
+      if (!result.success) failed = true;
+      console.log(`${result.success ? "✓" : "✗"} ${tool.name}: ${result.success ? "settings restored" : "reset failed"}`);
     }
     return failed ? 1 : 0;
   }
 
-  console.log(`• Talking to the local gateway at http://${opts.host}:${opts.port} (${cliTokenNote()})`);
-
-  // 1. Mint a NEW key. We never list existing keys: stored secrets are not
-  //    readable, and re-reading them must not become possible either.
-  const minted = await mintApiKey(opts);
-  const apiKey = minted.key;
-  console.log(`• Minted new API key "${minted.name}" (${maskKey(apiKey)}) — existing keys are never reused or read back`);
-
-  // 2. Model catalogue for the interactive picker.
-  let serverModels = [];
-  if (!opts.model && process.stdin.isTTY) {
-    const models = await api.getAvailableModels();
-    if (models.success) serverModels = (models.data?.data || []).map((m) => m.id).filter(Boolean);
+  let connection;
+  if (opts.url) {
+    connection = await authenticate(opts.url, { authKey: opts.authKey, save: opts.save,
+      promptKey: deps.prompts.key, fetchImpl: deps.fetch });
+  } else {
+    api.configure({ host: opts.host, port: opts.port, protocol: "http:" });
+    connection = {
+      mint: async (name) => { const result = await api.createApiKey(name); if (!result.success) throw new Error("Cannot create a key on the local gateway; start it or pass a remote URL"); return result.data; },
+      models: async () => { const result = await api.getAvailableModels(); return result.success ? result.data?.data || [] : []; },
+      revoke: (id) => api.deleteApiKey(id),
+    };
   }
-
-  const baseUrl = opts.baseUrl || `http://localhost:${opts.port}`;
-
-  // 3. Resolve models, then apply each tool through the server's writers.
-  let failed = 0;
-  let skipped = 0;
-  const applied = [];
-  const perToolModel = {};
-  for (const tool of tools) {
-    const model = await resolveModel(tool, opts, serverModels, deps);
-    perToolModel[tool.id] = model;
-    if (tool.needsModel && !model) {
-      skipped++;
-      console.log(`⏭  ${tool.name}: no model selected — skipped (pass --model <id>)`);
-      continue;
+  let minted;
+  let used = false;
+  try {
+    minted = await connection.mint(opts.keyName);
+    if (typeof minted?.key !== "string" || !minted.key) throw new Error("Server did not return the new key's one-time secret");
+    let catalog = [];
+    try { catalog = await connection.models(minted.key); } catch {
+      if (tools.some(tool => tool.needsModel) && !opts.model) throw new Error("Cannot load models; retry or select one with --model");
     }
-    try {
-      const body = tool.buildBody({
-        baseUrl,
-        apiKey,
-        model,
-        claudeModels: claudeEnvModels(opts),
-      });
-      const res = await api.applyCliToolSettings(tool.id, body);
-      if (!res.success) throw new Error(stripControl(res.error) || `HTTP ${res.statusCode}`);
-      // Read the config back (GET carries the file paths) so we can point at
-      // the exact files written. Only path strings are used — never the
-      // secret the writer echoes back.
-      let files = [];
-      const readBack = await api.getCliToolSettings(tool.id);
-      if (readBack.success) files = tool.files(readBack.data);
+    const serverModels = (Array.isArray(catalog) ? catalog : []).filter((model) => !model.kind || model.kind === "llm").map((model) => model.id).filter(Boolean);
+    const baseUrl = opts.baseUrl || opts.url || `http://localhost:${opts.port}`;
+    const applied = [];
+    let failed = 0;
+    for (const tool of tools) {
+      const model = await resolveModel(tool, opts, serverModels, deps)
+        || (tool.needsModel && !process.stdin.isTTY ? serverModels[0] : null);
+      if (tool.needsModel && !model) {
+        console.log(`✗ ${tool.name}: select a model with --model`);
+        failed++;
+        continue;
+      }
+      const body = tool.buildBody({ baseUrl, apiKey: minted.key, model,
+        claudeModels: claudeEnvModels(opts) });
+      let result;
+      try { result = await writer.applyCliToolSettings(tool.id, body); }
+      catch { result = { success: false }; }
+      if (!result.success) { console.log(`✗ ${tool.name}: configuration failed`); failed++; continue; }
+      used = true;
       applied.push(tool.id);
-      console.log(`✅ ${tool.name}${files.length ? ` → ${files.join(", ")}` : ""}`);
-    } catch (err) {
-      failed++;
-      console.log(`❌ ${tool.name}: ${err.message}`);
+      console.log(`✓ ${tool.name}: configured${model ? ` (${stripControl(model)})` : ""}`);
     }
-  }
-
-  if (opts.codexProfiles.length) {
-    if (!applied.includes("codex")) {
-      console.log("⚠ --codex-profile ignored: codex was not configured in this run");
-    } else {
-      for (const r of await applyCodexProfiles(opts.codexProfiles)) {
-        if (r.ok) console.log(`✅ codex profile "${r.name}" → ${r.model} (use: codex -p ${r.name})`);
-        else console.log(`❌ codex profile "${r.input}": ${r.error}`);
-        if (!r.ok) failed++;
+    if (opts.codexProfiles.length) {
+      if (!applied.includes("codex")) throw new Error("--codex-profile requires configuring Codex in the same run");
+      for (const result of await applyCodexProfiles(opts.codexProfiles, writer)) {
+        if (!result.ok) failed++;
+        console.log(`${result.ok ? "✓" : "✗"} Codex profile ${stripControl(result.name || result.input)}`);
       }
     }
+    console.log(`Endpoint: ${stripControl(baseUrl)}/v1`);
+    console.log(`New client key: ${maskKey(minted.key)}`);
+    if (opts.printEnv) {
+      const quote = (text) => "'" + String(text).replace(/'/g, "'\\''") + "'";
+      console.log(`export OPENAI_BASE_URL=${quote(`${baseUrl}/v1`)}`);
+      console.log(`export OPENAI_API_KEY=${quote(minted.key)}`);
+      used = true;
+    }
+    return failed ? 1 : 0;
+  } finally {
+    if (minted?.id && !used) await connection.revoke(minted.id).catch(() => {});
   }
-
-  console.log(`   Base URL: ${baseUrl}/v1`);
-  for (const [id, m] of Object.entries(perToolModel)) if (m) console.log(`   ${id} model: ${m}`);
-  const tiers = Object.entries(opts.models);
-  for (const [flag, m] of tiers) console.log(`   claude ${flag}: ${m}`);
-  if (tools.some((t) => t.id === "claude") && !tiers.length) {
-    console.log("   claude tiers: left unset — Claude Code's own defaults apply (or pass --sonnet <model> etc.)");
-  }
-  console.log(`   API key: ${maskKey(apiKey)} (full secret only lives in the tool configs above)`);
-  console.log(`   Undo: switchboard connect --reset --tools ${tools.map((t) => t.id).join(",")}`);
-
-  if (opts.printEnv) {
-    console.log("\nOpenAI-compatible CLIs (codex, opencode, aider, …):");
-    console.log(`   OPENAI_BASE_URL=${baseUrl}/v1`);
-    console.log(`   OPENAI_API_KEY=${apiKey}`);
-    console.log("   (freshly minted key — shown once, copy it now)");
-  }
-
-  // A skipped tool was not configured, so the run did not do what was asked.
-  return failed || skipped ? 1 : 0;
 }
 
 async function run(argv, deps = {}) {
-  const prompts = deps.prompts || { tools: promptTools, model: promptModel };
+  const prompts = { tools: promptTools, model: promptModel, key: async () => {
+    if (!process.stdin.isTTY) throw new Error("Set SWITCHBOARD_CONNECT_KEY or pass --api-key for dashboard sign-in");
+    const { Password } = require("enquirer");
+    return runPrompt(new Password({ message: "Dashboard API key" }));
+  }, ...deps.prompts };
   try {
     const opts = parseArgs(argv);
     if (opts.help) {
@@ -344,7 +303,7 @@ async function run(argv, deps = {}) {
       for (const t of TOOLS) console.log(`${t.id.padEnd(14)} ${t.name}`);
       return 0;
     }
-    return await runConnect(opts, { prompts });
+    return await runConnect(opts, { ...deps, prompts });
   } catch (err) {
     if (err instanceof Cancelled) {
       console.log("Cancelled.");
@@ -358,5 +317,5 @@ async function run(argv, deps = {}) {
 module.exports = {
   run,
   HELP,
-  __test__: { parseArgs, maskKey, stripControl, selectTools, resolveModel, mintApiKey, applyCodexProfiles, Cancelled },
+  __test__: { parseArgs, maskKey, stripControl, selectTools, resolveModel, applyCodexProfiles, Cancelled },
 };

@@ -228,6 +228,11 @@ if (fs.existsSync(customServerSrc)) {
   console.warn("⚠️  custom-server.js not found — server will run without real-IP injection\n");
 }
 
+// Share the dashboard's configuration writers with standalone CLI commands.
+execSync(`"${process.execPath}" "${path.join(__dirname, "build-config-writers.js")}"`, {
+  cwd: appDir, stdio: "inherit", env: process.env,
+});
+
 // Step 3b: Ensure pure-JS/fallback modules are bundled in app/cli/app/node_modules.
 // Native impit bindings are CLI optionalDependencies: npm installs the package
 // matching the end user's OS/arch beside app/, where impit's normal resolution

@@ -3,23 +3,20 @@
  * settings each local CLI tool is currently using: base URL, masked API key
  * (or just "set" when the writer only exposes that), and models.
  *
- * Reads the same GET endpoints the dashboard uses, so no config parsing is
- * duplicated here. Read-only: contacts only the local management API, never
+ * Reuses the same configuration readers as the dashboard, so no config parsing is
+ * duplicated here. Read-only: reads only local files, never
  * prints a full secret, and never lists stored API keys.
  */
 
-const api = require("../api/client");
+const api = require("./localConfig");
 const { TOOLS, TOOL_IDS, resolveTools, findTool } = require("./connectTools");
 const { __test__: { maskKey } } = require("./connect");
-
-const DEFAULT_PORT = 20128;
-const DEFAULT_HOST = "localhost";
 
 const HELP = `
 Usage: switchboard show [tool…] [options]
 
 Show the Switchboard settings each CLI tool on THIS machine is currently
-using. Read-only: reads the gateway's config-status endpoints and prints a
+using. Read-only: reads local configuration files and prints a
 redacted summary (base URL, masked API key, models). Never prints a full
 secret.
 
@@ -34,13 +31,11 @@ Options:
   --tools <list>   Comma-separated tools (same as positional names)
   --json           Machine-readable output (API key still masked)
   --profiles       Also list Codex profiles (codex -p <name>)
-  --host <host>    Management API host (default: ${DEFAULT_HOST})
-  --port <port>    Management API port (default: ${DEFAULT_PORT})
   -h, --help       Show this help
 `;
 
 function parseArgs(argv) {
-  const opts = { tools: [], host: DEFAULT_HOST, port: DEFAULT_PORT };
+  const opts = { tools: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => {
@@ -51,12 +46,7 @@ function parseArgs(argv) {
     if (a === "--tools") opts.tools.push(...next().split(",").map((s) => s.trim()).filter(Boolean));
     else if (a === "--json") opts.json = true;
     else if (a === "--profiles") opts.profiles = true;
-    else if (a === "--host" || a === "-H") opts.host = next();
-    else if (a === "--port" || a === "-p") {
-      const port = Number(next());
-      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("--port must be between 1 and 65535");
-      opts.port = port;
-    } else if (a === "-h" || a === "--help") opts.help = true;
+    else if (a === "-h" || a === "--help") opts.help = true;
     else if (!a.startsWith("-")) opts.tools.push(a);
     else throw new Error(`Unknown option: ${a}`);
   }
@@ -69,6 +59,15 @@ function stripControl(text) {
   return String(text ?? "").replace(/[\x00-\x1f\x7f]/g, "");
 }
 
+function safeUrl(value) {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol)) return "(invalid URL)";
+    return stripControl(url.origin + url.pathname);
+  } catch { return "(invalid URL)"; }
+}
+
 /** Normalize one tool's GET payload into a printable, key-safe record. */
 function inspect(tool, data) {
   const record = { id: tool.id, name: tool.name, files: [] };
@@ -76,19 +75,19 @@ function inspect(tool, data) {
     const summary = tool.summarize(data) || {};
     record.installed = data?.installed !== false;
     record.configured = !!(summary.baseUrl || summary.apiKey || summary.apiKeySet || Object.keys(summary.models || {}).length);
-    record.baseUrl = summary.baseUrl || null;
+    record.baseUrl = safeUrl(summary.baseUrl);
     record.apiKey = summary.apiKey ? maskKey(summary.apiKey) : null;
     if (summary.apiKeySet === true && !record.apiKey) record.apiKey = "(set — hidden by the tool)";
-    record.models = summary.models || {};
+    record.models = Object.fromEntries(Object.entries(summary.models || {}).map(([k, v]) => [stripControl(k), stripControl(v)]));
     if (typeof summary.active === "boolean") record.active = summary.active;
     for (const [k, v] of Object.entries(summary.extra || summary)) {
       if (["baseUrl", "apiKey", "apiKeySet", "models", "active"].includes(k)) continue;
-      if (v !== undefined && v !== null && v !== "" && typeof v !== "object") record.details = { ...(record.details || {}), [k]: String(v) };
+      if (v !== undefined && v !== null && v !== "" && typeof v !== "object") record.details = { ...(record.details || {}), [stripControl(k)]: stripControl(v) };
     }
     const files = tool.files(data);
-    if (files.length) record.files = files;
+    if (files.length) record.files = files.map(stripControl);
   } catch (err) {
-    record.error = err.message;
+    record.error = "Cannot read configuration";
   }
   return record;
 }
@@ -98,7 +97,7 @@ function printRecord(r) {
     console.log(`❌ ${r.name}: ${r.error}`);
     return;
   }
-  if (r.installed === false) {
+  if (r.installed === false && !r.configured) {
     console.log(`• ${r.name}: not installed`);
     return;
   }
@@ -139,7 +138,6 @@ async function runShow(argv) {
     console.log(HELP);
     return 0;
   }
-  api.configure({ host: opts.host, port: opts.port });
 
   const tools = opts.tools.length ? resolveTools(opts.tools) : TOOLS;
   const records = [];
@@ -147,18 +145,13 @@ async function runShow(argv) {
     try {
       records.push(inspect(tool, await fetchTool(tool)));
     } catch (err) {
-      const unreachable = /network error/i.test(String(err.message || ""));
-      if (unreachable) {
-        console.error(`Cannot reach Switchboard at ${opts.host}:${opts.port} — is it running? Start it with: switchboard start`);
-        return 1;
-      }
       records.push({ id: tool.id, name: tool.name, files: [], error: stripControl(err.message) });
     }
   }
 
   if (opts.profiles) {
     try {
-      const profiles = await fetchCodexProfiles();
+      const profiles = (await fetchCodexProfiles()).map(p => ({ name: stripControl(p.name), model: stripControl(p.model) }));
       if (opts.json) console.log(JSON.stringify({ tools: records, codexProfiles: profiles }, null, 2));
       else {
         records.forEach((r, i) => { if (i) console.log(""); printRecord(r); });

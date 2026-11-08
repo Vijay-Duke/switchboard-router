@@ -74,3 +74,31 @@ Tray/autostart logs on macOS are `/tmp/switchboard.log` and
 - Product direction: [../SWITCHBOARD.md](../SWITCHBOARD.md)
 - Auto + Learn design: [../docs/switchboard/README.md](../docs/switchboard/README.md)
 - Docker: [../DOCKER.md](../DOCKER.md)
+
+## Connect local tools to a gateway
+
+`connect` configures tools on this machine without starting a local server:
+
+```bash
+switchboard connect https://gateway.example --tools claude,codex --model provider/model
+switchboard connect --tools pi --model provider/model
+switchboard show claude codex pi --json
+switchboard connect --reset --tools claude,codex,pi
+```
+
+Remote connections prompt for a dashboard API key; automated runs can use
+`SWITCHBOARD_CONNECT_KEY`. Each connection creates a fresh client key. Existing
+saved key secrets are never fetched. Local connections use the local gateway's
+machine token to create the key. Tool files use the dashboard's existing writers,
+backups and reset behavior. `show` reads local configuration and masks secrets.
+
+Use `--save` with a remote URL to remember its dashboard session in an origin-bound,
+owner-only `connect-session.json` in the Switchboard data directory. This file
+contains a session cookie, not the sign-in or client API key. Use `--print-env`
+only when you intend to print the new client key for another application.
+
+`--list-tools` lists supported tools. Claude tier flags (`--opus`, `--sonnet`,
+`--fable`, `--haiku`) override individual models; `--model` supplies every tier.
+Use `--codex-profile work=provider/model` alongside `--tools codex` to create a
+local profile, and `show --profiles` to inspect profiles. Failed connections
+revoke the new key if it was neither configured nor explicitly printed.

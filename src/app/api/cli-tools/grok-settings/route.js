@@ -108,10 +108,11 @@ const parseEnvFile = async () => {
   }
 };
 
-export async function GET() {
+export async function GET(request) {
   try {
     const installed = await checkInstalled();
-    if (!installed) {
+    const includeConfig = request?.url && new URL(request.url).searchParams.get("includeConfig") === "1";
+    if (!installed && !includeConfig) {
       return NextResponse.json({
         installed: false,
         settings: null,
@@ -126,7 +127,7 @@ export async function GET() {
     const hasSwitchboard = !!(baseUrl && isLocalBase(baseUrl) && (user.apiKey || env.GROK_API_KEY));
 
     return NextResponse.json({
-      installed: true,
+      installed,
       hasSwitchboard,
       settings: {
         baseUrl,
