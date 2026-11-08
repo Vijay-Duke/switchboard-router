@@ -24,6 +24,7 @@ import { getComboModels } from "./services/model.js";
 import {
   getVaultEntry, putVaultEntry, searchVault, cleanupExpiredVault,
 } from "@/lib/db/repos/vaultRepo.js";
+import { makeKv } from "@/lib/db/helpers/kvStore.js";
 
 import { loadProviderQuotaState, saveProviderQuotaState } from "@/lib/db/repos/providerQuotaStateRepo.js";
 
@@ -53,6 +54,7 @@ export function ensureOpenSseDeps() {
     putVaultEntry,
     searchVault,
     cleanupExpiredVault,
+    makeKvStore: makeKv,
     buildExternalIdpRefreshParams: async (...args) => {
       const mod = await import("@/lib/oauth/kiroExternalIdp.js");
       return mod.buildExternalIdpRefreshParams(...args);

@@ -702,7 +702,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Streaming response
   const { onStreamComplete, onStreamFailure, streamDetailId } = buildOnStreamComplete({ ...sharedCtx });
   return handleStreamingResponse({
-    ...sharedCtx, providerResponse, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, streamController, onStreamComplete, onStreamFailure, streamDetailId,
+    ...sharedCtx, providerResponse, sourceFormat, targetFormat, userAgent, reqLogger, toolNameMap, streamController, onStreamComplete, onStreamFailure, streamDetailId, credentials,
     // wrap already owns first-byte timeout; skip the outer one so we don't abort mid-retry
     firstChunkTimeoutMs: geminiEmptyGuard ? undefined : 0,
   });
