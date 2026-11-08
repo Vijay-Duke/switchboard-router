@@ -792,7 +792,7 @@ export async function refreshNousToken(refreshToken, log) {
           refresh_token: refreshToken,
           client_id: oauth.clientId,
         }),
-        provider: "nous",
+        provider: "nous", identity: PROVIDERS.nous.identity, format: PROVIDERS.nous.format, redirect: "error",
         signal: AbortSignal.timeout(30000),
       });
 
@@ -825,7 +825,7 @@ export async function refreshNousToken(refreshToken, log) {
           body: JSON.stringify({
             min_ttl_seconds: 7200,
           }),
-          provider: "nous",
+          provider: "nous", identity: PROVIDERS.nous.identity, format: PROVIDERS.nous.format, redirect: "error",
           signal: AbortSignal.timeout(15000),
         });
 

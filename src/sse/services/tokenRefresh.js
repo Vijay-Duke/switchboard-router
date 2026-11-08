@@ -245,7 +245,14 @@ export async function updateProviderCredentials(connectionId, newCredentials) {
 
     if (newCredentials.accessToken)         updates.accessToken  = newCredentials.accessToken;
     if (newCredentials.refreshToken)        updates.refreshToken = newCredentials.refreshToken;
-    if (newCredentials.apiKey)              updates.apiKey       = newCredentials.apiKey;
+    // Nous rotates an inference agent key alongside its OAuth token. Other
+    // refresh hooks must retain the existing API-key write allowlist.
+    if (newCredentials.apiKey) {
+      const connection = await getProviderConnectionById(connectionId);
+      if (connection?.provider === "nous" && connection.authType === "oauth") {
+        updates.apiKey = newCredentials.apiKey;
+      }
+    }
     if (newCredentials.idToken)             updates.idToken = newCredentials.idToken;
     if (newCredentials.lastRefreshAt)       updates.lastRefreshAt = newCredentials.lastRefreshAt;
     if (newCredentials.expiresAt)           updates.expiresAt = newCredentials.expiresAt;

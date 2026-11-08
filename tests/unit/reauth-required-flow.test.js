@@ -131,6 +131,17 @@ describe("chatCore unrecoverable refresh branch", () => {
 });
 
 describe("updateProviderCredentials status passthrough", () => {
+  it("persists rotated inference agent keys only for Nous OAuth connections", async () => {
+    const db = await import("../../src/lib/db/index.js");
+    const { updateProviderCredentials } = await import("../../src/sse/services/tokenRefresh.js");
+    for (const authType of ["oauth", "apikey"]) {
+      const connection = await db.createProviderConnection({ provider: "nous", authType, name: authType, apiKey: "old-key" });
+      await updateProviderCredentials(connection.id, { apiKey: "new-agent-key", accessToken: "new-token" });
+      const saved = await db.getProviderConnectionById(connection.id);
+      expect(saved.apiKey).toBe(authType === "oauth" ? "new-agent-key" : "old-key");
+    }
+  });
+
   it("persists testStatus/lastError/lastErrorAt and lets reauthRequired override a hook's active", async () => {
     const [id] = await seed([{}]);
     const { updateProviderCredentials } = await import("../../src/sse/services/tokenRefresh.js");
