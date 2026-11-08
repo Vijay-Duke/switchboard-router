@@ -30,7 +30,7 @@ export async function getCustomModels() {
 }
 
 // Atomic check-then-insert inside transaction to prevent duplicate races
-export async function addCustomModel({ providerAlias, id, type = "llm", name, reasoning }) {
+export async function addCustomModel({ providerAlias, id, type = "llm", name, reasoning, transport }) {
   const k = customKey(providerAlias, id, type);
   const db = await getAdapter();
   let added = false;
@@ -43,6 +43,9 @@ export async function addCustomModel({ providerAlias, id, type = "llm", name, re
       type,
       name: name || id,
       ...(reasoning ? { reasoning } : {}),
+      // Realtime STT dispatch marker (whitelist-validated in the API layer);
+      // absent on ordinary chat/embedding models.
+      ...(transport ? { transport } : {}),
     });
     db.run(`INSERT INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, value]);
     added = true;
@@ -83,6 +86,7 @@ export async function addCustomModelsBulk(models) {
         type,
         name: m.name || id,
         ...(m.reasoning ? { reasoning: m.reasoning } : {}),
+        ...(m.transport ? { transport: m.transport } : {}),
       });
       db.run(`INSERT INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, value]);
       added += 1;

@@ -1,8 +1,10 @@
 import { Buffer } from "node:buffer";
 import { createErrorResult } from "../utils/error.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
-import { proxyAwareFetch, proxyOptionsFromCredentials } from "../utils/proxyFetch.js";
+import { proxyAwareFetch, proxyOptionsFromCredentials, resolveProxyUrl, getDispatcher } from "../utils/proxyFetch.js";
 import { PROVIDERS, PROVIDER_MEDIA } from "../providers/index.js";
+import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
+import { transcribeGeminiLive } from "./geminiLiveStt.js";
 
 function sttTransport(provider, cfg) {
   const transport = PROVIDERS[provider] || {};
@@ -316,11 +318,26 @@ function jsonResponse(obj) {
   };
 }
 
+// Model-level transport marker (registry models[].transport, e.g. the Gemini
+// live STT entry's "gemini-live", or a custom model's stored transport).
+// Dispatch reads the marker — never a hardcoded model id — so new realtime
+// providers extend sttCore through data, not code.
+function resolveModelTransport(provider, model) {
+  const key = PROVIDER_ID_TO_ALIAS[provider] || provider;
+  const models = PROVIDER_MODELS[key] || PROVIDER_MODELS[provider];
+  if (!Array.isArray(models)) return null;
+  const entry = models.find((m) => m && m.id === model && (m.kind || "llm") === "stt");
+  const marker = typeof entry?.transport === "string" ? entry.transport.trim() : "";
+  return marker || null;
+}
+
 /**
- * STT core handler — dispatch by sttConfig.format.
+ * STT core handler — dispatch by model transport marker, else sttConfig.format.
+ * `transport` is the caller-supplied marker override (custom models resolve
+ * it in the app layer; built-ins fall back to the registry entry marker).
  * @returns {Promise<{success, response, status?, error?}>}
  */
-export async function handleSttCore({ provider, model, formData, credentials, sttConfig, abortSignal }) {
+export async function handleSttCore({ provider, model, formData, credentials, sttConfig, transport, abortSignal }) {
   const file = formData.get("file");
   if (!file) return createErrorResult(HTTP_STATUS.BAD_REQUEST, "Missing required field: file");
 
@@ -345,18 +362,47 @@ export async function handleSttCore({ provider, model, formData, credentials, st
   if (!isSelfHosted && cfg.authType !== "none" && !token) {
     return createErrorResult(HTTP_STATUS.UNAUTHORIZED, `No credentials for STT provider: ${provider}`);
   }
-  const transport = sttTransport(provider, cfg);
+  const transportOpts = sttTransport(provider, cfg);
   const proxyOptions = proxyOptionsFromCredentials(credentials);
 
+  // Format-switch extension: an explicit caller marker wins over the registry
+  // marker; with neither, the provider-default sttConfig.format applies.
+  const marker = (typeof transport === "string" && transport.trim()) ? transport.trim() : resolveModelTransport(provider, model);
+
   try {
-    switch (cfg.format) {
-      case "deepgram":        return await transcribeDeepgram(cfg, file, model, token, formData, transport, abortSignal, proxyOptions);
-      case "assemblyai":      return await transcribeAssemblyAI(cfg, file, model, token, transport, abortSignal, proxyOptions);
-      case "nvidia-asr":      return await transcribeNvidia(cfg, file, model, token, transport, abortSignal, proxyOptions);
-      case "huggingface-asr": return await transcribeHuggingFace(cfg, file, model, token, transport, abortSignal, proxyOptions);
-      case "gemini-stt":      return await transcribeGemini(cfg, file, model, token, formData, transport, abortSignal, proxyOptions);
-      case "elevenlabs-stt":  return await transcribeElevenLabs(cfg, file, model, token, formData, transport, abortSignal, proxyOptions);
-      default:                return await transcribeOpenAICompatible(cfg, file, model, token, formData, transport, abortSignal, proxyOptions);
+    switch (marker || cfg.format) {
+      case "gemini-live": {
+        // Same egress as the REST hops: per-connection proxy, else env proxy.
+        // A proxy-dial failure falls back to a direct WS connection (the
+        // fetch transports degrade the same way when the agent is unusable).
+        let dispatcher = null;
+        try {
+          const proxyUrl = resolveProxyUrl(cfg.baseUrl, proxyOptions);
+          if (proxyUrl) dispatcher = await getDispatcher(proxyUrl);
+        } catch { /* connect direct */ }
+        const live = await transcribeGeminiLive({ cfg, file, model, token, formData, mimeType: resolveAudioContentType(file), ...(dispatcher ? { dispatcher } : {}), abortSignal });
+        // response_format parity with the OpenAI-compatible transport: default
+        // envelope stays {text}; verbose_json adds segments mapped from the
+        // Live API's incremental inputTranscription deltas. Those frames carry
+        // NO timestamps, so segments expose {id,text} only (id = delta order,
+        // Whisper-compatible 0-based) — start/end/duration are deliberately
+        // absent rather than fabricated as zeros, which would misrepresent
+        // provider data to callers diffing transports.
+        const fmt = typeof formData?.get === "function"
+          ? String(formData.get("response_format") ?? "").trim().toLowerCase()
+          : "";
+        if (fmt === "verbose_json") {
+          return jsonResponse({ text: live.text, segments: live.chunks.map((segText, id) => ({ id, text: segText })) });
+        }
+        return jsonResponse({ text: live.text });
+      }
+      case "deepgram":        return await transcribeDeepgram(cfg, file, model, token, formData, transportOpts, abortSignal, proxyOptions);
+      case "assemblyai":      return await transcribeAssemblyAI(cfg, file, model, token, transportOpts, abortSignal, proxyOptions);
+      case "nvidia-asr":      return await transcribeNvidia(cfg, file, model, token, transportOpts, abortSignal, proxyOptions);
+      case "huggingface-asr": return await transcribeHuggingFace(cfg, file, model, token, transportOpts, abortSignal, proxyOptions);
+      case "gemini-stt":      return await transcribeGemini(cfg, file, model, token, formData, transportOpts, abortSignal, proxyOptions);
+      case "elevenlabs-stt":  return await transcribeElevenLabs(cfg, file, model, token, formData, transportOpts, abortSignal, proxyOptions);
+      default:                return await transcribeOpenAICompatible(cfg, file, model, token, formData, transportOpts, abortSignal, proxyOptions);
     }
   } catch (err) {
     if (err?.name === "AbortError" || abortSignal?.aborted) return createErrorResult(499, "STT request aborted");

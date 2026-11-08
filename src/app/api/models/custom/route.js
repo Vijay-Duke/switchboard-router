@@ -9,6 +9,7 @@ import {
 import { isValidReasoningSupport } from "@/shared/utils/reasoningCatalog.js";
 import { invalidateCompatibleReasoningCache } from "@/sse/services/compatibleReasoning.js";
 import { schedulePiCatalogSync } from "@/lib/cli/piCatalogSync.js";
+import { isSttTransport } from "@/shared/constants/models.js";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,15 @@ export async function POST(request) {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
+    // Accepted STT transport markers live in the shared whitelist
+    // (src/shared/constants/models STT_TRANSPORT_META) — the dashboard transport
+    // select and this validator agree on one set. Unknown or mistyped values
+    // are silently dropped, the same policy the reasoning validator applies.
+    const sanitizeTransport = (transport, type) => {
+      if (type !== "stt" || !isSttTransport(transport)) return undefined;
+      return transport.trim();
+    };
+
     // Bulk import: { models: [{ providerAlias, id, type?, name?, reasoning? }, ...] }
     if (Array.isArray(body?.models)) {
       if (body.models.length === 0) {
@@ -46,6 +56,7 @@ export async function POST(request) {
           name: m?.name,
           // Discovered reasoning wire-format descriptor (import-time capture)
           reasoning: isValidReasoningSupport(m?.reasoning) ? m.reasoning : undefined,
+          transport: sanitizeTransport(m?.transport, m?.type || m?.kind || "llm"),
         }))
         .filter((m) => m.providerAlias && m.id);
       const result = await addCustomModelsBulk(cleaned);
@@ -56,16 +67,18 @@ export async function POST(request) {
       return NextResponse.json({ success: true, ...result });
     }
 
-    const { providerAlias, id, type, name, reasoning } = body || {};
+    const { providerAlias, id, type, name, reasoning, transport } = body || {};
     if (!providerAlias || !id) {
       return NextResponse.json({ error: "providerAlias and id required" }, { status: 400 });
     }
+    const cleanType = type || "llm";
     const added = await addCustomModel({
       providerAlias,
       id,
-      type: type || "llm",
+      type: cleanType,
       name,
       reasoning: isValidReasoningSupport(reasoning) ? reasoning : undefined,
+      transport: sanitizeTransport(transport, cleanType),
     });
     if (added) {
       invalidateCompatibleReasoningCache();

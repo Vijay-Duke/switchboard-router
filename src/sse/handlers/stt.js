@@ -2,7 +2,7 @@ import {
   extractApiKey,
   getProviderCredentials, markAccountUnavailable,
 } from "../services/auth.js";
-import { getSettings } from "@/lib/db/index.js";
+import { getSettings, getCustomModels } from "@/lib/db/index.js";
 import { getModelInfo } from "../services/model.js";
 import { handleSttCore } from "open-sse/handlers/sttCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
@@ -17,6 +17,23 @@ const CONNECTION_BACKED_PROVIDERS = new Set(
     .filter(([, p]) => p.serviceKinds?.includes("stt") && !p.noAuth)
     .map(([id]) => id)
 );
+
+// Custom-model transport marker: models registered through
+// /api/models/custom may pin a specialized STT transport (e.g.
+// "gemini-live"). The engine dispatches on the marker itself, so the app
+// layer only resolves it — same getModelInfo-style provider+model pairing,
+// restricted to type "stt" records.
+async function resolveCustomModelTransport(provider, model) {
+  try {
+    const customModels = await getCustomModels();
+    const hit = customModels.find((c) => c && c.type === "stt"
+      && c.providerAlias === provider && c.id === model
+      && typeof c.transport === "string" && c.transport.trim());
+    return hit ? hit.transport.trim() : null;
+  } catch {
+    return null; // DB unreadable → built-in registry marker still applies
+  }
+}
 
 export async function handleStt(request) {
   let formData;
@@ -51,8 +68,10 @@ export async function handleStt(request) {
   const { provider, model } = modelInfo;
   log.info("ROUTING", `Provider: ${provider}, Model: ${model}`);
 
+  const modelTransport = await resolveCustomModelTransport(provider, model);
+
   if (!CONNECTION_BACKED_PROVIDERS.has(provider)) {
-    const result = await handleSttCore({ clientKeyId, provider, model, formData, sttConfig: AI_PROVIDERS[provider]?.sttConfig, abortSignal: request.signal });
+    const result = await handleSttCore({ clientKeyId, provider, model, formData, sttConfig: AI_PROVIDERS[provider]?.sttConfig, transport: modelTransport, abortSignal: request.signal });
     if (result.success) return result.response;
     return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "STT failed");
   }
@@ -93,6 +112,7 @@ export async function handleStt(request) {
         formData,
         credentials,
         sttConfig: AI_PROVIDERS[provider]?.sttConfig,
+        transport: modelTransport,
         abortSignal: request.signal,
       });
       if (result.success) return result.response;

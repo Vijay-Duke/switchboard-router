@@ -3,17 +3,23 @@
 
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
-import { Button, Modal } from "@/shared/components";
+import { Button, Modal, Select, Toggle } from "@/shared/components";
+import { STT_TRANSPORT_META, STT_TRANSPORTS } from "@/shared/constants/models";
 
 export default function AddCustomModelModal({ isOpen, providerAlias, providerDisplayAlias, onSave, onClose }) {
   const [modelId, setModelId] = useState("");
   const [testStatus, setTestStatus] = useState(null); // null | "testing" | "ok" | "error"
   const [testError, setTestError] = useState("");
   const [saving, setSaving] = useState(false);
+  // STT is a model TYPE, not a chat capability: the save flow turns this
+  // flag into type "stt" (the API honours a transport only on stt records).
+  const [isStt, setIsStt] = useState(false);
+  // Realtime dispatch marker for the transport select; "" = provider default REST.
+  const [transport, setTransport] = useState("");
 
   // Reset state when modal opens
   useEffect(() => {
-    if (isOpen) { setModelId(""); setTestStatus(null); setTestError(""); }
+    if (isOpen) { setModelId(""); setIsStt(false); setTransport(""); setTestStatus(null); setTestError(""); }
   }, [isOpen]);
 
   // Strip provider's own alias prefix (e.g. "cc/model" -> "model" for cc provider)
@@ -47,7 +53,9 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
     if (!cleanId || saving) return;
     setSaving(true);
     try {
-      await onSave(cleanId);
+      // The type rides the save call; the pinned transport is only forwarded
+      // for stt models (null unless the caller picked one).
+      await onSave(cleanId, isStt ? "stt" : "llm", isStt && transport ? transport : null);
     } finally {
       setSaving(false);
     }
@@ -85,6 +93,32 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
           <p className="text-xs text-text-muted mt-1">
             Sent to provider as: <code className="font-mono bg-sidebar px-1 rounded">{stripAlias(modelId.trim()) || "model-id"}</code>
           </p>
+        </div>
+
+        {/* STT is a model TYPE, not a chat capability: toggling it registers
+            the model as type "stt" (the API honours a transport only on stt
+            records). The select pins the realtime dispatch marker persisted
+            with the model; the whitelist is the shared STT_TRANSPORT_META. */}
+        <div>
+          <Toggle
+            checked={isStt}
+            onChange={(v) => { setIsStt(v); if (!v) setTransport(""); }}
+            label="Speech to text"
+            description="Transcribes audio via /v1/audio/transcriptions"
+            size="sm"
+          />
+          {isStt && (
+            <div className="mt-3">
+              <Select
+                label="Transport"
+                value={transport}
+                onChange={(e) => setTransport(e.target.value)}
+                placeholder="Provider default (REST)"
+                options={STT_TRANSPORTS.map((t) => ({ value: t, label: STT_TRANSPORT_META[t].label }))}
+                hint="Realtime transport marker for the STT dispatcher. Empty keeps the provider's REST format."
+              />
+            </div>
+          )}
         </div>
 
         {/* Test result */}
