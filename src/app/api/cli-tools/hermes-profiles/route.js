@@ -1,5 +1,4 @@
 // @ts-check
-"use server";
 
 import { NextResponse } from "next/server";
 import { listProfiles } from "../hermes-settings/hermesProfiles.js";
