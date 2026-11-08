@@ -397,6 +397,24 @@ async function listHermesProfiles() {
   return makeRequest("GET", "/api/cli-tools/hermes-profiles");
 }
 
+/**
+ * List Codex profiles (~/.codex/<name>.config.toml)
+ * @returns {Promise<Object>} { success, data: { profiles: [{ name, model }] } }
+ */
+async function listCodexProfiles() {
+  return makeRequest("GET", "/api/cli-tools/codex-profiles");
+}
+
+/**
+ * Create or update a Codex profile (`codex -p <name>`)
+ * @param {string} name - Profile name
+ * @param {string} model - Model id the profile selects
+ * @returns {Promise<Object>} { success, data: { success, profile } }
+ */
+async function saveCodexProfile(name, model) {
+  return makeRequest("POST", "/api/cli-tools/codex-profiles", { name, model });
+}
+
 // ============================================================================
 // SETTINGS API
 // ============================================================================
@@ -536,6 +554,8 @@ module.exports = {
   applyCliToolSettings,
   resetCliToolSettings,
   listHermesProfiles,
+  listCodexProfiles,
+  saveCodexProfile,
 
   // Settings
   getSettings,

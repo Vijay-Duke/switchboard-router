@@ -27,6 +27,23 @@ if (subArgs[0] === "xai" && subArgs[1] === "video") {
   return;
 }
 
+// `switchboard connect` / `switchboard show` configure (or summarize) local
+// CLI tools through the management API of an already-running gateway. They
+// never start a server and never read stored API-key secrets back: connect
+// mints a NEW key whose one-time secret goes straight into the tool configs.
+if (subArgs[0] === "connect" || subArgs[0] === "show") {
+  const command = subArgs[0] === "connect"
+    ? require("./src/cli/commands/connect")
+    : require("./src/cli/commands/show");
+  command.run(subArgs.slice(1))
+    .then((code) => process.exit(code))
+    .catch((error) => {
+      console.error(`Error: ${error?.message || error}`);
+      process.exit(1);
+    });
+  return;
+}
+
 let cliOptions;
 try {
   cliOptions = parseCliArgs(process.argv.slice(2));
