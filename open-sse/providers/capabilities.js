@@ -352,6 +352,13 @@ export const PROVIDER_CAPABILITIES = {
 PROVIDER_CAPABILITIES.cx = PROVIDER_CAPABILITIES.codex;
 
 /**
+ * Qoder CN serves the identical model catalog from the CN gateway, so it
+ * shares the intl Qoder capability table verbatim (vision/reasoning/
+ * contextWindow). See the "qoder" entry above for the per-model rows.
+ */
+PROVIDER_CAPABILITIES["qoder-cn"] = PROVIDER_CAPABILITIES["qoder"];
+
+/**
  * Pattern fallback — glob (* = wildcard), matched case-insensitively and
  * anchored (^...$) so a pattern must match the full model id. ORDER MATTERS:
  * vision/specific variants first, text-only/generic families last, to avoid

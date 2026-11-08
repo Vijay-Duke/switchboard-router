@@ -5,7 +5,6 @@ import {
 } from "open-sse/shared/qoder/constants.js";
 import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
-import { getOAuthFetchProfile } from "../providerHelpers.js";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 
 /**
@@ -20,6 +19,11 @@ import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
  * Tokens live ~30 days; refresh is a no-op (the upstream refresh endpoint
  * returns 403 for our flow). Users re-run login when expired.
  *
+ * Region-aware: pass the provider's registry oauth block (loginUrl /
+ * deviceTokenUrl / userInfoUrl) to hit the CN site (qoder.com.cn); without
+ * one the intl endpoints are used. Only the hostnames differ between
+ * regions — the flow is identical.
+ *
  * Mirrors the structure of KiroService — the COSY signing / WAF-bypass body
  * encoding / chat protocol live separately in open-sse/shared/qoder/ because
  * they're used by every signed request, not just OAuth.
@@ -29,7 +33,6 @@ import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 // 5 minutes; an individual request that stalls beyond this is treated as a
 // failed poll attempt and the next poll iteration retries.
 const FETCH_TIMEOUT_MS = 15_000;
-const QODER_FETCH_PROFILE = getOAuthFetchProfile("qoder");
 
 function base64Url(buf) {
   return buf
@@ -43,15 +46,18 @@ function base64Url(buf) {
  * Wrap fetch with an AbortController-based timeout. Without this, a stalled
  * upstream socket hangs on Node's default keepalive timeout (minutes) and
  * abandoned polls accumulate hung sockets.
+ *
+ * `init` may carry the Switchboard outbound identity profile (identity /
+ * provider / format) so region hops wear the same identity wrap as chat.
  */
-async function fetchWithTimeout(url, init = {}) {
+async function fetchWithTimeout(url, init = {}, fetchProfile = null) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort("timeout"), FETCH_TIMEOUT_MS);
   try {
     return await proxyAwareFetch(url, {
       ...init,
       signal: controller.signal,
-      ...QODER_FETCH_PROFILE,
+      ...fetchProfile,
     });
   } finally {
     clearTimeout(timer);
@@ -59,6 +65,29 @@ async function fetchWithTimeout(url, init = {}) {
 }
 
 export class QoderService {
+  /**
+   * Region-aware device flow. Pass an oauth config block (registry oauth →
+   * PROVIDER_OAUTH → QODER_CONFIG/QODER_CN_CONFIG) to hit the CN site;
+   * without one, the intl endpoints are used. `fetchProfile` optionally
+   * carries the Switchboard identity wrap for the provider.
+   */
+  constructor(config = {}, fetchProfile = null) {
+    this.config = config;
+    this.fetchProfile = fetchProfile;
+  }
+
+  loginUrl() {
+    return this.config.loginUrl || QODER_LOGIN_URL;
+  }
+
+  deviceTokenUrl() {
+    return this.config.deviceTokenUrl || QODER_DEVICE_TOKEN_URL;
+  }
+
+  userInfoUrl() {
+    return this.config.userInfoUrl || QODER_USERINFO_URL;
+  }
+
   /**
    * Generate a PKCE verifier + S256 challenge pair.
    * Uses 32 random bytes (matches qodercli/Veria).
@@ -86,7 +115,7 @@ export class QoderService {
     });
 
     return {
-      verificationUriComplete: `${QODER_LOGIN_URL}?${params.toString()}`,
+      verificationUriComplete: `${this.loginUrl()}?${params.toString()}`,
       codeVerifier: verifier,
       nonce,
       machineId,
@@ -105,7 +134,7 @@ export class QoderService {
     if (!nonce || !codeVerifier) {
       throw new Error("pollDeviceToken: missing nonce or code verifier");
     }
-    const url = `${QODER_DEVICE_TOKEN_URL}?nonce=${encodeURIComponent(nonce)}&verifier=${encodeURIComponent(codeVerifier)}&challenge_method=S256`;
+    const url = `${this.deviceTokenUrl()}?nonce=${encodeURIComponent(nonce)}&verifier=${encodeURIComponent(codeVerifier)}&challenge_method=S256`;
 
     const response = await fetchWithTimeout(url, {
       method: "GET",
@@ -113,7 +142,7 @@ export class QoderService {
         Accept: "application/json",
         "User-Agent": "Go-http-client/2.0",
       },
-    });
+    }, this.fetchProfile);
 
     // Pending — server has registered the device code but the user hasn't
     // finished the browser flow yet. Both 202 and 404 mean "keep polling".
@@ -162,14 +191,14 @@ export class QoderService {
    */
   async fetchUserInfo(accessToken) {
     try {
-      const response = await fetchWithTimeout(QODER_USERINFO_URL, {
+      const response = await fetchWithTimeout(this.userInfoUrl(), {
         method: "GET",
         headers: {
           Authorization: `Bearer ${accessToken}`,
           Accept: "application/json",
           "User-Agent": "Go-http-client/2.0",
         },
-      });
+      }, this.fetchProfile);
       if (!response.ok) return { name: "", email: "" };
       const body = await response.json();
       return {

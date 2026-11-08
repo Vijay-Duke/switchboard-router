@@ -319,10 +319,12 @@ export function parseQuotaData(provider, data) {
   if (data.quotas && typeof data.quotas === "object") {
     for (const [key, quota] of Object.entries(data.quotas)) {
       if (!quota || typeof quota !== "object") continue;
-      // Qoder: skip empty organization / add-on buckets ("0/0" rows are noise).
-      if (provider === "qoder" && (key === "organization" || key === "addOn") && !(quotaNumber(quota.total) > 0)) continue;
+      // Qoder (intl or CN): skip empty organization / add-on buckets ("0/0"
+      // rows are noise).
+      if ((provider === "qoder" || provider === "qoder-cn") && (key === "organization" || key === "addOn") && !(quotaNumber(quota.total) > 0)) continue;
       const QODER_NAMES = { user: "Personal", organization: "Organization", addOn: "Add-on credits" };
-      const name = provider === "qoder" ? QODER_NAMES[key] || key : quota.displayName || key;
+      const isQoder = provider === "qoder" || provider === "qoder-cn";
+      const name = isQoder ? QODER_NAMES[key] || key : quota.displayName || key;
       normalizedQuotas.push({
         ...quota,
         name,

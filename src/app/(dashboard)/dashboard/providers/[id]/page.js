@@ -136,7 +136,10 @@ export default function ProviderDetailPage() {
   const modelToolbarActions = getProviderModelToolbarActions({ isCompatible, hasActiveConnection });
   const hasDualAuthModes = !isCompatible && isOAuth && supportsApiKeyAuth;
   const oauthConnectionLabel = providerId === "xai" ? "Grok Build OAuth" : "OAuth";
-  const apiKeyConnectionLabel = providerId === "xai" ? "xAI API Key" : "API Key";
+  const apiKeyConnectionLabel =
+    providerId === "xai" ? "xAI API Key"
+    : (providerId === "qoder" || providerId === "qoder-cn") ? "PAT"
+    : "API Key";
 
   const openOAuthConnection = () => {
     setShowOAuthModal(true);

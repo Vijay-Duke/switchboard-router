@@ -9,7 +9,7 @@
  *   - device flow URL construction
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import crypto from "crypto";
 
 import { qoderEncodeBody } from "../../open-sse/shared/qoder/encoding.js";
@@ -19,7 +19,14 @@ import {
   QODER_CHAT_URL_ENCODED,
   QODER_MODEL_LIST_URL,
   QODER_MODEL_MAP,
+  qoderInferenceBase,
 } from "../../open-sse/shared/qoder/constants.js";
+import { canonicalizeQoderUsage } from "../../open-sse/shared/qoder/sse.js";
+import {
+  rewriteQoderMessageAttachments,
+  clearQoderUploadCache,
+  buildMultipartFile,
+} from "../../open-sse/shared/qoder/attachments.js";
 import { PROVIDER_MODELS } from "../../open-sse/config/providerModels.js";
 import { __test__ as qoderExecutorInternals } from "../../open-sse/executors/qoder.js";
 
@@ -135,6 +142,21 @@ describe("initiateDeviceFlow", () => {
     expect(flow.verificationUriComplete).toContain("challenge_method=S256");
     expect(flow.verificationUriComplete).toContain(`nonce=${flow.nonce}`);
     expect(flow.verificationUriComplete).toContain(`machine_id=${flow.machineId}`);
+  });
+
+  it("targets the CN hosts when constructed with the qoder-cn config", () => {
+    const svc = new QoderService({
+      loginUrl: "https://qoder.com.cn/device/selectAccounts",
+      deviceTokenUrl: "https://openapi.qoder.com.cn/api/v1/deviceToken/poll",
+      userInfoUrl: "https://openapi.qoder.com.cn/api/v1/userinfo",
+    });
+    expect(svc.loginUrl()).toBe("https://qoder.com.cn/device/selectAccounts");
+    expect(svc.deviceTokenUrl()).toContain("openapi.qoder.com.cn");
+    expect(svc.userInfoUrl()).toContain("openapi.qoder.com.cn");
+    const flow = svc.initiateDeviceFlow();
+    expect(flow.verificationUriComplete).toMatch(
+      /^https:\/\/qoder\.com\.cn\/device\/selectAccounts\?/,
+    );
   });
 
   it("returns nonce and machineId as UUIDs", () => {
@@ -401,6 +423,21 @@ describe("normalizeMessages", () => {
     expect(content.some((b) => b.type === "text" && b.text === "what color?")).toBe(true);
   });
 
+  it("turns leftover file/document blocks into short stubs instead of dropping them", () => {
+    const result = normalizeMessages([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "see" },
+          { type: "file", file: { filename: "big.pdf", file_data: "data:application/pdf;base64,AAA" } },
+        ],
+      },
+    ]);
+    expect(result.messages[0].content).toContain("see");
+    expect(result.messages[0].content).toContain("big.pdf");
+    expect(result.messages[0].content).not.toContain("AAA");
+  });
+
   it("converts claude-style base64 image blocks to image_url data URIs", () => {
     const result = normalizeMessages([
       {
@@ -529,9 +566,227 @@ describe("wrapQoderSSE", () => {
     expect(out).toContain("data: [DONE]\n\n");
   });
 
+  it("mid-stream billing block becomes a structured quota error, not fake text", async () => {
+    const first = JSON.stringify({ statusCodeValue: 200, body: JSON.stringify({ choices: [{ delta: { content: "hi" } }] }) });
+    const env = JSON.stringify({ statusCodeValue: 403, body: '{"code":"112","message":"Quota exhausted"}' });
+    const wrapped = await wrapQoderSSE(makeResponse([`data: ${first}\n\ndata: ${env}\n\n`]), "qoder/lite");
+    const out = await drain(wrapped);
+    expect(out).toContain("qoder_billing_block");
+    expect(out).not.toContain("[qoder error");
+  });
+
+  it("upstream first-frame error envelope produces an HTTP error", async () => {
+    const env = JSON.stringify({ statusCodeValue: 503, body: "service unavailable" });
+    const wrapped = await wrapQoderSSE(makeResponse([`data: ${env}\n\n`]), "qoder/lite");
+    expect(wrapped.status).toBe(503);
+    expect(await wrapped.json()).toEqual({
+      error: { message: "service unavailable", code: 503 },
+    });
+  });
+
+  it("first-frame billing block maps to HTTP 403 for quota failover", async () => {
+    const env = JSON.stringify({ statusCodeValue: 403, body: '{"code":"112","message":"Quota exhausted"}' });
+    const wrapped = await wrapQoderSSE(makeResponse([`data: ${env}\n\n`]), "qoder/lite");
+    expect(wrapped.status).toBe(403);
+    const body = await wrapped.json();
+    expect(body.error.message).toContain("112");
+    expect(body.error.code).toBe(403);
+  });
+
   it("non-ok responses are returned unchanged (no transform)", async () => {
     const r = new Response("not ok", { status: 500 });
     const wrapped = await wrapQoderSSE(r, "qoder/auto");
     expect(wrapped).toBe(r);
+  });
+
+  function envelope(body) {
+    return `data: ${JSON.stringify({ statusCodeValue: 200, body })}\n\n`;
+  }
+
+  function parseForwardedChunks(out) {
+    return out
+      .split("\n\n")
+      .map((block) => block.trim())
+      .filter((block) => block.startsWith("data:") && !block.includes("[DONE]"))
+      .map((block) => JSON.parse(block.slice("data:".length).trim()));
+  }
+
+  it("coalesces empty finish-in-delta + usage-only into one OpenAI usage chunk", async () => {
+    const content = JSON.stringify({
+      id: "chatcmpl-qoder-1",
+      created: 1700000000,
+      model: "auto",
+      choices: [{ index: 0, delta: { content: "hi" } }],
+    });
+    const finish = JSON.stringify({
+      id: "chatcmpl-qoder-1",
+      choices: [{ index: 0, delta: { content: "", finish_reason: "stop" } }],
+    });
+    const usage = JSON.stringify({
+      id: "chatcmpl-qoder-1",
+      choices: [],
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 20,
+        total_tokens: 120,
+        prompt_tokens_details: { cached_tokens: 40 },
+      },
+    });
+    const wrapped = await wrapQoderSSE(
+      makeResponse([envelope(content) + envelope(finish) + envelope(usage) + envelope("[DONE]")]),
+      "qoder/auto",
+    );
+    const out = await drain(wrapped);
+    expect(out).toContain(`data: ${content}\n\n`);
+    const chunks = parseForwardedChunks(out);
+    const usageChunk = chunks.find((c) => c.usage);
+    expect(usageChunk).toBeDefined();
+    expect(usageChunk.choices[0].finish_reason).toBe("stop");
+    expect(usageChunk.usage.prompt_tokens).toBe(100);
+    expect(usageChunk.usage.completion_tokens).toBe(20);
+    expect(usageChunk.usage.prompt_tokens_details.cached_tokens).toBe(40);
+    expect(chunks.some((c) => Array.isArray(c.choices) && c.choices.length === 0)).toBe(false);
+    expect((out.match(/data: \[DONE\]/g) || []).length).toBe(1);
+  });
+
+  it("maps Qoder input_tokens aliases onto prompt_tokens in the coalesced usage chunk", async () => {
+    const finish = JSON.stringify({
+      choices: [{ index: 0, delta: { finish_reason: "stop" } }],
+    });
+    const usage = JSON.stringify({
+      choices: [],
+      usage: {
+        input_tokens: 80,
+        output_tokens: 10,
+        cache_read_input_tokens: 25,
+      },
+    });
+    const wrapped = await wrapQoderSSE(
+      makeResponse([envelope(finish) + envelope(usage)]),
+      "qoder/lite",
+    );
+    const chunks = parseForwardedChunks(await drain(wrapped));
+    const usageChunk = chunks.find((c) => c.usage);
+    expect(usageChunk.usage.prompt_tokens).toBe(80);
+    expect(usageChunk.usage.completion_tokens).toBe(10);
+    expect(usageChunk.usage.prompt_tokens_details.cached_tokens).toBe(25);
+  });
+});
+
+describe("canonicalizeQoderUsage", () => {
+  it("returns null for missing or empty usage", () => {
+    expect(canonicalizeQoderUsage(null)).toBeNull();
+    expect(canonicalizeQoderUsage({})).toBeNull();
+  });
+
+  it("copies prompt_tokens_details.cached_tokens through", () => {
+    const out = canonicalizeQoderUsage({
+      prompt_tokens: 50,
+      completion_tokens: 5,
+      prompt_tokens_details: { cached_tokens: 12 },
+    });
+    expect(out.prompt_tokens).toBe(50);
+    expect(out.cached_tokens).toBe(12);
+    expect(out.prompt_tokens_details.cached_tokens).toBe(12);
+    expect(out.total_tokens).toBe(55);
+  });
+});
+
+describe("qoderInferenceBase", () => {
+  it("sends job tokens to api2 and device tokens to api3", () => {
+    expect(qoderInferenceBase({ accessToken: "jt-abc" })).toContain("api2.qoder.sh");
+    expect(qoderInferenceBase({ accessToken: "dt-abc" })).toContain("api3.qoder.sh");
+  });
+
+  it("serves every token kind from the CN gateway for the qoder-cn region", () => {
+    expect(qoderInferenceBase({ accessToken: "jt-abc" }, "cn")).toContain("gateway.qoder.com.cn");
+    expect(qoderInferenceBase({ accessToken: "dt-abc" }, "cn")).toContain("gateway.qoder.com.cn");
+  });
+});
+
+describe("rewriteQoderMessageAttachments", () => {
+  beforeEach(() => clearQoderUploadCache());
+
+  it("uploads data-URI images and keeps only the OSS URL in the message", async () => {
+    const messages = [{
+      role: "user",
+      content: [
+        { type: "text", text: "see this" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+      ],
+    }];
+    const stats = await rewriteQoderMessageAttachments(messages, {
+      uploadFn: async ({ buffer, mediaType }) => {
+        expect(Buffer.isBuffer(buffer)).toBe(true);
+        expect(mediaType).toBe("image/png");
+        return "https://cdn.qoder.example/img.png";
+      },
+    });
+    expect(messages[0].content).toEqual([
+      { type: "text", text: "see this" },
+      { type: "image_url", image_url: { url: "https://cdn.qoder.example/img.png" } },
+    ]);
+    expect(JSON.stringify(messages)).not.toContain("AAAA");
+    expect(stats.imageUrls).toEqual(["https://cdn.qoder.example/img.png"]);
+  });
+
+  it("does not re-upload already-hosted http(s) image URLs", async () => {
+    const messages = [{
+      role: "user",
+      content: [{ type: "image_url", image_url: { url: "https://example.com/a.png" } }],
+    }];
+    await rewriteQoderMessageAttachments(messages, {
+      uploadFn: async () => {
+        throw new Error("should not upload remote URLs");
+      },
+    });
+    expect(messages[0].content[0].image_url.url).toBe("https://example.com/a.png");
+  });
+
+  it("stubs non-image file blocks instead of inlining bytes", async () => {
+    const pdfB64 = "A".repeat(200);
+    const messages = [{
+      role: "user",
+      content: [
+        { type: "text", text: "read this" },
+        { type: "file", file: { filename: "big.pdf", file_data: `data:application/pdf;base64,${pdfB64}` } },
+      ],
+    }];
+    await rewriteQoderMessageAttachments(messages, {
+      uploadFn: async () => {
+        throw new Error("should not upload PDFs as images");
+      },
+    });
+    const wire = JSON.stringify(messages);
+    expect(wire).not.toContain(pdfB64);
+    expect(wire).toContain("[file omitted: big.pdf");
+  });
+
+  it("stubs oversized images when OSS upload fails instead of keeping a huge data URI", async () => {
+    const big = "A".repeat(700_000);
+    const messages = [{
+      role: "user",
+      content: [{ type: "image_url", image_url: { url: `data:image/png;base64,${big}` } }],
+    }];
+    await rewriteQoderMessageAttachments(messages, {
+      uploadFn: async () => {
+        throw new Error("upstream 413");
+      },
+    });
+    const wire = JSON.stringify(messages);
+    expect(wire).not.toContain(big);
+    expect(wire).toContain("[file omitted:");
+    expect(Buffer.byteLength(wire, "utf8")).toBeLessThan(4096);
+  });
+
+  it("buildMultipartFile uses the file field name qodercli sends", () => {
+    const { boundary, body } = buildMultipartFile(Buffer.from("hi"), {
+      fileName: "image.png",
+      mediaType: "image/png",
+    });
+    const text = body.toString("latin1");
+    expect(text).toContain(`name="file"`);
+    expect(text).toContain(`filename="image.png"`);
+    expect(text).toContain(`--${boundary}`);
   });
 });

@@ -16,6 +16,7 @@ import {
   isCanonicalModelDisabled,
 } from "@/shared/utils/providerCustomModels.js";
 import { discoverConnectionModels } from "@/lib/providerModelDiscovery";
+import { resolveQoderModels, routableQoderModels } from "open-sse/services/qoderModels.js";
 import { capabilitiesFromServiceKind, effortCapabilitiesForModelId, resolveEffortCapabilities, unionEffortCapabilities } from "open-sse/providers/capabilities.js";
 import { effortCapabilitiesFromThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import { MAX_COMBO_DEPTH } from "open-sse/config/runtimeConfig.js";
@@ -304,6 +305,33 @@ export async function buildModelsList(kindFilter, { signal = null, skipCompatibl
     const discovered = await discoverWithTimeout(connection, signal);
     if (discovered) discoveredByProvider.set(providerId, discovered);
   }));
+  // Qoder (intl + CN): the advertised list must match what the chat router
+  // will actually route — visible catalog keys PLUS hidden enable:false keys
+  // and the static Sonus/Cantus fallbacks — not just the IDE-visible subset
+  // the dashboard import flow uses.
+  for (const [providerId, connection] of discoveryConnections) {
+    if (providerId !== "qoder" && providerId !== "qoder-cn") continue;
+    if (!discoveredByProvider.has(providerId)) continue;
+    try {
+      const catalog = await resolveQoderModels({
+        provider: providerId,
+        accessToken: connection.accessToken,
+        // PAT (pt-...) connections keep the token in apiKey.
+        apiKey: connection.apiKey,
+        refreshToken: connection.refreshToken,
+        email: connection.email,
+        displayName: connection.displayName,
+        providerSpecificData: connection.providerSpecificData || {},
+      });
+      const routable = routableQoderModels(catalog);
+      if (routable.length) {
+        discoveredByProvider.set(providerId, {
+          ...discoveredByProvider.get(providerId),
+          models: routable.map((m) => ({ id: m.id, name: m.name })),
+        });
+      }
+    } catch { /* keep the discovered subset */ }
+  }
 
   const models = [];
 

@@ -15,6 +15,9 @@ const moduleDefault = {
     deprecationNotice: "RISK_NOTICE",
   },
   category: "free",
+  authModes: ["oauth", "apikey"],
+  hasOAuth: true,
+  authHint: "Personal Access Token (pt-...) from https://qoder.com/account/integrations",
   transport: {
     identity: "openai-node",
     baseUrl: "https://api3.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation",
@@ -59,6 +62,8 @@ const moduleDefault = {
   },
   features: {
     usage: true,
+    // PAT (apikey) connections also carry quota usage (via job-token exchange).
+    usageApikey: true,
   },
 };
 

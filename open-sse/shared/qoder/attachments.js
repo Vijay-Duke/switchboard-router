@@ -82,7 +82,7 @@ function extractUrlFromUploadResponse(json) {
   return null;
 }
 
-async function defaultUploadImage({ buffer, mediaType, credentials, proxyOptions, signal, region }) {
+async function defaultUploadImage({ buffer, mediaType, credentials, proxyOptions, signal, region, fetchInit = null }) {
   const requestId = uuidv4();
   const url = `${qoderInferenceBase(credentials, region)}${`/algo${QODER_IMAGE_UPLOAD_SIG_PATH}`}?request_id=${requestId}`;
   const { boundary, body } = buildMultipartFile(buffer, {
@@ -107,7 +107,9 @@ async function defaultUploadImage({ buffer, mediaType, credentials, proxyOptions
   };
   const res = await proxyAwareFetch(
     url,
-    { method: "PUT", headers, body, signal },
+    // fetchInit carries the Switchboard identity/provider/format profile so
+    // signed uploads wear the same outbound identity as chat calls.
+    { method: "PUT", headers, body, signal, ...fetchInit },
     proxyOptions,
   );
   if (!res.ok) {
@@ -291,11 +293,12 @@ export async function rewriteQoderMessageAttachments(messages, {
   signal = null,
   uploadFn = null,
   region = null,
+  fetchInit = null,
 } = {}) {
   const stats = { imageUrls: [], uploaded: 0, stubbed: 0 };
   if (!Array.isArray(messages) || messages.length === 0) return stats;
 
-  const ctx = { credentials, log, proxyOptions, signal, uploadFn, region, cache: new Map() };
+  const ctx = { credentials, log, proxyOptions, signal, uploadFn, region, fetchInit, cache: new Map() };
 
   for (const msg of messages) {
     if (!msg || typeof msg !== "object") continue;

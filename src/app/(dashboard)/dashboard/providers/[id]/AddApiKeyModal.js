@@ -12,10 +12,14 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const isSelfHosted = provider.startsWith("selfhosted-");
   const isCookie = authType === "cookie";
   const isXaiApiKey = provider === "xai" && !isCookie;
-  const credentialLabel = isCookie ? "Cookie Value" : "API Key";
+  const credentialLabel = isCookie
+    ? "Cookie Value"
+    : provider === "qoder" || provider === "qoder-cn"
+      ? "Personal Access Token (PAT)"
+      : "API Key";
   const credentialPlaceholder = isCookie
     ? (provider === "grok-web" ? "sso=xxxxx... or just the raw value" : "eyJhbGciOi...")
-    : (isXaiApiKey ? "xai-..." : "");
+    : (isXaiApiKey ? "xai-..." : provider === "qoder" || provider === "qoder-cn" ? "pt-..." : "");
 
   const isAzure = provider === "azure";
   const isCloudflareAi = provider === "cloudflare-ai";
@@ -41,6 +45,11 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
   const [saving, setSaving] = useState(false);
+  const bulkPlaceholder = isCloudflareAi
+    ? `name1|sk-key1|acc123456\nname2|sk-key2|def789012\nsk-key-only-auto-named`
+    : provider === "qoder" || provider === "qoder-cn"
+      ? `name1|pt-xxxxx\nname2|pt-yyyyy\npt-only-auto-named`
+      : BULK_PLACEHOLDER;
   const [mode, setMode] = useState("single"); // "single" | "bulk"
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState(null); // { success, failed }
@@ -178,10 +187,17 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
 
         {mode === "bulk" && !isSelfHosted && (
           <div className="flex flex-col gap-3">
-            <p className="text-xs text-text-muted">One key per line. Format: <code>name|apiKey</code> or just <code>apiKey</code> (auto-named by index).</p>
+            <p className="text-xs text-text-muted">
+              {isCloudflareAi
+                ? <>One key per line. Format: <code>name|apiKey|accountId</code> or just <code>apiKey</code> (auto-named by index).</>
+                : provider === "qoder" || provider === "qoder-cn"
+                  ? <>One PAT per line. Format: <code>name|pt-...</code> or just <code>pt-...</code> (auto-named by index).</>
+                  : <>One key per line. Format: <code>name|apiKey</code> or just <code>apiKey</code> (auto-named by index).</>
+              }
+            </p>
             <textarea
               className="w-full rounded border border-accent/30 bg-sidebar p-2 text-sm font-mono resize-y min-h-[140px] focus:outline-none focus:ring-1 focus:ring-primary"
-              placeholder={BULK_PLACEHOLDER}
+              placeholder={isCloudflareAi ? `name1|sk-key1|acc123456\nname2|sk-key2|def789012` : bulkPlaceholder}
               value={bulkText}
               onChange={(e) => setBulkText(e.target.value)}
             />

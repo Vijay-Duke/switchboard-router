@@ -38,6 +38,9 @@ export const QWEN_CONFIG = { ...PROVIDER_OAUTH["qwen"] };
 // of attempting to silently rotate.
 export const QODER_CONFIG = { ...PROVIDER_OAUTH["qoder"] };
 
+// Qoder CN (qoder.com.cn) — same device token flow as intl Qoder, CN hosts.
+export const QODER_CN_CONFIG = { ...PROVIDER_OAUTH["qoder-cn"] };
+
 // iFlow OAuth Configuration (Authorization Code)
 export const IFLOW_CONFIG = { ...PROVIDER_OAUTH["iflow"] };
 

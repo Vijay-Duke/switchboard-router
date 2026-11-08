@@ -6,6 +6,7 @@ import { getDefaultModel } from "open-sse/config/providerModels.js";
 import { resolveOllamaLocalHost, resolveXiaomiTokenplanBaseUrl, PROVIDERS } from "open-sse/config/providers.js";
 import { openaiToCommandCodeRequest } from "open-sse/translator/request/openai-to-commandcode.js";
 import { normalizeProviderId } from "@/lib/providerNormalization";
+import { resolveQoderCredentials, resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 import { assertPublicUrlResolved } from "@/shared/utils/ssrfGuard.js";
 
@@ -597,6 +598,21 @@ export async function POST(request) {
             error = "Invalid session cookie — re-paste __Secure-next-auth.session-token from perplexity.ai";
           } else {
             isValid = true;
+          }
+          break;
+        }
+
+        case "qoder":
+        case "qoder-cn": {
+          // PAT (pt-...) needs the job-token exchange before it can sign
+          // anything — the generic OpenAI-compat probe below can't validate it.
+          try {
+            const resolved = await resolveQoderCredentials({ provider, apiKey, providerSpecificData }, null, AbortSignal.timeout(8000));
+            const result = await resolveQoderModels(resolved, { forceRefresh: true });
+            isValid = !!result?.models?.length;
+          } catch (err) {
+            isValid = false;
+            error = err.message;
           }
           break;
         }

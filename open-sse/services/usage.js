@@ -27,6 +27,7 @@ import {
   getVercelAiGatewayUsage,
   getQoderUsage,
 } from "./usage/misc.js";
+import { resolveQoderCredentials } from "./qoderModels.js";
 
 /**
  * Get usage data for a provider connection
@@ -42,7 +43,8 @@ const USAGE_HANDLERS = {
   codex: (c) => getCodexUsage(c.accessToken, c.proxyOptions, c.providerSpecificData),
   kiro: (c) => getKiroUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   cursor: (c) => getCursorUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
-  qoder: (c) => getQoderUsage(c.accessToken, c.proxyOptions),
+  qoder: (c) => getQoderUsageFor(c),
+  "qoder-cn": (c) => getQoderUsageFor(c),
   qwen: (c) => getQwenUsage(c.accessToken, c.providerSpecificData),
   iflow: (c) => getIflowUsage(c.accessToken),
   ollama: (c) => getOllamaUsage(c.apiKey, c.providerSpecificData, c.proxyOptions),
@@ -61,6 +63,14 @@ const USAGE_HANDLERS = {
   muse: (c) => getMuseUsage(c.providerSpecificData?.dcaToken || c.refreshToken, c.providerSpecificData, c.proxyOptions),
   groq: (c) => getGroqUsage(c.apiKey, c.proxyOptions),
 };
+
+// Qoder intl/CN share one usage path: PATs must be exchanged to a job token
+// before the quota endpoint accepts them, and the quota URL comes from the
+// provider's own registry usage block (region-correct via c.provider).
+async function getQoderUsageFor(c) {
+  const resolved = await resolveQoderCredentials(c, c.proxyOptions).catch(() => null);
+  return getQoderUsage(resolved?.accessToken || c.accessToken, c.proxyOptions, c.provider || "qoder");
+}
 
 export async function getUsageForProvider(connection, proxyOptions = null, options = {}) {
   const { provider, accessToken, apiKey, refreshToken, providerSpecificData, projectId } = connection;
