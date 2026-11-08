@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { convertAudio, MAX_AUDIO_BYTES } from "./codexSttAudio.js";
 
 // Gemini Live API realtime STT transport.
 //
@@ -17,8 +18,8 @@ import { Buffer } from "node:buffer";
 //   - Node >= 22 global WebSocket (undici); injectable for tests and
 //     per-connection proxy dispatchers (undici WebSocket options object),
 //     the same seam open-sse/executors/codexWsTransport.js exposes.
-//   - Live API expects low-latency PCM; other containers are forwarded with
-//     their declared MIME unchanged (provider-side rejection is surfaced).
+//   - Live API expects PCM16; other containers are decoded to 16kHz mono
+//     with the same bounded ffmpeg helper used by Codex transcription.
 //   - Text accumulation is append-only over inputTranscription segments and
 //     ends on serverContent.turnComplete (or graceful close with partial text).
 //   - Transcription deltas are kept per-frame (chunks[]) so sttCore can shape
@@ -39,16 +40,16 @@ class GeminiLiveError extends Error {
   }
 }
 
-// REST base (https://host/v1beta/models) → Live WS base
-// (wss://host/ws/api/v1beta/models), then the bidiGenerateContent endpoint.
-// http:// bases (self-hosted relays) map to ws:// the same way
-// codexWsTransport.toWsUrl maps its HTTP hops.
-function toLiveWsUrl(baseUrl, model, token) {
+// Google Live uses an RPC WebSocket endpoint; the model belongs in setup,
+// never in the URL. See https://ai.google.dev/api/live#websocket-connection.
+function toLiveWsUrl(baseUrl, token) {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
-  if (!url.pathname.startsWith("/ws/")) url.pathname = `/ws/api${url.pathname}`;
-  const base = url.toString().replace(/\/+$/, "");
-  return `${base}/${encodeURIComponent(model)}:bidiGenerateContent?key=${encodeURIComponent(token || "")}`;
+  const version = /\/(v1(?:alpha|beta)?)\//.exec(url.pathname)?.[1] || "v1beta";
+  url.pathname = `/ws/google.ai.generativelanguage.${version}.GenerativeService.BidiGenerateContent`;
+  url.search = "";
+  url.searchParams.set("key", token || "");
+  return url.toString();
 }
 
 // Bind socket events supporting BOTH handler styles: addEventListener
@@ -107,12 +108,18 @@ function firstNumberField(formData, key, fallback) {
  * @throws {GeminiLiveError} with .status for the sttCore error envelope.
  */
 export async function transcribeGeminiLive({ cfg, file, model, token, formData, mimeType, WebSocket = globalThis.WebSocket, dispatcher, abortSignal }) {
-  const WS = WebSocket;
+  const WS = WebSocket || (await import("undici")).WebSocket;
   if (typeof WS !== "function") {
     throw new GeminiLiveError("Gemini Live transport needs global WebSocket (Node >= 22)", 502);
   }
 
-  const buf = Buffer.from(await file.arrayBuffer());
+  if (file.size > MAX_AUDIO_BYTES) throw new GeminiLiveError("Audio exceeds size limit", 413);
+  // The Live service accepts raw PCM16, not WAV/MP3/WebM container bytes.
+  // Share the bounded ffmpeg decoder with Codex transcription for containers.
+  let audio = file;
+  if (!/^audio\/pcm(?:;|$)/i.test(mimeType)) audio = await convertAudio(file, abortSignal, { sampleRate: 16000, rawPcm: true });
+  const audioMime = audio === file ? (mimeType.includes("rate=") ? mimeType : "audio/pcm;rate=16000") : "audio/pcm;rate=16000";
+  const buf = Buffer.from(await audio.arrayBuffer());
   if (!buf.length) throw new GeminiLiveError("Empty audio file", 400);
   if (abortSignal?.aborted) throw new GeminiLiveError("Gemini Live transcription aborted", 499);
 
@@ -125,7 +132,7 @@ export async function transcribeGeminiLive({ cfg, file, model, token, formData, 
   const instructionOverride = firstStringField(formData, "system_instruction");
   const systemText = instructionOverride
     || (language ? `${instruction} Language: ${language}.` : instruction);
-  const wsUrl = toLiveWsUrl(cfg.baseUrl, model, token);
+  const wsUrl = toLiveWsUrl(cfg.baseUrl, token);
 
   return await new Promise((resolve, reject) => {
     let text = "";
@@ -185,14 +192,14 @@ export async function transcribeGeminiLive({ cfg, file, model, token, formData, 
     const streamAudioAndPrompt = () => {
       for (let off = sentBytes; off < buf.length; off += CHUNK_BYTES) {
         const mediaChunk = buf.subarray(off, off + CHUNK_BYTES).toString("base64");
-        if (!send({ realtimeInput: { mediaChunks: [{ mimeType, data: mediaChunk }] } })) {
+        if (!send({ realtimeInput: { mediaChunks: [{ mimeType: audioMime, data: mediaChunk }] } })) {
           fail(new GeminiLiveError("Gemini Live socket closed while streaming audio", 502));
           return;
         }
         sentBytes = Math.min(off + CHUNK_BYTES, buf.length);
       }
-      // Final user turn: flushes the recognizer and yields turnComplete.
-      send({ clientContent: { turns: [{ parts: [{ text: systemText }] }], turnComplete: true } });
+      // Flush the realtime audio recognizer before closing this user turn.
+      send({ realtimeInput: { audioStreamEnd: true } });
     };
 
     // goAway: the server names the instant it will force-close this socket.
@@ -234,9 +241,9 @@ export async function transcribeGeminiLive({ cfg, file, model, token, formData, 
             setup: {
               model: `models/${model}`,
               generationConfig: {
-                responseModalities: ["TEXT"],
-                inputAudioTranscription: {},
+                responseModalities: ["AUDIO"],
               },
+              inputAudioTranscription: {},
               systemInstruction: { parts: [{ text: systemText }] },
             },
           });

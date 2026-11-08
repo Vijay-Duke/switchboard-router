@@ -42,7 +42,7 @@ const CRED = { apiKey: "AIza-TEST" };
 const LIVE_ID = "probe-live-capability-1";
 
 function mkFile() {
-  return new File([new Uint8Array([1, 2, 3, 4])], "a.wav", { type: "audio/wav" });
+  return new File([new Uint8Array([1, 2, 3, 4])], "a.pcm", { type: "audio/pcm;rate=16000" });
 }
 
 function mkFormData(extra = {}) {
@@ -225,8 +225,13 @@ describe("Live transport dispatch via caller marker", () => {
     expect(Buffer.from(media[0].data, "base64").length).toBeGreaterThan(0);
 
     expect(ws.url).toContain("wss://");
-    expect(ws.url).toContain("bidiGenerateContent");
-    expect(ws.url).toContain(LIVE_ID);
+    expect(new URL(ws.url).pathname).toBe("/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent");
+    expect(ws.url).not.toContain(LIVE_ID);
+    expect(ws.sent[0].setup.model).toBe(`models/${LIVE_ID}`);
+    expect(ws.sent[0].setup.inputAudioTranscription).toEqual({});
+    expect(ws.sent[0].setup.generationConfig.responseModalities).toEqual(["AUDIO"]);
+    expect(ws.sent[0].setup.generationConfig.inputAudioTranscription).toBeUndefined();
+    expect(ws.sent.some(frame => frame.realtimeInput?.audioStreamEnd === true)).toBe(true);
 
     // REST contrast (folded from T2): an ordinary gemini model still transcribes
     // over REST generateContent — the live path is opt-in, never the default.
