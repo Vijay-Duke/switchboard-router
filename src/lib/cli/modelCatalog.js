@@ -2,9 +2,16 @@
 
 import { parseDocument } from "yaml";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
+import {
+  AUX_ROLE_KEY_RE,
+  HERMES_PROVIDER_REF,
+  HERMES_STT_API_KEY_REF,
+  isSwitchboardStt,
+  readHermesSettings,
+} from "./hermesConfig.js";
 
 const AIDER_BACKUP_MARKER = "# switchboard-managed-aider:";
-const HERMES_BACKUP_MARKER = "# switchboard-managed-hermes:";
+export const HERMES_BACKUP_MARKER = "# switchboard-managed-hermes:";
 
 /** @param {unknown} value */
 export function isNonEmptyString(value) {
@@ -326,11 +333,32 @@ export function removeAiderYaml(yaml) {
 }
 
 /**
+ * Write Switchboard's Hermes wiring into a config.yaml using the YAML Document
+ * API, so every unrelated key, comment and ordering choice survives. The
+ * previous values of everything we touch are snapshotted into a trailing
+ * backup comment that removeHermesYaml restores.
+ *
  * @param {string} yaml
- * @param {{baseUrl: string, models: unknown, defaultModel?: string}} options
+ * @param {{
+ *   baseUrl: string,
+ *   models: unknown,
+ *   defaultModel?: string,
+ *   delegation?: string | null,
+ *   auxiliary?: Record<string, string | null>,
+ *   stt?: { enabled: boolean, model: string } | null,
+ * }} options
+ *   delegation/auxiliary/stt semantics: a model id writes that slot as ours
+ *   (provider "custom:switchboard"); null clears our wiring (whatever was
+ *   there before our first apply comes back); undefined leaves the slot as it
+ *   stands — wiring that is already ours is re-applied unchanged, anything
+ *   else (foreign or absent) stays foreign/absent.
  */
-export function buildHermesYaml(yaml, { baseUrl, models: rawModels, defaultModel }) {
-  const restored = readBackup(yaml, HERMES_BACKUP_MARKER) ? removeHermesYaml(yaml) : yaml;
+export function buildHermesYaml(yaml, { baseUrl, models: rawModels, defaultModel, delegation, auxiliary, stt }) {
+  const hadMarker = readBackup(yaml, HERMES_BACKUP_MARKER) != null;
+  // Wiring as it stands before the restore — undefined params keep whatever is
+  // already routed through switchboard instead of silently dropping it.
+  const current = hadMarker ? readHermesSettings(yaml) : null;
+  const restored = hadMarker ? removeHermesYaml(yaml) : yaml;
   const doc = parseDocument(restored || "");
   if (doc.errors.length) throw new Error(`Invalid Hermes YAML: ${doc.errors[0].message}`);
   const models = normalizeModelIds(rawModels);
@@ -339,7 +367,13 @@ export function buildHermesYaml(yaml, { baseUrl, models: rawModels, defaultModel
   const providerList = Array.isArray(providers) ? providers : [];
   const previousProvider = providerList.find((provider) => provider?.name === "switchboard");
   const previousModel = yamlValue(doc.getIn(["model"]));
-  const backup = { previousProvider: previousProvider ?? null, previousModel: previousModel ?? null };
+  const backup = {
+    previousProvider: previousProvider ?? null,
+    previousModel: previousModel ?? null,
+    previousDelegation: yamlValue(doc.getIn(["delegation"])) ?? null,
+    previousAuxiliary: yamlValue(doc.getIn(["auxiliary"])) ?? null,
+    previousStt: yamlValue(doc.getIn(["stt"])) ?? null,
+  };
   const remaining = providerList.filter((provider) => provider?.name !== "switchboard");
   const modelMap = Object.fromEntries(models.map((id) => [id, {}]));
   remaining.push({
@@ -353,8 +387,49 @@ export function buildHermesYaml(yaml, { baseUrl, models: rawModels, defaultModel
   doc.setIn(["model"], {
     ...(previousModel && typeof previousModel === "object" ? previousModel : {}),
     default: activeModel,
-    provider: "custom:switchboard",
+    provider: HERMES_PROVIDER_REF,
   });
+
+  // Delegation slot — our block references the named provider, no embedded
+  // credentials; the backup restores any foreign delegation wholesale.
+  const delegationModel = typeof delegation === "string" && delegation.trim()
+    ? delegation.trim()
+    : current?.delegation?.provider === HERMES_PROVIDER_REF && current.delegation.model
+      ? current.delegation.model
+      : null;
+  if (delegationModel) doc.setIn(["delegation"], { model: delegationModel, provider: HERMES_PROVIDER_REF });
+
+  // Auxiliary roles — same rule per role: explicit id wins, null clears,
+  // undefined keeps our existing wiring, foreign entries are never touched.
+  const roleModels = {};
+  for (const [role, cfg] of Object.entries(current?.auxiliary || {})) {
+    if (cfg?.provider === HERMES_PROVIDER_REF && cfg.model) roleModels[role] = cfg.model;
+  }
+  for (const [role, value] of Object.entries(auxiliary || {})) {
+    if (typeof value === "string" && value.trim()) roleModels[role] = value.trim();
+    else delete roleModels[role];
+  }
+  for (const [role, model] of Object.entries(roleModels)) {
+    if (!AUX_ROLE_KEY_RE.test(role)) continue;
+    doc.setIn(["auxiliary", role], { model, provider: HERMES_PROVIDER_REF });
+  }
+
+  // Audio transcription: the "openai" backend is OpenAI-SDK-shaped and honours
+  // stt.openai.{model,base_url,api_key}; the model id is provider-qualified so
+  // the gateway routes on it. Sibling stt settings survive via the Document
+  // setIn calls, and api_key always references the .env line we upsert.
+  const sttWanted = stt != null
+    ? stt
+    : current?.hasSwitchboardStt && current.stt?.model ? { enabled: true, model: current.stt.model } : null;
+  const sttModel = sttWanted?.enabled === true && typeof sttWanted.model === "string" ? sttWanted.model.trim() : "";
+  if (sttModel) {
+    doc.setIn(["stt", "enabled"], true);
+    doc.setIn(["stt", "provider"], "openai");
+    doc.setIn(["stt", "openai", "model"], sttModel);
+    doc.setIn(["stt", "openai", "base_url"], baseUrl);
+    doc.setIn(["stt", "openai", "api_key"], HERMES_STT_API_KEY_REF);
+  }
+
   return `${doc.toString().trimEnd()}\n${HERMES_BACKUP_MARKER}${encodeBackup(backup)}\n`;
 }
 
@@ -371,9 +446,31 @@ export function removeHermesYaml(yaml) {
     else doc.deleteIn(["custom_providers"]);
   }
   const currentProvider = yamlValue(doc.getIn(["model", "provider"]));
-  if (currentProvider === "custom:switchboard") {
-    if (backup?.previousModel) doc.setIn(["model"], backup.previousModel);
+  if (currentProvider === HERMES_PROVIDER_REF) {
+    if (backup?.previousModel != null && backup.previousModel !== "") doc.setIn(["model"], backup.previousModel);
     else doc.deleteIn(["model"]);
+  }
+  // Only restore slots that still carry OUR wiring — a block the user has since
+  // pointed at another provider is theirs and must survive a reset untouched.
+  if (yamlValue(doc.getIn(["delegation", "provider"])) === HERMES_PROVIDER_REF) {
+    if (backup?.previousDelegation != null) doc.setIn(["delegation"], backup.previousDelegation);
+    else doc.deleteIn(["delegation"]);
+  }
+  const auxiliary = yamlValue(doc.getIn(["auxiliary"])) || {};
+  for (const role of Object.keys(auxiliary)) {
+    if (auxiliary[role]?.provider !== HERMES_PROVIDER_REF) continue;
+    const previous = backup?.previousAuxiliary?.[role];
+    if (previous != null) doc.setIn(["auxiliary", role], previous);
+    else doc.deleteIn(["auxiliary", role]);
+  }
+  if (Array.isArray(doc.getIn(["auxiliary"])?.items) && doc.getIn(["auxiliary"]).items.length === 0) {
+    doc.deleteIn(["auxiliary"]);
+  }
+  const stt = yamlValue(doc.getIn(["stt"])) || {};
+  const sttOpenai = stt.openai && typeof stt.openai === "object" ? stt.openai : {};
+  if (isSwitchboardStt({ provider: stt.provider ?? null, ...sttOpenai })) {
+    if (backup?.previousStt != null) doc.setIn(["stt"], backup.previousStt);
+    else doc.deleteIn(["stt"]);
   }
   return doc.toString();
 }
