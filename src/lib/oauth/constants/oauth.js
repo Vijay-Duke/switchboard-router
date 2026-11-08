@@ -118,6 +118,13 @@ export const KIMCHI_CONFIG = { ...PROVIDER_OAUTH["kimchi"] };
 export const GROK_CLI_CONFIG = { ...PROVIDER_OAUTH["grok-cli"] };
 export const MUSE_CONFIG = { ...PROVIDER_OAUTH["muse"] };
 
+// GLM Coding (Z.ai) OAuth — ZCode CLI polling flow (NOT PKCE): init mints a
+// one-off poll token, the browser opens the server-generated authorize_url,
+// poll/ready returns the tokens. The Z.AI OAuth token is then exchanged for a
+// platform business JWT and finally a long-lived coding-plan API key (no
+// refresh grant).
+export const GLM_OAUTH_CONFIG = { ...PROVIDER_OAUTH["glm"] };
+
 // Nous Research Portal — OAuth 2.0 Device Code flow (RFC 8628) + agent key minting
 export const NOUS_CONFIG = {
   ...PROVIDER_OAUTH["nous"],
@@ -149,5 +156,6 @@ export const PROVIDERS = {
   KIMCHI: "kimchi",
   GROK_CLI: "grok-cli",
   MUSE: "muse",
+  GLM: "glm",
   NOUS: "nous",
 };

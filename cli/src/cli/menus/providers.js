@@ -134,11 +134,12 @@ const OAUTH_PROVIDERS = {
   iflow: { id: "iflow", alias: "if", name: "iFlow AI" },
   qwen: { id: "qwen", alias: "qw", name: "Qwen Code" },
   kiro: { id: "kiro", alias: "kr", name: "Kiro AI" },
+  glm: { id: "glm", alias: "glm", name: "Zai GLM Coding" },
 };
 
 const APIKEY_PROVIDERS = {
   openrouter: { id: "openrouter", name: "OpenRouter" },
-  glm: { id: "glm", name: "GLM Coding" },
+  glm: { id: "glm", name: "Zai GLM Coding" },
   minimax: { id: "minimax", name: "Minimax Coding" },
   kimi: { id: "kimi", name: "Kimi Coding" },
   openai: { id: "openai", name: "OpenAI" },
@@ -395,7 +396,7 @@ async function showConnectionActions(connection, providerId, breadcrumb = []) {
  * @param {string} authType - "oauth" or "apikey"
  */
 // Providers that use Device Code Flow (terminal-based polling)
-const DEVICE_CODE_PROVIDERS = ["github", "qwen", "kiro"];
+const DEVICE_CODE_PROVIDERS = ["github", "qwen", "kiro", "glm"];
 
 /**
  * Handle adding new connection - auto-detect flow type
