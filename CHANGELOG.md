@@ -1,3 +1,23 @@
+# v0.9.69 (2026-11-08)
+
+## Features
+- Complete the remaining in-scope upstream ports: Smart Router/System One, per-key model/combo policies and token quotas, scheduled auto-ping, Cline/Airforce free-model discovery, and provider custom headers.
+- Add GLM OAuth, OpenCode Zen PAYG, Bedrock Anthropic/xAI with static and AWS profile/SSO credentials, MiniMax Code global/CN OAuth and desktop leases, and Nous OAuth/API-key connections.
+- Add Qoder CN and queue/context/billing support, Antigravity Sonnet/Opus 5.5 tiers with effort-based selection, Ollama local TTS and cloud fetch/search, GLM search, Codex OAuth transcription, and Gemini Live transcription.
+- Add Hermes profiles, role models and audio settings; standalone CLI `connect` mints a fresh key and applies tool configuration locally, while offline `show` redacts secrets.
+- Add Grok CLI bulk imports, Requests analytics, provider/model charts, custom-model capability toggles and lazy chart loading.
+
+## Fixes
+- Persist Gemini thought signatures across restarts, hydrate them before translation, isolate client/account/session lookups and preserve nonstream tool-call signatures.
+- Apply headroom compression to native Gemini, Responses and CommandCode tool outputs.
+- Enforce key restrictions through aliases, nested combos, discovery and search/fetch targets; reject paused or exhausted keys consistently.
+- Use explicit outbound transport identity for new OAuth and account calls, preserve headers on specialized executors, sign Bedrock overrides and keep inference-key rotation scoped to Nous OAuth.
+- Use Gemini Live's RPC WebSocket endpoint, top-level setup acknowledgement, binary JSON frames and decoded PCM16 audio. Interrupted sessions return a retryable error. Codex and container-audio transcription require ffmpeg.
+- Preserve unrelated Hermes YAML settings and atomically update configuration/environment files; saved CLI login is origin-bound, mode 600, and contains no gateway key.
+
+## Scope
+- Completes the previously deferred in-scope subsystems through upstream v0.5.112. Web-cookie/browser-pool providers, Xiaomi desktop login and relay proxy pools remain intentionally excluded. See `docs/UPSTREAM_PORT_2026_11.md` for the feature inventory and adaptations.
+
 # v0.9.68 (2026-11-08)
 
 ## Features
