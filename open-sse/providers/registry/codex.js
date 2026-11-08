@@ -94,6 +94,9 @@ const moduleDefault = {
   sttConfig: {
     baseUrl: "https://chatgpt.com/backend-api/transcribe",
     authType: "oauth",
+    // Same egress identity as the codex chat lane — the identity layer
+    // supplies the codex-cli UA/originator headers and chrome TLS.
+    identity: "codex-cli",
     format: "codex-transcribe",
   },
   oauth: {

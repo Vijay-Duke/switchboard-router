@@ -33,6 +33,7 @@ const moduleDefault = {
   ],
   serviceKinds: ["llm", "webFetch"],
   fetchConfig: {
+    identity: "openai-node",
     baseUrl: "https://ollama.com/api/web_fetch",
     method: "POST",
     authType: "apikey",

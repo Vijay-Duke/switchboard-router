@@ -21,6 +21,7 @@ const moduleDefault = {
   // to the Ollama chat transport, so this stays a separate provider entry.
   credentialFallback: "ollama",
   searchConfig: {
+    identity: "openai-node",
     baseUrl: "https://ollama.com/api/web_search",
     method: "POST",
     authType: "apikey",

@@ -60,6 +60,7 @@ const moduleDefault = {
   serviceKinds: ["llm", "webSearch"],
   // Coding plan bundles web search on the same API key as chat.
   searchConfig: {
+    identity: "openai-node",
     baseUrl: "https://api.z.ai/api/mcp/web_search_prime/mcp",
     method: "POST",
     authType: "apikey",
