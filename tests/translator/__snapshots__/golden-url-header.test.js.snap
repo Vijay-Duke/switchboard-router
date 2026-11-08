@@ -101,6 +101,31 @@ exports[`GOLDEN buildHeaders (default executor providers) > anthropic → header
 }
 `;
 
+exports[`GOLDEN buildHeaders (default executor providers) > api-airforce → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://endpoint-proxy.local",
+    "User-Agent": "OpenAI/NodeJS/<NODE_VERSION>",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://endpoint-proxy.local",
+    "User-Agent": "OpenAI/NodeJS/<NODE_VERSION>",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://endpoint-proxy.local",
+    "User-Agent": "OpenAI/NodeJS/<NODE_VERSION>",
+  },
+}
+`;
+
 exports[`GOLDEN buildHeaders (default executor providers) > assemblyai → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
@@ -1379,6 +1404,13 @@ exports[`GOLDEN buildUrl (default executor providers) > anthropic → url (strea
 {
   "nonStream": "https://api.anthropic.com/v1/messages",
   "stream": "https://api.anthropic.com/v1/messages",
+}
+`;
+
+exports[`GOLDEN buildUrl (default executor providers) > api-airforce → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://api.airforce/v1/chat/completions",
+  "stream": "https://api.airforce/v1/chat/completions",
 }
 `;
 

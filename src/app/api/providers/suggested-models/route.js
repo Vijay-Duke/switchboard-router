@@ -1,5 +1,8 @@
 // @ts-check
 import { NextResponse } from "next/server";
+import REGISTRY from "open-sse/providers/registry/index.js";
+import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
+import { assertPublicUrlResolved } from "open-sse/utils/ssrfGuard.js";
 import { FILTERS } from "./filters.js";
 
 export const dynamic = "force-dynamic";
@@ -18,8 +21,16 @@ export async function GET(request) {
     return NextResponse.json({ error: "Unknown filter type" }, { status: 400 });
   }
 
+  const provider = REGISTRY.find(entry => entry.modelsFetcher?.url === url && entry.modelsFetcher.type === type && !entry.modelsFetcher.requiresAuth);
+  if (!provider) return NextResponse.json({ error: "Unknown public model catalog" }, { status: 400 });
   try {
-    const res = await fetch(url);
+    await assertPublicUrlResolved(url);
+    const timeout = AbortSignal.timeout(10000);
+    const res = await proxyAwareFetch(url, {
+      identity: provider.transport?.identity || "openai-node", provider: provider.id,
+      format: provider.transport?.format || "openai", redirect: "error",
+      signal: request.signal ? AbortSignal.any([request.signal, timeout]) : timeout,
+    });
     if (!res.ok) {
       return NextResponse.json({ data: [] });
     }

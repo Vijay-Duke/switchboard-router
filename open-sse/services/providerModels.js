@@ -1,3 +1,4 @@
+import { filterAirforceFreeModels } from "../shared/airforceModels.js";
 import REGISTRY from "../providers/registry/index.js";
 import { decodeMessage } from "../utils/cursorProtobuf.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
@@ -243,7 +244,8 @@ async function fetchCatalog(connection, entry, config, options) {
     if (config.type === "google-available-models") {
       return parseGoogleAvailableModels(await response.json());
     }
-    return normalizeModels(parseJsonModels(await response.json()));
+    const rawModels = parseJsonModels(await response.json());
+    return normalizeModels(config.type === "airforce-free" ? filterAirforceFreeModels(rawModels) : rawModels);
   } finally {
     clearTimeout(timeout);
   }

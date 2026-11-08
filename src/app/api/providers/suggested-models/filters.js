@@ -1,4 +1,5 @@
 // @ts-check
+import { filterAirforceFreeModels } from "open-sse/shared/airforceModels.js";
 // Free OpenCode models that don't use the "-free" id suffix
 const KNOWN_FREE_OPENCODE_MODELS = ["big-pickle"];
 
@@ -6,6 +7,7 @@ const KNOWN_FREE_OPENCODE_MODELS = ["big-pickle"];
 const DEAD_FREE_OPENCODE_MODELS = new Set(["deepseek-v4-flash-free"]);
 
 export const FILTERS = {
+  "airforce-free": filterAirforceFreeModels,
   "openrouter-free": (models) =>
     models
       .filter(
