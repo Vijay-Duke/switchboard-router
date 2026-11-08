@@ -879,7 +879,8 @@ export async function refreshMiniMaxCodeToken(provider, refreshToken, log) {
   if (!tokenUrl || !refreshToken) return null;
   return dedupRefresh(provider, refreshToken, async () => {
     try {
-      const response = await fetch(tokenUrl, {
+      const response = await proxyAwareFetch(tokenUrl, {
+        identity: PROVIDERS[provider]?.identity, provider, format: PROVIDERS[provider]?.format, redirect: "error",
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",

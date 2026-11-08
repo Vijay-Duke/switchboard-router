@@ -265,7 +265,7 @@ export async function POST(request) {
       // AWS-signed providers (Bedrock) have no bearer key for the generic probes below, which
       // would reject bedrock outright and send bedrock-xai to a literal "{region}" host.
       if (AI_PROVIDERS[provider]?.credentialForm === "aws") {
-        return NextResponse.json(await probeBedrockCredentials({ apiKey, providerSpecificData }, fetch));
+        return NextResponse.json(await probeBedrockCredentials({ provider, apiKey, providerSpecificData }));
       }
 
       // Generic probe for webSearch/webFetch providers (config-driven)
@@ -337,8 +337,8 @@ export async function POST(request) {
           // Nous exposes /models publicly, so a models request cannot validate
           // the Portal key. Use the smallest authenticated inference instead.
           const probe = createNousApiKeyProbe(apiKey);
-          const res = await fetch(probe.url, {
-            ...probe.options,
+          const res = await proxyAwareFetch(probe.url, {
+            ...probe.options, identity: PROVIDERS.nous.identity, provider: "nous", format: "openai", redirect: "error",
             signal: AbortSignal.timeout(8000),
           });
           isValid = isNousApiKeyAccepted(res.status);

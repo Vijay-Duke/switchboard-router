@@ -99,8 +99,11 @@ export class BedrockExecutor extends BaseExecutor {
     signal,
     log,
     proxyOptions = null,
+    providerOverrides = null,
   }) {
+    signal?.throwIfAborted();
     const resolved = await resolveAwsCredentials(credentials, { log });
+    signal?.throwIfAborted();
 
     const url = this.buildUrl(model, stream, 0, credentials);
     const transformedBody = this.transformRequest(
@@ -116,7 +119,7 @@ export class BedrockExecutor extends BaseExecutor {
     const headers = signAwsRequest({
       method: "POST",
       url,
-      headers: this.buildHeaders(credentials, stream),
+      headers: { ...this.buildHeaders(credentials, stream), ...(providerOverrides?.headers || {}) },
       body: payload,
       region: resolved.region,
       service: BEDROCK.service,
@@ -135,6 +138,9 @@ export class BedrockExecutor extends BaseExecutor {
         url,
         {
           method: "POST",
+          identity: this.config.identity,
+          provider: this.provider,
+          format: this.wireFormat,
           headers,
           body: payload,
           signal: fetchSignal,
@@ -434,7 +440,7 @@ function redactSignedHeaders(headers) {
  *
  * @returns {Promise<{valid: boolean, error: string|null}>}
  */
-export async function probeBedrockCredentials(credentials, fetchFn) {
+export async function probeBedrockCredentials(credentials, fetchFn = proxyAwareFetch) {
   let resolved;
   try {
     resolved = await resolveAwsCredentials(credentials);
@@ -460,6 +466,7 @@ export async function probeBedrockCredentials(credentials, fetchFn) {
   let res;
   try {
     res = await fetchFn(url, {
+      identity: "openai-node", provider: credentials.provider || "bedrock", format: "openai",
       method: "GET",
       headers,
       redirect: "error",

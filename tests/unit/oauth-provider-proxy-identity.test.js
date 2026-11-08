@@ -225,3 +225,17 @@ describe("kimi-coding stable device id circuit", () => {
     expect(pollInit.headers["X-Msh-Device-Id"]).toBe(deviceData._kimiDeviceId);
   });
 });
+
+
+describe("ported OAuth transport boundaries", () => {
+  it.each(["minimax-code", "minimax-code-global"])("uses registry identity and refuses redirects for %s", async provider => {
+    proxyAwareFetch.mockResolvedValueOnce(jsonResponse({ device_code: "device", user_code: "user", verification_uri: "https://account.minimax.io/activate" }));
+    await requestDeviceCode(provider, "challenge");
+    expect(proxyAwareFetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ identity: "claude-cli", provider, format: "claude", redirect: "error" }));
+  });
+  it("uses the GLM identity for its ZCode init", async () => {
+    proxyAwareFetch.mockResolvedValueOnce(jsonResponse({ code: 0, data: { flow_id: "flow", authorize_url: "https://chat.z.ai/authorize" } }));
+    await requestDeviceCode("glm");
+    expect(proxyAwareFetch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ identity: "claude-cli", provider: "glm", format: "claude", redirect: "error" }));
+  });
+});

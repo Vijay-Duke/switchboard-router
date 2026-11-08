@@ -7,6 +7,7 @@
 // plain Bearer): the request carries mcode query params, a `yy` md5 over
 // path+query, body and now, and `x-signature` md5(ts + secret [+ body]).
 
+import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { createHash } from "node:crypto";
 import { getLeaseToken, isLeaseConnection } from "./minimaxCodeLease.js";
 
@@ -70,7 +71,9 @@ function checked(env, what) {
 
 async function accountCall(site, path, opts, what) {
   const { url, init } = signedAccountRequest(site, path, opts);
-  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(15000) });
+  const res = await proxyAwareFetch(url, { ...init, identity: "openai-node",
+    provider: site.agent?.includes("minimax.io") ? "minimax-code-global" : "minimax-code",
+    format: "openai", redirect: "error", signal: AbortSignal.timeout(15000) });
   if (res.status === 401 || res.status === 403) throw new AccountRefused(`${what}: the sign-in was refused (HTTP ${res.status})`);
   if (!res.ok) throw new Error(`${what}: HTTP ${res.status}`);
   let env;
@@ -144,7 +147,9 @@ export async function getMiniMaxCodeMembership(site, access, userID) {
 
 /** Read the M Plan's rate windows from coding_plan/remains (plain Bearer). */
 export async function getMiniMaxPlanWindows(site, access, group) {
-  const res = await fetch(`${site.platform}/v1/api/openplatform/coding_plan/remains`, {
+  const res = await proxyAwareFetch(`${site.platform}/v1/api/openplatform/coding_plan/remains`, {
+    identity: "openai-node", provider: site.platform?.includes("minimax.io") ? "minimax-code-global" : "minimax-code",
+    format: "openai", redirect: "error",
     headers: { Accept: "application/json", Authorization: `Bearer ${access}`, ...(group ? { "X-Group-Id": group } : {}) },
     signal: AbortSignal.timeout(15000),
   });

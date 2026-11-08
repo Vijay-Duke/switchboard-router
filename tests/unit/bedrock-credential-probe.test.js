@@ -117,6 +117,7 @@ describe("BedrockExecutor.execute request-log headers", () => {
       },
     });
 
+    expect(proxyAwareFetch.mock.calls[0][1]).toMatchObject({ identity: "openai-node", provider: "bedrock", format: "claude", redirect: "error" });
     const sent = proxyAwareFetch.mock.calls[0][1].headers;
     expect(sent["x-amz-security-token"]).toBe("FwoGZXsession-token");
     const signature = sent.Authorization.match(/Signature=([0-9a-f]{64})/)?.[1];

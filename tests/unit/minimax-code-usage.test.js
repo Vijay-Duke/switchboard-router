@@ -1,3 +1,4 @@
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: vi.fn((url, init) => globalThis.fetch(url, init)) }));
 // MiniMax Code usage (P2) — signed account API, membership/plan-window parsing,
 // the usage handler's dashboard shape, and the suggested-models live filter.
 import { afterEach, describe, expect, it, vi } from "vitest";

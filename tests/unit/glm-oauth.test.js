@@ -58,6 +58,7 @@ describe("glm OAuth flow (ZCode CLI poll protocol)", () => {
 
   beforeEach(() => {
     calls = [];
+    proxyAwareFetch.mockImplementation((url, init) => globalThis.fetch(url, init));
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url, init = {}) => {
@@ -123,6 +124,7 @@ describe("glm OAuth flow (ZCode CLI poll protocol)", () => {
   });
 
   afterEach(() => {
+    proxyAwareFetch.mockReset();
     vi.unstubAllGlobals();
     delete globalThis.__glmPollState;
   });

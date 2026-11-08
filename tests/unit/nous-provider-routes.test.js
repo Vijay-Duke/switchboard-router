@@ -109,14 +109,14 @@ describe("Nous route wiring (API key + OAuth)", () => {
   });
 
   it("validates a new key through chat rather than the public models endpoint", async () => {
-    global.fetch.mockResolvedValue(makeResponse(200));
+    proxyAwareFetch.mockResolvedValue(makeResponse(200));
 
     const response = await validateProvider(makeValidationRequest());
     const payload = await response.json();
 
     expect(payload).toEqual({ valid: true, error: null });
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-    const [url, options] = global.fetch.mock.calls[0];
+    expect(proxyAwareFetch).toHaveBeenCalledTimes(1);
+    const [url, options] = proxyAwareFetch.mock.calls[0];
     expect(url).toBe(NOUS_CHAT_COMPLETIONS_URL);
     expect(options).toMatchObject({
       method: "POST",
@@ -133,14 +133,14 @@ describe("Nous route wiring (API key + OAuth)", () => {
   });
 
   it("distinguishes rejected keys from inconclusive non-success responses", async () => {
-    global.fetch.mockResolvedValueOnce(makeResponse(401));
+    proxyAwareFetch.mockResolvedValueOnce(makeResponse(401));
     const rejected = await validateProvider(makeValidationRequest());
     expect(await rejected.json()).toEqual({
       valid: false,
       error: "Invalid or inactive API key",
     });
 
-    global.fetch.mockResolvedValueOnce(makeResponse(402));
+    proxyAwareFetch.mockResolvedValueOnce(makeResponse(402));
     const paymentRequired = await validateProvider(makeValidationRequest());
     expect(await paymentRequired.json()).toEqual({
       valid: false,

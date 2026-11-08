@@ -217,7 +217,9 @@ const minimaxStr = (o, k) => (typeof o?.[k] === "string" && o[k].trim() ? o[k].t
 const minimaxPos = (o, k) => (typeof o?.[k] === "number" && Number.isFinite(o[k]) && o[k] > 0 ? o[k] : undefined);
 
 async function minimaxPostForm(url, fields) {
-  const res = await fetch(url, {
+  const provider = new URL(url).hostname === "account.minimax.io" ? "minimax-code-global" : "minimax-code";
+  const res = await proxyAwareFetch(url, {
+    ...getOAuthFetchProfile(provider), redirect: "error",
     method: "POST",
     headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(fields).toString(),
@@ -415,7 +417,8 @@ async function exchangeBusinessToken(config, zaiAccessToken) {
 // Business endpoints answer {code, msg, data}; code 0/200 (or absent) = success.
 // data is returned directly (null when missing).
 async function fetchBusinessJson(url, options, label) {
-  const response = await fetch(url, options);
+  const response = await proxyAwareFetch(url, { ...options, ...getOAuthFetchProfile("glm"),
+    redirect: "error", signal: AbortSignal.timeout(30000) });
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`Z.ai ${label} request failed (HTTP ${response.status}): ${text.slice(0, 200)}`);
@@ -2026,7 +2029,8 @@ const PROVIDERS = {
   flowType: "device_code",
   requestDeviceCode: async (config) => {
     const pollToken = crypto.randomBytes(32).toString("hex");
-    const response = await fetch(config.cliInitUrl, {
+    const response = await proxyAwareFetch(config.cliInitUrl, {
+      ...getOAuthFetchProfile("glm"), redirect: "error", signal: AbortSignal.timeout(30000),
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -2067,7 +2071,8 @@ const PROVIDERS = {
       };
     }
 
-    const response = await fetch(`${config.cliPollUrl}/${encodeURIComponent(deviceCode)}`, {
+    const response = await proxyAwareFetch(`${config.cliPollUrl}/${encodeURIComponent(deviceCode)}`, {
+      ...getOAuthFetchProfile("glm"), redirect: "error", signal: AbortSignal.timeout(30000),
       headers: { Authorization: `Bearer ${pollToken}` },
     });
     if (!response.ok) {

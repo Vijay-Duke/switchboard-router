@@ -1,3 +1,4 @@
+vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: vi.fn((url, init) => globalThis.fetch(url, init)) }));
 // MiniMax Code (mcode) provider — registry wiring, thinking mapping, OAuth
 // device flow module, refresh discipline, and quota-error normalization.
 // Protocol reference: docs/minimax-code-proxy-plan.md (reverse-engineered from
