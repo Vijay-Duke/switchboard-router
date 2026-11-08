@@ -171,6 +171,15 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Skip all translation/normalization — only model and Bearer are swapped
   const clientTool = detectClientTool(clientRawRequest?.headers || {}, body);
   harvestDetectedClient(clientTool, clientRawRequest?.headers || {}, body);
+  // Per-conversation session seed handed to executors that translate it into a
+  // provider-native session header (opencode's ses_ id, antigravity ints, ...).
+  const sessionSeed = (() => {
+    try {
+      return resolveSessionId({ headers: clientRawRequest?.headers, body, connectionId, scope: provider });
+    } catch {
+      return connectionId || "";
+    }
+  })();
   const passthrough = !bypassNativePassthrough && (isNativePassthrough(clientTool, provider)
     || (statefulClaude && ["claude", "anthropic"].includes(provider)));
   if (statefulClaude && !passthrough) {
@@ -476,11 +485,12 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     if (requestAborted()) return abortResult();
     // Clone per attempt: executors mutate the body in place (schema fallback,
     // stream_options delete/inject), so retries must not inherit attempt-1 edits.
-    const result = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions });
+    const result = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions, providerSessionId: sessionSeed, clientTool });
     providerResponse = result.response;
     providerUrl = result.url;
     providerHeaders = result.headers;
     finalBody = result.transformedBody;
+    if (result.toolNameMap?.size) toolNameMap = new Map([...(toolNameMap || []), ...result.toolNameMap]);
     reqLogger.logTargetRequest(providerUrl, providerHeaders, finalBody);
   } catch (error) {
     const cancelled = requestAborted() || error?.name === "AbortError";
@@ -536,7 +546,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
         // but cancellation must never dispatch another inference request.
         if (requestAborted()) return abortResult();
         try {
-          const retryResult = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions });
+          const retryResult = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions, providerSessionId: sessionSeed, clientTool });
+          if (retryResult.toolNameMap?.size) toolNameMap = new Map([...(toolNameMap || []), ...retryResult.toolNameMap]);
           // Cancel superseded response body to avoid undici pool pinning
           try { await providerResponse.body?.cancel?.(); } catch {}
           providerResponse = retryResult.response;
@@ -610,7 +621,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   const reexecuteBody = async () => {
     streamController.signal?.throwIfAborted();
-    const retryResult = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions });
+    const retryResult = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions, providerSessionId: sessionSeed, clientTool });
+    if (retryResult.toolNameMap?.size) toolNameMap = new Map([...(toolNameMap || []), ...retryResult.toolNameMap]);
     if (requestAborted()) {
       try { await retryResult.response.body?.cancel?.(); } catch {}
       throw new DOMException("Request aborted", "AbortError");
@@ -673,7 +685,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   // Provider forced streaming but client wants JSON
   if (!clientRequestedStreaming && providerRequiresStreaming) {
-    const result = await handleForcedSSEToJson({ ...sharedCtx, providerResponse, sourceFormat, targetFormat, trackDone, appendLog });
+    const result = await handleForcedSSEToJson({ ...sharedCtx, providerResponse, sourceFormat, targetFormat, toolNameMap, trackDone, appendLog });
     if (result) { streamController.handleComplete(); return result; }
   }
 

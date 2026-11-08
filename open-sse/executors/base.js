@@ -168,7 +168,7 @@ export class BaseExecutor {
     return { status: response.status, message: bodyText || `HTTP ${response.status}` };
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, directFetch = null }) {
     signal?.throwIfAborted();
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
@@ -280,6 +280,9 @@ export class BaseExecutor {
           // The identity layer re-adds snapshot betas at egress; drop the one
           // that would blank thinking summaries the request asked for.
           dropBetas: wantsThinkingSummaries(transformedBody) ? [ANTHROPIC_BETA_REDACT_THINKING] : undefined,
+          // Protocol adapters that need their own transport (opencode's TLS
+          // fingerprint) override the direct path; proxies still take priority.
+          ...(directFetch ? { directFetch } : {}),
         }, proxyOptions);
         clearTimeout(connectTimer);
         if (signal?.aborted) {

@@ -633,6 +633,19 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     }
   }
 
+  // Protocol adapters that carry their own transport (opencode's impersonated
+  // TLS client) override the direct path; a configured proxy still takes
+  // priority, and an unavailable impersonation runtime falls back to the
+  // native fetch instead of failing the request.
+  if (!proxyUrl && typeof options.directFetch === "function") {
+    try {
+      return await options.directFetch(targetUrl, fetchInit);
+    } catch (error) {
+      if (error?.name !== "OpencodeTlsUnavailableError") throw error;
+      dbg("FETCH", `direct transport unavailable (${error.message}); falling back to native fetch`);
+    }
+  }
+
   if (proxyUrl) {
     try {
       const dispatcher = await getDispatcher(proxyUrl);

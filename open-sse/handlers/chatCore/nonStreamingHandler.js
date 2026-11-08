@@ -9,6 +9,7 @@ import { convertChatCompletionsStreamToJson, streamToJsonMaxBytes, assertWithinM
 import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, settleUsageStats } from "./requestDetail.js";
 import { appendRequestLog, saveRequestDetail } from "../../runtimeDeps.js";
 import { decloakToolNames } from "../../utils/claudeCloaking.js";
+import { restoreToolNames } from "../../utils/opencodeFingerprint.js";
 import { extractThinkTags } from "../../utils/thinkExtractor.js";
 
 // Read a JSON body without ever holding more than `limit` bytes: the byte
@@ -360,7 +361,9 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
 
   return {
     success: true,
-    response: new Response(JSON.stringify(translatedResponse), {
+    // Restore caller tool spellings the opencode fingerprint pass aliased
+    // (read -> read_client) on the request side.
+    response: new Response(JSON.stringify(restoreToolNames(translatedResponse, toolNameMap)), {
       headers: { "Content-Type": "application/json", ...upstreamResponseHeaders(providerResponse.headers) }
     })
   };

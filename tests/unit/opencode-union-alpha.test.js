@@ -15,15 +15,16 @@ describe("OpenCode Free Union Alpha", () => {
 
     const executor = new OpenCodeExecutor();
     const url = executor.buildUrl("union-alpha");
-    expect(url).toBe("https://opencode.ai/zen/v1/messages");
-    expect(executor.buildUrl("union-alpha(high)")).toBe("https://opencode.ai/zen/v1/messages");
+    // v2 client fingerprint routes the free lane through /inference/v1.
+    expect(url).toBe("https://opencode.ai/inference/v1/messages");
+    expect(executor.buildUrl("union-alpha(high)")).toBe("https://opencode.ai/inference/v1/messages");
     expect(executor.buildHeaders({}, true, url)).toMatchObject({ "anthropic-version": "2023-06-01" });
   });
 
   it("leaves the other free models on Chat Completions", () => {
     const executor = new OpenCodeExecutor();
     const url = executor.buildUrl("big-pickle");
-    expect(url).toBe("https://opencode.ai/zen/v1/chat/completions");
+    expect(url).toBe("https://opencode.ai/inference/v1/chat/completions");
     expect(executor.buildHeaders({}, true, url)).not.toHaveProperty("anthropic-version");
     expect(getModelTargetFormat("oc", "big-pickle")).toBeNull();
   });

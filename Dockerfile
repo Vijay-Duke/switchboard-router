@@ -35,6 +35,23 @@ COPY . ./
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
+# wreq-js is a lazy runtime dependency (loaded by open-sse/services/lazyRuntime.js
+# via createRequire). Next standalone tracing does not include it, so OpenCode
+# Free fails with HTTP 502. Install it (with native bindings/transitive deps) in
+# an isolated dir so the runner stage can copy it into /app/node_modules.
+# (ported from upstream 3b7acf72)
+RUN --mount=type=cache,target=/root/.npm \
+    mkdir -p /opt/lazy-runtime && cd /opt/lazy-runtime && \
+    npm init -y >/dev/null && \
+    npm install --no-save \
+      --registry="${NPM_REGISTRY}" \
+      --fetch-retries=5 \
+      --fetch-retry-factor=2 \
+      --fetch-retry-mintimeout=10000 \
+      --fetch-retry-maxtimeout=120000 \
+      --fetch-timeout=300000 \
+      wreq-js
+
 FROM ${NODE_IMAGE} AS runner
 ARG ALPINE_MIRROR
 ARG APP_VERSION
@@ -65,6 +82,8 @@ COPY --from=builder /app/src/mitm ./src/mitm
 COPY --from=builder /app/node_modules/node-forge ./node_modules/node-forge
 # node-machine-id is createRequire/require-loaded at runtime (MITM child); tracing omits it.
 COPY --from=builder /app/node_modules/node-machine-id ./node_modules/node-machine-id
+# wreq-js (and deps) are lazy-loaded at runtime and omitted by tracing.
+COPY --from=builder /opt/lazy-runtime/node_modules/. ./node_modules/
 # Ensure `next` is available at runtime in case tracing did not include it.
 COPY --from=builder /app/node_modules/next ./node_modules/next
 

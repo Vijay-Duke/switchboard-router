@@ -3,6 +3,7 @@ import { FORMATS } from "../translator/formats.js";
 import { trackPendingRequest, appendRequestLog } from "../runtimeDeps.js";
 import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
 import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE, ensureStreamToolCallIds } from "./streamHelpers.js";
+import { restoreToolNames } from "./opencodeFingerprint.js";
 import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
 import { errorLine } from "./logTags.js";
@@ -247,7 +248,9 @@ export function createSSEStream(options = {}) {
         output = "data: [DONE]\n\n";
       } else {
         try {
-          const parsed = JSON.parse(dataText.trim());
+          // Re-assigned when the opencode fingerprint restore path swaps in a
+          // renamed-tool copy of the parsed chunk.
+          let parsed = JSON.parse(dataText.trim());
           consecutiveUnparsable = 0;
           onStreamProgress?.(parsed.type);
           if (["message_start", "message_delta", "message_stop", "content_block_start", "content_block_delta", "content_block_stop"].includes(parsed.type)) nativeClaudeSeen = true;
@@ -279,6 +282,19 @@ export function createSSEStream(options = {}) {
             if (original) {
               parsed.content_block = { ...parsed.content_block, name: original };
               toolNameDecloaked = true;
+            }
+          }
+
+          // The opencode fingerprint pass renames a colliding caller tool to an
+          // alias (read -> read_client). On this path nothing else restored it,
+          // so the client would receive a call to a tool it never declared
+          // ("Model tried to call unavailable tool 'read_client'").
+          let toolNameRestored = false;
+          if (toolNameMap?.size) {
+            const restored = restoreToolNames(parsed, toolNameMap);
+            if (restored !== parsed) {
+              parsed = restored;
+              toolNameRestored = true;
             }
           }
 
@@ -376,7 +392,7 @@ export function createSSEStream(options = {}) {
             parsed.usage = filterUsageForFormat(buffered, FORMATS.OPENAI);
             output = `data: ${JSON.stringify(parsed)}\n\n`;
             injectedUsage = true;
-          } else if (idFixed || fieldsInjected || toolNameDecloaked || toolCallIdFixed) {
+          } else if (idFixed || fieldsInjected || toolNameDecloaked || toolCallIdFixed || toolNameRestored) {
             output = `data: ${JSON.stringify(parsed)}\n\n`;
             injectedUsage = true;
           }

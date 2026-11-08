@@ -3,6 +3,7 @@ import { ensureToolCallIds, fixMissingToolResponses } from "./concerns/toolCall.
 import { prepareClaudeRequest, ensureTrailingUserTurn } from "./formats/claude.js";
 import { ROLE, GEMINI_ROLE } from "./schema/roles.js";
 import { cloakClaudeTools, decloakStreamChunk } from "../utils/claudeCloaking.js";
+import { restoreToolNames } from "../utils/opencodeFingerprint.js";
 import { filterToOpenAIFormat } from "./formats/openai.js";
 import { normalizeThinkingConfig } from "../services/provider.js";
 import { applyThinking, captureThinking } from "./concerns/thinkingUnified.js";
@@ -162,7 +163,7 @@ export function translateResponse(targetFormat, sourceFormat, chunk, state) {
       if (!state.streamToolCallIds) state.streamToolCallIds = new Map();
       ensureStreamToolCallIds(chunk, state.streamToolCallIds);
     }
-    return [decloakStreamChunk(chunk, state?.toolNameMap)];
+    return [restoreToolNames(decloakStreamChunk(chunk, state?.toolNameMap), state?.toolNameMap)];
   }
 
   let results = [chunk];
