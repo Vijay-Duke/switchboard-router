@@ -14,6 +14,7 @@ import {
   refreshCopilotToken,
   refreshCodebuddyToken,
   refreshClineToken,
+  refreshNousToken,
   classifyOAuthRefreshError,
 } from "./tokenRefresh/providers.js";
 
@@ -30,6 +31,7 @@ export {
   refreshCopilotToken,
   refreshCodebuddyToken,
   refreshClineToken,
+  refreshNousToken,
   classifyOAuthRefreshError,
 };
 
@@ -160,6 +162,7 @@ const REFRESH_HANDLERS = {
   "codebuddy-cn": (c, log) => refreshCodebuddyToken(c.refreshToken, log),
   cline: (c, log, proxyOptions) => refreshClineToken(c.refreshToken, log, "cline", proxyOptions),
   clinepass: (c, log, proxyOptions) => refreshClineToken(c.refreshToken, log, "clinepass", proxyOptions),
+  nous: (c, log) => refreshNousToken(c.refreshToken, log),
   muse: (c, log) => refreshMuseToken(c.providerSpecificData?.dcaToken || c.refreshToken, log),
   vertex: (c, log) => vertexRefreshHandler(c, log, "vertex"),
   "vertex-partner": (c, log) => vertexRefreshHandler(c, log, "vertex-partner"),

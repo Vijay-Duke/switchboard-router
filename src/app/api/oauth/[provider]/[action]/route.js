@@ -372,7 +372,7 @@ export async function POST(request, { params }) {
       }
 
       // Providers that don't use PKCE for device code
-      const noPkceProviders = ["github", "kimi-coding", "kilocode", "codebuddy-cn", "grok-cli", "muse"];
+      const noPkceProviders = ["github", "kimi-coding", "kilocode", "codebuddy-cn", "grok-cli", "muse", "nous"];
       let result;
       if (noPkceProviders.includes(provider)) {
         // kimi-coding threads _kimiDeviceId through extraData; the others

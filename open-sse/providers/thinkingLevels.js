@@ -32,6 +32,7 @@ const FORMAT_LEVELS = {
   minimax: L.onOff,
   hunyuan: L.base,
   step: L.base,
+  nous: L.base,
 };
 
 // Opus/Sonnet 4.6 lack xhigh (Anthropic + Kiro docs) — keep the 4-level+max set.
