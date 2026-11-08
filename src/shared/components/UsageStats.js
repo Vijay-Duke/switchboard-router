@@ -15,10 +15,15 @@ import Card from "./Card";
 import Button from "./Button";
 import OverviewCards from "@/app/(dashboard)/dashboard/usage/components/OverviewCards";
 import UsageTable, { fmt, fmtTime, getGroupProviderLabel, resolveUsageProviderName } from "@/app/(dashboard)/dashboard/usage/components/UsageTable";
-import ProviderTopology from "@/app/(dashboard)/dashboard/usage/components/ProviderTopology";
-import UsageChart from "@/app/(dashboard)/dashboard/usage/components/UsageChart";
-import ProviderBarChart from "@/app/(dashboard)/dashboard/usage/components/ProviderBarChart";
-import TopModelsChart from "@/app/(dashboard)/dashboard/usage/components/TopModelsChart";
+import dynamic from "next/dynamic";
+
+// Lazy-load: keeps @xyflow/react and recharts out of the initial bundle of
+// every page importing this component (upstream ddfdb0df). DashboardLayout
+// preloads these chunks via requestIdleCallback so navigating to Usage is fast.
+const ProviderTopology = dynamic(() => import("@/app/(dashboard)/dashboard/usage/components/ProviderTopology"), { ssr: false });
+const UsageChart = dynamic(() => import("@/app/(dashboard)/dashboard/usage/components/UsageChart"), { ssr: false });
+const ProviderBarChart = dynamic(() => import("@/app/(dashboard)/dashboard/usage/components/ProviderBarChart"), { ssr: false });
+const TopModelsChart = dynamic(() => import("@/app/(dashboard)/dashboard/usage/components/TopModelsChart"), { ssr: false });
 import { reportClientError } from "@/shared/utils/clientFeedback";
 
 function timeAgo(timestamp) {
