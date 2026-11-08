@@ -164,7 +164,10 @@ beforeEach(() => {
   fs.rmSync(path.join(tempDir, "logs"), { recursive: true, force: true });
   vi.clearAllMocks();
   mocks.getComboModels.mockImplementation(async (model) => model === "combo-denied" ? ["deepseek/test-model"] : null);
-  mocks.getModelInfo.mockResolvedValue({ provider: "deepseek", model: "test-model" });
+  // Identity-resolution mock: only the real test model resolves. Client-key
+  // access control canonicalizes allow-list entries through getModelInfo, so
+  // a blanket mockResolvedValue would alias every entry onto test-model.
+  mocks.getModelInfo.mockImplementation(async (model) => model === "deepseek/test-model" ? { provider: "deepseek", model: "test-model" } : null);
   mocks.getProviderCredentials.mockResolvedValue({
     connectionId: "provider-connection",
     connectionName: "Provider connection",

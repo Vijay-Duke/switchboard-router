@@ -27,6 +27,7 @@ vi.mock("../../open-sse/runtimeDeps.js", () => ({
 // Our tree routes the catalog request through proxyAwareFetch (SSRF/proxy
 // plumbing); stubbed per-test in the aggregation suite below.
 const proxyFetchMock = vi.hoisted(() => vi.fn(async () => ({ ok: false })));
+const aggregationFetchMock = vi.hoisted(() => vi.fn(async () => ({ ok: false })));
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch: proxyFetchMock,
 }));
@@ -193,7 +194,7 @@ describe("cline free-models envelope in nonStreamingHandler", () => {
 });
 
 describe("cline /api/v1/models aggregation (resolveClineModels vs resolveClinepassModels)", () => {
-  const fetchMock = vi.hoisted(() => vi.fn(async () => ({ ok: false })));
+  const fetchMock = aggregationFetchMock;
 
   const API_RESPONSE = [
     { id: "cline-pass/deepseek-v4-flash", name: "DeepSeek V4 Flash" },

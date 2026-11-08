@@ -38,6 +38,7 @@ vi.mock("@/sse/services/tokenRefresh.js", () => tokenMocks);
 
 vi.mock("@/sse/services/clientKeyPolicy.js", () => ({
   authorizeClientKeyRequest: vi.fn(async () => ({ ok: true, mode: "local", clientKeyId: null, lease: null })),
+  clientKeyTargetDenied: vi.fn(async () => false),
   runWithClientKeyLease: (_lease, work) => work(),
 }));
 
