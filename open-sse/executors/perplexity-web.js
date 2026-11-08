@@ -394,7 +394,7 @@ export class PerplexityWebExecutor extends BaseExecutor {
     super("perplexity-web", PROVIDERS["perplexity-web"]);
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, providerOverrides = null }) {
     const messages = body?.messages;
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       const errResp = new Response(JSON.stringify({
@@ -441,6 +441,7 @@ export class PerplexityWebExecutor extends BaseExecutor {
       "User-Agent": PPLX_USER_AGENT,
       "X-App-ApiClient": "default",
       "X-App-ApiVersion": PPLX_API_VERSION,
+      ...(providerOverrides?.headers || {}),
     };
 
     if (credentials.accessToken) {

@@ -208,9 +208,9 @@ export class GithubExecutor extends BaseExecutor {
     return result;
   }
 
-  async executeWithResponsesEndpoint({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
+  async executeWithResponsesEndpoint({ model, body, stream, credentials, signal, log, proxyOptions = null, providerOverrides = null }) {
     const url = this.config.responsesUrl;
-    const headers = this.buildHeaders(credentials, stream);
+    const headers = { ...this.buildHeaders(credentials, stream), ...(providerOverrides?.headers || {}) };
 
     const transformedBody = openaiToOpenAIResponsesRequest(model, body, stream, credentials);
 

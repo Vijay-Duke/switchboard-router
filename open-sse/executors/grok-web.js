@@ -224,7 +224,7 @@ export class GrokWebExecutor extends BaseExecutor {
     super("grok-web", PROVIDERS["grok-web"]);
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, providerOverrides = null }) {
     const messages = body?.messages;
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       const errResp = new Response(JSON.stringify({
@@ -281,6 +281,7 @@ export class GrokWebExecutor extends BaseExecutor {
       "x-statsig-id": generateStatsigId(),
       "x-xai-request-id": crypto.randomUUID(),
       traceparent: `00-${traceId}-${spanId}-00`,
+      ...(providerOverrides?.headers || {}),
     };
 
     // Strip "sso=" prefix if user pasted it

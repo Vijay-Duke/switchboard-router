@@ -103,6 +103,16 @@ describe("PUT /api/providers/[id]/overrides", () => {
 });
 
 describe("BaseExecutor merges providerOverrides last", () => {
+  it("passes custom headers through the specialized Copilot Responses route", async () => {
+    const { GithubExecutor } = await import("../../open-sse/executors/github.js");
+    mocks.proxyFetch.mockResolvedValue(new Response("unavailable", { status: 500 }));
+    const executor = new GithubExecutor();
+    await executor.executeWithResponsesEndpoint({ model: "gpt-5", body: { messages: [{ role: "user", content: "hello" }] },
+      stream: false, credentials: { apiKey: "key" },
+      providerOverrides: { headers: { "X-Title": "user" } } });
+    expect(mocks.proxyFetch.mock.calls.at(-1)[1].headers["X-Title"]).toBe("user");
+  });
+
   it("assigns user headers over registry headers at dispatch", async () => {
     const { BaseExecutor } = await import("../../open-sse/executors/base.js");
     mocks.proxyFetch.mockResolvedValue({

@@ -293,7 +293,7 @@ export class CodexExecutor extends BaseExecutor {
       breaker = wsBreakerFor(proxyUrl || "direct");
       if (Date.now() < breaker.openUntil) return null;
 
-      const headers = { ...this.buildHeaders(args.credentials, args.stream, url, args.model, transformedBody) };
+      const headers = { ...this.buildHeaders(args.credentials, args.stream, url, args.model, transformedBody), ...(args.providerOverrides?.headers || {}) };
       const { headers: wsHeaders } = wrapHeaders(headers, {
         identity: this.resolveIdentity(args.credentials),
         provider: "codex",
