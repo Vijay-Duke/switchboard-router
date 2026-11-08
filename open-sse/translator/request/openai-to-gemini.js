@@ -3,6 +3,7 @@ import { FORMATS } from "../formats.js";
 import { DEFAULT_THINKING_AG_SIGNATURE, DEFAULT_THINKING_GEMINI_CLI_SIGNATURE } from "../../config/defaultThinkingSignature.js";
 import { ANTIGRAVITY_DEFAULT_SYSTEM } from "../../config/appConstants.js";
 import { openaiToClaudeRequestForAntigravity } from "./openai-to-claude.js";
+import { getGeminiThoughtSignatureSync } from "../../services/thoughtSignatureStore.js";
 function generateUUID() {
   return crypto.randomUUID();
 }
@@ -62,7 +63,7 @@ function createToolCallIdUniquifier() {
 }
 
 // Core: Convert OpenAI request to Gemini format (base for all variants)
-function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG_SIGNATURE) {
+function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG_SIGNATURE, sessionId = null) {
   const result = {
     model: model,
     contents: [],
@@ -179,22 +180,33 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
 
         if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
           const toolCallIds = [];
+          let firstFunctionCallSeen = false;
           for (const tc of msg.tool_calls) {
             if (tc.type !== OPENAI_BLOCK.FUNCTION) continue;
 
             const args = tryParseJSON(tc.function?.arguments || "{}") ?? {};
+            // Replay the cached signature when the client round-trips a previous
+            // call id; otherwise the first call in the turn carries the default
+            // signature and siblings stay unsigned (Gemini 3+ rejects parallel
+            // calls that all carry signatures).
+            const cachedSig = tc.id ? getGeminiThoughtSignatureSync(tc.id, sessionId, model) : null;
+            const callSig = cachedSig || (!firstFunctionCallSeen ? signature : undefined);
+            firstFunctionCallSeen = true;
             const emitId = toolCallIdUniquifier.next(tc.id);
             // `id` is part of the Gemini API FunctionCall/FunctionResponse schema
             // and pairs the call with its functionResponse.id below (the
             // post-translate orphan strip keys on it; Vertex strips both).
-            parts.push({
-              thoughtSignature: signature,
+            const part = {
               functionCall: {
                 id: emitId,
                 name: sanitizeGeminiFunctionName(tc.function.name),
                 args: args
               }
-            });
+            };
+            if (callSig) {
+              part.thoughtSignature = callSig;
+            }
+            parts.push(part);
             // Name travels with the pair: tcID2Name is conversation-wide, so a
             // later call reusing the id would otherwise rename this response.
             toolCallIds.push({ origId: tc.id, emitId, name: tc.function?.name });
@@ -304,16 +316,17 @@ function mapOpenAIToolChoiceToGemini(choice) {
 }
 
 // OpenAI -> Gemini (standard API). The registry invokes this with credentials
-// as the 4th arg — never forward it as the thought signature. Vertex calls
-// openaiToGeminiBase directly with its own signature string.
-export function openaiToGeminiRequest(model, body, stream) {
-  return openaiToGeminiBase(model, body, stream);
+// as the 4th arg — only its `_clientSessionId` (set by translateRequest) is
+// consumed, never the credentials object itself. Vertex calls openaiToGeminiBase
+// directly with its own signature string.
+export function openaiToGeminiRequest(model, body, stream, credentials = null) {
+  return openaiToGeminiBase(model, body, stream, DEFAULT_THINKING_AG_SIGNATURE, credentials?._clientSessionId);
 }
 export { openaiToGeminiBase };
 
 // OpenAI -> Gemini CLI (Cloud Code Assist)
-export function openaiToGeminiCLIRequest(model, body, stream) {
-  const gemini = openaiToGeminiBase(model, body, stream, DEFAULT_THINKING_GEMINI_CLI_SIGNATURE);
+export function openaiToGeminiCLIRequest(model, body, stream, credentials = null) {
+  const gemini = openaiToGeminiBase(model, body, stream, DEFAULT_THINKING_GEMINI_CLI_SIGNATURE, credentials?._clientSessionId);
   // Thinking is normalized centrally by applyThinking (thinkingUnified.js) after translation.
 
   // Clean schema for tools
@@ -430,18 +443,29 @@ function wrapInCloudCodeEnvelopeForClaude(model, claudeRequest, credentials = nu
       const parts = [];
 
       if (Array.isArray(msg.content)) {
+        let firstToolUseSeen = false;
         for (const block of msg.content) {
           if (block.type === CLAUDE_BLOCK.TEXT) {
             parts.push({ text: block.text });
           } else if (block.type === CLAUDE_BLOCK.TOOL_USE) {
-            parts.push({
-              thoughtSignature: signature,
+            // Replay the cached signature for a round-tripped tool_use id; the
+            // first call of the turn falls back to the default signature and
+            // siblings stay unsigned.
+            const cachedSig = block.id ? getGeminiThoughtSignatureSync(block.id, credentials?._clientSessionId, model) : null;
+            const callSig = cachedSig || (!firstToolUseSeen ? signature : undefined);
+            firstToolUseSeen = true;
+
+            const part = {
               functionCall: {
                 id: block.id,
                 name: sanitizeGeminiFunctionName(block.name),
                 args: block.input || {}
               }
-            });
+            };
+            if (callSig) {
+              part.thoughtSignature = callSig;
+            }
+            parts.push(part);
           } else if (block.type === CLAUDE_BLOCK.TOOL_RESULT) {
             let content = block.content;
             if (Array.isArray(content)) {

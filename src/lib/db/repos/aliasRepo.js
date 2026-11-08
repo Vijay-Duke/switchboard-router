@@ -33,7 +33,7 @@ export async function getCustomModels() {
 // Atomic upsert inside transaction to prevent duplicate races.
 // Re-adding an existing model updates caps/name in place without resetting
 // omitted fields (e.g. a previously captured reasoning descriptor).
-export async function addCustomModel({ providerAlias, id, type = "llm", name, reasoning, caps }) {
+export async function addCustomModel({ providerAlias, id, type = "llm", name, reasoning, caps, transport }) {
   const k = customKey(providerAlias, id, type);
   const db = await getAdapter();
   let added = false;
@@ -52,6 +52,9 @@ export async function addCustomModel({ providerAlias, id, type = "llm", name, re
       name: name || id,
       ...(reasoning ? { reasoning } : {}),
       ...(caps ? { caps } : {}),
+      // Realtime STT dispatch marker (whitelist-validated in the API layer);
+      // absent on ordinary chat/embedding models.
+      ...(transport ? { transport } : {}),
     });
     db.run(`INSERT INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, value]);
     added = true;
@@ -92,6 +95,7 @@ export async function addCustomModelsBulk(models) {
         type,
         name: m.name || id,
         ...(m.reasoning ? { reasoning: m.reasoning } : {}),
+        ...(m.transport ? { transport: m.transport } : {}),
       });
       db.run(`INSERT INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, value]);
       added += 1;

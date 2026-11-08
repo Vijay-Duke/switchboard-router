@@ -6,6 +6,7 @@ import { toOpenAIUsage } from "../concerns/usage.js";
 import { reasoningDelta } from "../concerns/reasoning.js";
 import { encodeDataUri } from "../concerns/image.js";
 import { toOpenAIFinish } from "../concerns/finishReason.js";
+import { storeGeminiThoughtSignature } from "../../services/thoughtSignatureStore.js";
 
 // Build chunk meta for current gemini state
 function chunkMeta(state) {
@@ -13,7 +14,10 @@ function chunkMeta(state) {
 }
 
 // Build a tool_call chunk from a gemini functionCall part (shared by sig/non-sig branches)
-function emitFunctionCall(functionCall, state) {
+// `signature` (when present) is cached in the thought-signature store so the next
+// turn can replay it — keyed by BOTH the id we hand the client and the native
+// functionCall.id (the antigravity native-contents replay looks that one up).
+function emitFunctionCall(functionCall, state, signature = null) {
   const rawName = functionCall.name;
   // Restore original tool name from mapping (AG cloaking)
   const fcName = state.toolNameMap?.get(rawName) || rawName;
@@ -24,8 +28,16 @@ function emitFunctionCall(functionCall, state) {
   // with dash separators keeps the golden-snapshot volatile strip
   // (-<10+digits>-<digits>) matching verbatim so snapshots stay deterministic.
   const safeName = String(fcName).replace(/[^a-zA-Z0-9_-]/g, "");
+  const callId = `call_${safeName}-${Date.now()}-${toolCallIndex}`;
+  if (signature) {
+    storeGeminiThoughtSignature(callId, signature, state.sessionId, state.model);
+    const nativeId = functionCall?.id;
+    if (nativeId && nativeId !== callId) {
+      storeGeminiThoughtSignature(nativeId, signature, state.sessionId, state.model);
+    }
+  }
   const toolCall = {
-    id: `call_${safeName}-${Date.now()}-${toolCallIndex}`,
+    id: callId,
     index: toolCallIndex,
     type: OPENAI_BLOCK.FUNCTION,
     function: { name: fcName, arguments: JSON.stringify(fcArgs) },
@@ -72,7 +84,7 @@ export function geminiToOpenAIResponse(chunk, state) {
       const fresh = !state.messageId;
       if (fresh) {
         state.messageId = response.responseId || `msg_${Date.now()}`;
-        state.model = response.modelVersion || "gemini";
+        state.model = response.modelVersion || state.model || "gemini";
         state.functionIndex = 0;
         state.geminiToolCallCount = 0;
       }
@@ -95,7 +107,7 @@ export function geminiToOpenAIResponse(chunk, state) {
   // Initialize state
   if (!state.messageId) {
     state.messageId = response.responseId || `msg_${Date.now()}`;
-    state.model = response.modelVersion || "gemini";
+    state.model = response.modelVersion || state.model || "gemini";
     state.functionIndex = 0;
     state.geminiToolCallCount = 0;
     results.push(buildChunk(chunkMeta(state), { role: ROLE.ASSISTANT }, null));
@@ -129,8 +141,16 @@ export function geminiToOpenAIResponse(chunk, state) {
 
       // Handle thought signature (thinking mode)
       if (hasThoughtSig) {
+        if (typeof hasThoughtSig === "string") {
+          state.pendingThoughtSignature = hasThoughtSig;
+        }
         const hasTextContent = part.text !== undefined && part.text !== "";
         const hasFunctionCall = !!part.functionCall;
+
+        // Standalone thoughtSignature part (no text, no functionCall): keep pending for the next functionCall
+        if (!hasTextContent && !hasFunctionCall) {
+          continue;
+        }
 
         if (hasTextContent) {
           results.push(buildChunk(
@@ -141,7 +161,8 @@ export function geminiToOpenAIResponse(chunk, state) {
         }
 
         if (hasFunctionCall) {
-          results.push(emitFunctionCall(part.functionCall, state));
+          results.push(emitFunctionCall(part.functionCall, state, hasThoughtSig));
+          state.pendingThoughtSignature = null;
         }
         continue;
       }
@@ -160,7 +181,9 @@ export function geminiToOpenAIResponse(chunk, state) {
 
       // Function call
       if (part.functionCall) {
-        results.push(emitFunctionCall(part.functionCall, state));
+        const sig = state.pendingThoughtSignature || null;
+        results.push(emitFunctionCall(part.functionCall, state, sig));
+        state.pendingThoughtSignature = null;
       }
     }
   }

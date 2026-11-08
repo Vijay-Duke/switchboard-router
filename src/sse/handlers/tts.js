@@ -33,7 +33,10 @@ export async function handleTts(request) {
 
   const url = new URL(request.url);
   const modelStr = body.model;
-  const responseFormat = url.searchParams.get("response_format") || "mp3"; // mp3 (default) | json
+  // response_format: query string wins, else body field (wav/pcm for local servers), else mp3
+  const responseFormat = url.searchParams.get("response_format")
+    || (typeof body.response_format === "string" && body.response_format)
+    || "mp3";
   const language = body.language || ""; // Optional language hint (currently used by Gemini)
   log.request("POST", `${url.pathname} | ${modelStr} | format=${responseFormat}${language ? ` | lang=${language}` : ""}`);
 
@@ -107,7 +110,16 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, cl
         const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
         return unavailableResponse(status, `[${provider}/${model}] ${msg}`, credentials.retryAfter, credentials.retryAfterHuman);
       }
-      if (excludeConnectionIds.size === 0) return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
+      if (excludeConnectionIds.size === 0) {
+        // Ollama is a local server — synthesize without a stored connection
+        // (default http://localhost:11434); a saved connection still wins when present.
+        if (provider === "ollama-local") {
+          const result = await handleTtsCore({ clientKeyId, provider, model, input: body.input, credentials: null, responseFormat, language, abortSignal });
+          if (result.success) return result.response;
+          return errorResponse(result.status || HTTP_STATUS.BAD_GATEWAY, result.error || "TTS failed");
+        }
+        return errorResponse(HTTP_STATUS.BAD_REQUEST, `No credentials for provider: ${provider}`);
+      }
       return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
     }
 

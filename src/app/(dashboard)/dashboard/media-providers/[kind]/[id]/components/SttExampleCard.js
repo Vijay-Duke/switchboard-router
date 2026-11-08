@@ -21,6 +21,9 @@ export function SttExampleCard({ providerId }) {
   // transcription fields; gate only when the model declares params.
   const STT_STANDARD_PARAMS = ["language", "response_format", "temperature", "prompt"];
   const allowedParams = Array.isArray(selectedModelObj?.params) ? selectedModelObj.params : STT_STANDARD_PARAMS;
+  // Models declare the response formats they actually support (Codex OAuth
+  // transcription, for instance, answers json/text only).
+  const responseFormats = selectedModelObj?.responseFormats || ["json", "text", "srt", "verbose_json", "vtt"];
 
   const [audioFile, setAudioFile] = useState(null);
   const [language, setLanguage] = useState("");
@@ -238,11 +241,7 @@ export function SttExampleCard({ providerId }) {
               onChange={(e) => setResponseFormat(e.target.value)}
               className="w-full px-3 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
             >
-              <option value="json">json</option>
-              <option value="text">text</option>
-              <option value="srt">srt</option>
-              <option value="verbose_json">verbose_json</option>
-              <option value="vtt">vtt</option>
+              {responseFormats.map((format) => <option key={format} value={format}>{format}</option>)}
             </select>
           </Row>
         )}

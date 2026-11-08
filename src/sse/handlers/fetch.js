@@ -12,7 +12,7 @@ import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { applyScheduleGate } from "../services/scheduleGate.js";
-import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
+import { checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleComboChat, getComboModelsFromData } from "open-sse/services/combo.js";
 import { assertPublicUrl, assertPublicUrlResolved } from "@/shared/utils/ssrfGuard.js";
 import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
@@ -199,8 +199,14 @@ async function handleSingleProviderFetch(body, providerInput, request, clientKey
   let lastError = null;
   let lastStatus = null;
 
+  // Keep web-fetch failures scoped to this capability. Providers such as
+  // Ollama use the same connection for chat and fetch, so an upstream fetch
+  // failure must not take the account offline for LLM requests. The lock key
+  // rides the per-model lock slot (modelLock_webfetch:<provider>).
+  const fetchLockKey = `webfetch:${providerId}`;
+
   while (true) {
-    const credentials = await getProviderCredentials(providerId, excludeConnectionIds, null, {
+    const credentials = await getProviderCredentials(providerId, excludeConnectionIds, fetchLockKey, {
       clientKeyId,
     });
 
@@ -229,7 +235,6 @@ async function handleSingleProviderFetch(body, providerInput, request, clientKey
     }, async () => {
       const refreshedCredentials = await checkAndRefreshToken(providerId, credentials);
       const result = await handleFetchCore({
-        clientKeyId,
         url: targetUrl,
         format,
         maxCharacters,
@@ -238,20 +243,10 @@ async function handleSingleProviderFetch(body, providerInput, request, clientKey
         credentials: refreshedCredentials,
         log,
         abortSignal: callOpts?.signal || request?.signal || null,
-        onCredentialsRefreshed: async (newCreds) => {
-          await updateProviderCredentials(credentials.connectionId, {
-            accessToken: newCreds.accessToken,
-            refreshToken: newCreds.refreshToken,
-            providerSpecificData: newCreds.providerSpecificData,
-            testStatus: "active"
-          });
-        },
-        onRequestSuccess: async () => {
-          await clearAccountError(credentials.connectionId, credentials);
-        }
       });
 
       if (result.success) {
+        await clearAccountError(credentials.connectionId, credentials, fetchLockKey);
         return new Response(JSON.stringify(result.data), {
           headers: { "Content-Type": "application/json" }
         });
@@ -262,6 +257,7 @@ async function handleSingleProviderFetch(body, providerInput, request, clientKey
         result.status,
         result.error,
         providerId,
+        fetchLockKey,
       );
       if (shouldFallback) {
         return { retry: true, error: result.error, status: result.status };

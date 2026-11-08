@@ -30,6 +30,8 @@ let deps = {
   searchVault: async () => [],
   getVaultEntry: async () => null,
   cleanupExpiredVault: async () => 0,
+  // SQLite kv factory (M11): app wires src/lib/db makeKv; null → RAM-only stores.
+  makeKvStore: null,
   // oauth helpers used by token refresh (optional)
   buildExternalIdpRefreshParams: null,
   createXaiService: null,
@@ -108,4 +110,10 @@ export async function getVaultEntry(...args) {
 
 export async function cleanupExpiredVault(...args) {
   return deps.cleanupExpiredVault ? deps.cleanupExpiredVault(...args) : 0;
+}
+
+// Scoped kv store factory (persisted thought signatures). Returns null when the
+// app has not wired the DB layer (tests, scripts) — callers fail open to RAM.
+export function makeKvStore(...args) {
+  return deps.makeKvStore ? deps.makeKvStore(...args) : null;
 }

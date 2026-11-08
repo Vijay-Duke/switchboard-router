@@ -48,14 +48,22 @@ describe("compressWithHeadroom openai-responses format (#1998)", () => {
     expect(typeof body.input[0].content).not.toBe("string");
   });
 
-  it("skips Responses tool/reasoning history instead of collapsing it into a message (#2132)", async () => {
-    global.fetch = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({
-        messages: [{ role: "user", content: "compressed tool history" }],
-        tokens_saved: 10,
-      }),
-    }));
+  // #2132: tool/reasoning protocol items must never be collapsed into a
+  // message and round-tripped. Since the native tool-output lane landed, the
+  // eligible plain-text function_call_output strings ARE compressed in place;
+  // everything else (function_call arguments, reasoning, structured outputs)
+  // stays byte-identical and the input keeps the Responses shape.
+  it("compresses only plain-text tool outputs in Responses tool/reasoning history instead of collapsing it into a message (#2132)", async () => {
+    global.fetch = vi.fn(async (_url, init) => {
+      const payload = JSON.parse(init.body);
+      return {
+        ok: true,
+        json: async () => ({
+          messages: payload.messages.map((message) => ({ ...message, content: "compressed tool history" })),
+          tokens_saved: 10,
+        }),
+      };
+    });
 
     const input = [
       {
@@ -72,7 +80,7 @@ describe("compressWithHeadroom openai-responses format (#1998)", () => {
       {
         type: "function_call_output",
         call_id: "call_apply_patch_123",
-        output: "ok",
+        output: "patch applied cleanly with a very long plain-text summary",
       },
       {
         type: "reasoning",
@@ -99,9 +107,57 @@ describe("compressWithHeadroom openai-responses format (#1998)", () => {
       diagnostics,
     });
 
+    expect(data).not.toBeNull();
+    expect(global.fetch).toHaveBeenCalledOnce();
+    const sent = JSON.parse(global.fetch.mock.calls[0][1].body).messages;
+    expect(sent).toEqual([
+      { role: "tool", tool_call_id: "headroom-tool-0", content: "patch applied cleanly with a very long plain-text summary" },
+    ]);
+    expect(body.input).toHaveLength(input.length);
+    expect(body.input[0]).toEqual(input[0]);
+    expect(body.input[1]).toEqual(input[1]); // function_call arguments untouched
+    expect(body.input[2]).toEqual({ ...input[2], output: "compressed tool history" });
+    expect(body.input[3]).toEqual(input[3]); // reasoning untouched
+    expect(body.tools).toEqual([{ type: "custom", name: "apply_patch", format: { type: "grammar", syntax: "lark", definition: "start: /.+/" } }]);
+  });
+
+  it("skips Responses tool history when no output is eligible plain text (#2132)", async () => {
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ messages: [], tokens_saved: 10 }),
+    }));
+
+    const input = [
+      {
+        type: "function_call",
+        call_id: "call_apply_patch_123",
+        name: "apply_patch",
+        arguments: "*** Begin Patch\n*** End Patch",
+      },
+      {
+        type: "function_call_output",
+        call_id: "call_apply_patch_123",
+        output: '{"status":"ok"}',
+      },
+      {
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: "Need a plan" }],
+      },
+    ];
+    const body = { input: structuredClone(input) };
+    const diagnostics = {};
+
+    const data = await compressWithHeadroom(body, {
+      enabled: true,
+      url: "http://headroom.test",
+      model: "gpt-5",
+      format: "openai-responses",
+      diagnostics,
+    });
+
     expect(data).toBeNull();
     expect(global.fetch).not.toHaveBeenCalled();
     expect(body.input).toEqual(input);
-    expect(diagnostics.reason).toBe("skipped: openai-responses tool/reasoning input is not safe to compress");
+    expect(diagnostics.reason).toBe("no eligible plain-text tool output");
   });
 });

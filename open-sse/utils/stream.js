@@ -72,6 +72,7 @@ export function createSSEStream(options = {}) {
     onStreamProgress = null,
     clientKeyId = null,
     terminateOnResponsesTerminal = true,
+    credentials = null,
   } = options;
 
   let buffer = "";
@@ -83,6 +84,8 @@ export function createSSEStream(options = {}) {
 
   // Per-stream decoder with stream:true to correctly handle multi-byte chars split across chunks
   const decoder = new TextDecoder("utf-8", { fatal: false });
+
+  // Direct chat→Responses route: the response translator may defer
 
   function assertReassemblyWithinLimit(extraBytes) {
     reassemblyBytes += extraBytes;
@@ -96,7 +99,7 @@ export function createSSEStream(options = {}) {
   // route the terminal null chunk never reaches that translator).
   const deferCompletionForUsage = targetFormat === FORMATS.OPENAI && sourceFormat === FORMATS.OPENAI_RESPONSES;
   const state = mode === STREAM_MODE.TRANSLATE
-    ? { ...initState(sourceFormat), provider, toolNameMap, model, deferCompletionForUsage }
+    ? { ...initState(sourceFormat), provider, toolNameMap, model, deferCompletionForUsage, sessionId: credentials?._clientSessionId || null }
     : null;
   // Bound the deferred-completion wait: a broken upstream can stall after
   // finish_reason with no usage trailer and no [DONE], holding the socket open.
@@ -819,7 +822,7 @@ export function createSSEStream(options = {}) {
   });
 }
 
-export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, clientKeyId = null, terminateOnResponsesTerminal = true) {
+export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, provider = null, reqLogger = null, toolNameMap = null, model = null, connectionId = null, body = null, onStreamComplete = null, clientKeyId = null, terminateOnResponsesTerminal = true, credentials = null) {
   return createSSEStream({
     mode: STREAM_MODE.TRANSLATE,
     targetFormat,
@@ -833,6 +836,7 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
     onStreamComplete,
     clientKeyId,
     terminateOnResponsesTerminal,
+    credentials,
   });
 }
 

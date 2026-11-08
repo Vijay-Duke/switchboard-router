@@ -7,6 +7,7 @@ import openai from "./openai.js";
 import openrouter from "./openrouter.js";
 import gemini, { fetchGeminiVoices } from "./gemini.js";
 import selfhostedTts from "./selfhostedTts.js";
+import ollamaLocal from "./ollamaLocal.js";
 import { FORMAT_HANDLERS } from "./genericFormats.js";
 import { parseModelVoice } from "./_base.js";
 import { proxyOptionsFromCredentials } from "../../utils/proxyFetch.js";
@@ -22,6 +23,7 @@ const SPECIAL_ADAPTERS = {
   openrouter,
   gemini,
   "selfhosted-tts": selfhostedTts,
+  "ollama-local": ollamaLocal,
 };
 
 export function getTtsAdapter(provider) {
