@@ -93,6 +93,16 @@ describe("Hermes settings API", () => {
     expect(await fs.readFile(target.envPath, "utf8")).toBe('BOT_TOKEN="preserve"\n');
   });
 
+  it("does not leave a partial YAML update when the env file cannot be read", async () => {
+    const original = 'model: ""\ntheme: dark\n';
+    const target = await putConfig("work", original);
+    await fs.mkdir(target.envPath);
+    const { POST } = await import("../../src/app/api/cli-tools/hermes-settings/route.js");
+    const response = await POST(post({ ...options, profile: "work", apiKey: "test-secret" }));
+    expect(response.status).toBe(500);
+    expect(await fs.readFile(target.configPath, "utf8")).toBe(original);
+  });
+
   it("redacts a foreign transcription credential in GET", async () => {
     await putConfig("default", 'stt:\n  provider: openai\n  openai:\n    model: whisper-1\n    api_key: foreign-secret\n');
     const { GET } = await import("../../src/app/api/cli-tools/hermes-settings/route.js");
@@ -103,12 +113,14 @@ describe("Hermes settings API", () => {
   it("bulk refresh preserves models and skips foreign profiles", async () => {
     const a = await putConfig("default", buildHermesYaml("", options));
     const b = await putConfig("work", buildHermesYaml("", { ...options, models: ["test/work"] }));
+    const legacy = await putConfig("legacy", 'model:\n  default: test/legacy\n  provider: custom\n  base_url: http://127.0.0.1:20128/v1\n');
     const c = await putConfig("foreign", 'model:\n  default: own/model\n  provider: own\n');
     const foreign = await fs.readFile(c.configPath, "utf8");
     const { POST } = await import("../../src/app/api/cli-tools/hermes-settings/route.js");
     const response = await POST(post({ ...options, baseUrl: "https://new.example/v1", applyToAll: true, apiKey: "new-key" }));
     const data = await response.json();
-    expect(data.updated).toBe(2);
+    expect(data.updated).toBe(3);
+    expect(readHermesSettings(await fs.readFile(legacy.configPath, "utf8")).defaultModel).toBe("test/legacy");
     expect(data.results.find(({ profile }) => profile === "foreign").status).toBe("skipped");
     expect(readHermesSettings(await fs.readFile(a.configPath, "utf8")).defaultModel).toBe("test/main");
     const work = readHermesSettings(await fs.readFile(b.configPath, "utf8"));
@@ -123,5 +135,6 @@ describe("Hermes settings API", () => {
     expect((await POST(post({ ...options, profile: "../escape" }))).status).toBe(400);
     expect((await POST(post({ ...options, auxiliary: { vision: {} } }))).status).toBe(400);
     expect((await POST(post({ ...options, delegation: {} }))).status).toBe(400);
+    expect((await POST(post({ ...options, auxiliary: [] }))).status).toBe(400);
   });
 });

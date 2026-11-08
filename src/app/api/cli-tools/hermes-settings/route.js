@@ -14,7 +14,7 @@ import {
   normalizeModelIds,
   removeHermesYaml,
 } from "@/lib/cli/modelCatalog.js";
-import { writeCliFile } from "@/lib/cli/fileIo.js";
+import { writeCliFile, replaceCliFiles } from "@/lib/cli/fileIo.js";
 import {
   AUX_ROLE_KEY_RE,
   HERMES_API_KEY_ENV,
@@ -76,11 +76,14 @@ const writeHomeConfig = async (home, yaml) => {
 
 // Only ever upserts the SWITCHBOARD_API_KEY line — per-profile .env files also carry bot
 // tokens and messaging-channel credentials that must stay untouched.
-const writeHomeEnv = async (home, apiKey) => {
-  if (!isNonEmptyString(apiKey)) return;
+const applyHomeConfig = async (home, yaml, apiKey) => {
   if (home.isDefault) await fs.mkdir(home.dir, { recursive: true });
-  const env = upsertEnvVar(await readEnvFile(home), HERMES_API_KEY_ENV, apiKey);
-  await writeCliFile(home.envPath, env, { secret: true });
+  const operations = [{ filePath: home.configPath, content: yaml, secret: true }];
+  if (isNonEmptyString(apiKey)) {
+    operations.push({ filePath: home.envPath,
+      content: upsertEnvVar(await readEnvFile(home), HERMES_API_KEY_ENV, apiKey), secret: true });
+  }
+  await replaceCliFiles(operations);
 };
 
 const checkHermesInstalled = async () => {
@@ -148,22 +151,19 @@ const applyToAllProfiles = async ({ normalizedBaseUrl, apiKey, model }) => {
       const yaml = await readConfigYaml(home);
       const settings = readHermesSettings(yaml);
       const providerManaged = settings.hasSwitchboard;
-      const legacyManaged = !providerManaged && hasLegacySwitchboardModel(settings.model);
 
-      if (providerManaged || legacyManaged) {
+      if (providerManaged) {
         // buildHermesYaml keeps role/stt wiring that is already ours when the
         // corresponding params are absent, so this refresh only moves the
         // endpoint (and migrates a legacy model block onto the named provider).
         const baseYaml = yaml;
-        let models = settings.models;
+        const models = settings.models.length ? settings.models : (settings.defaultModel ? [settings.defaultModel] : []);
         const defaultModel = settings.defaultModel;
-        if (legacyManaged) models = settings.defaultModel ? [settings.defaultModel] : [];
-        await writeHomeConfig(home, buildHermesYaml(baseYaml, {
+        await applyHomeConfig(home, buildHermesYaml(baseYaml, {
           baseUrl: normalizedBaseUrl,
           models,
           defaultModel,
-        }));
-        await writeHomeEnv(home, apiKey);
+        }), apiKey);
         results.push({ profile: profile.name, status: "updated", model: defaultModel });
       } else if (settings.defaultModel) {
         results.push({
@@ -172,12 +172,11 @@ const applyToAllProfiles = async ({ normalizedBaseUrl, apiKey, model }) => {
           reason: `main model uses provider "${settings.model?.provider || "unknown"}" — configure this profile individually`,
         });
       } else if (model) {
-        await writeHomeConfig(home, buildHermesYaml(yaml, {
+        await applyHomeConfig(home, buildHermesYaml(yaml, {
           baseUrl: normalizedBaseUrl,
           models: [model],
           defaultModel: model,
-        }));
-        await writeHomeEnv(home, apiKey);
+        }), apiKey);
         results.push({ profile: profile.name, status: "updated", model });
       } else {
         results.push({ profile: profile.name, status: "skipped", reason: "no main model configured" });
@@ -212,6 +211,9 @@ export async function POST(request) {
     let effectiveDefault = defaultModel || model;
     let effectiveModels = requestedModels;
     let effectiveDelegation = delegation;
+    if (auxiliary != null && (typeof auxiliary !== "object" || Array.isArray(auxiliary))) {
+      return NextResponse.json({ error: "auxiliary must be a role mapping" }, { status: 400 });
+    }
     let effectiveAuxiliary = auxiliary ? { ...auxiliary } : undefined;
     if (Array.isArray(selections)) {
       effectiveAuxiliary = effectiveAuxiliary || {};
@@ -282,8 +284,7 @@ export async function POST(request) {
       auxiliary: effectiveAuxiliary,
       stt: audio ? { enabled: audioEnabled, model: audioModel } : undefined,
     });
-    await writeHomeConfig(home, newYaml);
-    await writeHomeEnv(home, apiKey);
+    await applyHomeConfig(home, newYaml, apiKey);
 
     const settings = readHermesSettings(newYaml);
     const scope = home.isDefault ? "" : ` to profile "${home.name}"`;

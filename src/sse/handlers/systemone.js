@@ -36,6 +36,9 @@ export async function handleSystemone(request) {
   }
   const url = new URL(request.url);
   const modelStr = body.model;
+  if (typeof modelStr !== "string" || !modelStr.trim()) {
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing or invalid model");
+  }
   const preferredConnectionId = request.headers.get("x-connection-id") || null;
   const strictPreferredConnection = request.headers.get("x-switchboard-strict-connection") === "1";
 

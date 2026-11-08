@@ -32,8 +32,7 @@
 //       base_url: "http://127.0.0.1:20128/v1"
 //       api_key: ${SWITCHBOARD_API_KEY}
 //
-// Reading is Document/plain-parse based (no regex) except for the legacy
-// pre-provider `model:` block our fork wrote before custom_providers existed.
+// Configuration is read and edited with YAML documents, including legacy model blocks.
 
 import { parse as parseYaml, parseDocument } from "yaml";
 
@@ -43,11 +42,11 @@ export const HERMES_API_KEY_ENV = "SWITCHBOARD_API_KEY";
 export const HERMES_STT_API_KEY_REF = "${SWITCHBOARD_API_KEY}";
 
 // Auxiliary role names become YAML keys inside "auxiliary:" — keep them inert.
-export const AUX_ROLE_KEY_RE = /^[A-Za-z0-9_]+$/;
+export const AUX_ROLE_KEY_RE = /^(?!(?:__proto__|constructor|prototype)$)[A-Za-z0-9_]+$/;
 
 // ── legacy model block (pre custom_providers writes) ─────────────────────────
 // Old shape: `model:\n  default: "..."\n  provider: "custom"\n  base_url: "http://127.0.0.1:PORT/v1"`.
-// Match top-level "model:" mapping block; does NOT match the `model: ""` sentinel.
+// Read only a top-level mapping; the fresh-install `model: ""` sentinel is not a model block.
 export function parseLegacyModelBlock(yaml) {
   try {
     const model = parseYaml(yaml || "")?.model;
