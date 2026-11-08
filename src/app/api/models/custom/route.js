@@ -9,8 +9,19 @@ import {
 import { isValidReasoningSupport } from "@/shared/utils/reasoningCatalog.js";
 import { invalidateCompatibleReasoningCache } from "@/sse/services/compatibleReasoning.js";
 import { schedulePiCatalogSync } from "@/lib/cli/piCatalogSync.js";
+import { CAPACITY_META } from "@/shared/constants/models";
 
 export const dynamic = "force-dynamic";
+
+// Whitelist capability keys to boolean values — ignore anything else
+function sanitizeCaps(caps) {
+  if (!caps || typeof caps !== "object") return null;
+  const clean = {};
+  for (const key of Object.keys(CAPACITY_META)) {
+    if (typeof caps[key] === "boolean") clean[key] = caps[key];
+  }
+  return Object.keys(clean).length ? clean : null;
+}
 
 // GET /api/models/custom - List all custom models
 export async function GET() {
@@ -56,20 +67,22 @@ export async function POST(request) {
       return NextResponse.json({ success: true, ...result });
     }
 
-    const { providerAlias, id, type, name, reasoning } = body || {};
+    const { providerAlias, id, type, name, reasoning, caps } = body || {};
     if (!providerAlias || !id) {
       return NextResponse.json({ error: "providerAlias and id required" }, { status: 400 });
     }
+    const cleanCaps = sanitizeCaps(caps);
     const added = await addCustomModel({
       providerAlias,
       id,
       type: type || "llm",
       name,
       reasoning: isValidReasoningSupport(reasoning) ? reasoning : undefined,
+      ...(cleanCaps ? { caps: cleanCaps } : {}),
     });
-    if (added) {
+    if (added || cleanCaps) {
       invalidateCompatibleReasoningCache();
-      schedulePiCatalogSync();
+      schedulePiCatalogSync(); // Pi picker metadata (reasoning/levels) auto-refresh
     }
     return NextResponse.json({ success: true, added });
   } catch (error) {

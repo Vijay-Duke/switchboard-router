@@ -11,7 +11,7 @@ export function useModelCaps() {
 
   useEffect(() => {
     let alive = true;
-    (async () => {
+    const fetchCaps = async () => {
       try {
         const res = await fetch("/api/models");
         if (!res.ok) return;
@@ -25,8 +25,14 @@ export function useModelCaps() {
         }
         if (alive) { setByFull(full); setById(id); }
       } catch { /* ignore */ }
-    })();
-    return () => { alive = false; };
+    };
+    fetchCaps();
+    // Custom models change at runtime — refetch instead of trusting stale maps
+    window.addEventListener("customModelChanged", fetchCaps);
+    return () => {
+      alive = false;
+      window.removeEventListener("customModelChanged", fetchCaps);
+    };
   }, []);
 
   // Resolve caps from a "provider/model" string or a bare model id.

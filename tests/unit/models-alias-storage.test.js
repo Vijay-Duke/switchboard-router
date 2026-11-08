@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
-  getModelAliases: vi.fn(), setModelAlias: vi.fn(), getDisabledModels: vi.fn(),
+  getModelAliases: vi.fn(), setModelAlias: vi.fn(), getDisabledModels: vi.fn(), getCustomModels: vi.fn(),
 }));
 vi.mock("@/models", () => ({
-  getModelAliases: mocks.getModelAliases, setModelAlias: mocks.setModelAlias,
+  getModelAliases: mocks.getModelAliases, setModelAlias: mocks.setModelAlias, getCustomModels: mocks.getCustomModels,
 }));
 vi.mock("@/lib/disabledModelsDb", () => ({ getDisabledModels: mocks.getDisabledModels }));
 const { GET, PUT } = await import("../../src/app/api/models/route.js");
@@ -13,6 +13,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getModelAliases.mockResolvedValue({});
   mocks.getDisabledModels.mockResolvedValue({});
+  mocks.getCustomModels.mockResolvedValue([]);
   mocks.setModelAlias.mockResolvedValue(undefined);
 });
 function request(model = MODEL, alias = ALIAS) {
