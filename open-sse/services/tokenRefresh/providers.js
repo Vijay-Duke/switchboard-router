@@ -921,3 +921,9 @@ export async function refreshMiniMaxCodeToken(provider, refreshToken, log) {
     }
   }, log);
 }
+
+// Zed auth is a long-lived RSA-decrypted access_token with no OAuth2 refresh
+// grant (the keypair lives with the client); refresh is a re-login.
+export function refreshZedToken() {
+  return null;
+}

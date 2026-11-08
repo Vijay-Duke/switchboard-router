@@ -1172,5 +1172,23 @@
         }
       }
     ]
+  },
+  "zed": {
+    "baseUrl": "https://cloud.zed.dev/completions",
+    "format": "openai",
+    "identity": "openai-node",
+    "forceStream": true,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "auth": {
+      "combined": true,
+      "header": "Authorization",
+      "scheme": "<user_id> <access_token>"
+    },
+    "usage": {
+      "url": "https://cloud.zed.dev/client/users/me"
+    },
+    "modelsUrl": "https://cloud.zed.dev/models"
   }
 }

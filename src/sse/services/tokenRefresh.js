@@ -31,6 +31,7 @@ import {
   refreshKiroToken as _refreshKiroToken,
   refreshNousToken as _refreshNousToken,
   refreshMiniMaxCodeToken as _refreshMiniMaxCodeToken,
+  refreshZedToken as _refreshZedToken,
   getRefreshLeadMs as _getRefreshLeadMs
 } from "open-sse/services/tokenRefresh.js";
 import {
@@ -76,6 +77,8 @@ export const refreshNousToken = (refreshToken) =>
 
 export const refreshMiniMaxCodeToken = (provider, refreshToken) =>
   _refreshMiniMaxCodeToken(provider, refreshToken, log);
+
+export const refreshZedToken = () => _refreshZedToken();
 
 export const getAccessToken = (provider, credentials) =>
   _getAccessToken(provider, credentials, log);
