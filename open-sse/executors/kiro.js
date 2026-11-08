@@ -7,6 +7,7 @@ import { SSE_DONE, SSE_HEADERS } from "../utils/sseConstants.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { safeAwsRegion } from "../utils/awsRegion.js";
 import { parseKiroProfileArn } from "../utils/kiroProfileArn.js";
+import { parseEventFrame } from "../utils/awsEventStream.js";
 
 /**
  * KiroExecutor - Executor for Kiro AI (AWS CodeWhisperer)
@@ -178,7 +179,14 @@ export class KiroExecutor extends BaseExecutor {
           const eventData = buffer.slice(0, totalLength);
           buffer = buffer.slice(totalLength);
 
-          const event = parseEventFrame(eventData);
+          let event = null;
+          // The shared decoder throws on integrity failures (CRC/bounds) where the old
+          // in-file copy returned null; keep the caller's null → skip-frame contract.
+          try {
+            event = parseEventFrame(eventData);
+          } catch {
+            event = null;
+          }
           if (!event) continue;
 
           const eventType = event.headers[":event-type"] || "";
@@ -554,71 +562,6 @@ export class KiroExecutor extends BaseExecutor {
       log?.error?.("TOKEN", `Kiro refresh error: ${error.message}`);
       return null;
     }
-  }
-}
-
-/**
- * Parse AWS EventStream frame
- */
-function parseEventFrame(data) {
-  try {
-    const view = new DataView(data.buffer, data.byteOffset);
-    const headersLength = view.getUint32(4, false);
-
-    // Parse headers
-    const headers = {};
-    let offset = 12; // After prelude
-    const headerEnd = 12 + headersLength;
-
-    while (offset < headerEnd && offset < data.length) {
-      const nameLen = data[offset];
-      offset++;
-      if (offset + nameLen > data.length) break;
-
-      const name = new TextDecoder().decode(data.slice(offset, offset + nameLen));
-      offset += nameLen;
-
-      const headerType = data[offset];
-      offset++;
-
-      if (headerType === 7) { // String type
-        const valueLen = (data[offset] << 8) | data[offset + 1];
-        offset += 2;
-        if (offset + valueLen > data.length) break;
-
-        const value = new TextDecoder().decode(data.slice(offset, offset + valueLen));
-        offset += valueLen;
-        headers[name] = value;
-      } else {
-        break;
-      }
-    }
-
-    // Parse payload
-    const payloadStart = 12 + headersLength;
-    const payloadEnd = data.length - 4; // Exclude message CRC
-
-    let payload = null;
-    if (payloadEnd > payloadStart) {
-      const payloadStr = new TextDecoder().decode(data.slice(payloadStart, payloadEnd));
-
-      // Skip empty or whitespace-only payloads
-      if (!payloadStr || !payloadStr.trim()) {
-        return { headers, payload: null };
-      }
-
-      try {
-        payload = JSON.parse(payloadStr);
-      } catch (parseError) {
-        // Log parse error for debugging
-        console.warn(`[Kiro] Failed to parse payload: ${parseError.message} | payload: ${payloadStr.substring(0, 100)}`);
-        payload = { raw: payloadStr };
-      }
-    }
-
-    return { headers, payload };
-  } catch {
-    return null;
   }
 }
 

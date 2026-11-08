@@ -1,25 +1,13 @@
 import { describe, it, expect } from "vitest";
 
 import { KiroExecutor } from "../../open-sse/executors/kiro.js";
+import { encodeEventFrame } from "../../open-sse/utils/awsEventStream.js";
 
-// Build one AWS EventStream frame. CRCs are ignored by parseEventFrame.
+// Build one AWS EventStream frame with valid prelude/message CRCs via the shared
+// encoder — kiro decodes with the same strict parser bedrock uses, so a frame
+// with bogus CRCs would be dropped rather than best-effort parsed.
 function eventFrame(headers, payloadObj) {
-  const headerBytes = [];
-  for (const [name, value] of Object.entries(headers)) {
-    const n = new TextEncoder().encode(name);
-    const v = new TextEncoder().encode(value);
-    headerBytes.push(n.length, ...n, 7, (v.length >> 8) & 0xff, v.length & 0xff, ...v);
-  }
-  const payload = new TextEncoder().encode(JSON.stringify(payloadObj));
-  const headersLength = headerBytes.length;
-  const totalLength = 12 + headersLength + payload.length + 4;
-  const out = new Uint8Array(totalLength);
-  const view = new DataView(out.buffer);
-  view.setUint32(0, totalLength, false);
-  view.setUint32(4, headersLength, false);
-  out.set(headerBytes, 12);
-  out.set(payload, 12 + headersLength);
-  return out;
+  return encodeEventFrame(headers, payloadObj);
 }
 
 function sseResponse(frames) {

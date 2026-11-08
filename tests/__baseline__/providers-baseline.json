@@ -76,6 +76,24 @@
     "headers": {},
     "format": "openai"
   },
+  "bedrock-xai": {
+    "baseUrl": "https://bedrock-runtime.{region}.amazonaws.com",
+    "auth": {
+      "header": "aws-sigv4",
+      "scheme": "raw"
+    },
+    "format": "openai",
+    "identity": "openai-node"
+  },
+  "bedrock": {
+    "baseUrl": "https://bedrock-runtime.{region}.amazonaws.com",
+    "format": "claude",
+    "auth": {
+      "header": "aws-sigv4",
+      "scheme": "raw"
+    },
+    "identity": "claude-cli"
+  },
   "blackbox": {
     "identity": "openai-node",
     "baseUrl": "https://api.blackbox.ai/v1/chat/completions",
