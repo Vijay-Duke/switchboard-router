@@ -45,19 +45,23 @@ const SECRET_TOOL_SEARCH_OUTPUT = [
 
 let tempRoot;
 const savedEnv = {};
+const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
 
 beforeEach(() => {
+  Object.defineProperty(process, "platform", { ...originalPlatform, value: "linux" });
   execCalls.length = 0;
   mockCli.responses = {};
   tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "zed-creds-"));
   savedEnv.XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME;
   savedEnv.XDG_DATA_HOME = process.env.XDG_DATA_HOME;
+  savedEnv.LOCALAPPDATA = process.env.LOCALAPPDATA;
   process.env.XDG_CONFIG_HOME = path.join(tempRoot, "config");
   process.env.XDG_DATA_HOME = path.join(tempRoot, "data");
   fs.mkdirSync(path.join(tempRoot, "config", "zed"), { recursive: true });
 });
 
 afterEach(() => {
+  Object.defineProperty(process, "platform", originalPlatform);
   fs.rmSync(tempRoot, { recursive: true, force: true });
   for (const [key, value] of Object.entries(savedEnv)) {
     if (value === undefined) delete process.env[key];
@@ -66,6 +70,10 @@ afterEach(() => {
 });
 
 describe("resolveZedCredentialsUrl", () => {
+  it("reads Zed's commented settings with trailing commas", async () => {
+    fs.writeFileSync(path.join(tempRoot, "config", "zed", "settings.json"), '{ // custom server\n "credentials_url": "https://zed.example/",\n}');
+    expect(await resolveZedCredentialsUrl()).toBe("https://zed.example");
+  });
   it("defaults to https://zed.dev when no settings.json exists", async () => {
     expect(await resolveZedCredentialsUrl()).toBe(ZED_DEFAULT_CREDENTIALS_URL);
   });
@@ -85,6 +93,19 @@ describe("resolveZedCredentialsUrl", () => {
     );
     expect(await resolveZedCredentialsUrl()).toBe("https://zed.stg.dev");
   });
+});
+
+it("keeps Windows credential targets literal when settings contain PowerShell syntax", async () => {
+  Object.defineProperty(process, "platform", { ...originalPlatform, value: "win32" });
+  process.env.LOCALAPPDATA = path.join(tempRoot, "local");
+  fs.mkdirSync(path.join(process.env.LOCALAPPDATA, "Zed"), { recursive: true });
+  const target = "https://zed.example/$(Write-Output 'expanded')";
+  fs.writeFileSync(path.join(process.env.LOCALAPPDATA, "Zed", "settings.json"), JSON.stringify({ credentials_url: target }));
+  mockCli.responses["powershell.exe"] = done => done(null, { stdout: "user-id\ncredential-token\n" });
+  const result = await readZedIdeCredentials();
+  expect(result.found).toBe(true);
+  const command = execCalls.find(call => call[0] === "powershell.exe").at(-1);
+  expect(command).toContain("[ZedCred]::Read('zed:url=https://zed.example/$(Write-Output ''expanded'')')");
 });
 
 describe("getZedGlobalDbPaths", () => {

@@ -10,6 +10,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { createRequire } from "module";
+import { parse as parseJSONC } from "jsonc-parser";
 
 const execFileAsync = promisify(execFile);
 const nodeRequire = createRequire(import.meta.url);
@@ -27,7 +28,7 @@ export async function resolveZedCredentialsUrl() {
     try {
       await access(settingsPath, constants.R_OK);
       const raw = await readFile(settingsPath, "utf8");
-      const settings = JSON.parse(raw);
+      const settings = parseJSONC(raw);
       const url =
         (typeof settings?.credentials_url === "string" && settings.credentials_url) ||
         (typeof settings?.server_url === "string" && settings.server_url) ||
@@ -277,6 +278,9 @@ function unescapeSecurityPassword(value) {
 async function readWindowsCredentials(credentialsUrl) {
   // Zed target name: zed:url=https://zed.dev
   const target = `zed:url=${credentialsUrl}`;
+  // PowerShell double-quoted strings expand $(), $, and backticks. A JSON
+  // string is not a PowerShell literal; keep the settings value inert.
+  const targetLiteral = `'${target.replace(/'/g, "''")}'`;
   const script = `
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @"
@@ -311,7 +315,7 @@ public class ZedCred {
   }
 }
 "@
-$r = [ZedCred]::Read(${JSON.stringify(target)})
+$r = [ZedCred]::Read(${targetLiteral})
 if ($null -eq $r) { exit 2 }
 Write-Output $r
 `.trim();
