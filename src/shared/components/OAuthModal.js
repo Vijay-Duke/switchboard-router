@@ -162,7 +162,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       setError(null);
 
       // Device code flow providers
-      const deviceCodeProviders = ["github", "qwen", "kiro", "kimi-coding", "kilocode", "codebuddy-cn", "qoder", "grok-cli", "muse", "nous"];
+      const deviceCodeProviders = ["github", "qwen", "kiro", "kimi-coding", "kilocode", "codebuddy-cn", "qoder", "grok-cli", "muse", "nous", "minimax-code", "minimax-code-global"];
       if (deviceCodeProviders.includes(provider)) {
         setIsDeviceCode(true);
         setStep("waiting");
@@ -208,9 +208,13 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
             }
           : provider === "kimi-coding"
           ? { _kimiDeviceId: data._kimiDeviceId }
+          : (provider === "minimax-code" || provider === "minimax-code-global")
+          ? { _minimaxPollByUser: data._minimaxPollByUser }
           : null;
         startPolling(
-          data.device_code,
+          // MiniMax's device-code variant returns no device_code: the token
+          // endpoint is polled with the user_code itself.
+          data.device_code || data.user_code,
           data.codeVerifier,
           data.interval || 5,
           extraData,

@@ -381,10 +381,13 @@ export async function POST(request, { params }) {
       } else if (provider === "kiro") {
         // Kiro needs extraData (clientId, clientSecret) from device code response
         result = await pollForToken(provider, deviceCode, null, extraData);
-      } else if (provider === "qoder") {
+      } else if (provider === "qoder" || provider === "minimax-code" || provider === "minimax-code-global") {
         // Qoder needs both the PKCE verifier (codeVerifier) and the machineId
         // captured at device-code time (extraData._qoderMachineId) so
-        // mapTokens can persist it for COSY signing.
+        // mapTokens can persist it for COSY signing. MiniMax Code threads
+        // extraData._minimaxPollByUser so the poll body switches between the
+        // device_code and user_code fields (its device-code variant returns
+        // no device_code — the user_code itself is polled).
         if (!codeVerifier) {
           return NextResponse.json({ error: "Missing code verifier" }, { status: 400 });
         }

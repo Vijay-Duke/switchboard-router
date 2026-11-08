@@ -718,6 +718,48 @@
       }
     ]
   },
+  "minimax-code-global": {
+    "baseUrl": "https://agent.minimax.io/mavis/api/v1/llm/v1/messages",
+    "format": "claude",
+    "thinkingFormat": "claude-adaptive",
+    "headers": {
+      "User-Agent": "MiniMaxAgent",
+      "X-Mavis-Agent-Id": "main"
+    },
+    "auth": {
+      "combined": true,
+      "header": "Authorization",
+      "scheme": "bearer",
+      "anthropicVersion": true,
+      "hooks": [
+        "minimaxHeaders"
+      ]
+    },
+    "identity": "claude-cli",
+    "clientId": "mcode-public",
+    "tokenUrl": "https://account.minimax.io/oauth2/token"
+  },
+  "minimax-code": {
+    "baseUrl": "https://agent.minimax.cn/mavis/api/v1/llm/v1/messages",
+    "format": "claude",
+    "thinkingFormat": "claude-adaptive",
+    "headers": {
+      "User-Agent": "MiniMaxAgent",
+      "X-Mavis-Agent-Id": "main"
+    },
+    "auth": {
+      "combined": true,
+      "header": "Authorization",
+      "scheme": "bearer",
+      "anthropicVersion": true,
+      "hooks": [
+        "minimaxHeaders"
+      ]
+    },
+    "identity": "claude-cli",
+    "clientId": "mcode-public",
+    "tokenUrl": "https://account.minimax.cn/oauth2/token"
+  },
   "minimax": {
     "identity": "claude-cli",
     "baseUrl": "https://api.minimax.io/anthropic/v1/messages",

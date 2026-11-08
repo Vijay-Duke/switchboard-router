@@ -15,6 +15,7 @@ import {
   refreshCodebuddyToken,
   refreshClineToken,
   refreshNousToken,
+  refreshMiniMaxCodeToken,
   classifyOAuthRefreshError,
 } from "./tokenRefresh/providers.js";
 
@@ -32,6 +33,7 @@ export {
   refreshCodebuddyToken,
   refreshClineToken,
   refreshNousToken,
+  refreshMiniMaxCodeToken,
   classifyOAuthRefreshError,
 };
 
@@ -163,6 +165,10 @@ const REFRESH_HANDLERS = {
   cline: (c, log, proxyOptions) => refreshClineToken(c.refreshToken, log, "cline", proxyOptions),
   clinepass: (c, log, proxyOptions) => refreshClineToken(c.refreshToken, log, "clinepass", proxyOptions),
   nous: (c, log) => refreshNousToken(c.refreshToken, log),
+  // MiniMax Code — single-use refresh tokens; the handler dedupes by token
+  // value and classifies invalid_grant, so a spent token is never re-sent
+  "minimax-code": (c, log) => refreshMiniMaxCodeToken("minimax-code", c.refreshToken, log),
+  "minimax-code-global": (c, log) => refreshMiniMaxCodeToken("minimax-code-global", c.refreshToken, log),
   muse: (c, log) => refreshMuseToken(c.providerSpecificData?.dcaToken || c.refreshToken, log),
   vertex: (c, log) => vertexRefreshHandler(c, log, "vertex"),
   "vertex-partner": (c, log) => vertexRefreshHandler(c, log, "vertex-partner"),

@@ -52,7 +52,7 @@ import {
   requestGrokCliDeviceCode,
 } from "./grokCli";
 
-export { extractCodexAccountInfo, fetchKiroProfileArn };
+export { extractCodexAccountInfo, fetchKiroProfileArn, createMinimaxCodeProvider, MINIMAX_CODE_SITES };
 
 // Inlined from services/xai.js to keep web route bundle free of `open` (CLI-only) package
 let cachedXaiDiscovery = null;
@@ -80,6 +80,151 @@ async function discoverXaiEndpoints() {
 }
 
 // Provider configurations
+// MiniMax Code (mcode) OAuth device flow — shared factory for the two site
+// providers (minimax-code = China, minimax-code-global = international).
+//
+// The flow is MiniMax Code's own sign-in (client mcode-public, PKCE S256),
+// but with our own tokens: ~/.minimax is never read or written, so a sign-in
+// here does not sign the CLI out and accounts can coexist. Wire shape per
+// @magpie-community/opencode-minimax-auth 0.1.1:
+//
+//   1) POST {account}/oauth2/device/code
+//        client_id, scope, audience, code_challenge, code_challenge_method=S256
+//        → user_code, verification_uri(_complete), device_code (sometimes
+//          absent — MiniMax's variant polls with the user_code instead),
+//          expiry as expired_in (ms epoch or seconds) or expires_in, interval
+//          (seconds on the standard shape, milliseconds on the user-code one)
+//   2) POST {account}/oauth2/token  (one POST per poll; the dashboard drives)
+//        grant_type=urn:ietf:params:oauth:grant-type:device_code,
+//        device_code|user_code, client_id, code_verifier
+//        → {status: pending|slow_down|denied|expired} on 200, or a standard
+//          OAuth {error} body; success carries access/refresh_token + expires_in
+const MINIMAX_CODE_DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+const MINIMAX_CODE_SIGN_IN_MS = 10 * 60 * 1000;
+
+const minimaxStr = (o, k) => (typeof o?.[k] === "string" && o[k].trim() ? o[k].trim() : undefined);
+const minimaxPos = (o, k) => (typeof o?.[k] === "number" && Number.isFinite(o[k]) && o[k] > 0 ? o[k] : undefined);
+
+async function minimaxPostForm(url, fields) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(fields).toString(),
+    signal: AbortSignal.timeout(30000),
+  });
+  let body;
+  try {
+    body = JSON.parse(await res.text());
+  } catch {}
+  if (!body || typeof body !== "object") body = { error: `invalid_json_response (HTTP ${res.status})` };
+  return { status: res.status, body };
+}
+
+// MiniMax states the device code's end in odd units: expired_in may be a ms
+// epoch or seconds; interval may be seconds (standard shape) or ms (user-code
+// shape). Normalize both to the units the dashboard expects.
+function minimaxNormalizeDeadline(body) {
+  const expiresIn = minimaxPos(body, "expires_in");
+  const expiredIn = minimaxPos(body, "expired_in");
+  if (expiresIn) return expiresIn;
+  if (!expiredIn) return undefined;
+  return expiredIn < 1e12 ? expiredIn : Math.max(1, Math.ceil((expiredIn - Date.now()) / 1000));
+}
+
+function minimaxNormalizeInterval(body, pollByUser) {
+  const interval = minimaxPos(body, "interval");
+  if (!interval) return 5;
+  if (!pollByUser) return interval; // standard shape: seconds
+  return interval >= 60 ? Math.round(interval / 1000) : interval; // user-code shape: ms
+}
+
+// Site table — the llm/agent hosts live in the registry transport; only the
+// OAuth hosts matter here.
+const MINIMAX_CODE_SITES = {
+  cn: { account: "https://account.minimax.cn" },
+  global: { account: "https://account.minimax.io" },
+};
+
+function createMinimaxCodeProvider(site) {
+  const pick = (b) => ({
+    userCode: minimaxStr(b, "user_code"),
+    deviceCode: minimaxStr(b, "device_code"),
+    uri: minimaxStr(b, "verification_uri_complete") ?? minimaxStr(b, "verification_uri") ?? minimaxStr(b, "verification_url"),
+  });
+
+  return {
+    config: {
+      clientId: "mcode-public",
+      scope: "agent.default",
+      audience: "agent-backend",
+      deviceUrl: `${site.account}/oauth2/device/code`,
+      tokenUrl: `${site.account}/oauth2/token`,
+    },
+    flowType: "device_code",
+
+    async requestDeviceCode(config, codeChallenge) {
+      if (!codeChallenge) throw new Error("MiniMax Code sign-in requires a PKCE code challenge");
+      const { status, body } = await minimaxPostForm(config.deviceUrl, {
+        client_id: config.clientId,
+        scope: config.scope,
+        audience: config.audience,
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256",
+      });
+      const { userCode, deviceCode, uri } = pick(body);
+      if (!userCode || !uri) {
+        throw new Error(`MiniMax device code response unusable (HTTP ${status})`);
+      }
+      // No device_code → MiniMax's variant: the token endpoint is polled with
+      // the user_code itself. Surface the user code as device_code (the modal
+      // threads one value through) plus a flag the poll body switches on.
+      const pollByUser = !deviceCode;
+      return {
+        device_code: deviceCode ?? userCode,
+        user_code: userCode,
+        verification_uri: uri,
+        expires_in: minimaxNormalizeDeadline(body) ?? Math.floor(MINIMAX_CODE_SIGN_IN_MS / 1000),
+        interval: minimaxNormalizeInterval(body, pollByUser),
+        _minimaxPollByUser: pollByUser,
+      };
+    },
+
+    async pollToken(config, deviceCode, codeVerifier, extraData) {
+      if (!deviceCode) return { ok: true, data: { error: "authorization_pending" } };
+      const fields = {
+        grant_type: MINIMAX_CODE_DEVICE_GRANT,
+        ...(extraData?._minimaxPollByUser ? { user_code: deviceCode } : { device_code: deviceCode }),
+        client_id: config.clientId,
+        code_verifier: codeVerifier,
+      };
+      const { body } = await minimaxPostForm(config.tokenUrl, fields);
+
+      // MiniMax's own envelope: {status: ...} on HTTP 200.
+      const status = minimaxStr(body, "status");
+      if (status === "pending") return { ok: true, data: { error: "authorization_pending" } };
+      if (status === "slow_down") return { ok: true, data: { error: "slow_down" } };
+      if (status === "denied" || status === "access_denied") return { ok: true, data: { error: "access_denied" } };
+      if (status === "expired" || status === "expired_token") return { ok: true, data: { error: "expired_token" } };
+      if (status) return { ok: true, data: { error: `unexpected_status:${status}` } };
+
+      // Standard OAuth error body on the same call.
+      if (minimaxStr(body, "error")) return { ok: true, data: { error: minimaxStr(body, "error"), error_description: minimaxStr(body, "error_description") } };
+
+      if (!minimaxStr(body, "access_token")) return { ok: true, data: { error: "no_access_token" } };
+      return { ok: true, data: body };
+    },
+
+    mapTokens(data) {
+      const expiresIn = minimaxPos(data, "expires_in");
+      return {
+        accessToken: minimaxStr(data, "access_token"),
+        refreshToken: minimaxStr(data, "refresh_token") ?? "",
+        expiresIn: expiresIn ?? 3600,
+      };
+    },
+  };
+}
+
 const PROVIDERS = {
   claude: {
     config: CLAUDE_CONFIG,
@@ -1715,6 +1860,9 @@ const PROVIDERS = {
       },
     }),
   },
+
+  "minimax-code": createMinimaxCodeProvider(MINIMAX_CODE_SITES.cn),
+  "minimax-code-global": createMinimaxCodeProvider(MINIMAX_CODE_SITES.global),
 };
 
 /**

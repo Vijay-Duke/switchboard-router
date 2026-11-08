@@ -11,6 +11,7 @@ import { getCodexUsage, consumeCodexRateLimitResetCredit, getCodexRateLimitReset
 export { consumeCodexRateLimitResetCredit, getCodexRateLimitResetCredits, consumeClaudeResetGrant };
 import { getKiroUsage } from "./usage/kiro.js";
 import { getMiniMaxUsage } from "./usage/minimax.js";
+import { getMiniMaxCodeUsage } from "./minimaxCodeUsage.js";
 import { getCodeBuddyCnUsage } from "./usage/codebuddy-cn.js";
 import { getKimiUsage } from "./usage/kimi.js";
 import { getDeepseekUsage } from "./usage/deepseek.js";
@@ -51,6 +52,9 @@ const USAGE_HANDLERS = {
   "glm-cn": (c) => getGlmUsage(c.apiKey, c.provider, c.proxyOptions),
   minimax: (c) => getMiniMaxUsage(c.apiKey, c.provider, c.proxyOptions),
   "minimax-cn": (c) => getMiniMaxUsage(c.apiKey, c.provider, c.proxyOptions),
+  // MiniMax Code (mcode) credits lane — signed account API + plan windows
+  "minimax-code": (c) => getMiniMaxCodeUsage(c),
+  "minimax-code-global": (c) => getMiniMaxCodeUsage(c),
   "vercel-ai-gateway": (c) => getVercelAiGatewayUsage(c.apiKey, c.proxyOptions),
   "codebuddy-cn": (c) => getCodeBuddyCnUsage(c.accessToken, c.apiKey, c.providerSpecificData, c.proxyOptions),
   kimi: (c) => getKimiUsage(c.accessToken, c.apiKey, c.proxyOptions, c.providerSpecificData),
