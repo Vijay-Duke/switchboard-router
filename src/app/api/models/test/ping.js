@@ -83,6 +83,38 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
     return { ok: true, latencyMs, error: null, status: res.status };
   }
 
+  if (kind === "systemone") {
+    const res = await fetch(`${baseUrl}/api/v1/systemone`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        state: "The service is temporarily unavailable and customers are complaining.",
+        questions: {
+          is_urgent: {
+            type: "noul",
+            instructions: "Does this situation require urgent attention?",
+          },
+        },
+      }),
+      signal,
+    });
+    const latencyMs = Date.now() - start;
+    const rawText = await res.text().catch(() => "");
+    let parsed = null;
+    try { parsed = rawText ? JSON.parse(rawText) : null; } catch {}
+
+    if (!res.ok) {
+      const detail = parsed?.error?.message || parsed?.error || parsed?.message || rawText;
+      return { ok: false, latencyMs, error: `HTTP ${res.status}${detail ? `: ${String(detail).slice(0, 240)}` : ""}`, status: res.status };
+    }
+    const hasAnswers = parsed?.answers && typeof parsed.answers === "object" && Object.keys(parsed.answers).length > 0;
+    if (!hasAnswers) {
+      return { ok: false, latencyMs, status: res.status, error: "Provider returned no decision answers" };
+    }
+    return { ok: true, latencyMs, error: null, status: res.status };
+  }
+
   if (kind === "image") {
     const res = await fetch(`${baseUrl}/api/v1/images/generations`, {
       method: "POST",

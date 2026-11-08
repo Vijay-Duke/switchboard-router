@@ -30,8 +30,16 @@ const moduleDefault = {
     { id: "qwen3.5", name: "Qwen3.5" },
     { id: "minimax-m3", name: "MiniMax M3" },
     { id: "deepseek-v4.1-flash:cloud", name: "DeepSeek V4.1 Flash" },
+    { id: "clef", name: "Clef", kind: "systemone" },
+    { id: "clef-flash", name: "Clef Flash", kind: "systemone" },
+    { id: "clef:cloud", name: "Clef (Cloud)", kind: "systemone" },
   ],
-  serviceKinds: ["llm"],
+  serviceKinds: ["llm", "systemone"],
+  systemoneConfig: {
+    baseUrl: "https://ollama.com/v1/systemone",
+    authType: "apikey",
+    authHeader: "bearer",
+  },
   features: {
     usage: true,
     usageApikey: true,

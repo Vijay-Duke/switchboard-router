@@ -50,6 +50,7 @@ import { applyRatingSideEffects } from "../routing/ratingSideEffects.js";
 import { resolveWorkerCaps } from "../routing/comboCaps.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
+import { resolveSmartChoice } from "../services/systemoneRouter.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
 import { getNativeClaudeCredentials } from "../services/claudePassThrough.js";
@@ -150,6 +151,27 @@ async function loadProviderPreference(strategy) {
     providerQuota,
     providerLatencyGuardMs: strategy.providerLatencyGuardMs,
   };
+}
+
+/**
+ * Session identity for the Smart Router's sticky sessions: prefer an explicit
+ * client-provided session header/body field; callers fall back to the
+ * conversation fingerprint (first user text + key hash), which keeps stickiness
+ * stable across multi-turn conversations on the same key.
+ */
+function resolveSmartSessionId({ headers, body } = {}) {
+  const header = (k) => {
+    try { return headers?.get?.(k) || null; } catch { return null; }
+  };
+  const explicit =
+    header("x-session-id") ||
+    header("x-opencode-session-id") ||
+    header("anthropic-session-id") ||
+    (body?.metadata && typeof body.metadata === "object" ? (body.metadata.session_id || body.metadata.user_id) : null) ||
+    body?.session_id ||
+    null;
+  if (explicit && typeof explicit === "string") return explicit;
+  return null;
 }
 
 function cannedThanksResponse(stream, modelStr) {
@@ -468,6 +490,20 @@ export async function handleChat(request, clientRawRequest = null) {
       ? await loadProviderPreference(ps)
       : null;
     log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit}, capacitySwitch: ${capacityAutoSwitch})`);
+    // Smart Router: session identity for sticky routing (explicit header/body
+    // session id, else the conversation fingerprint on this key).
+    let smartSessionId = null;
+    if (comboStrategy === "smart") {
+      try {
+        smartSessionId = resolveSmartSessionId({ headers: request?.headers, body });
+        if (!smartSessionId) {
+          const apiKeyHash = hashKey(clientKeyId || "local-no-key");
+          smartSessionId = conversationFingerprint(conversationInfo(body.messages).firstUserText, apiKeyHash);
+        }
+      } catch {
+        smartSessionId = null;
+      }
+    }
     return handleComboChat({
       body,
       models: augmentedModels,
@@ -482,6 +518,13 @@ export async function handleChat(request, clientRawRequest = null) {
       comboStickyLimit,
       autoSwitch: capacityAutoSwitch,
       ...(providerPreference || {}),
+      ...(comboStrategy === "smart" ? {
+        sessionId: smartSessionId,
+        smartPolicy: ps.smartPolicy || "smart",
+        sessionSticky: ps.sessionSticky !== false,
+        confidenceThreshold: typeof ps.confidenceThreshold === "number" ? ps.confidenceThreshold : 0.8,
+        resolveSmartChoice,
+      } : {}),
       abortSignal: request?.signal || null,
       childComboDepth: 1,
     });
@@ -757,6 +800,20 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         ? await loadProviderPreference(ps)
         : null;
       log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit}, capacitySwitch: ${capacityAutoSwitch})`);
+      // Smart Router: session identity for sticky routing (explicit header/body
+      // session id, else the conversation fingerprint on this key).
+      let nestedSmartSessionId = null;
+      if (comboStrategy === "smart") {
+        try {
+          nestedSmartSessionId = resolveSmartSessionId({ headers: request?.headers, body });
+          if (!nestedSmartSessionId) {
+            const apiKeyHash = hashKey(clientKeyId || "local-no-key");
+            nestedSmartSessionId = conversationFingerprint(conversationInfo(body.messages).firstUserText, apiKeyHash);
+          }
+        } catch {
+          nestedSmartSessionId = null;
+        }
+      }
       return handleComboChat({
         body,
         models: augmentedModels,
@@ -771,6 +828,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         comboStickyLimit,
         autoSwitch: capacityAutoSwitch,
         ...(providerPreference || {}),
+        ...(comboStrategy === "smart" ? {
+          sessionId: nestedSmartSessionId,
+          smartPolicy: ps.smartPolicy || "smart",
+          sessionSticky: ps.sessionSticky !== false,
+          confidenceThreshold: typeof ps.confidenceThreshold === "number" ? ps.confidenceThreshold : 0.8,
+          resolveSmartChoice,
+        } : {}),
         abortSignal: abortSignal || null,
         childComboDepth: comboDepth + 1,
         autoDepth,

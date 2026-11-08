@@ -170,6 +170,12 @@ const KIND_ENDPOINT_META = {
     desc: "OpenAI-compatible vector embeddings endpoint",
     payloadExample: '{ "model": "...", "input": "..." }',
   },
+  systemone: {
+    method: "POST",
+    path: "/v1/systemone",
+    desc: "System One decision evaluation endpoint (state + questions → answers)",
+    payloadExample: '{ "model": "...", "state": "...", "questions": { ... } }',
+  },
 };
 
 export default function MediaProviderKindPage() {
