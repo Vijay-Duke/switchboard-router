@@ -223,7 +223,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   // Persistence must be read before sync translation; a write-only cache loses
   // signatures after restart. Partition by client, account and conversation.
-  if ([FORMATS.GEMINI, FORMATS.GEMINI_CLI, FORMATS.ANTIGRAVITY, FORMATS.VERTEX].includes(targetFormat) && credentials) {
+  if ((provider === "zed" || [FORMATS.GEMINI, FORMATS.GEMINI_CLI, FORMATS.ANTIGRAVITY, FORMATS.VERTEX].includes(targetFormat)) && credentials) {
     credentials._thoughtSignatureSessionId = JSON.stringify([clientKeyId || "local", connectionId || credentials.connectionId || null, captureClientSessionId(body, credentials)]);
     await hydrateGeminiThoughtSignatures(body, credentials._thoughtSignatureSessionId, upstreamModel);
   }

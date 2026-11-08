@@ -25,6 +25,9 @@ const SPECIALIZED = new Set([
   // SigV4 per-request signing in a dedicated executor; no static auth spec for
   // the default executor's buildHeaders to apply.
   "bedrock", "bedrock-xai",
+  // Zed's executor overrides execute() entirely (thread envelope + short-lived
+  // LLM bearer token); the default executor's auth header never ships.
+  "zed",
 ]);
 
 // Sanitize dynamic credentials, timestamps, host details, and live identity versions

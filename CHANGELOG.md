@@ -2,6 +2,7 @@
 
 ## Features
 - Complete the remaining in-scope upstream ports: Smart Router/System One, per-key model/combo policies and token quotas, scheduled auto-ping, Cline/Airforce free-model discovery, and provider custom headers.
+- Add Zed hosted models with native browser login, guarded IDE import, live catalog and plan quotas.
 - Add GLM OAuth, OpenCode Zen PAYG, Bedrock Anthropic/xAI with static and AWS profile/SSO credentials, MiniMax Code global/CN OAuth and desktop leases, and Nous OAuth/API-key connections.
 - Add Qoder CN and queue/context/billing support, Antigravity Sonnet/Opus 5.5 tiers with effort-based selection, Ollama local TTS and cloud fetch/search, GLM search, Codex OAuth transcription, and Gemini Live transcription.
 - Add Hermes profiles, role models and audio settings; standalone CLI `connect` mints a fresh key and applies tool configuration locally, while offline `show` redacts secrets.

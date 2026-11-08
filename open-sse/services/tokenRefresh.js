@@ -16,6 +16,7 @@ import {
   refreshClineToken,
   refreshNousToken,
   refreshMiniMaxCodeToken,
+  refreshZedToken,
   classifyOAuthRefreshError,
 } from "./tokenRefresh/providers.js";
 
@@ -34,6 +35,7 @@ export {
   refreshClineToken,
   refreshNousToken,
   refreshMiniMaxCodeToken,
+  refreshZedToken,
   classifyOAuthRefreshError,
 };
 
@@ -169,6 +171,9 @@ const REFRESH_HANDLERS = {
   // value and classifies invalid_grant, so a spent token is never re-sent
   "minimax-code": (c, log) => refreshMiniMaxCodeToken("minimax-code", c.refreshToken, log),
   "minimax-code-global": (c, log) => refreshMiniMaxCodeToken("minimax-code-global", c.refreshToken, log),
+  // Zed uses a long-lived RSA-decrypted access_token — there is no refresh
+  // grant to run, so the handler intentionally reports "nothing to do".
+  zed: () => refreshZedToken(),
   muse: (c, log) => refreshMuseToken(c.providerSpecificData?.dcaToken || c.refreshToken, log),
   vertex: (c, log) => vertexRefreshHandler(c, log, "vertex"),
   "vertex-partner": (c, log) => vertexRefreshHandler(c, log, "vertex-partner"),

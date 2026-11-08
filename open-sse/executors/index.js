@@ -24,6 +24,7 @@ import { MimoFreeExecutor } from "./mimo-free.js";
 import { CodeBuddyExecutor } from "./codebuddy-cn.js";
 import { DefaultExecutor } from "./default.js";
 import { GrokCliExecutor } from "./grok-cli.js";
+import ZedExecutor from "./zed.js";
 
 const executors = {
   antigravity: new AntigravityExecutor(),
@@ -62,6 +63,8 @@ const executors = {
   mmf: new MimoFreeExecutor(), // Alias for mimo-free
   "codebuddy-cn": new CodeBuddyExecutor(),
   "grok-cli": new GrokCliExecutor(),
+  zed: new ZedExecutor(),
+  zd: new ZedExecutor(), // Alias for zed
 };
 
 const defaultCache = new Map();
@@ -99,3 +102,4 @@ export { XiaomiTokenplanExecutor } from "./xiaomi-tokenplan.js";
 export { MimoFreeExecutor } from "./mimo-free.js";
 export { CodeBuddyExecutor } from "./codebuddy-cn.js";
 export { GrokCliExecutor } from "./grok-cli.js";
+export { default as ZedExecutor } from "./zed.js";

@@ -29,6 +29,8 @@ tool payload normalization, thinking metadata, and terminal-event output recover
 - Auto-ping schedules at fixed local times.
 - Smart Router/System One decisions, sticky sessions, adaptive hysteresis,
   confidence thresholds, fail-open behavior and dashboard policy configuration.
+- Zed hosted models with native RSA browser sign-in, guarded local IDE import,
+  live model discovery, plan quota display and multi-format inference.
 - Z.ai OAuth alongside GLM API-key authentication, OpenCode Zen PAYG, AWS Bedrock
   Anthropic/xAI with static or local AWS profile/SSO credentials, MiniMax Code
   global/CN OAuth and desktop leases, and Nous OAuth/API-key connections.

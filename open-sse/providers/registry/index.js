@@ -112,6 +112,7 @@ import p109 from "./xiaomi-mimo.js";
 import p110 from "./xiaomi-tokenplan.js";
 import p111 from "./xquik.js";
 import p112 from "./youcom.js";
+import p113 from "./zed.js";
 
 const providerRegistry = [
   p0,
@@ -226,7 +227,8 @@ const providerRegistry = [
   p109,
   p110,
   p111,
-  p112
+  p112,
+  p113
 ];
 
 export default providerRegistry;

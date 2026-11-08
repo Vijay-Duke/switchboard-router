@@ -15,6 +15,7 @@ import { getMiniMaxCodeUsage } from "./minimaxCodeUsage.js";
 import { getCodeBuddyCnUsage } from "./usage/codebuddy-cn.js";
 import { getKimiUsage } from "./usage/kimi.js";
 import { getDeepseekUsage } from "./usage/deepseek.js";
+import { getZedUsage } from "./usage/zed.js";
 import { getGrokCliUsage } from "./usage/grok-cli.js";
 import { getMuseUsage } from "./usage/muse.js";
 import { getOpenCodeGoUsage } from "./usage/opencode-go.js";
@@ -65,6 +66,7 @@ const USAGE_HANDLERS = {
   "opencode-go": (c) => getOpenCodeGoUsage(c.apiKey, c.proxyOptions),
   "opencode-zen": (c) => getOpenCodeZenUsage(c.apiKey, c.proxyOptions),
   deepseek: (c) => getDeepseekUsage(c.apiKey, c.proxyOptions),
+  zed: (c) => getZedUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   "grok-cli": (c) => getGrokCliUsage(c.accessToken, c.providerSpecificData, c.proxyOptions),
   // Muse quota auth is the DCA device token, not the minted inference key.
   muse: (c) => getMuseUsage(c.providerSpecificData?.dcaToken || c.refreshToken, c.providerSpecificData, c.proxyOptions),

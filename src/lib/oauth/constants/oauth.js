@@ -134,6 +134,17 @@ export const NOUS_CONFIG = {
   inferenceBaseUrl: NOUS_INFERENCE_BASE_URL,
 };
 
+// Zed hosted LLM cloud — RSA keypair native-app flow (NOT OAuth): the app
+// generates a keypair, zed.dev/native_app_signin binds it to a local callback
+// port, and the browser redirect carries the RSA-encrypted access token.
+export const ZED_HOSTED_CONFIG = {
+  webBaseUrl: "https://zed.dev",
+  cloudBaseUrl: "https://cloud.zed.dev",
+  llmBaseUrl: "https://cloud.zed.dev",
+  defaultNativeAppPort: 58443,
+  oauthTimeoutMs: 600_000,
+};
+
 // OAuth timeout (5 minutes)
 export const OAUTH_TIMEOUT = 300000;
 
@@ -161,4 +172,5 @@ export const PROVIDERS = {
   MUSE: "muse",
   GLM: "glm",
   NOUS: "nous",
+  ZED: "zed",
 };

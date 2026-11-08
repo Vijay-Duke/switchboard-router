@@ -20,9 +20,15 @@ import {
   registerXaiSession,
   getXaiSessionStatus,
   clearXaiSession,
+  startZedProxy,
+  stopZedProxy,
+  registerZedSession,
+  getZedSessionStatus,
+  clearZedSession,
   getOAuthState,
   clearOAuthState,
 } from "@/lib/oauth/utils/server";
+import { ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
 import { PROVIDER_OAUTH } from "open-sse/providers/index.js";
 
 /**
@@ -118,13 +124,26 @@ export async function GET(request, { params }) {
       const reservedParams = new Set(["redirect_uri"]);
       const meta = {};
       searchParams.forEach((value, key) => { if (!reservedParams.has(key)) meta[key] = value; });
+      // Zed: derive native_app_port from the local callback URL so the RSA keypair
+      // is bound to the port the proxy is actually listening on.
+      if (provider === "zed") {
+        try { const p = new URL(redirectUri).port; if (p) meta.nativeAppPort = p; } catch { /* ignore */ }
+      }
       const authData = await generateAuthData(provider, redirectUri, Object.keys(meta).length ? meta : undefined);
       return NextResponse.json(authData);
     }
 
     if (action === "start-proxy") {
+      // Zed uses a dynamic-port local callback server (singleton session,
+      // state is registered separately via /register-session after /authorize).
+      if (provider === "zed") {
+        // Prefer ZED_HOSTED_CONFIG.defaultNativeAppPort (58443) so the browser redirect
+        // matches what Zed expects; falls back to a random port if it's busy.
+        const result = await startZedProxy(searchParams.get("native_app_port") || ZED_HOSTED_CONFIG.defaultNativeAppPort);
+        return NextResponse.json(result);
+      }
       if (!["codex", "xai"].includes(provider)) {
-        return NextResponse.json({ error: "Proxy only supported for codex/xai" }, { status: 400 });
+        return NextResponse.json({ error: "Proxy only supported for codex/xai/zed" }, { status: 400 });
       }
       const appPort = searchParams.get("app_port");
       if (!appPort) {
@@ -146,18 +165,22 @@ export async function GET(request, { params }) {
     }
 
     if (action === "poll-status") {
-      if (!["codex", "xai"].includes(provider)) {
-        return NextResponse.json({ error: "Poll only supported for codex/xai" }, { status: 400 });
+      if (!["codex", "xai", "zed"].includes(provider)) {
+        return NextResponse.json({ error: "Poll only supported for codex/xai/zed" }, { status: 400 });
       }
       const state = searchParams.get("state");
       if (!state) {
         return NextResponse.json({ error: "Missing state" }, { status: 400 });
       }
-      const session = provider === "xai" ? getXaiSessionStatus(state) : getCodexSessionStatus(state);
+      let session;
+      if (provider === "zed") session = getZedSessionStatus(state);
+      else session = provider === "xai" ? getXaiSessionStatus(state) : getCodexSessionStatus(state);
       if (!session) return NextResponse.json({ status: "unknown" });
       if (session.status === "done" || session.status === "error") {
         const payload = { ...session };
-        if (provider === "xai") clearXaiSession(state);
+        delete payload.codeVerifier;
+        if (provider === "zed") clearZedSession(state);
+        else if (provider === "xai") clearXaiSession(state);
         else clearCodexSession(state);
         return NextResponse.json(payload);
       }
@@ -165,10 +188,11 @@ export async function GET(request, { params }) {
     }
 
     if (action === "stop-proxy") {
-      if (!["codex", "xai"].includes(provider)) {
-        return NextResponse.json({ error: "Proxy only supported for codex/xai" }, { status: 400 });
+      if (!["codex", "xai", "zed"].includes(provider)) {
+        return NextResponse.json({ error: "Proxy only supported for codex/xai/zed" }, { status: 400 });
       }
-      if (provider === "xai") stopXaiProxy();
+      if (provider === "zed") stopZedProxy();
+      else if (provider === "xai") stopXaiProxy();
       else stopCodexProxy();
       return NextResponse.json({ success: true });
     }
@@ -219,6 +243,17 @@ export async function GET(request, { params }) {
       }
     }
 
+    if (action === "auto-import") {
+      // Zed IDE keyring/keychain session detection (loopback-guarded in the
+      // dashboard guard — it returns the IDE's access token to the caller).
+      if (provider !== "zed") {
+        return NextResponse.json({ error: "auto-import only supported for zed" }, { status: 400 });
+      }
+      const { readZedIdeCredentials } = await import("@/lib/oauth/zedCredentials");
+      const result = await readZedIdeCredentials();
+      return NextResponse.json(result);
+    }
+
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (error) {
     console.log("OAuth GET error:", error);
@@ -236,6 +271,70 @@ export async function POST(request, { params }) {
       body = await request.json();
     } catch {
       return NextResponse.json({ error: "Invalid or empty request body" }, { status: 400 });
+    }
+
+    if (action === "register-session") {
+      // Register proxy session out of URL query (state) + body (codeVerifier).
+      // Zed's codeVerifier encodes the RSA private key — must stay out of URL/logs.
+      const { searchParams: registerParams } = new URL(request.url);
+      const state = registerParams.get("state") || body?.state;
+      if (!state) return NextResponse.json({ error: "Missing state" }, { status: 400 });
+      let ok = false;
+      if (provider === "zed") ok = registerZedSession({ state, codeVerifier: body?.codeVerifier, systemId: body?.systemId });
+      else return NextResponse.json({ error: "register-session only supported for zed" }, { status: 400 });
+      return NextResponse.json({ success: ok });
+    }
+
+    if (action === "import") {
+      // Zed IDE auto-import: create a connection from the keyring-read session
+      // (accessToken + userId pair) after verifying it against cloud.zed.dev.
+      if (provider !== "zed") {
+        return NextResponse.json({ error: "import only supported for zed" }, { status: 400 });
+      }
+      const accessToken = typeof body?.accessToken === "string" ? body.accessToken.trim() : "";
+      const userId = typeof body?.userId === "string" ? body.userId.trim() : "";
+      if (!accessToken || !userId) {
+        return NextResponse.json({ error: "accessToken and userId are required" }, { status: 400 });
+      }
+      const systemId = typeof body?.systemId === "string" && body.systemId.trim() ? body.systemId.trim() : null;
+
+      const { fetchZedAuthenticatedUser, resolveZedOrganizationId } = await import("open-sse/shared/zedAuth.js");
+      const credentials = {
+        accessToken,
+        providerSpecificData: {
+          ...(userId ? { userId } : {}),
+          ...(systemId ? { systemId } : {}),
+        },
+      };
+      let userInfo = null;
+      try {
+        userInfo = await fetchZedAuthenticatedUser(credentials, { config: ZED_HOSTED_CONFIG });
+      } catch (error) {
+        return NextResponse.json(
+          { error: `Zed session is not valid: ${error.message}` },
+          { status: 400 },
+        );
+      }
+      const organizationId = resolveZedOrganizationId(credentials, userInfo);
+
+      const connection = await createProviderConnection({
+        provider,
+        authType: "oauth",
+        accessToken,
+        email: userInfo?.email || null,
+        name: userInfo?.name || userInfo?.display_name || null,
+        providerSpecificData: {
+          authMethod: "oauth",
+          ...(userId ? { userId } : {}),
+          ...(systemId ? { systemId } : {}),
+          organizationId: organizationId || "",
+        },
+        testStatus: "active",
+      });
+      return NextResponse.json({
+        success: true,
+        connection: { id: connection.id, provider: connection.provider, email: connection.email },
+      });
     }
 
     if (action === "lease-connect") {
@@ -275,7 +374,7 @@ export async function POST(request, { params }) {
     }
 
     if (action === "exchange") {
-      const { code, redirectUri, codeVerifier, state, meta } = body;
+      const { code, redirectUri, codeVerifier, state, meta, systemId } = body;
 
       // Cline and ClinePass use authorization_code without PKCE. Kimchi returns a browser token.
       // None of them carry our `state` through the upstream, so there is no
@@ -391,8 +490,13 @@ export async function POST(request, { params }) {
         return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
       }
 
-      // Exchange code for tokens (meta carries provider-specific params, e.g. gitlab clientId/baseUrl)
-      const tokenData = await exchangeTokens(provider, code, effectiveRedirectUri, effectiveVerifier, state, meta);
+      // Exchange code for tokens (meta carries provider-specific params, e.g. gitlab clientId/baseUrl).
+      // systemId (Zed) is merged into meta so the login attempt's own id is
+      // used instead of a freshly prepared one. Ignored by other providers.
+      const exchangeMeta = (meta || systemId)
+        ? { ...(meta || {}), ...(systemId ? { systemId } : {}) }
+        : undefined;
+      const tokenData = await exchangeTokens(provider, code, effectiveRedirectUri, effectiveVerifier, state, exchangeMeta);
 
       // Save to database
       const connection = await createProviderConnection({
