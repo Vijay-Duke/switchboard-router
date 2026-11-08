@@ -1,3 +1,20 @@
+# v0.9.68 (2026-11-08)
+
+## Features
+- Port upstream 9router changes through v0.5.112: updated model catalogs, quota tracking, Codex profiles, provider status filters, combo/model search, video generation, ElevenLabs speech-to-text, Xquik and Antigravity search, and Ollama Local embeddings.
+- OpenCode Free now uses `/inference/v1`, canonical sessions and the current client fingerprint. Its optional `wreq-js` TLS runtime installs on first use, with native fetch fallback if unavailable; configured proxies retain priority.
+- OpenCode Free and Go support Muse Spark's Responses transport, strict tool payloads and model-specific routing. OpenCode Go Haiku 5.5 uses the Messages transport and adaptive thinking.
+
+## Fixes
+- Harden IPv6 SSRF checks, authenticate remote Responses requests, validate strict proxies and sanitize database writes.
+- Surface in-stream errors, preserve Responses output and usage, and retain arguments emitted only at tool-call completion.
+- Combos try the next model after request-scoped 4xx errors or exhausted credits; return the first request error when no model succeeds. Exhausted rate-limited accounts return 503. Search failures no longer disable chat credentials.
+- Keep reasoning capabilities scoped to the provider; preserve opaque redacted Claude history while removing empty thinking blocks.
+- Preserve Switchboard's secret-storage, proxy and CORS behavior when adapting upstream changes.
+
+## Scope
+- Approximately 200 upstream fixes/features plus the OpenCode follow-up are included. Per-key restrictions/quotas, Smart Router/System One, Bedrock, Zed, scheduled auto-ping and other large subsystems remain deferred; see `docs/UPSTREAM_PORT_2026_11.md`.
+
 # v0.9.67 (2026-11-08)
 
 ## Fixes
