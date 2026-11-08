@@ -166,6 +166,21 @@ describe("OAuth services fetch identity", () => {
     );
   });
 
+  it("routes Qoder CN device login and polling through its CN identity", async () => {
+    const device = await requestDeviceCode("qoder-cn");
+    expect(new URL(device.verification_uri_complete).hostname).toBe("qoder.com.cn");
+    proxyAwareFetch
+      .mockResolvedValueOnce(jsonResponse({ token: "dt-cn", user_id: "cn-user", expires_in: 3600 }))
+      .mockResolvedValueOnce(jsonResponse({ name: "CN user", email: "cn@example.com" }));
+    const result = await pollForToken("qoder-cn", device.device_code, device.codeVerifier, device);
+    expect(result.success).toBe(true);
+    expect(result.tokens.accessToken).toBe("dt-cn");
+    for (const [url, init] of proxyAwareFetch.mock.calls) {
+      expect(new URL(url).hostname).toBe("openapi.qoder.com.cn");
+      expect(init).toMatchObject({ identity: "openai-node", provider: "qoder-cn", format: "openai" });
+    }
+  });
+
   it("uses Kiro identity for profile discovery and preserves AWS target headers", async () => {
     proxyAwareFetch.mockResolvedValueOnce(jsonResponse({
       profiles: [{ arn: "arn:aws:codewhisperer:us-east-1:123456789012:profile/PROFILE" }],

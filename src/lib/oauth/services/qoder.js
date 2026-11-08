@@ -6,6 +6,7 @@ import {
 import crypto from "crypto";
 import { v4 as uuidv4 } from "uuid";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
+import { getOAuthFetchProfile } from "../providerHelpers.js";
 
 /**
  * Qoder OAuth Service
@@ -73,7 +74,9 @@ export class QoderService {
    */
   constructor(config = {}, fetchProfile = null) {
     this.config = config;
-    this.fetchProfile = fetchProfile;
+    this.fetchProfile = fetchProfile || getOAuthFetchProfile(
+      new URL(this.deviceTokenUrl()).hostname === "openapi.qoder.com.cn" ? "qoder-cn" : "qoder"
+    );
   }
 
   loginUrl() {
