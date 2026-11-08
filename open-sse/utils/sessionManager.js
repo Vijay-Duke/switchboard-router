@@ -221,6 +221,12 @@ export function resolveSessionId({ headers, body, connectionId, workspaceId, sco
 }
 
 // Capture session id from request body + credentials (envelope still intact here)
+// Signature persistence cannot use process-generated or assistant-text affinity:
+// both can change between emitting a tool call and replaying it after restart.
+export function captureClientSessionId(body, credentials) {
+    return extractClientSessionId(credentials?.rawHeaders, body);
+}
+
 export function captureSessionId(body, credentials, connectionId, scope = "") {
     return resolveSessionId({ headers: credentials?.rawHeaders, body, connectionId, scope });
 }

@@ -1,4 +1,6 @@
 import { detectFormat, getTargetFormat, resolveTransport } from "../services/provider.js";
+import { captureClientSessionId } from "../utils/sessionManager.js";
+import { hydrateGeminiThoughtSignatures } from "../services/thoughtSignatureStore.js";
 import { translateRequest } from "../translator/index.js";
 import { stripThinkingSuffix } from "../translator/concerns/thinkingUnified.js";
 import { FORMATS } from "../translator/formats.js";
@@ -219,6 +221,12 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     log?.debug?.("TOOLCLEAN", `pre-translation: stripped ${preStripped} orphaned tool result(s)`);
   }
 
+  // Persistence must be read before sync translation; a write-only cache loses
+  // signatures after restart. Partition by client, account and conversation.
+  if ([FORMATS.GEMINI, FORMATS.GEMINI_CLI, FORMATS.ANTIGRAVITY, FORMATS.VERTEX].includes(targetFormat) && credentials) {
+    credentials._thoughtSignatureSessionId = JSON.stringify([clientKeyId || "local", connectionId || credentials.connectionId || null, captureClientSessionId(body, credentials)]);
+    await hydrateGeminiThoughtSignatures(body, credentials._thoughtSignatureSessionId, upstreamModel);
+  }
   let translatedBody;
   let toolNameMap;
   if (passthrough) {
@@ -680,7 +688,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // One identity per completed request. Handlers pass it to saveUsageStats so a
   // replayed save is idempotent instead of double-counting usage.
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-  const sharedCtx = { provider, model, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, clientRawRequest, onRequestSuccess, requestId, pxpipe: pxpipeSummary || undefined, streamSignal: streamController.signal };
+  const sharedCtx = { provider, model, body, credentials, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, clientRawRequest, onRequestSuccess, requestId, pxpipe: pxpipeSummary || undefined, streamSignal: streamController.signal };
   const appendLog = (extra) => {
     if (!vaultInternal) appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });
   };

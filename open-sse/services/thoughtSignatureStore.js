@@ -34,6 +34,7 @@ function kv() {
 }
 
 const memorySignatures = new Map();
+const cacheKey = (id, session) => JSON.stringify([session || null, id]);
 let pruneCounter = 0;
 
 /**
@@ -120,11 +121,7 @@ export function storeGeminiThoughtSignature(toolCallId, signature, sessionId = n
   const family = signatureFamily(model);
   pruneMemoryExpired();
 
-  const keys = [];
-  if (sessionId && typeof sessionId === "string") {
-    keys.push(`${sessionId}:${toolCallId}`);
-  }
-  keys.push(toolCallId);
+  const keys = [cacheKey(toolCallId, sessionId)];
 
   const store = kv();
   for (const k of keys) {
@@ -152,81 +149,44 @@ export function storeGeminiThoughtSignature(toolCallId, signature, sessionId = n
  */
 export async function getGeminiThoughtSignature(toolCallId, sessionId = null, model = null) {
   if (typeof toolCallId !== "string" || !toolCallId) return null;
-
-  const family = signatureFamily(model);
-  pruneMemoryExpired();
-
-  if (sessionId && typeof sessionId === "string") {
-    const sessionKey = `${sessionId}:${toolCallId}`;
-    const sessionEntry = memorySignatures.get(sessionKey);
-    if (sessionEntry && sessionEntry.expiresAt > Date.now() && isCompatible(sessionEntry, family)) {
-      return sessionEntry.signature;
-    }
-  }
-
-  const entry = memorySignatures.get(toolCallId);
-  if (entry && entry.expiresAt > Date.now() && isCompatible(entry, family)) {
-    return entry.signature;
-  }
-
+  const key = cacheKey(toolCallId, sessionId);
+  const cached = getGeminiThoughtSignatureSync(toolCallId, sessionId, model);
+  if (cached) return cached;
   const store = kv();
   if (!store?.get) return null;
-
   try {
-    if (sessionId && typeof sessionId === "string") {
-      const sessionKey = `${sessionId}:${toolCallId}`;
-      const sessionRow = await store.get(sessionKey);
-      if (sessionRow && typeof sessionRow.signature === "string" && (!sessionRow.expiresAt || sessionRow.expiresAt > Date.now()) && isCompatible(sessionRow, family)) {
-        memorySignatures.set(sessionKey, {
-          signature: sessionRow.signature,
-          family: sessionRow.family || null,
-          expiresAt: Date.now() + MEMORY_TTL_MS,
-        });
-        return sessionRow.signature;
-      }
+    const row = await store.get(key);
+    if (!row || typeof row.signature !== "string" || !isCompatible(row, signatureFamily(model))) return null;
+    if (row.expiresAt && row.expiresAt <= Date.now()) {
+      store.remove(key).catch(() => {});
+      return null;
     }
-
-    const row = await store.get(toolCallId);
-    if (row && typeof row.signature === "string") {
-      if (row.expiresAt && row.expiresAt <= Date.now()) {
-        store.remove(toolCallId).catch(() => {});
-        return null;
-      }
-      if (!isCompatible(row, family)) return null;
-      memorySignatures.set(toolCallId, {
-        signature: row.signature,
-        family: row.family || null,
-        expiresAt: Date.now() + MEMORY_TTL_MS,
-      });
-      return row.signature;
-    }
-  } catch {
-    // Fail-open
-  }
-
-  return null;
+    memorySignatures.set(key, { signature: row.signature, family: row.family || null,
+      expiresAt: Math.min(row.expiresAt || Infinity, Date.now() + MEMORY_TTL_MS) });
+    return row.signature;
+  } catch { return null; }
 }
 
-/**
- * Synchronous get from RAM cache only (for sync translators).
- * `model` is the target model; signatures produced by another model family are ignored.
- */
+/** Load persisted signatures before the synchronous request translators run. */
+export async function hydrateGeminiThoughtSignatures(body, sessionId, model) {
+  const ids = new Set();
+  const visit = value => {
+    if (!value || typeof value !== "object" || ids.size >= MAX_SIGNATURES) return;
+    if (["tool_use", "function_call"].includes(value.type) && typeof value.id === "string") ids.add(value.id);
+    if (Array.isArray(value.tool_calls)) for (const call of value.tool_calls) if (typeof call?.id === "string") ids.add(call.id);
+    for (const child of Object.values(value)) {
+      if (Array.isArray(child)) child.forEach(visit);
+      else if (child && typeof child === "object") visit(child);
+    }
+  };
+  visit(body);
+  await Promise.all([...ids].map(id => getGeminiThoughtSignature(id, sessionId, model)));
+}
+
+/** Synchronous lookup in the exact client/session namespace. */
 export function getGeminiThoughtSignatureSync(toolCallId, sessionId = null, model = null) {
   if (typeof toolCallId !== "string" || !toolCallId) return null;
-  const family = signatureFamily(model);
   pruneMemoryExpired();
-
-  if (sessionId && typeof sessionId === "string") {
-    const sessionKey = `${sessionId}:${toolCallId}`;
-    const sessionEntry = memorySignatures.get(sessionKey);
-    if (sessionEntry && sessionEntry.expiresAt > Date.now() && isCompatible(sessionEntry, family)) {
-      return sessionEntry.signature;
-    }
-  }
-
-  const entry = memorySignatures.get(toolCallId);
-  if (entry && entry.expiresAt > Date.now() && isCompatible(entry, family)) {
-    return entry.signature;
-  }
-  return null;
+  const entry = memorySignatures.get(cacheKey(toolCallId, sessionId));
+  return entry && entry.expiresAt > Date.now() && isCompatible(entry, signatureFamily(model)) ? entry.signature : null;
 }

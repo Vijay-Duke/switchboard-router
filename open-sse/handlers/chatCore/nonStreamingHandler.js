@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { storeGeminiThoughtSignature } from "../../services/thoughtSignatureStore.js";
 import { FORMATS } from "../../translator/formats.js";
 import { upstreamResponseHeaders } from "../../utils/upstreamHeaders.js";
 import { ollamaBodyToOpenAI } from "../../translator/response/ollama-to-openai.js";
@@ -49,7 +51,7 @@ async function readBoundedText(providerResponse, limit) {
  * Client-format projection is done separately via projectCompletionToClientFormat
  * (Switchboard#2347 / PR#2348) so tool_calls and reasoning aren't dropped.
  */
-export function translateNonStreamingResponse(responseBody, targetFormat) {
+export function translateNonStreamingResponse(responseBody, targetFormat, { sessionId = null, model = null } = {}) {
   if (targetFormat === FORMATS.OPENAI) return responseBody;
 
   // OpenAI Responses API providers (apiType:"responses") return a native
@@ -82,8 +84,13 @@ export function translateNonStreamingResponse(responseBody, targetFormat) {
         if (part.thought === true && part.text) reasoningContent += part.text;
         else if (part.text !== undefined) textContent += part.text;
         if (part.functionCall) {
+          const callId = `call_${randomUUID().replace(/-/g, "")}`;
+          if (part.thoughtSignature) {
+            storeGeminiThoughtSignature(callId, part.thoughtSignature, sessionId, model || response.modelVersion);
+            if (part.functionCall.id) storeGeminiThoughtSignature(part.functionCall.id, part.thoughtSignature, sessionId, model || response.modelVersion);
+          }
           toolCalls.push({
-            id: `call_${part.functionCall.name}_${toolCalls.length}`,
+            id: callId,
             type: "function",
             function: { name: part.functionCall.name, arguments: JSON.stringify(part.functionCall.args || {}) }
           });
@@ -213,7 +220,7 @@ export function translateNonStreamingResponse(responseBody, targetFormat) {
 /**
  * Handle non-streaming response from provider.
  */
-export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, requestId, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, trackDone, appendLog, pxpipe, streamSignal }) {
+export async function handleNonStreamingResponse({ providerResponse, provider, model, credentials, sourceFormat, targetFormat, body, stream, requestConfig, translatedBody, finalBody, requestStartTime, connectionId, clientKeyId, requestId, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, trackDone, appendLog, pxpipe, streamSignal }) {
   trackDone();
   const contentType = providerResponse.headers.get("content-type") || "";
   let responseBody;
@@ -287,7 +294,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     ? null
     : (targetFormat === FORMATS.OPENAI
       ? responseBody
-      : translateNonStreamingResponse(responseBody, targetFormat));
+      : translateNonStreamingResponse(responseBody, targetFormat, { sessionId: credentials?._thoughtSignatureSessionId || credentials?._clientSessionId, model }));
 
   // Extract <think>...</think> on the OpenAI pivot (MiniMax M3 etc.)
   let extractedThink = false;

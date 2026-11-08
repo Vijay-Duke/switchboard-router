@@ -99,7 +99,7 @@ export function createSSEStream(options = {}) {
   // route the terminal null chunk never reaches that translator).
   const deferCompletionForUsage = targetFormat === FORMATS.OPENAI && sourceFormat === FORMATS.OPENAI_RESPONSES;
   const state = mode === STREAM_MODE.TRANSLATE
-    ? { ...initState(sourceFormat), provider, toolNameMap, model, deferCompletionForUsage, sessionId: credentials?._clientSessionId || null }
+    ? { ...initState(sourceFormat), provider, toolNameMap, model, deferCompletionForUsage, sessionId: credentials?._thoughtSignatureSessionId || credentials?._clientSessionId || null }
     : null;
   // Bound the deferred-completion wait: a broken upstream can stall after
   // finish_reason with no usage trailer and no [DONE], holding the socket open.

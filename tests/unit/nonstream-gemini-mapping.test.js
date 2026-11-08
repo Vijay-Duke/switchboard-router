@@ -8,15 +8,16 @@ function gemini(finishReason, parts = [{ text: "hi" }]) {
 }
 
 describe("Gemini non-stream projection (H19)", () => {
-  it("emits deterministic tool-call ids", () => {
+  it("emits unique tool-call ids across responses", () => {
     const parts = [
       { functionCall: { name: "get_weather", args: { city: "Perth" } } },
       { functionCall: { name: "get_time", args: {} } },
     ];
     const a = translateNonStreamingResponse(gemini("STOP", parts), FORMATS.GEMINI);
     const b = translateNonStreamingResponse(gemini("STOP", parts), FORMATS.GEMINI);
-    expect(a.choices[0].message.tool_calls.map((t) => t.id)).toEqual(["call_get_weather_0", "call_get_time_1"]);
-    expect(a.choices[0].message.tool_calls.map((t) => t.id)).toEqual(b.choices[0].message.tool_calls.map((t) => t.id));
+    expect(a.choices[0].message.tool_calls.map((t) => t.id)).toEqual([expect.stringMatching(/^call_[a-z0-9]+$/), expect.stringMatching(/^call_[a-z0-9]+$/)]);
+    const ids = [...a.choices[0].message.tool_calls, ...b.choices[0].message.tool_calls].map(t => t.id);
+    expect(new Set(ids).size).toBe(4);
     expect(a.choices[0].finish_reason).toBe("tool_calls");
   });
 
