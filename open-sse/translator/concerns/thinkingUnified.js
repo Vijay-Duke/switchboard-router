@@ -305,13 +305,6 @@ function applyFormat(fmt, body, cfg, caps, supportedLevels = null, display = und
       body.reasoning = level ? { effort: level === "max" ? "xhigh" : level } : { enabled: true };
       break;
     }
-    case "openai-responses": {
-      // OpenAI Responses wire: reasoning.{effort, summary} is the native shape.
-      if (none && canDisable) { body.reasoning = { effort: "none" }; break; }
-      const level = toLevel(eff);
-      body.reasoning = { effort: level === "max" ? "xhigh" : (level || "medium"), summary: "auto" };
-      break;
-    }
     case "claude-adaptive": {
       if (none && canDisable) { body.thinking = { type: "disabled" }; break; }
       const level = toLevel(eff);
