@@ -1,13 +1,14 @@
 "use client";
 // @ts-check
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
-import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModal, CapacityBadges, Select, Toggle } from "@/shared/components";
+import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModal, CapacityBadges, Select, Toggle, Badge, SmartPolicyModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
-import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, resolveProviderId, AI_PROVIDERS } from "@/shared/constants/providers";
 import { useNotificationStore } from "@/store/notificationStore";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 import { splitPoolByTier } from "open-sse/routing/objective.js";
@@ -522,6 +523,16 @@ function strategyPatchFromForm(form) {
     if (routerModel) patch.routerModel = routerModel;
     if (objective) patch.objective = objective;
     patch.judgeModel = ""; // fusion-only
+    patch.smartPolicy = "";
+    patch.sessionSticky = "";
+    patch.confidenceThreshold = "";
+  } else if (strat === "smart") {
+    if (routerModel) patch.routerModel = routerModel;
+    patch.judgeModel = "";
+    patch.objective = "";
+    patch.learningEnabled = "";
+    patch.freezeLearning = "";
+    patch.explorationRate = "";
   } else if (strat === "fusion") {
     // Clear auto-only keys (use "" so JSON keeps the clear; handleSet strips empties)
     patch.routerModel = "";
@@ -529,6 +540,9 @@ function strategyPatchFromForm(form) {
     patch.learningEnabled = "";
     patch.freezeLearning = "";
     patch.explorationRate = "";
+    patch.smartPolicy = "";
+    patch.sessionSticky = "";
+    patch.confidenceThreshold = "";
   } else {
     // fallback / round-robin
     patch.routerModel = "";
@@ -537,6 +551,9 @@ function strategyPatchFromForm(form) {
     patch.learningEnabled = "";
     patch.freezeLearning = "";
     patch.explorationRate = "";
+    patch.smartPolicy = "";
+    patch.sessionSticky = "";
+    patch.confidenceThreshold = "";
   }
   return patch;
 }
@@ -610,6 +627,7 @@ function TierLabels({ models, routerModel }) {
 const STRATEGY_OPTIONS = [
   { value: "fallback", label: "Fallback — try in order" },
   { value: "round-robin", label: "Round Robin — rotate load" },
+  { value: "smart", label: "Smart Router — System One" },
   { value: "fusion", label: "Fusion — panel + judge (N+1)" },
   { value: "auto", label: "Auto — router picks 1 worker" },
 ];
@@ -617,6 +635,7 @@ const STRATEGY_OPTIONS = [
 const STRATEGY_HELP = {
   fallback: "Tries models top-to-bottom; on failure uses the next.",
   "round-robin": "Rotates models across requests to spread load.",
+  smart: "System One decision model picks the worker (fails open to list order).",
   fusion: "Calls every model, then a judge merges answers (bills N+1).",
   auto: "Router model chooses one worker each request (bills 2 calls).",
 };
@@ -628,9 +647,48 @@ const OBJECTIVE_OPTIONS = [
   { value: "latency", label: "Latency" },
 ];
 
+/** Badge label for the Smart Router policy stored on a combo strategy. */
+function getPolicyBadgeLabel(strategy = {}) {
+  const policy = strategy.smartPolicy || (strategy.sessionSticky === false ? "per-turn" : "smart");
+  if (policy === "strict") return "Strict Lock";
+  if (policy === "per-turn") return "Per-Turn";
+  if (policy === "custom") {
+    const raw = strategy.confidenceThreshold;
+    const pct = Math.round((raw || 0.8) * (raw && raw <= 1 ? 100 : 1));
+    return `Custom (≥${pct || 80}%)`;
+  }
+  return "Smart (≥80%)";
+}
+
+/** Is the Smart Router's decision model usable (free lane or connected provider)? */
+function getRouterModelStatus(routerModel, activeProviders) {
+  const effectiveModel = (typeof routerModel === "string" && routerModel.trim())
+    ? routerModel.trim()
+    : "oc/jev-1.13-free";
+  const slashIdx = effectiveModel.indexOf("/");
+  const prefix = slashIdx !== -1 ? effectiveModel.slice(0, slashIdx) : effectiveModel;
+  const providerId = resolveProviderId(prefix);
+  const providerDef = AI_PROVIDERS[providerId];
+  const isNoAuth = !!providerDef?.noAuth;
+
+  if (isNoAuth) {
+    return { ready: true, label: "Ready (Free)", providerId };
+  }
+
+  const isConnected = (activeProviders || []).some((c) => c.provider === providerId && c.isActive !== false);
+  if (isConnected) {
+    return { ready: true, label: "Connected", providerId };
+  }
+
+  return { ready: false, label: "Not configured", providerId };
+}
+
 export function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy, providerSchedules = {} }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
   const [showRouterSelect, setShowRouterSelect] = useState(false);
+  // Smart Router picker is limited to System One decision models (kind systemone).
+  const [showSmartRouterSelect, setShowSmartRouterSelect] = useState(false);
+  const [showPolicyModal, setShowPolicyModal] = useState(false);
   // routerModel is mandatory for Auto — when switching to Auto without one, open
   // the router picker and persist strategy + router together (avoids the API 400).
   const [pendingAutoSwitch, setPendingAutoSwitch] = useState(false);
@@ -643,6 +701,7 @@ export function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied,
   const current = strategy.fallbackStrategy || "fallback";
   const judge = strategy.judgeModel || "";
   const isFusion = current === "fusion";
+  const isSmart = current === "smart";
   const isAuto = current === "auto";
   const routerModel = strategy.routerModel || "";
   const objective = strategy.objective || "balanced";
@@ -743,6 +802,59 @@ export function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied,
                 )}
               </div>
             )}
+
+            {/* Smart: System One router picker and policy modal trigger */}
+            {isSmart && (() => {
+              const routerStatus = getRouterModelStatus(routerModel, activeProviders);
+              const policyLabel = getPolicyBadgeLabel(strategy);
+              return (
+                <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-text-muted">Router</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowSmartRouterSelect(true)}
+                    className="inline-flex max-w-full items-center gap-1 rounded border border-dashed border-primary/40 px-1.5 py-0.5 font-mono text-[11px] text-primary hover:border-primary hover:bg-primary/5 transition-colors"
+                    title="Pick the System One model that decides model routing"
+                  >
+                    <span className="material-symbols-outlined text-[13px]">psychology</span>
+                    <span className="truncate">{routerModel || "Auto — oc/jev-1.13-free"}</span>
+                  </button>
+                  {routerStatus.ready ? (
+                    <Badge variant="success" size="sm" dot>{routerStatus.label}</Badge>
+                  ) : (
+                    <span className="inline-flex items-center gap-1">
+                      <Badge variant="error" size="sm" dot>{routerStatus.label}</Badge>
+                      <Link
+                        href={`/dashboard/media-providers/systemone/${routerStatus.providerId}`}
+                        className="text-[10px] text-primary hover:underline font-medium"
+                        title="Configure in Media Providers"
+                      >
+                        Configure
+                      </Link>
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowPolicyModal(true)}
+                    className="inline-flex items-center gap-1 rounded border border-border/70 bg-black/[0.02] dark:bg-white/[0.02] px-2 py-0.5 text-[11px] text-text-main hover:border-primary/50 hover:bg-primary/5 transition-colors"
+                    title="Configure routing policy and prompt cache retention"
+                  >
+                    <span className="material-symbols-outlined text-[13px] text-text-muted">tune</span>
+                    <span className="font-medium">{policyLabel}</span>
+                  </button>
+                  {routerModel && (
+                    <button
+                      type="button"
+                      onClick={() => onSetStrategy({ routerModel: "" })}
+                      className="p-0.5 rounded text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                      title="Reset router to Auto"
+                    >
+                      <span className="material-symbols-outlined text-[13px]">close</span>
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Auto: router + objective + relearn */}
             {isAuto && (
@@ -1068,6 +1180,28 @@ export function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied,
         title="Select Router Model"
         addedModelValues={routerModel ? [routerModel] : []}
         closeOnSelect={true}
+      />
+
+      {/* System One Router model picker (single-select from systemone kind) */}
+      <ModelSelectModal
+        isOpen={showSmartRouterSelect}
+        onClose={() => setShowSmartRouterSelect(false)}
+        onSelect={(m) => { onSetStrategy({ routerModel: m?.value || "" }); setShowSmartRouterSelect(false); }}
+        activeProviders={activeProviders}
+        title="Select System One Router Model"
+        kindFilter="systemone"
+        addedModelValues={routerModel ? [routerModel] : []}
+        closeOnSelect={true}
+      />
+
+      {/* Smart Router Policy Settings Modal */}
+      <SmartPolicyModal
+        isOpen={showPolicyModal}
+        onClose={() => setShowPolicyModal(false)}
+        comboName={combo.name}
+        currentPolicy={strategy.smartPolicy || (strategy.sessionSticky === false ? "per-turn" : "smart")}
+        currentThreshold={strategy.confidenceThreshold ?? 80}
+        onSave={onSetStrategy}
       />
     </Card>
   );

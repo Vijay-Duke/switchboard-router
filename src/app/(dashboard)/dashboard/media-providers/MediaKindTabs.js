@@ -13,6 +13,7 @@ const TABS = [
   { id: "embedding", label: "Embedding", href: "/dashboard/media-providers/embedding" },
   { id: "video", label: "Video", href: "/dashboard/media-providers/video" },
   { id: "web", label: "Web", href: "/dashboard/media-providers/web" },
+  { id: "systemone", label: "System One", href: "/dashboard/media-providers/systemone" },
 ];
 
 /**

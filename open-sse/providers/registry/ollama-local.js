@@ -142,8 +142,18 @@ const moduleDefault = {
     { id: "laya:421m-english-bf16",               name: "Laya 421M English (BF16)",              kind: "embedding", dimensions: 1024 },
     { id: "laya:322m-multilingual-bf16",          name: "Laya 322M Multilingual (BF16)",         kind: "embedding", dimensions: 1024 },
     { id: "laya:421m-typed-decisions-bf16",       name: "Laya 421M Decisions (BF16)",            kind: "embedding", dimensions: 1024 },
+
+    // Clef decision models on the native /v1/systemone endpoint
+    { id: "clef",                                 name: "Clef",                                   kind: "systemone" },
+    { id: "clef-flash",                          name: "Clef Flash",                            kind: "systemone" },
   ],
-  serviceKinds: ["llm", "embedding"],
+  serviceKinds: ["llm", "embedding", "systemone"],
+  systemoneConfig: {
+    baseUrl: "http://localhost:11434/v1/systemone",
+    // Saved host (providerSpecificData.baseUrl) is joined with this path.
+    path: "/v1/systemone",
+    authType: "none",
+  },
   embeddingConfig: {
     identity: "openai-node",
     format: "openai",

@@ -156,6 +156,7 @@ const STRATEGY_ALLOWED_KEYS = new Set([
   "activeLearningVersionId", "autoLearnIntervalHours",
   "capacityAutoSwitch", "emitAutoRouterHeaders",
   "fusionTuning", "autoTuning", "modelAvailability",
+  "smartPolicy", "sessionSticky", "confidenceThreshold",
 ]);
 const AUTO_TUNING_ALLOWED_KEYS = new Set([
   "heuristicFirst", "maxFewShots", "minEventsBeforeLearn",

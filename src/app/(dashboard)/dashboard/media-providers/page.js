@@ -16,6 +16,7 @@ const HUB_KINDS = [
   { id: "stt", label: "Speech to Text", icon: "mic", blurb: "Transcription providers" },
   { id: "embedding", label: "Embedding", icon: "data_array", blurb: "Vector embedding providers" },
   { id: "web", label: "Web Fetch & Search", icon: "travel_explore", blurb: "Search + page fetch providers" },
+  { id: "systemone", label: "System One", icon: "psychology", blurb: "Decision-model routing providers" },
 ];
 
 export default function MediaProvidersHubPage() {
@@ -45,8 +46,11 @@ export default function MediaProvidersHubPage() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <h2 className="text-sm font-semibold text-text-main">
+                      <h2 className="text-sm font-semibold text-text-main flex items-center gap-1.5">
                         {k.label || meta?.label || k.id}
+                        {meta?.isNew && (
+                          <span className="text-[9px] font-bold uppercase text-primary bg-primary/10 px-1.5 py-0.5 rounded">New</span>
+                        )}
                       </h2>
                       <span className="material-symbols-outlined text-text-subtle text-[16px] group-hover:text-primary transition-colors">
                         chevron_right

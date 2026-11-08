@@ -38,6 +38,25 @@ export default function DashboardLayout({ children, endpointHost }) {
   const notifications = useNotificationStore((state) => state.notifications);
   const removeNotification = useNotificationStore((state) => state.removeNotification);
 
+  // Preload heavy usage charts in background when browser is idle so
+  // navigating to the usage page is still instant despite lazy loading.
+  useEffect(() => {
+    const preload = () => {
+      import("@/shared/components/UsageStats").catch(() => {});
+      import("@/app/(dashboard)/dashboard/usage/components/UsageChart").catch(() => {});
+      import("@/app/(dashboard)/dashboard/usage/components/ProviderBarChart").catch(() => {});
+      import("@/app/(dashboard)/dashboard/usage/components/TopModelsChart").catch(() => {});
+    };
+    if (typeof window !== "undefined") {
+      if ("requestIdleCallback" in window) {
+        const id = window.requestIdleCallback(preload, { timeout: 4000 });
+        return () => window.cancelIdleCallback(id);
+      }
+      const timer = setTimeout(preload, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
   const isChat = pathname === "/dashboard/basic-chat";
 
   // QA-027: mobile drawer must be dismissible with Escape

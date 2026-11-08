@@ -1,6 +1,6 @@
 // @ts-check
 import { NextResponse } from "next/server";
-import { getModelAliases, setModelAlias } from "@/models";
+import { getModelAliases, setModelAlias, getCustomModels } from "@/models";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { AI_MODELS } from "@/shared/constants/config";
 import { getProviderAlias } from "@/shared/constants/providers";
@@ -33,6 +33,33 @@ export async function GET() {
           caps: { vision: c.vision, search: c.search, reasoning: c.reasoning, pdf: c.pdf, audioInput: c.audioInput, videoInput: c.videoInput },
         };
       });
+
+    // Custom models ride along; their stored caps override the name heuristic
+    const seenFull = new Set(models.map((m) => m.fullModel));
+    const customModels = (await getCustomModels()).filter((m) => {
+      if (!m?.id || (m.kind || m.type || "llm") !== "llm") return false;
+      return !seenFull.has(`${m.providerAlias}/${m.id}`);
+    });
+    for (const m of customModels) {
+      const fullModel = `${m.providerAlias}/${m.id}`;
+      const c = getCapabilitiesForModel(m.providerAlias, m.id);
+      models.push({
+        provider: m.providerAlias,
+        model: m.id,
+        name: m.name || m.id,
+        fullModel,
+        alias: aliasesByModel.get(fullModel) || m.id,
+        caps: {
+          vision: c.vision,
+          search: c.search,
+          reasoning: c.reasoning,
+          pdf: c.pdf,
+          audioInput: c.audioInput,
+          videoInput: c.videoInput,
+          ...(m.caps || {}),
+        },
+      });
+    }
 
     return NextResponse.json({ models });
   } catch (error) {
