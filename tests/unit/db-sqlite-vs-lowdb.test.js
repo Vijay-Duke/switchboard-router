@@ -364,11 +364,28 @@ describe("DB SQLite layer — public API parity", () => {
     expect(data[0]).toHaveProperty("label");
     expect(data[0]).toHaveProperty("tokens");
     expect(data[0]).toHaveProperty("cost");
+    expect(data[0]).toHaveProperty("requests");
+  });
+
+  it("getChartData: counts one request per usage row per bucket", async () => {
+    const before = (await sqliteDb.getChartData("24h")).reduce((n, b) => n + (b.requests || 0), 0);
+    const now = new Date();
+    await sqliteDb.saveRequestUsage({
+      provider: "openai", model: "gpt-test", timestamp: now.toISOString(),
+      tokens: { prompt_tokens: 10, completion_tokens: 5 },
+    });
+    await sqliteDb.saveRequestUsage({
+      provider: "openai", model: "gpt-test", timestamp: now.toISOString(),
+      tokens: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+    const data = await sqliteDb.getChartData("24h");
+    expect(data.reduce((n, b) => n + (b.requests || 0), 0) - before).toBe(2);
   });
 
   it("getChartData: 7d buckets", async () => {
     const data = await sqliteDb.getChartData("7d");
     expect(data).toHaveLength(7);
+    expect(data[0]).toHaveProperty("requests");
   });
 
   it("getChartData: all-time spans earliest recorded day through today", async () => {
@@ -381,6 +398,7 @@ describe("DB SQLite layer — public API parity", () => {
     const data = await sqliteDb.getChartData("all");
     expect(data.length).toBeGreaterThanOrEqual(90);
     expect(data[0].tokens).toBe(7);
+    expect(data[0].requests).toBe(1);
     expect(data.at(-1)).toHaveProperty("label");
   });
 });

@@ -17,6 +17,8 @@ import OverviewCards from "@/app/(dashboard)/dashboard/usage/components/Overview
 import UsageTable, { fmt, fmtTime, getGroupProviderLabel, resolveUsageProviderName } from "@/app/(dashboard)/dashboard/usage/components/UsageTable";
 import ProviderTopology from "@/app/(dashboard)/dashboard/usage/components/ProviderTopology";
 import UsageChart from "@/app/(dashboard)/dashboard/usage/components/UsageChart";
+import ProviderBarChart from "@/app/(dashboard)/dashboard/usage/components/ProviderBarChart";
+import TopModelsChart from "@/app/(dashboard)/dashboard/usage/components/TopModelsChart";
 import { reportClientError } from "@/shared/utils/clientFeedback";
 
 function timeAgo(timestamp) {
@@ -530,6 +532,14 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
 
       {/* Token / Cost chart - sync period */}
       {loading ? spinner : <UsageChart period={period} />}
+
+      {/* Provider and model breakdown charts */}
+      {!loading && (stats.byProvider || stats.byModel) && (
+        <div className="grid min-w-0 grid-cols-1 gap-2 lg:grid-cols-2">
+          <ProviderBarChart byProvider={stats.byProvider} />
+          <TopModelsChart byModel={stats.byModel} />
+        </div>
+      )}
 
       {/* Table with dropdown selector */}
       <div className="flex flex-col gap-3">
