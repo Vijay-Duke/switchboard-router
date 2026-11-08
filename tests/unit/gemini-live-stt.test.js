@@ -19,11 +19,12 @@ import os from "node:os";
 import path from "node:path";
 
 const proxyAwareFetch = vi.hoisted(() => vi.fn());
+const egress = vi.hoisted(() => ({ options: null, dispatcher: vi.fn(async () => null) }));
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
   proxyAwareFetch,
-  proxyOptionsFromCredentials: () => null,
-  resolveProxyUrl: () => null,
-  getDispatcher: vi.fn(async () => null),
+  proxyOptionsFromCredentials: () => egress.options,
+  resolveProxyUrl: () => egress.options?.connectionProxyUrl || null,
+  getDispatcher: egress.dispatcher,
 }));
 
 import { handleSttCore } from "../../open-sse/handlers/sttCore.js";
@@ -143,6 +144,8 @@ async function liveSession({ model = LIVE_ID, formData = mkFormData(), transport
 
 beforeEach(() => {
   proxyAwareFetch.mockReset();
+  egress.options = null;
+  egress.dispatcher.mockReset().mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -153,6 +156,17 @@ afterEach(() => {
 // ── S1/S2/S3: transport marker dispatch, text envelope, no REST ───────────
 
 describe("Live transport dispatch via caller marker", () => {
+  it.each(["relay", "strict"])("keeps the %s egress policy when WebSocket transport is unavailable", async policy => {
+    stubWs();
+    egress.options = policy === "relay" ? { vercelRelayUrl: "https://relay.test" }
+      : { strictProxy: true, connectionProxyUrl: "http://proxy.test" };
+    egress.dispatcher.mockRejectedValue(new Error("proxy unavailable"));
+    const result = await handleSttCore({ provider: "gemini", model: LIVE_ID, formData: mkFormData(), credentials: CRED, sttConfig: STTCFG, transport: "gemini-live" });
+    expect(result.success).toBe(false);
+    expect(result.status).toBe(502);
+    expect(FakeWS.instances).toHaveLength(0);
+  });
+
   it("reports goAway as retryable instead of resuming without the uploaded audio", async () => {
     const { pending, ws } = await liveSession();
     ws.emit({ setupComplete: {} });

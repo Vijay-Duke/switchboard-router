@@ -381,6 +381,7 @@ export async function handleSttCore({ provider, model, formData, credentials, st
   try {
     switch (marker || cfg.format) {
       case "gemini-live": {
+        if (proxyOptions?.vercelRelayUrl) throw Object.assign(new Error("Gemini Live requires a WebSocket-capable proxy; HTTP relay transport is unsupported"), { status: 502 });
         // Same egress as the REST hops: per-connection proxy, else env proxy.
         // A proxy-dial failure falls back to a direct WS connection (the
         // fetch transports degrade the same way when the agent is unusable).
@@ -388,7 +389,9 @@ export async function handleSttCore({ provider, model, formData, credentials, st
         try {
           const proxyUrl = resolveProxyUrl(cfg.baseUrl, proxyOptions);
           if (proxyUrl) dispatcher = await getDispatcher(proxyUrl);
-        } catch { /* connect direct */ }
+        } catch (error) {
+          if (proxyOptions?.strictProxy) throw Object.assign(new Error(`Gemini Live proxy failed: ${error.message}`), { status: 502 });
+        }
         const live = await transcribeGeminiLive({ cfg, file, model, token, formData, mimeType: resolveAudioContentType(file), ...(dispatcher ? { dispatcher } : {}), abortSignal });
         // response_format parity with the OpenAI-compatible transport: default
         // envelope stays {text}; verbose_json adds segments mapped from the

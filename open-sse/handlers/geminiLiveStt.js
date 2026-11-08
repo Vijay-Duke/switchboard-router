@@ -275,6 +275,7 @@ export async function transcribeGeminiLive({ cfg, file, model, token, formData, 
       });
     };
 
+    arm(setupTimeoutMs, "Gemini Live timed out opening the session");
     open();
   });
 }
