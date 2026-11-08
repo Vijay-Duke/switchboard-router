@@ -523,7 +523,10 @@ export async function handleChat(request, clientRawRequest = null) {
         smartPolicy: ps.smartPolicy || "smart",
         sessionSticky: ps.sessionSticky !== false,
         confidenceThreshold: typeof ps.confidenceThreshold === "number" ? ps.confidenceThreshold : 0.8,
-        resolveSmartChoice,
+        resolveSmartChoice: (routerBody, models) => resolveSmartChoice({
+          body: routerBody, models, routerModel: ps.routerModel, log, clientKeyId,
+          abortSignal: request?.signal,
+        }),
       } : {}),
       abortSignal: request?.signal || null,
       childComboDepth: 1,
@@ -833,7 +836,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           smartPolicy: ps.smartPolicy || "smart",
           sessionSticky: ps.sessionSticky !== false,
           confidenceThreshold: typeof ps.confidenceThreshold === "number" ? ps.confidenceThreshold : 0.8,
-          resolveSmartChoice,
+          resolveSmartChoice: (routerBody, models) => resolveSmartChoice({
+            body: routerBody, models, routerModel: ps.routerModel, log, clientKeyId,
+            abortSignal,
+          }),
         } : {}),
         abortSignal: abortSignal || null,
         childComboDepth: comboDepth + 1,

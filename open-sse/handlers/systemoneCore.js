@@ -1,6 +1,6 @@
 import { createErrorResult, parseUpstreamError, formatProviderError } from "../utils/error.js";
 import { HTTP_STATUS, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
-import { PROVIDER_MEDIA } from "../providers/index.js";
+import { PROVIDERS, PROVIDER_MEDIA } from "../providers/index.js";
 import { getModelUpstreamId } from "../config/providerModels.js";
 import { generateSessionId } from "../executors/opencode.js";
 import { assertPublicUrlResolved } from "../utils/ssrfGuard.js";
@@ -44,9 +44,13 @@ export async function handleSystemoneCore({
   credentials,
   log,
   onRequestSuccess,
+  abortSignal,
 }) {
   const { provider, model } = modelInfo;
   const cfg = PROVIDER_MEDIA[provider]?.systemoneConfig;
+  const transport = PROVIDERS[provider] || {};
+  const timeoutSignal = AbortSignal.timeout(FETCH_CONNECT_TIMEOUT_MS);
+  const signal = abortSignal ? AbortSignal.any([abortSignal, timeoutSignal]) : timeoutSignal;
   let targetUrl = buildSystemoneUrl(credentials?.providerSpecificData?.baseUrl, cfg);
   if (!targetUrl) {
     return createErrorResult(
@@ -105,11 +109,13 @@ export async function handleSystemoneCore({
       headers,
       body: JSON.stringify(requestBody),
       redirect: "error",
-      ...(typeof AbortSignal?.timeout === "function"
-        ? { signal: AbortSignal.timeout(FETCH_CONNECT_TIMEOUT_MS) }
-        : {}),
+      signal,
+      identity: cfg.identity || transport.identity || "openai-node",
+      provider,
+      format: cfg.format || "openai",
     }, proxyOptionsFromCredentials(credentials));
   } catch (error) {
+    if (abortSignal?.aborted) return createErrorResult(499, "System One request aborted");
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
     log?.debug?.("SYSTEMONE", `Fetch error: ${errMsg}`);
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, errMsg);
@@ -126,6 +132,7 @@ export async function handleSystemoneCore({
   try {
     responseBody = await providerResponse.json();
   } catch {
+    if (abortSignal?.aborted) return createErrorResult(499, "System One request aborted");
     return createErrorResult(HTTP_STATUS.BAD_GATEWAY, `Invalid JSON response from ${provider}`);
   }
 
@@ -135,7 +142,7 @@ export async function handleSystemoneCore({
   return {
     success: true,
     usage: usage
-      ? { prompt_tokens: usage.input_tokens || 0, completion_tokens: usage.output_tokens || 0 }
+      ? { prompt_tokens: usage.input_tokens ?? usage.prompt_tokens ?? 0, completion_tokens: usage.output_tokens ?? usage.completion_tokens ?? 0 }
       : null,
     response: new Response(JSON.stringify(responseBody), {
       headers: {

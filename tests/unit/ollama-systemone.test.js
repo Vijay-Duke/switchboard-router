@@ -76,6 +76,7 @@ describe("handleSystemoneCore request", () => {
     });
     expect(result.success).toBe(true);
     const [url, init] = vi.mocked(proxyAwareFetch).mock.calls[0];
+    expect(init).toMatchObject({ identity: "openai-node", provider, format: "openai", signal: expect.any(AbortSignal) });
     return { url, headers: init.headers, body: JSON.parse(init.body) };
   }
 

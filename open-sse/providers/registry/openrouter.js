@@ -43,6 +43,8 @@ const moduleDefault = {
   serviceKinds: ["llm","embedding","tts","imageToText","video","systemone"],
   // System One decision API (TypeSafe-compatible): https://openrouter.ai/docs/guides/community/typesafe-sdk
   systemoneConfig: {
+    identity: "openai-node",
+    format: "openai",
     baseUrl: "https://openrouter.ai/api/v1/systemone",
     headers: { "HTTP-Referer": "https://github.com/switchboard/switchboard", "X-Title": "Switchboard" },
   },

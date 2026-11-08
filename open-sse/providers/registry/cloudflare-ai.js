@@ -54,6 +54,8 @@ const moduleDefault = {
   ],
   serviceKinds: ["llm","image","systemone"],
   systemoneConfig: {
+    identity: "openai-node",
+    format: "openai",
     baseUrl: "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/run/{model}",
     authType: "apikey",
     authHeader: "bearer",

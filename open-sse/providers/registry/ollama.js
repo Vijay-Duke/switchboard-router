@@ -36,6 +36,8 @@ const moduleDefault = {
   ],
   serviceKinds: ["llm", "systemone"],
   systemoneConfig: {
+    identity: "openai-node",
+    format: "openai",
     baseUrl: "https://ollama.com/v1/systemone",
     authType: "apikey",
     authHeader: "bearer",

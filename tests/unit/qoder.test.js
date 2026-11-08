@@ -730,6 +730,19 @@ describe("rewriteQoderMessageAttachments", () => {
     expect(stats.imageUrls).toEqual(["https://cdn.qoder.example/img.png"]);
   });
 
+  it("threads the authoritative region and identity to image uploads", async () => {
+    let uploadArgs;
+    const fetchInit = { identity: "openai-node", provider: "qoder-cn", format: "openai" };
+    const messages = [{ role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,aGVsbG8=" } }] }];
+    await rewriteQoderMessageAttachments(messages, {
+      credentials: { accessToken: "test" }, region: "cn", fetchInit,
+      uploadFn: async (args) => { uploadArgs = args; return "https://example.com/upload.png"; },
+    });
+    expect(uploadArgs.region).toBe("cn");
+    expect(uploadArgs.fetchInit).toBe(fetchInit);
+    expect(messages[0].content[0].image_url.url).toBe("https://example.com/upload.png");
+  });
+
   it("does not re-upload already-hosted http(s) image URLs", async () => {
     const messages = [{
       role: "user",

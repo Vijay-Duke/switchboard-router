@@ -62,6 +62,13 @@ describe("System One Smart Combo Router", () => {
       expect(extractPromptState(body)).toBe("Parse this AST: function foo() {}");
     });
 
+    it("uses the last user Responses input rather than the assistant reply", () => {
+      expect(extractPromptState({ input: [
+        { type: "message", role: "user", content: [{ type: "input_text", text: "user task" }] },
+        { type: "message", role: "assistant", content: [{ type: "text", text: "assistant answer" }] },
+      ] })).toBe("user task");
+    });
+
     it("extracts from string prompt or input", () => {
       expect(extractPromptState({ prompt: "Hello world" })).toBe("Hello world");
       expect(extractPromptState({ input: "Codex prompt" })).toBe("Codex prompt");

@@ -149,6 +149,8 @@ const moduleDefault = {
   ],
   serviceKinds: ["llm", "embedding", "systemone"],
   systemoneConfig: {
+    identity: "openai-node",
+    format: "openai",
     baseUrl: "http://localhost:11434/v1/systemone",
     // Saved host (providerSpecificData.baseUrl) is joined with this path.
     path: "/v1/systemone",

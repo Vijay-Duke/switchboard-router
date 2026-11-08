@@ -480,11 +480,8 @@ describe("registry identities", () => {
     ]);
     for (const entry of registry) {
       const transports = [entry.transport, ...(entry.transports || [])].filter(Boolean);
-      // systemoneConfig is a decision-lane descriptor, not an outbound chat
-      // transport: systemoneCore fetches it via proxyAwareFetch (SSRF-guarded)
-      // and never goes through identity-wrapped outbound transports.
       const media = Object.entries(entry)
-        .filter(([name, value]) => /Config$/.test(name) && name !== "systemoneConfig" && value?.baseUrl)
+        .filter(([name, value]) => /Config$/.test(name) && value?.baseUrl)
         .map(([, value]) => value);
       for (const transport of [...transports, ...media]) {
         const profileId = resolveProfileId(transport.identity, { format: transport.format, provider: entry.id });

@@ -54,7 +54,7 @@ function stubText({ name, mime, bytes, reason }) {
 }
 
 export function buildMultipartFile(buffer, { fieldName = "file", fileName, mediaType } = {}) {
-  const boundary = `----9routerQoder${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+  const boundary = `----SwitchboardQoder${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
   const filename = fileName || `upload.${mimeExt(mediaType)}`;
   const head = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="${fieldName}"; filename="${filename}"\r\nContent-Type: ${mediaType || "application/octet-stream"}\r\n\r\n`,
@@ -122,7 +122,7 @@ async function defaultUploadImage({ buffer, mediaType, credentials, proxyOptions
   return uploaded;
 }
 
-async function uploadImageData({ base64, mediaType, credentials, proxyOptions, signal, log, uploadFn, cache }) {
+async function uploadImageData({ base64, mediaType, credentials, proxyOptions, signal, log, uploadFn, cache, region, fetchInit }) {
   const compact = String(base64 || "").replace(/\s/g, "");
   if (!compact) return null;
   const bytes = decodedBytes(compact);
@@ -141,7 +141,7 @@ async function uploadImageData({ base64, mediaType, credentials, proxyOptions, s
 
   const doUpload = uploadFn || defaultUploadImage;
   try {
-    const url = await doUpload({ buffer, mediaType, credentials, proxyOptions, signal });
+    const url = await doUpload({ buffer, mediaType, credentials, proxyOptions, signal, region, fetchInit });
     if (typeof url === "string" && url) {
       cache?.set(digest, url);
       return { url, bytes, mime: mediaType };

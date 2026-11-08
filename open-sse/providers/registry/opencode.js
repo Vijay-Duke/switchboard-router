@@ -49,6 +49,8 @@ const moduleDefault = {
   ],
   serviceKinds: ["llm", "systemone"],
   systemoneConfig: {
+    identity: "openai-node",
+    format: "openai",
     baseUrl: "https://opencode.ai/zen/v1/systemone",
     headers: {
       "x-opencode-client": "desktop",

@@ -8,7 +8,7 @@ import {
 import { getSettings } from "@/lib/db/index.js";
 import { getModelInfo } from "../services/model.js";
 import { handleSystemoneCore } from "open-sse/handlers/systemoneCore.js";
-import { saveUsageStats } from "open-sse/handlers/chatCore/requestDetail.js";
+import { settleUsageStats } from "open-sse/handlers/chatCore/requestDetail.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
@@ -118,6 +118,7 @@ export async function handleSystemone(request) {
         modelInfo: { provider, model },
         credentials: refreshedCredentials,
         log,
+        abortSignal: request.signal,
         onCredentialsRefreshed: async (newCreds) => {
           await updateProviderCredentials(credentials.connectionId, {
             ...newCreds,
@@ -132,7 +133,7 @@ export async function handleSystemone(request) {
 
       if (result.success) {
         if (result.usage) {
-          saveUsageStats({
+          await settleUsageStats({
             provider,
             model,
             connectionId: credentials.connectionId,
@@ -142,7 +143,7 @@ export async function handleSystemone(request) {
               ...result.usage,
               total_tokens: result.usage.prompt_tokens + result.usage.completion_tokens,
             },
-          })?.catch?.(() => {});
+          });
         }
         return result.response;
       }

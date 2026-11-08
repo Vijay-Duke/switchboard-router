@@ -36,7 +36,7 @@ export function extractPromptState(body, maxChars = MAX_STATE_CHARS) {
     // Find the latest user message
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
-      if (msg?.role === "user" || msg?.type === "message" || (!msg?.role && msg?.content)) {
+      if (msg?.role === "user" || (!msg?.role && msg?.content)) {
         const text = extractTextFromContent(msg.content ?? msg.text);
         if (text && text.trim().length > 0) {
           return text.trim().slice(0, maxChars);
@@ -66,7 +66,7 @@ function extractTextFromContent(content) {
     return content
       .map((part) => {
         if (typeof part === "string") return part;
-        if (part?.type === "text" && typeof part.text === "string") return part.text;
+        if (["text", "input_text"].includes(part?.type) && typeof part.text === "string") return part.text;
         return "";
       })
       .filter(Boolean)
