@@ -22,6 +22,9 @@ const SPECIALIZED = new Set([
   "codex", "cursor", "vertex", "vertex-partner", "qwen", "opencode",
   "opencode-go", "grok-web", "perplexity-web", "ollama-local", "commandcode",
   "xiaomi-tokenplan", "mimo-free",
+  // SigV4 per-request signing in a dedicated executor; no static auth spec for
+  // the default executor's buildHeaders to apply.
+  "bedrock", "bedrock-xai",
 ]);
 
 // Sanitize dynamic credentials, timestamps, host details, and live identity versions
@@ -55,6 +58,11 @@ function sanitize(headers) {
     }
     // CodeBuddy channel-check ids are fresh UUIDs per request.
     if (name === "x-request-id" || name.startsWith("x-conversation-")) {
+      out[k] = "<UUID>";
+      continue;
+    }
+    // MiniMax Code session ids are randomUUID() per request (minimaxHeaders hook).
+    if (name === "x-mavis-session-id") {
       out[k] = "<UUID>";
       continue;
     }

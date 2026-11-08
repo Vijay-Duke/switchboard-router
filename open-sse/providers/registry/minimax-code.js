@@ -28,6 +28,7 @@ const moduleDefault = {
   transport: {
     baseUrl: "https://agent.minimax.cn/mavis/api/v1/llm/v1/messages",
     format: "claude",
+    identity: "claude-cli",
     thinkingFormat: "claude-adaptive",
     headers: {
       "User-Agent": "MiniMaxAgent",

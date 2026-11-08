@@ -82,8 +82,8 @@
       "header": "aws-sigv4",
       "scheme": "raw"
     },
-    "format": "openai",
-    "identity": "openai-node"
+    "identity": "openai-node",
+    "format": "openai"
   },
   "bedrock": {
     "baseUrl": "https://bedrock-runtime.{region}.amazonaws.com",
@@ -92,7 +92,7 @@
       "header": "aws-sigv4",
       "scheme": "raw"
     },
-    "identity": "claude-cli"
+    "identity": "openai-node"
   },
   "blackbox": {
     "identity": "openai-node",
@@ -721,6 +721,7 @@
   "minimax-code-global": {
     "baseUrl": "https://agent.minimax.io/mavis/api/v1/llm/v1/messages",
     "format": "claude",
+    "identity": "claude-cli",
     "thinkingFormat": "claude-adaptive",
     "headers": {
       "User-Agent": "MiniMaxAgent",
@@ -735,13 +736,13 @@
         "minimaxHeaders"
       ]
     },
-    "identity": "claude-cli",
     "clientId": "mcode-public",
     "tokenUrl": "https://account.minimax.io/oauth2/token"
   },
   "minimax-code": {
     "baseUrl": "https://agent.minimax.cn/mavis/api/v1/llm/v1/messages",
     "format": "claude",
+    "identity": "claude-cli",
     "thinkingFormat": "claude-adaptive",
     "headers": {
       "User-Agent": "MiniMaxAgent",
@@ -756,7 +757,6 @@
         "minimaxHeaders"
       ]
     },
-    "identity": "claude-cli",
     "clientId": "mcode-public",
     "tokenUrl": "https://account.minimax.cn/oauth2/token"
   },

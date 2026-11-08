@@ -38,6 +38,10 @@ const moduleDefault = {
     format: "claude",
     // SigV4 is computed per request from the resolved credentials; there is no static header.
     auth: { header: "aws-sigv4", scheme: "raw" },
+    // Declarative only: the executor signs its own header set and any identity
+    // additions from the fetch layer (User-Agent) ride along unsigned, which AWS
+    // accepts. Declared as plain-node like other executor-owned transports.
+    identity: "openai-node",
     // Deliberately NOT forceStream. Bedrock has a real non-streaming endpoint (/invoke) that
     // returns a complete Anthropic Messages response, and forcing streaming sent non-stream
     // clients through handleForcedSSEToJson (chatCore.js:482), which returned an empty

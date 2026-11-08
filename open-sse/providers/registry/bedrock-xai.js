@@ -39,6 +39,9 @@ const moduleDefault = {
     // a Chat Completions body, and the streaming frames carry chat.completion.chunk payloads.
     // So the existing OpenAI translators apply and the response needs no translation at all.
     auth: { header: "aws-sigv4", scheme: "raw" },
+    // Declarative only, same as `bedrock`: the executor signs its own header set
+    // and identity additions from the fetch layer ride along unsigned.
+    identity: "openai-node",
   },
   // Like `bedrock`: which ids an account can call varies by region and enabled inference
   // profiles, so anything is allowed through and only the known-live ones are listed.
