@@ -93,7 +93,8 @@ RUN mkdir -p /app/data && chown -R node:node /app && \
 
 # Fix permissions at runtime (handles mounted volumes). Avoid a full
 # distribution upgrade in the runtime image: it makes builds less reproducible.
-RUN apk --no-cache add su-exec && \
+# ffmpeg: required by Codex OAuth transcription (audio decode to mono 24k PCM16).
+RUN apk --no-cache add su-exec ffmpeg && \
   printf '#!/bin/sh\nchown -hR node:node /app/data /app/data-home 2>/dev/null\nexec su-exec node "$@"\n' > /entrypoint.sh && \
   chmod +x /entrypoint.sh
 

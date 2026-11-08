@@ -5,6 +5,7 @@ import { proxyAwareFetch, proxyOptionsFromCredentials, resolveProxyUrl, getDispa
 import { PROVIDERS, PROVIDER_MEDIA } from "../providers/index.js";
 import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
 import { transcribeGeminiLive } from "./geminiLiveStt.js";
+import { transcribeCodex } from "./codexStt.js";
 
 function sttTransport(provider, cfg) {
   const transport = PROVIDERS[provider] || {};
@@ -343,6 +344,14 @@ export async function handleSttCore({ provider, model, formData, credentials, st
 
   let cfg = sttConfig;
   if (!cfg) return createErrorResult(HTTP_STATUS.BAD_REQUEST, `Provider '${provider}' does not support STT`);
+
+  // Codex OAuth transcription uses a fixed ChatGPT endpoint with its own
+  // identity/proxy plumbing (Bearer OAuth token + account header) — the
+  // generic token and endpoint handling never applies, and connection URL
+  // overrides are deliberately ignored.
+  if (provider === "codex" && cfg.format === "codex-transcribe") {
+    return transcribeCodex({ formData, credentials, abortSignal, proxyOptions: proxyOptionsFromCredentials(credentials) });
+  }
 
   const isSelfHosted = provider === "selfhosted-stt";
   if (isSelfHosted) {

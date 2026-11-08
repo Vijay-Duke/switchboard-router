@@ -1,6 +1,6 @@
 import {
   extractApiKey,
-  getProviderCredentials, markAccountUnavailable,
+  getProviderCredentials, markAccountUnavailable, clearAccountError,
 } from "../services/auth.js";
 import { getSettings, getCustomModels } from "@/lib/db/index.js";
 import { getModelInfo } from "../services/model.js";
@@ -11,6 +11,7 @@ import { AI_PROVIDERS } from "@/shared/constants/providers";
 import * as log from "../utils/logger.js";
 import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
 import { withConnectionInFlight } from "../services/connectionInFlight.js";
+import { checkAndRefreshToken } from "../services/tokenRefresh.js";
 
 const CONNECTION_BACKED_PROVIDERS = new Set(
   Object.entries(AI_PROVIDERS)
@@ -68,6 +69,13 @@ export async function handleStt(request) {
   const { provider, model } = modelInfo;
   log.info("ROUTING", `Provider: ${provider}, Model: ${model}`);
 
+  // Codex exposes exactly one OAuth transcription model; anything else is a
+  // caller mistake, not a missing credential (chat models live on the chat
+  // endpoint, and API-key audio providers are separate entries).
+  if (provider === "codex" && model !== "transcribe") {
+    return errorResponse(HTTP_STATUS.BAD_REQUEST, "Use model cx/transcribe for Codex STT");
+  }
+
   const modelTransport = await resolveCustomModelTransport(provider, model);
 
   if (!CONNECTION_BACKED_PROVIDERS.has(provider)) {
@@ -82,7 +90,7 @@ export async function handleStt(request) {
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
+    let credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
       preferredConnectionId,
       strictPreferredConnection,
       clientKeyId,
@@ -105,19 +113,52 @@ export async function handleStt(request) {
       model,
       connectionId: credentials.connectionId,
     }, async () => {
-      const result = await handleSttCore({
+      const isCodex = provider === "codex";
+      // Codex STT reuses stored OAuth chat connections: refresh the token
+      // with the shared persisted service (same lead/rotation rules as chat)
+      // before the audio leaves the process. A refresh failure falls back to
+      // the stored token — the forced 401 path below handles a stale one.
+      if (isCodex) {
+        try {
+          credentials = await checkAndRefreshToken(provider, credentials);
+        } catch (error) {
+          log.warn("AUTH", `Codex STT token refresh failed: ${error?.message || error}`);
+        }
+      }
+      const callCore = (creds) => handleSttCore({
         clientKeyId,
         provider,
         model,
         formData,
-        credentials,
+        credentials: creds,
         sttConfig: AI_PROVIDERS[provider]?.sttConfig,
         transport: modelTransport,
         abortSignal: request.signal,
       });
-      if (result.success) return result.response;
+      let result = await callCore(credentials);
+      // A 401 may simply mean the persisted token rotated elsewhere: one
+      // forced refresh + retry, then give up on this connection.
+      if (isCodex && !result.success && result.status === 401
+        && credentials?.refreshToken && !request.signal.aborted) {
+        const previous = credentials.accessToken;
+        try {
+          credentials = await checkAndRefreshToken(provider, credentials, { force: true });
+        } catch (error) {
+          log.warn("AUTH", `Codex STT forced token refresh failed: ${error?.message || error}`);
+        }
+        if (credentials.accessToken !== previous) result = await callCore(credentials);
+      }
+      if (result.success) {
+        if (isCodex) await clearAccountError(credentials.connectionId, credentials, model).catch(() => {});
+        return result.response;
+      }
       if (result.status === 499 || request.signal.aborted) {
         return { finalResponse: result.response };
+      }
+      // Bad audio / oversized uploads / conversion timeouts are caller
+      // problems, not a broken account — answer without fallback or marking.
+      if (isCodex && [400, 413, 504].includes(result.status)) {
+        return { finalResponse: result.response || errorResponse(result.status, result.error) };
       }
 
       const { shouldFallback } = await markAccountUnavailable(
