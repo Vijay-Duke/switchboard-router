@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { convertAudio, MAX_AUDIO_BYTES } from "./codexSttAudio.js";
+import { convertAudio, MAX_AUDIO_BYTES, MAX_AUDIO_SECONDS } from "./codexSttAudio.js";
 
 // Gemini Live API realtime STT transport.
 //
@@ -23,14 +23,13 @@ import { convertAudio, MAX_AUDIO_BYTES } from "./codexSttAudio.js";
 //   - Text accumulation is append-only over inputTranscription segments and
 //     ends on serverContent.turnComplete (or graceful close with partial text).
 //   - Transcription deltas are kept per-frame (chunks[]) so sttCore can shape
-//     verbose_json segments without fabricating timestamps. goAway advisements
-//     rotate the socket once per call: setup replay + byte-offset resume.
+//     verbose_json segments without fabricating timestamps. A server goAway
+//     returns a retryable error rather than losing already-uploaded audio.
 
 const SETUP_TIMEOUT_MS = 10_000;  // open → setupComplete
 const TURN_TIMEOUT_MS = 60_000;   // audio streamed → turnComplete
 const MAX_TIMEOUT_MS = 300_000;   // clamp ceiling for client-supplied lifecycle knobs
 const CHUNK_BYTES = 16_384;       // ~0.5s of 16-bit 16kHz mono PCM
-const GOAWAY_RECONNECTS = 1;      // socket rotations honoured per call
 
 class GeminiLiveError extends Error {
   constructor(message, status) {
@@ -71,7 +70,9 @@ function bindSocket(ws, { onOpen, onMessage, onError, onClose }) {
 
 function parseFrame(data) {
   try {
-    return JSON.parse(typeof data === "string" ? data : String(data));
+    return JSON.parse(typeof data === "string" ? data
+      : data instanceof ArrayBuffer ? Buffer.from(data).toString("utf8")
+        : ArrayBuffer.isView(data) ? Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8") : String(data));
   } catch {
     return null; // non-JSON frames carry no Live API semantics
   }
@@ -121,6 +122,9 @@ export async function transcribeGeminiLive({ cfg, file, model, token, formData, 
   const audioMime = audio === file ? (mimeType.includes("rate=") ? mimeType : "audio/pcm;rate=16000") : "audio/pcm;rate=16000";
   const buf = Buffer.from(await audio.arrayBuffer());
   if (!buf.length) throw new GeminiLiveError("Empty audio file", 400);
+  const rate = Number(/(?:^|;)rate=(\d+)/i.exec(audioMime)?.[1] || 16000);
+  if (!Number.isFinite(rate) || rate < 8000 || rate > 48000 || buf.length % 2) throw new GeminiLiveError("Invalid PCM16 audio", 400);
+  if (buf.length > MAX_AUDIO_SECONDS * rate * 2) throw new GeminiLiveError(`Audio duration exceeds ${MAX_AUDIO_SECONDS} seconds`, 400);
   if (abortSignal?.aborted) throw new GeminiLiveError("Gemini Live transcription aborted", 499);
 
   const instruction = firstStringField(formData, "prompt") || "Transcribe the spoken audio verbatim.";
@@ -139,11 +143,9 @@ export async function transcribeGeminiLive({ cfg, file, model, token, formData, 
     const chunks = [];        // raw inputTranscription deltas, shaped by sttCore
     let settled = false;
     let timer = null;
-    let goAwayTimer = null;
     let ws = null;
     let generation = 0;       // socket identity: superseded closes never settle
     let sentBytes = 0;        // audio prefix already handed to the live socket
-    let goAwayReconnects = GOAWAY_RECONNECTS;
 
     // Client abort settles the socket the same way a hard error does —
     // stt.js maps status 499 to its request-aborted lane.
@@ -156,7 +158,6 @@ export async function transcribeGeminiLive({ cfg, file, model, token, formData, 
     };
     const shutdown = () => {
       if (timer) { clearTimeout(timer); timer = null; }
-      if (goAwayTimer) { clearTimeout(goAwayTimer); goAwayTimer = null; }
       if (abortSignal?.removeEventListener) abortSignal.removeEventListener("abort", onAbort);
       // ws is null until the first open() dials (and stays null when the
       // constructor throws) — fail() runs shutdown() on that path.
@@ -187,8 +188,7 @@ export async function transcribeGeminiLive({ cfg, file, model, token, formData, 
       return true;
     };
 
-    // Streams every byte not yet sent, then the flushing text turn. After a
-    // goAway rotation this resumes from sentBytes — no audio re-upload.
+    // Stream the PCM payload, then signal the end of audio.
     const streamAudioAndPrompt = () => {
       for (let off = sentBytes; off < buf.length; off += CHUNK_BYTES) {
         const mediaChunk = buf.subarray(off, off + CHUNK_BYTES).toString("base64");
@@ -202,33 +202,13 @@ export async function transcribeGeminiLive({ cfg, file, model, token, formData, 
       send({ realtimeInput: { audioStreamEnd: true } });
     };
 
-    // goAway: the server names the instant it will force-close this socket.
-    // Graceful play = rotate BEFORE the deadline: retire the live socket,
-    // dial a fresh one, replay setup, resume audio from sentBytes — text and
-    // chunks survive the hop. Once the advisory budget is spent a later
-    // goAway is left to the close path, which settles on partial transcript.
-    const scheduleGoAwayReconnect = (goAway) => {
-      if (settled || goAwayTimer || goAwayReconnects <= 0) return;
-      const deadline = Date.parse(typeof goAway?.time === "string" ? goAway.time : "");
-      const delay = Number.isFinite(deadline)
-        ? Math.max(0, Math.min(deadline - Date.now(), setupTimeoutMs))
-        : 0;
-      goAwayTimer = setTimeout(() => {
-        goAwayTimer = null;
-        if (settled) return;
-        goAwayReconnects--;
-        generation++;
-        try { ws?.close(1000); } catch { /* deadline crossed mid-flight — re-dial anyway */ }
-        open();
-      }, delay);
-    };
-
     const open = () => {
       const gen = ++generation;
       try {
         // undici's WebSocket accepts { dispatcher } to honour the
         // per-connection egress proxy; minimal polyfills ignore the arg.
         ws = dispatcher ? new WS(wsUrl, { dispatcher }) : new WS(wsUrl);
+        ws.binaryType = "arraybuffer";
       } catch {
         fail(new GeminiLiveError("Gemini Live websocket connection failed", 502));
         return;
@@ -259,7 +239,13 @@ export async function transcribeGeminiLive({ cfg, file, model, token, formData, 
             return;
           }
           if (frame.goAway) {
-            scheduleGoAwayReconnect(frame.goAway);
+            fail(new GeminiLiveError("Gemini Live session ended before transcription completed; retry transcription", 502));
+            return;
+          }
+
+          if (frame.setupComplete) {
+            arm(turnTimeoutMs, "Gemini Live transcription timed out");
+            streamAudioAndPrompt();
             return;
           }
 
@@ -274,11 +260,6 @@ export async function transcribeGeminiLive({ cfg, file, model, token, formData, 
             chunks.push(delta);
           }
 
-          if (sc.setupComplete) {
-            arm(turnTimeoutMs, "Gemini Live transcription timed out");
-            streamAudioAndPrompt();
-            return;
-          }
           if (sc.turnComplete) succeed();
         },
         onError: () => {

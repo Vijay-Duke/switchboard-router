@@ -86,8 +86,9 @@ class FakeWS {
   }
 
   // Fire a server frame through both supported binding styles.
-  emit(obj) {
-    const ev = { data: JSON.stringify(obj) };
+  emit(obj, binary = false) {
+    const encoded = new TextEncoder().encode(JSON.stringify(obj));
+    const ev = { data: binary ? encoded.buffer : JSON.stringify(obj) };
     if (typeof this.onmessage === "function") this.onmessage(ev);
     (this._listeners.message || []).forEach((f) => f(ev));
   }
@@ -125,7 +126,7 @@ function stubFetch(handler = () => { throw new Error("REST must not be used for 
 
 // Server drives a completed session: setup ack → transcription deltas → turn done.
 function serverScript(instance, texts) {
-  instance.emit({ serverContent: { setupComplete: true } });
+  instance.emit({ setupComplete: {} });
   for (const t of texts) instance.emit({ serverContent: { inputTranscription: { text: t } } });
   instance.emit({ serverContent: { turnComplete: true } });
 }
@@ -152,6 +153,17 @@ afterEach(() => {
 // ── S1/S2/S3: transport marker dispatch, text envelope, no REST ───────────
 
 describe("Live transport dispatch via caller marker", () => {
+  it("reports goAway as retryable instead of resuming without the uploaded audio", async () => {
+    const { pending, ws } = await liveSession();
+    ws.emit({ setupComplete: {} });
+    ws.emit({ goAway: { timeLeft: "5s" } });
+    const result = await pending;
+    expect(result.success).toBe(false);
+    expect(result.status).toBe(502);
+    expect(result.error).toMatch(/retry transcription/);
+    expect(FakeWS.instances).toHaveLength(1);
+  });
+
   it("T3: transport 'gemini-live' opens a WebSocket, never REST; text = accumulated deltas", async () => {
     // REST-fallback contrast (folded from T1): a live-capability id with no
     // transport marker falls to REST and fails cleanly — the live path is opt-in.
@@ -211,7 +223,8 @@ describe("Live transport dispatch via caller marker", () => {
     expect(JSON.stringify(setup.setup)).toContain(LIVE_ID);
     expect(setup.realtimeInput).toBeUndefined();
 
-    serverScript(ws, ["x"]);
+    ws.emit({ setupComplete: {} }, true);
+    ws.emit({ serverContent: { inputTranscription: { text: "x" }, turnComplete: true } }, true);
     const result = await pending;
     expect(result.success).toBe(true);
     expect(fetchCalls).toHaveLength(0);
@@ -507,14 +520,14 @@ describe("Lifecycle gates", () => {
     const audioFrames = ws.sent.filter((f) => f.realtimeInput);
     expect(audioFrames).toHaveLength(0);
     // clean up: let the pending promise settle so afterEach unstub works cleanly
-    ws.emit({ serverContent: { setupComplete: true } });
+    ws.emit({ setupComplete: {} });
     ws.emit({ serverContent: { turnComplete: true } });
     await pending;
   });
 
   it("T17: tiny turn_timeout_ms with setup-complete but no turn-complete errors out", async () => {
     const { pending, ws } = await liveSession({ formData: mkFormData({ turn_timeout_ms: "5" }) });
-    ws.emit({ serverContent: { setupComplete: true } });
+    ws.emit({ setupComplete: {} });
     // deliberately do NOT emit turnComplete
     const result = await pending;
     expect(result.success).toBe(false);
@@ -533,7 +546,7 @@ describe("Lifecycle gates", () => {
 
   it("T19: whitespace-only transcription frames are not appended to the transcript", async () => {
     const { pending, ws } = await liveSession();
-    ws.emit({ serverContent: { setupComplete: true } });
+    ws.emit({ setupComplete: {} });
     // a padding-only frame must contribute nothing to the transcript
     ws.emit({ serverContent: { inputTranscription: { text: "   " } } });
     ws.emit({ serverContent: { inputTranscription: { text: "done" } } });
@@ -545,7 +558,7 @@ describe("Lifecycle gates", () => {
 
   it("T20: a run that receives only whitespace frames errors instead of returning a blank transcript", async () => {
     const { pending, ws } = await liveSession();
-    ws.emit({ serverContent: { setupComplete: true } });
+    ws.emit({ setupComplete: {} });
     ws.emit({ serverContent: { inputTranscription: { text: "   " } } });
     // server closes before any real transcript arrived: a partial success would
     // hand the client a whitespace-only transcript
