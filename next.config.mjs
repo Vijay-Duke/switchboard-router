@@ -23,7 +23,12 @@ const nextConfig = {
   output: "standalone",
   serverExternalPackages: [
     "better-sqlite3", "sql.js", "node:sqlite", "bun:sqlite", "node-machine-id", "bindings",
-    "impit", "open-sse"
+    "impit", "open-sse",
+    // @aws-sdk/credential-providers must stay external for the same class of reason as
+    // better-sqlite3: it reads ~/.aws/config and the SSO token cache from disk at runtime
+    // and resolves its credential plugins by dynamic require, neither of which survives
+    // bundling.
+    "@aws-sdk/credential-providers"
   ],
   // Next.js 16 blocks /_next/* cross-origin in dev by default. Without this,
   // opening the app via 127.0.0.1 or a LAN IP leaves React unhydrated — login

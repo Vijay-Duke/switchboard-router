@@ -31,6 +31,8 @@ import {
   KIMCHI_CONFIG,
   GROK_CLI_CONFIG,
   MUSE_CONFIG,
+  GLM_OAUTH_CONFIG,
+  NOUS_CONFIG,
   getOAuthClientMetadata,
 } from "./constants/oauth";
 import { XAI_CONFIG, XAI_PKCE_VERIFIER_BYTES } from "./constants/xai";
@@ -52,7 +54,7 @@ import {
   requestGrokCliDeviceCode,
 } from "./grokCli";
 
-export { extractCodexAccountInfo, fetchKiroProfileArn };
+export { extractCodexAccountInfo, fetchKiroProfileArn, createMinimaxCodeProvider, MINIMAX_CODE_SITES };
 
 // Inlined from services/xai.js to keep web route bundle free of `open` (CLI-only) package
 let cachedXaiDiscovery = null;
@@ -189,6 +191,294 @@ function createQoderProvider(config, providerId = "qoder") {
 }
 
 // Provider configurations
+// MiniMax Code (mcode) OAuth device flow — shared factory for the two site
+// providers (minimax-code = China, minimax-code-global = international).
+//
+// The flow is MiniMax Code's own sign-in (client mcode-public, PKCE S256),
+// but with our own tokens: ~/.minimax is never read or written, so a sign-in
+// here does not sign the CLI out and accounts can coexist. Wire shape per
+// @magpie-community/opencode-minimax-auth 0.1.1:
+//
+//   1) POST {account}/oauth2/device/code
+//        client_id, scope, audience, code_challenge, code_challenge_method=S256
+//        → user_code, verification_uri(_complete), device_code (sometimes
+//          absent — MiniMax's variant polls with the user_code instead),
+//          expiry as expired_in (ms epoch or seconds) or expires_in, interval
+//          (seconds on the standard shape, milliseconds on the user-code one)
+//   2) POST {account}/oauth2/token  (one POST per poll; the dashboard drives)
+//        grant_type=urn:ietf:params:oauth:grant-type:device_code,
+//        device_code|user_code, client_id, code_verifier
+//        → {status: pending|slow_down|denied|expired} on 200, or a standard
+//          OAuth {error} body; success carries access/refresh_token + expires_in
+const MINIMAX_CODE_DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+const MINIMAX_CODE_SIGN_IN_MS = 10 * 60 * 1000;
+
+const minimaxStr = (o, k) => (typeof o?.[k] === "string" && o[k].trim() ? o[k].trim() : undefined);
+const minimaxPos = (o, k) => (typeof o?.[k] === "number" && Number.isFinite(o[k]) && o[k] > 0 ? o[k] : undefined);
+
+async function minimaxPostForm(url, fields) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(fields).toString(),
+    signal: AbortSignal.timeout(30000),
+  });
+  let body;
+  try {
+    body = JSON.parse(await res.text());
+  } catch {}
+  if (!body || typeof body !== "object") body = { error: `invalid_json_response (HTTP ${res.status})` };
+  return { status: res.status, body };
+}
+
+// MiniMax states the device code's end in odd units: expired_in may be a ms
+// epoch or seconds; interval may be seconds (standard shape) or ms (user-code
+// shape). Normalize both to the units the dashboard expects.
+function minimaxNormalizeDeadline(body) {
+  const expiresIn = minimaxPos(body, "expires_in");
+  const expiredIn = minimaxPos(body, "expired_in");
+  if (expiresIn) return expiresIn;
+  if (!expiredIn) return undefined;
+  return expiredIn < 1e12 ? expiredIn : Math.max(1, Math.ceil((expiredIn - Date.now()) / 1000));
+}
+
+function minimaxNormalizeInterval(body, pollByUser) {
+  const interval = minimaxPos(body, "interval");
+  if (!interval) return 5;
+  if (!pollByUser) return interval; // standard shape: seconds
+  return interval >= 60 ? Math.round(interval / 1000) : interval; // user-code shape: ms
+}
+
+// Site table — the llm/agent hosts live in the registry transport; only the
+// OAuth hosts matter here.
+const MINIMAX_CODE_SITES = {
+  cn: { account: "https://account.minimax.cn" },
+  global: { account: "https://account.minimax.io" },
+};
+
+function createMinimaxCodeProvider(site) {
+  const pick = (b) => ({
+    userCode: minimaxStr(b, "user_code"),
+    deviceCode: minimaxStr(b, "device_code"),
+    uri: minimaxStr(b, "verification_uri_complete") ?? minimaxStr(b, "verification_uri") ?? minimaxStr(b, "verification_url"),
+  });
+
+  return {
+    config: {
+      clientId: "mcode-public",
+      scope: "agent.default",
+      audience: "agent-backend",
+      deviceUrl: `${site.account}/oauth2/device/code`,
+      tokenUrl: `${site.account}/oauth2/token`,
+    },
+    flowType: "device_code",
+
+    async requestDeviceCode(config, codeChallenge) {
+      if (!codeChallenge) throw new Error("MiniMax Code sign-in requires a PKCE code challenge");
+      const { status, body } = await minimaxPostForm(config.deviceUrl, {
+        client_id: config.clientId,
+        scope: config.scope,
+        audience: config.audience,
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256",
+      });
+      const { userCode, deviceCode, uri } = pick(body);
+      if (!userCode || !uri) {
+        throw new Error(`MiniMax device code response unusable (HTTP ${status})`);
+      }
+      // No device_code → MiniMax's variant: the token endpoint is polled with
+      // the user_code itself. Surface the user code as device_code (the modal
+      // threads one value through) plus a flag the poll body switches on.
+      const pollByUser = !deviceCode;
+      return {
+        device_code: deviceCode ?? userCode,
+        user_code: userCode,
+        verification_uri: uri,
+        expires_in: minimaxNormalizeDeadline(body) ?? Math.floor(MINIMAX_CODE_SIGN_IN_MS / 1000),
+        interval: minimaxNormalizeInterval(body, pollByUser),
+        _minimaxPollByUser: pollByUser,
+      };
+    },
+
+    async pollToken(config, deviceCode, codeVerifier, extraData) {
+      if (!deviceCode) return { ok: true, data: { error: "authorization_pending" } };
+      const fields = {
+        grant_type: MINIMAX_CODE_DEVICE_GRANT,
+        ...(extraData?._minimaxPollByUser ? { user_code: deviceCode } : { device_code: deviceCode }),
+        client_id: config.clientId,
+        code_verifier: codeVerifier,
+      };
+      const { body } = await minimaxPostForm(config.tokenUrl, fields);
+
+      // MiniMax's own envelope: {status: ...} on HTTP 200.
+      const status = minimaxStr(body, "status");
+      if (status === "pending") return { ok: true, data: { error: "authorization_pending" } };
+      if (status === "slow_down") return { ok: true, data: { error: "slow_down" } };
+      if (status === "denied" || status === "access_denied") return { ok: true, data: { error: "access_denied" } };
+      if (status === "expired" || status === "expired_token") return { ok: true, data: { error: "expired_token" } };
+      if (status) return { ok: true, data: { error: `unexpected_status:${status}` } };
+
+      // Standard OAuth error body on the same call.
+      if (minimaxStr(body, "error")) return { ok: true, data: { error: minimaxStr(body, "error"), error_description: minimaxStr(body, "error_description") } };
+
+      if (!minimaxStr(body, "access_token")) return { ok: true, data: { error: "no_access_token" } };
+      return { ok: true, data: body };
+    },
+
+    mapTokens(data) {
+      const expiresIn = minimaxPos(data, "expires_in");
+      return {
+        accessToken: minimaxStr(data, "access_token"),
+        refreshToken: minimaxStr(data, "refresh_token") ?? "",
+        expiresIn: expiresIn ?? 3600,
+      };
+    },
+  };
+}
+
+// ── Zai GLM Coding (ZCode CLI polling OAuth) ────────────────────────────────
+// Business JWT → coding-plan API key ("apiKey.secretKey"). Mirrors ZCode CLI
+// coding-plan-api-key.ts: getCustomerInfo → default org/project → api_keys
+// list/create("zcode-api-key") → copy → secretKey.
+async function resolveCodingPlanApiKey(config, zaiAccessToken) {
+  const businessToken = await exchangeBusinessToken(config, zaiAccessToken);
+  const authHeaders = {
+    Authorization: `Bearer ${businessToken}`,
+    "Content-Type": "application/json",
+  };
+
+  const customerInfo = await fetchBusinessJson(
+    `${config.apiBaseUrl}/api/biz/customer/getCustomerInfo`,
+    { headers: authHeaders },
+    "customer info"
+  );
+  const location = pickOrgAndProject(customerInfo);
+  if (!location) {
+    throw new Error("Unable to resolve Z.ai organization and project for the coding plan");
+  }
+
+  const listUrl =
+    `${config.apiBaseUrl}/api/biz/v1/organization/${location.organizationId}` +
+    `/projects/${location.projectId}/api_keys`;
+  const keys = (await fetchBusinessJson(listUrl, { headers: authHeaders }, "api keys")) || [];
+  let keyEntry = Array.isArray(keys)
+    ? keys.find((item) => item?.name === config.planApiKeyName)
+    : null;
+  if (!keyEntry) {
+    keyEntry = await fetchBusinessJson(
+      listUrl,
+      {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ name: config.planApiKeyName }),
+      },
+      "api key create"
+    );
+  }
+
+  const apiKey = keyEntry?.apiKey?.trim();
+  if (!apiKey) {
+    throw new Error("Z.ai api_keys response is missing apiKey");
+  }
+
+  const secret = await fetchBusinessJson(
+    `${listUrl}/copy/${encodeURIComponent(apiKey)}`,
+    { headers: authHeaders },
+    "api key copy"
+  );
+  const secretKey = secret?.secretKey?.trim();
+  if (!secretKey) {
+    throw new Error("Z.ai api key copy response is missing secretKey");
+  }
+
+  return { planApiKey: `${apiKey}.${secretKey}`, businessToken };
+}
+
+// POST {businessLoginUrl} {"token": <zai oauth token>} → { data: { access_token } }
+async function exchangeBusinessToken(config, zaiAccessToken) {
+  const payload = await fetchBusinessJson(
+    config.businessLoginUrl,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: zaiAccessToken }),
+    },
+    "Z.ai business login"
+  );
+  const token = payload?.access_token?.trim() || payload?.accessToken?.trim();
+  if (!token) {
+    throw new Error("Z.ai business login response is missing access_token");
+  }
+  return token;
+}
+
+// Business endpoints answer {code, msg, data}; code 0/200 (or absent) = success.
+// data is returned directly (null when missing).
+async function fetchBusinessJson(url, options, label) {
+  const response = await fetch(url, options);
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Z.ai ${label} request failed (HTTP ${response.status}): ${text.slice(0, 200)}`);
+  }
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    throw new Error(`Z.ai ${label} response is not valid JSON`);
+  }
+  if (!isSuccessCode(payload?.code) || payload?.success === false) {
+    throw new Error(payload?.msg || `Z.ai ${label} returned business error ${payload?.code}`);
+  }
+  return payload?.data ?? payload ?? null;
+}
+
+// Prefer the org named "默认机构"/"default" and the non-team project named
+// "默认项目"/"default" (projectType "2" = team), falling back to the first entries.
+function pickOrgAndProject(customerInfo) {
+  const organizations = Array.isArray(customerInfo?.organizations)
+    ? customerInfo.organizations
+    : [];
+  const personalOrgs = organizations
+    .map((organization) => ({
+      organization,
+      projects: (organization?.projects || []).filter(
+        (project) => String(project?.projectType ?? "").trim() !== "2"
+      ),
+    }))
+    .filter(({ organization, projects }) =>
+      Boolean(organization?.organizationId && projects.length)
+    );
+  if (!personalOrgs.length) return null;
+
+  const org =
+    personalOrgs.find(({ organization }) => isDefaultName(organization.organizationName)) ||
+    personalOrgs[0];
+  const project =
+    org.projects.find((item) => isDefaultName(item?.projectName)) || org.projects[0];
+  if (!org.organization?.organizationId || !project?.projectId) return null;
+  return { organizationId: org.organization.organizationId, projectId: project.projectId };
+}
+
+function isDefaultName(name) {
+  const normalized = String(name || "").trim().toLowerCase();
+  return normalized.includes("默认机构") || normalized.includes("默认项目") || normalized === "default";
+}
+
+function isSuccessCode(code) {
+  return code === undefined || code === null || code === 0 || code === 200 || code === "0" || code === "200";
+}
+
+// Absolute epoch (s or ms) → seconds from now; null when absent/invalid.
+function relativeSeconds(expiresAt) {
+  const raw = Number(expiresAt);
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  const ms = raw > 1e12 ? raw : raw * 1000;
+  const seconds = Math.floor((ms - Date.now()) / 1000);
+  return seconds > 0 ? seconds : null;
+}
+
+
+
 const PROVIDERS = {
   claude: {
     config: CLAUDE_CONFIG,
@@ -1618,6 +1908,260 @@ const PROVIDERS = {
       },
     }),
   },
+  nous: {
+    config: NOUS_CONFIG,
+    flowType: "device_code",
+    requestDeviceCode: async (config) => {
+      const response = await proxyAwareFetch(config.deviceCodeUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: new URLSearchParams({
+          client_id: config.clientId,
+          scope: config.scope,
+        }),
+        provider: "nous",
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Nous device code request failed: ${error}`);
+      }
+
+      const data = await response.json();
+      return {
+        device_code: data.device_code,
+        user_code: data.user_code,
+        verification_uri: data.verification_uri,
+        verification_uri_complete: data.verification_uri_complete,
+        expires_in: data.expires_in,
+        interval: data.interval,
+      };
+    },
+    pollToken: async (config, deviceCode) => {
+      const response = await proxyAwareFetch(config.tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: new URLSearchParams({
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+          client_id: config.clientId,
+          device_code: deviceCode,
+        }),
+        provider: "nous",
+      });
+
+      const bodyText = await response.text();
+      let data;
+      try {
+        data = JSON.parse(bodyText);
+      } catch {
+        data = { error: "invalid_response", error_description: bodyText.slice(0, 200) };
+      }
+
+      const pending =
+        data?.error === "authorization_pending" ||
+        data?.error === "slow_down";
+      return {
+        ok: response.ok || pending,
+        data,
+      };
+    },
+    postExchange: async (tokens) => {
+      try {
+        const response = await proxyAwareFetch(NOUS_CONFIG.agentKeyUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            Authorization: `Bearer ${tokens.access_token}`,
+          },
+          body: JSON.stringify({
+            min_ttl_seconds: 7200,
+          }),
+          provider: "nous",
+        });
+
+        if (!response.ok) {
+          const error = await response.text().catch(() => "");
+          console.warn(`[oauth] Nous agent key mint failed (${response.status}): ${error}`);
+          return { agentKey: null };
+        }
+
+        const data = await response.json();
+        return {
+          agentKey: data.api_key || null,
+          agentKeyId: data.key_id || null,
+          agentKeyExpiresAt: data.expires_at || null,
+          agentKeyExpiresIn: data.expires_in || null,
+        };
+      } catch (err) {
+        console.warn(`[oauth] Nous agent key mint error: ${err?.message || err}`);
+        return { agentKey: null };
+      }
+    },
+    mapTokens: (tokens, extra) => ({
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      expiresIn: tokens.expires_in,
+      scope: tokens.scope,
+      apiKey: extra?.agentKey || tokens.access_token,
+      providerSpecificData: {
+        inferenceBaseUrl: NOUS_CONFIG.inferenceBaseUrl,
+        ...(extra?.agentKeyId ? { agentKeyId: extra.agentKeyId } : {}),
+        ...(extra?.agentKeyExpiresAt ? { agentKeyExpiresAt: extra.agentKeyExpiresAt } : {}),
+      },
+    }),
+  },
+
+  "minimax-code": createMinimaxCodeProvider(MINIMAX_CODE_SITES.cn),
+  "minimax-code-global": createMinimaxCodeProvider(MINIMAX_CODE_SITES.global),
+
+  glm: {
+  config: GLM_OAUTH_CONFIG,
+  flowType: "device_code",
+  requestDeviceCode: async (config) => {
+    const pollToken = crypto.randomBytes(32).toString("hex");
+    const response = await fetch(config.cliInitUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${pollToken}`,
+      },
+      body: JSON.stringify({ provider: config.providerId || "zai" }),
+    });
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`ZCode OAuth init failed: ${error}`);
+    }
+    const payload = await response.json();
+    if (!isSuccessCode(payload.code) || !payload.data) {
+      throw new Error(payload.msg || "ZCode OAuth init returned no data");
+    }
+    const data = payload.data;
+    if (!data.flow_id || !data.authorize_url) {
+      throw new Error("ZCode OAuth init response missing flow_id/authorize_url");
+    }
+    return {
+      device_code: data.flow_id,
+      verification_uri: data.authorize_url,
+      // expires_at is upstream-absolute; surface a relative deadline for the UI
+      expires_in: relativeSeconds(data.expires_at) ?? 300,
+      interval: data.poll_interval_sec || 3,
+      _zcodePollToken: pollToken,
+    };
+  },
+  pollToken: async (config, deviceCode, _codeVerifier, extraData) => {
+    const pollToken = extraData?._zcodePollToken;
+    if (!pollToken) {
+      return {
+        ok: true,
+        data: {
+          error: "access_denied",
+          error_description: "Missing ZCode poll token — restart the login flow",
+        },
+      };
+    }
+
+    const response = await fetch(`${config.cliPollUrl}/${encodeURIComponent(deviceCode)}`, {
+      headers: { Authorization: `Bearer ${pollToken}` },
+    });
+    if (!response.ok) {
+      return {
+        ok: true,
+        data: {
+          error: "access_denied",
+          error_description: `ZCode poll failed (HTTP ${response.status})`,
+        },
+      };
+    }
+
+    const payload = await response.json();
+    if (!isSuccessCode(payload.code)) {
+      return {
+        ok: true,
+        data: { error: "access_denied", error_description: payload.msg || "ZCode poll failed" },
+      };
+    }
+
+    const data = payload.data || {};
+    if (data.status === "pending") {
+      return { ok: true, data: { error: "authorization_pending" } };
+    }
+    if (data.status === "failed") {
+      return {
+        ok: true,
+        data: {
+          error: "access_denied",
+          error_description: "ZCode authorization failed or was cancelled",
+        },
+      };
+    }
+    if (data.status !== "ready") {
+      return {
+        ok: true,
+        data: { error: "authorization_pending", error_description: `Unknown status: ${data.status}` },
+      };
+    }
+
+    // ready payload nests the ZAI OAuth tokens under data[providerId] (see
+    // apps/zcode-cli cli-oauth.ts parseReadyData): { status:"ready", token,
+    // user, zai: { access_token, refresh_token? } }. Fall back to top-level
+    // fields for resilience against payload drift.
+    const providerData = data[config.providerId] || data[data.providerId] || {};
+    const zaiAccessToken =
+      providerData.access_token ||
+      providerData.accessToken ||
+      data.accessToken ||
+      data.access_token;
+    if (!zaiAccessToken) {
+      return {
+        ok: true,
+        data: {
+          error: "access_denied",
+          error_description: "ZCode poll response missing access token",
+        },
+      };
+    }
+
+    // ready.accessToken is the Z.AI OAuth token — derive the coding-plan API key
+    const { planApiKey, businessToken } = await resolveCodingPlanApiKey(config, zaiAccessToken);
+
+    return {
+      ok: true,
+      data: {
+        access_token: planApiKey,
+        _zcodeJwtToken: data.token || "",
+        _zaiBusinessToken: businessToken,
+        _zaiRefreshToken:
+          providerData.refresh_token || providerData.refreshToken || data.refresh_token || data.refreshToken || "",
+        _zcodeUser: data.user || {},
+      },
+    };
+  },
+  mapTokens: (tokens) => {
+    const user = tokens._zcodeUser || {};
+    const displayName = user.name || user.email || null;
+    return {
+      accessToken: tokens.access_token,
+      refreshToken: null,
+      email: user.email || null,
+      ...(displayName ? { displayName } : {}),
+      providerSpecificData: {
+        authMethod: "cli_poll",
+        username: user.name || undefined,
+        userId: user.user_id || undefined,
+        zcodeJwtToken: tokens._zcodeJwtToken || undefined,
+        zaiBusinessToken: tokens._zaiBusinessToken || undefined,
+        ...(tokens._zaiRefreshToken ? { zaiRefreshToken: tokens._zaiRefreshToken } : {}),
+      },
+    };
+  },
+},
 };
 
 /**

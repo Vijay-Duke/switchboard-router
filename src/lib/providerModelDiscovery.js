@@ -21,6 +21,7 @@ import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveProviderModels, parseGoogleAvailableModels } from "open-sse/services/providerModels.js";
 import { resolveClinepassModels, resolveClineModels } from "open-sse/services/clinepassModels.js";
 import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
+import { NOUS_MODELS_URL, normalizeNousModels } from "open-sse/services/nous.js";
 import { MODEL_CATALOG_HEADER } from "@/lib/modelCatalogDiscovery";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
@@ -64,6 +65,15 @@ const createOpenAIModelsConfig = (url) => ({
   authPrefix: "Bearer ",
   parseResponse: parseOpenAIStyleModels
 });
+
+const normalizeRoutedNousModels = (data) => normalizeNousModels(data).map((model) => ({
+  ...model,
+  // Live upstream IDs include a vendor namespace (for example,
+  // stepfun/step-5-preview:free). Prefix the owning Switchboard provider so
+  // Basic Chat does not parse that namespace as the provider itself.
+  id: `nous/${model.id}`,
+  upstreamModelId: model.id,
+}));
 
 const resolveQwenModelsUrl = (connection) => {
   const fallback = "https://portal.qwen.ai/v1/models";
@@ -284,6 +294,14 @@ const PROVIDER_MODELS_CONFIG = {
   },
   openai: createOpenAIModelsConfig("https://api.openai.com/v1/models"),
   openrouter: createOpenAIModelsConfig("https://openrouter.ai/api/v1/models"),
+  nous: {
+    ...createOpenAIModelsConfig(NOUS_MODELS_URL),
+    // The minted OAuth agent key (connection.apiKey) is the credential the
+    // inference API documents for API-key auth; prefer it over the raw OAuth
+    // access token when both exist.
+    preferApiKey: true,
+    parseResponse: normalizeRoutedNousModels,
+  },
   anthropic: {
     url: "https://api.anthropic.com/v1/models",
     method: "GET",
@@ -672,7 +690,9 @@ async function discoverUncached(connection) {
   }
 
   // Get auth token
-  const token = connection.providerSpecificData?.copilotToken || connection.accessToken || connection.apiKey;
+  const token = config.preferApiKey
+    ? (connection.apiKey || connection.providerSpecificData?.copilotToken || connection.accessToken)
+    : (connection.providerSpecificData?.copilotToken || connection.accessToken || connection.apiKey);
   if (!token) {
     return fail("No valid token found", 401);
   }

@@ -7,7 +7,8 @@ import {
   requestDeviceCode, 
   pollForToken 
 } from "@/lib/oauth/providers";
-import { createProviderConnection } from "@/models";
+import { createProviderConnection, getProviderConnections } from "@/models";
+import { requestLease, requestStatus, resolveLeaseEndpoint, resolveMcodeDataDir, AuthLeaseError } from "open-sse/services/minimaxCodeLease.js";
 import {
   startCodexProxy,
   stopCodexProxy,
@@ -200,6 +201,24 @@ export async function GET(request, { params }) {
       });
     }
 
+    if (action === "lease-status") {
+      // MiniMax Code desktop broker probe: is the desktop app installed,
+      // running and signed in on this machine? Read-only — leases nothing.
+      const MCODE_LEASE_PROVIDERS = ["minimax-code", "minimax-code-global"];
+      if (!MCODE_LEASE_PROVIDERS.includes(provider)) {
+        return NextResponse.json({ error: "lease-status only supported for minimax-code/minimax-code-global" }, { status: 400 });
+      }
+      const override = searchParams.get("data_dir");
+      const dataDir = override ? String(override).trim() : resolveMcodeDataDir(null);
+      try {
+        const status = await requestStatus(dataDir);
+        return NextResponse.json({ found: true, dataDir, ...status });
+      } catch (error) {
+        const code = error instanceof AuthLeaseError ? error.code : "INTERNAL_ERROR";
+        return NextResponse.json({ found: false, dataDir, error: code, message: error.message });
+      }
+    }
+
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (error) {
     console.log("OAuth GET error:", error);
@@ -217,6 +236,42 @@ export async function POST(request, { params }) {
       body = await request.json();
     } catch {
       return NextResponse.json({ error: "Invalid or empty request body" }, { status: 400 });
+    }
+
+    if (action === "lease-connect") {
+      // MiniMax Code: create a connection that borrows the desktop app's
+      // sign-in over the local auth-lease pipe (authType "mcode-lease"). The
+      // router stores no tokens for it — the desktop broker owns refresh.
+      const MCODE_LEASE_PROVIDERS = ["minimax-code", "minimax-code-global"];
+      if (!MCODE_LEASE_PROVIDERS.includes(provider)) {
+        return NextResponse.json({ error: "lease-connect only supported for minimax-code/minimax-code-global" }, { status: 400 });
+      }
+      const dataDir = body?.dataDir ? String(body.dataDir).trim() : resolveMcodeDataDir(null);
+      try {
+        // Validate availability up front so the user gets the broker's exact
+        // failure reason instead of a dead connection.
+        await requestLease(dataDir);
+      } catch (error) {
+        const code = error instanceof AuthLeaseError ? error.code : "INTERNAL_ERROR";
+        return NextResponse.json({ error: error.message, code }, { status: 409 });
+      }
+
+      // Idempotent: one lease connection per (provider, data dir).
+      resolveLeaseEndpoint(dataDir); // throws INVALID_REQUEST on a non-absolute override
+      const existing = (await getProviderConnections({ provider }))
+        .find((c) => c.authType === "mcode-lease" && resolveMcodeDataDir(c) === dataDir);
+      if (existing) {
+        return NextResponse.json({ success: true, connection: { id: existing.id, provider: existing.provider }, reused: true });
+      }
+
+      const connection = await createProviderConnection({
+        provider,
+        authType: "mcode-lease",
+        name: provider === "minimax-code-global" ? "MiniMax Desktop (Lease, Global)" : "MiniMax Desktop (Lease)",
+        providerSpecificData: { mcodeDataDir: dataDir },
+        testStatus: "active",
+      });
+      return NextResponse.json({ success: true, connection: { id: connection.id, provider: connection.provider } });
     }
 
     if (action === "exchange") {
@@ -372,7 +427,7 @@ export async function POST(request, { params }) {
       }
 
       // Providers that don't use PKCE for device code
-      const noPkceProviders = ["github", "kimi-coding", "kilocode", "codebuddy-cn", "grok-cli", "muse"];
+      const noPkceProviders = ["github", "kimi-coding", "kilocode", "codebuddy-cn", "grok-cli", "muse", "nous", "glm"];
       let result;
       if (noPkceProviders.includes(provider)) {
         // kimi-coding threads _kimiDeviceId through extraData; the others
@@ -381,10 +436,8 @@ export async function POST(request, { params }) {
       } else if (provider === "kiro") {
         // Kiro needs extraData (clientId, clientSecret) from device code response
         result = await pollForToken(provider, deviceCode, null, extraData);
-      } else if (provider === "qoder" || provider === "qoder-cn") {
-        // Qoder (intl or CN) needs both the PKCE verifier (codeVerifier) and
-        // the machineId captured at device-code time (extraData._qoderMachineId)
-        // so mapTokens can persist it for COSY signing.
+      } else if (["qoder", "qoder-cn", "minimax-code", "minimax-code-global"].includes(provider)) {
+        // Qoder needs the signing machine id; MiniMax carries its polling mode.
         if (!codeVerifier) {
           return NextResponse.json({ error: "Missing code verifier" }, { status: 400 });
         }

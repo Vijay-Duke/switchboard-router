@@ -11,14 +11,16 @@ const snapPath = join(here, "alias-baseline.json");
 // All known alias tokens to probe (collected from both maps' historical keys)
 const ALIAS_TOKENS = [
   "cc","cx","gc","qw","if","ag","gh","kr","cu","kc","kmc","cl","oc","ocg","qd","qoder",
+  "ocz","opencode-zen","br","brx","bedrock","aws-bedrock","bedrock-grok",
   "el","openai","vercel","vercel-ai-gateway","anthropic","gemini","openrouter","glm","kimi",
-  "minimax","minimax-cn","hf","huggingface","ds","deepseek","cmc","commandcode","groq","xai",
+  "minimax","minimax-cn","mm","mmg","minimax-code","minimax-code-global","hf","huggingface","ds","deepseek","cmc","commandcode","groq","xai",
   "mistral","pplx","perplexity","together","fireworks","cerebras","cohere","nvidia","nebius",
   "siliconflow","hyp","hyperbolic","dg","deepgram","aai","assemblyai","nb","nanobanana","ch",
   "chutes","ark","volcengine-ark","byteplus","bpm","cursor","vx","vertex","vxp","vertex-partner",
   "gw","grok-web","pw","perplexity-web","mimo","xiaomi-mimo","xmtp","xiaomi-tokenplan","cf",
   "cloudflare-ai","fal","fal-ai","stability","stability-ai","bfl","black-forest-labs","recraft",
   "topaz","runway","runwayml","jina","jina-ai","polly","aws-polly","bb","blackbox",
+  "nous","nous-portal","nous-research","ns",
 ];
 
 // Sort idToAlias by key — runtime accesses by key, order is irrelevant (content-based)

@@ -6,6 +6,7 @@ import {
   deleteProviderConnection,
   redactSecrets,
 } from "@/models";
+import { usesAwsCredentialForm } from "@/lib/providerConnectionResponse";
 
 export const dynamic = "force-dynamic";
 
@@ -139,10 +140,20 @@ export async function PUT(request, { params }) {
         proxyPoolResult.hasProxyPoolField
       )
     ) {
+      const incomingProviderSpecificData = { ...(providerSpecificData || {}) };
+      const isAwsCredential = usesAwsCredentialForm(existing.provider);
+      // The edit form cannot read the stored token back. An empty password field means
+      // keep the saved credential; null explicitly removes it.
+      if (isAwsCredential && incomingProviderSpecificData.sessionToken === "") {
+        delete incomingProviderSpecificData.sessionToken;
+      }
       updateData.providerSpecificData = {
         ...(existing.providerSpecificData || {}),
-        ...(providerSpecificData || {}),
+        ...incomingProviderSpecificData,
       };
+      if (isAwsCredential && incomingProviderSpecificData.sessionToken === null) {
+        delete updateData.providerSpecificData.sessionToken;
+      }
 
       if (proxyConfig.hasAnyProxyField) {
         updateData.providerSpecificData.connectionProxyEnabled = proxyConfig.connectionProxyEnabled;

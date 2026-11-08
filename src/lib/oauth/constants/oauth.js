@@ -4,6 +4,7 @@
 import { platform, arch } from "os";
 import { ANTIGRAVITY_OAUTH_CLIENT, GOOGLE_OAUTH_CLIENT } from "open-sse/providers/shared.js";
 import { PROVIDER_OAUTH, PROVIDERS as REGISTRY_PROVIDERS } from "open-sse/providers/index.js";
+import { NOUS_INFERENCE_BASE_URL } from "open-sse/services/nous.js";
 
 /**
  * Get the platform enum value based on the current OS.
@@ -120,6 +121,19 @@ export const KIMCHI_CONFIG = { ...PROVIDER_OAUTH["kimchi"] };
 export const GROK_CLI_CONFIG = { ...PROVIDER_OAUTH["grok-cli"] };
 export const MUSE_CONFIG = { ...PROVIDER_OAUTH["muse"] };
 
+// GLM Coding (Z.ai) OAuth — ZCode CLI polling flow (NOT PKCE): init mints a
+// one-off poll token, the browser opens the server-generated authorize_url,
+// poll/ready returns the tokens. The Z.AI OAuth token is then exchanged for a
+// platform business JWT and finally a long-lived coding-plan API key (no
+// refresh grant).
+export const GLM_OAUTH_CONFIG = { ...PROVIDER_OAUTH["glm"] };
+
+// Nous Research Portal — OAuth 2.0 Device Code flow (RFC 8628) + agent key minting
+export const NOUS_CONFIG = {
+  ...PROVIDER_OAUTH["nous"],
+  inferenceBaseUrl: NOUS_INFERENCE_BASE_URL,
+};
+
 // OAuth timeout (5 minutes)
 export const OAUTH_TIMEOUT = 300000;
 
@@ -145,4 +159,6 @@ export const PROVIDERS = {
   KIMCHI: "kimchi",
   GROK_CLI: "grok-cli",
   MUSE: "muse",
+  GLM: "glm",
+  NOUS: "nous",
 };

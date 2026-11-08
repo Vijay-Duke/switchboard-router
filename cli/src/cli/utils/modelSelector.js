@@ -19,7 +19,7 @@ const PROVIDER_ALIAS_NAMES = {
   gh: "GitHub Copilot",
   kr: "Kiro AI",
   openrouter: "OpenRouter",
-  glm: "GLM Coding",
+  glm: "Zai GLM Coding",
   kimi: "Kimi Coding",
   minimax: "Minimax Coding",
   openai: "OpenAI",

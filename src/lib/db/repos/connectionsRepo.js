@@ -23,7 +23,7 @@ const OPTIONAL_FIELDS = [
 // rows stay readable: decryptSecret(stored) ?? stored falls back on decrypt miss.
 const SECRET_FIELDS = new Set([
   "accessToken", "refreshToken", "idToken", "apiKey",
-  "copilotToken", "cookies", "clientSecret", "secretAccessKey",
+  "copilotToken", "cookies", "clientSecret", "secretAccessKey", "sessionToken",
 ]);
 
 function mapSecrets(value, transform, secretContext = false) {
