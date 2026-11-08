@@ -885,6 +885,48 @@
       }
     ]
   },
+  "opencode-zen": {
+    "identity": "openai-node",
+    "baseUrl": "https://opencode.ai/zen/v1/chat/completions",
+    "headers": {},
+    "usage": {
+      "url": "https://opencode.ai/zen/v1/usage"
+    },
+    "format": "openai",
+    "transports": [
+      {
+        "identity": "openai-node",
+        "format": "openai",
+        "baseUrl": "https://opencode.ai/zen/v1/chat/completions",
+        "auth": {
+          "combined": true,
+          "header": "Authorization",
+          "scheme": "bearer"
+        }
+      },
+      {
+        "identity": "openai-node",
+        "format": "claude",
+        "baseUrl": "https://opencode.ai/zen/v1/messages",
+        "auth": {
+          "combined": true,
+          "header": "x-api-key",
+          "scheme": "raw",
+          "anthropicVersion": true
+        }
+      },
+      {
+        "identity": "openai-node",
+        "format": "openai-responses",
+        "baseUrl": "https://opencode.ai/zen/v1/responses",
+        "auth": {
+          "combined": true,
+          "header": "Authorization",
+          "scheme": "bearer"
+        }
+      }
+    ]
+  },
   "opencode": {
     "identity": "openai-node",
     "baseUrl": "https://opencode.ai",

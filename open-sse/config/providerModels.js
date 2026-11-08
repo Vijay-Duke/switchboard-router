@@ -61,7 +61,7 @@ export function findModelName(aliasOrId, modelId) {
 export function getModelTargetFormat(aliasOrId, modelId) {
   // Muse Spark models on the free lane are Responses-only even when the id came
   // from modelsFetcher/passthrough rather than the curated registry (acb5c34c).
-  if ((!aliasOrId || aliasOrId === "oc" || aliasOrId === "opencode" || aliasOrId === "ocg" || aliasOrId === "opencode-go") && isMuseSparkModel(modelId)) {
+  if ((!aliasOrId || aliasOrId === "oc" || aliasOrId === "opencode" || aliasOrId === "ocg" || aliasOrId === "opencode-go" || aliasOrId === "ocz" || aliasOrId === "opencode-zen") && isMuseSparkModel(modelId)) {
     return FORMATS.OPENAI_RESPONSES;
   }
   const models = PROVIDER_MODELS[aliasOrId];
