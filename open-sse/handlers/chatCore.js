@@ -61,7 +61,7 @@ const URL_CONTROLLED_STREAM_FORMATS = new Set([
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  * @param {AbortSignal} [options.abortSignal] - Optional external abort (e.g. router timeout)
  */
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, onUpstreamEmptyExhausted, clientRawRequest, connectionId, userAgent, clientKeyId, ccFilterNaming, rtkEnabled, vaultEnabled, vaultThresholdKB, vaultTtlHours, vaultConversationId, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, customPromptEnabled, customPrompt, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, bypassNativePassthrough, vaultInternal, abortSignal }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, onUpstreamEmptyExhausted, clientRawRequest, connectionId, userAgent, clientKeyId, ccFilterNaming, rtkEnabled, vaultEnabled, vaultThresholdKB, vaultTtlHours, vaultConversationId, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, customPromptEnabled, customPrompt, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, providerOverrides, bypassNativePassthrough, vaultInternal, abortSignal }) {
   if (abortSignal?.aborted) return createErrorResult(499, "Request aborted");
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
@@ -485,7 +485,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     if (requestAborted()) return abortResult();
     // Clone per attempt: executors mutate the body in place (schema fallback,
     // stream_options delete/inject), so retries must not inherit attempt-1 edits.
-    const result = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions, providerSessionId: sessionSeed, clientTool });
+    const result = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions, providerSessionId: sessionSeed, clientTool, providerOverrides });
     providerResponse = result.response;
     providerUrl = result.url;
     providerHeaders = result.headers;
@@ -546,7 +546,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
         // but cancellation must never dispatch another inference request.
         if (requestAborted()) return abortResult();
         try {
-          const retryResult = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions, providerSessionId: sessionSeed, clientTool });
+          const retryResult = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions, providerSessionId: sessionSeed, clientTool, providerOverrides });
           if (retryResult.toolNameMap?.size) toolNameMap = new Map([...(toolNameMap || []), ...retryResult.toolNameMap]);
           // Cancel superseded response body to avoid undici pool pinning
           try { await providerResponse.body?.cancel?.(); } catch {}
@@ -621,7 +621,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   const reexecuteBody = async () => {
     streamController.signal?.throwIfAborted();
-    const retryResult = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions, providerSessionId: sessionSeed, clientTool });
+    const retryResult = await executor.execute({ model, body: structuredClone(translatedBody), stream, credentials, signal: streamController.signal, log, proxyOptions, providerSessionId: sessionSeed, clientTool, providerOverrides });
     if (retryResult.toolNameMap?.size) toolNameMap = new Map([...(toolNameMap || []), ...retryResult.toolNameMap]);
     if (requestAborted()) {
       try { await retryResult.response.body?.cancel?.(); } catch {}

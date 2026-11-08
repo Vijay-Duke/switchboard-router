@@ -29,6 +29,7 @@ import AddCustomModelModal from "./AddCustomModelModal";
 import BulkImportCodexModal from "./BulkImportCodexModal";
 import VerifyModelsPanel from "./VerifyModelsPanel";
 import PeakHoursCard from "./PeakHoursCard";
+import CustomConfigCard from "./CustomConfigCard";
 import { getProviderModelToolbarActions } from "./providerModelActions";
 import { canonicalModelId } from "@/lib/model-probe/canonicalId.js";
 import { reportClientError } from "@/shared/utils/clientFeedback";
@@ -1817,6 +1818,9 @@ export default function ProviderDetailPage() {
           for compatible nodes that's the node prefix, not its internal id.
           Remounts on provider change so no editor state leaks across pages. */}
       <PeakHoursCard key={providerId} providerId={providerId} scheduleKey={providerDisplayAlias} />
+
+      {/* Per-provider user overrides (custom headers / connect timeout) */}
+      <CustomConfigCard providerId={providerId} />
 
       {/* Models */}
       <Card>

@@ -884,6 +884,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const chatSettings = await getSettings();
     if (abortSignal?.aborted) return abortResponse();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
+    // Per-provider user overrides (custom headers / connect timeout) from settings
+    const providerOverrides = (chatSettings.providerOverrides || {})[provider] || null;
     const attemptBody = typeof structuredClone === "function"
       ? structuredClone(body)
       : JSON.parse(JSON.stringify(body));
@@ -936,6 +938,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         : null,
       onPxpipeEvent: appendPxpipeEvent,
       providerThinking,
+      providerOverrides,
       sourceFormatOverride,
       bypassNativePassthrough: !!callOpts?.bypassNativePassthrough,
       vaultInternal: !!callOpts?.vaultInternal,
