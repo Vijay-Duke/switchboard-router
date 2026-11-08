@@ -31,7 +31,16 @@ const moduleDefault = {
     { id: "minimax-m3", name: "MiniMax M3" },
     { id: "deepseek-v4.1-flash:cloud", name: "DeepSeek V4.1 Flash" },
   ],
-  serviceKinds: ["llm"],
+  serviceKinds: ["llm", "webFetch"],
+  fetchConfig: {
+    baseUrl: "https://ollama.com/api/web_fetch",
+    method: "POST",
+    authType: "apikey",
+    authHeader: "bearer",
+    formats: ["markdown"],
+    maxCharacters: 200000,
+    timeoutMs: 30000,
+  },
   features: {
     usage: true,
     usageApikey: true,
