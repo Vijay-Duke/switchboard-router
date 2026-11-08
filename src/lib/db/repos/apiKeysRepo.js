@@ -17,6 +17,7 @@ export const CLIENT_KEY_POLICY_BOUNDS = Object.freeze({
   maxRatePerMinute: 60_000,
   maxConcurrency: 1_000,
   maxSpendUsd: 1_000_000,
+  maxTokenQuota: 1_000_000_000_000,
 });
 
 const PATCH_FIELDS = new Set([
@@ -28,6 +29,8 @@ const PATCH_FIELDS = new Set([
   "rateLimitPerMinute",
   "concurrencyLimit",
   "spendLimitUsd",
+  "tokenLimit",
+  "usedTokens",
 ]);
 
 function parseArray(value) {
@@ -59,6 +62,8 @@ function rowToKey(row) {
     concurrencyLimit: row.concurrencyLimit == null ? null : Number(row.concurrencyLimit),
     spendLimitUsd: row.spendLimitUsd == null ? null : Number(row.spendLimitUsd),
     spentUsd: Number(row.spentUsd || 0),
+    tokenLimit: row.tokenLimit == null ? null : Number(row.tokenLimit),
+    usedTokens: Number(row.usedTokens || 0),
   };
 }
 
@@ -137,6 +142,21 @@ export function normalizeClientKeyPatch(data) {
       throw new Error(`spendLimitUsd must be finite from 0 through ${CLIENT_KEY_POLICY_BOUNDS.maxSpendUsd}`);
     } else out.spendLimitUsd = value;
   }
+  // Per-key token quota: null/"" means unlimited; usedTokens is only patched
+  // to reset the counter (the request path increments it atomically).
+  if (Object.hasOwn(data, "tokenLimit")) {
+    const value = data.tokenLimit;
+    if (value == null || value === "") out.tokenLimit = null;
+    else if (!Number.isInteger(value) || value < 0 || value > CLIENT_KEY_POLICY_BOUNDS.maxTokenQuota) {
+      throw new Error(`tokenLimit must be an integer from 0 through ${CLIENT_KEY_POLICY_BOUNDS.maxTokenQuota}`);
+    } else out.tokenLimit = value === 0 ? null : value;
+  }
+  if (Object.hasOwn(data, "usedTokens")) {
+    const value = data.usedTokens;
+    if (!Number.isInteger(value) || value < 0 || value > CLIENT_KEY_POLICY_BOUNDS.maxTokenQuota) {
+      throw new Error(`usedTokens must be an integer from 0 through ${CLIENT_KEY_POLICY_BOUNDS.maxTokenQuota}`);
+    } else out.usedTokens = value;
+  }
   return out;
 }
 
@@ -210,8 +230,13 @@ export async function getApiKeyById(id) {
   return rowToKey(db.get(`${KEY_ROWS} WHERE k.id = ?`, [id]));
 }
 
-export async function createApiKey(name, machineId) {
+export async function createApiKey(name, machineId, options = {}) {
   if (!machineId) throw new Error("machineId is required");
+  const patch = normalizeClientKeyPatch({
+    ...(Object.hasOwn(options, "tokenLimit") ? { tokenLimit: options.tokenLimit } : {}),
+    ...(options.allowedModels != null ? { allowedModels: options.allowedModels } : {}),
+    ...(options.allowedCombos != null ? { allowedCombos: options.allowedCombos } : {}),
+  });
   const db = await getAdapter();
   const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey");
   const generated = generateApiKeyWithMachine(machineId);
@@ -230,11 +255,15 @@ export async function createApiKey(name, machineId) {
     concurrencyLimit: null,
     spendLimitUsd: null,
     spentUsd: 0,
+    tokenLimit: patch.tokenLimit ?? null,
+    usedTokens: 0,
   };
+  const allowModelsSql = patch.allowedModels?.length ? JSON.stringify(patch.allowedModels) : null;
+  const allowCombosSql = patch.allowedCombos?.length ? JSON.stringify(patch.allowedCombos) : null;
   db.run(
-    `INSERT INTO apiKeys(id, key, keyPrefix, lookupDigest, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd)
-     VALUES(?, ?, ?, ?, ?, ?, 1, ?, NULL, NULL, NULL, NULL, NULL, NULL, 0)`,
-    [row.id, packed, apiKeyPrefix(generated.key), apiKeyLookupDigest(generated.key), name, machineId, row.createdAt]
+    `INSERT INTO apiKeys(id, key, keyPrefix, lookupDigest, name, machineId, isActive, createdAt, allowedModels, allowedCombos, expiresAt, rateLimitPerMinute, concurrencyLimit, spendLimitUsd, spentUsd, tokenLimit, usedTokens)
+     VALUES(?, ?, ?, ?, ?, ?, 1, ?, ?, ?, NULL, NULL, NULL, NULL, 0, ?, 0)`,
+    [row.id, packed, apiKeyPrefix(generated.key), apiKeyLookupDigest(generated.key), name, machineId, row.createdAt, allowModelsSql, allowCombosSql, row.tokenLimit]
   );
   return { ...rowToKey(row), key: generated.key };
 }
@@ -250,10 +279,11 @@ export async function updateApiKey(id, data) {
     const merged = { ...current, ...patch };
     db.run(
       `UPDATE apiKeys
-       SET name = ?, isActive = ?, allowedModels = ?, allowedCombos = ?, expiresAt = ?, rateLimitPerMinute = ?, concurrencyLimit = ?, spendLimitUsd = ?
+       SET name = ?, isActive = ?, allowedModels = ?, allowedCombos = ?, expiresAt = ?, rateLimitPerMinute = ?, concurrencyLimit = ?, spendLimitUsd = ?, tokenLimit = ?, usedTokens = ?
        WHERE id = ?`,
       [merged.name, merged.isActive ? 1 : 0, JSON.stringify(merged.allowedModels), JSON.stringify(merged.allowedCombos), merged.expiresAt,
-        merged.rateLimitPerMinute, merged.concurrencyLimit, merged.spendLimitUsd, id]
+        merged.rateLimitPerMinute, merged.concurrencyLimit, merged.spendLimitUsd,
+        merged.tokenLimit ?? null, merged.usedTokens ?? 0, id]
     );
     result = { ...merged };
   });
@@ -268,7 +298,7 @@ export async function deleteApiKey(id) {
   return ok;
 }
 
-export async function authenticateApiKey(raw) {
+export async function authenticateApiKey(raw, { includeInactive = false } = {}) {
   if (!raw || typeof raw !== "string") return null;
   const db = await getAdapter();
   const lookupDigest = apiKeyLookupDigest(raw);
@@ -278,15 +308,20 @@ export async function authenticateApiKey(raw) {
     const hit = getVerifyMemo(lookupDigest, rawSha);
     if (hit) {
       const fresh = db.get(`${KEY_ROWS} WHERE k.id = ?`, [hit.id]);
-      if (fresh && (fresh.isActive === 1 || fresh.isActive === true)) {
+      const active = Boolean(fresh) && (fresh.isActive === 1 || fresh.isActive === true);
+      if (fresh && (active || includeInactive)) {
         fresh.spentUsd = await getClientKeySpend(fresh.id);
         return rowToKey(fresh);
       }
       verifyMemo.delete(lookupDigest);
     }
   }
+  // A paused (isActive = 0) key still verifies as a KNOWN key: the policy
+  // layer must be able to reject it by name instead of falling back to the
+  // unknown-key local pass (includeInactive).
+  const activeClause = includeInactive ? "" : "k.isActive = 1 AND ";
   const indexed = lookupDigest
-    ? db.get(`${KEY_ROWS} WHERE k.isActive = 1 AND k.lookupDigest = ?`, [lookupDigest])
+    ? db.get(`${KEY_ROWS} WHERE ${activeClause}k.lookupDigest = ?`, [lookupDigest])
     : null;
 
   if (indexed) {
@@ -300,7 +335,7 @@ export async function authenticateApiKey(raw) {
   }
 
   const legacyRows = db.all(
-    `${KEY_ROWS} WHERE k.isActive = 1 AND k.lookupDigest IS NULL AND k.keyPrefix = ? AND k.key NOT LIKE 'v2:%'`,
+    `${KEY_ROWS} WHERE ${activeClause}k.lookupDigest IS NULL AND k.keyPrefix = ? AND k.key NOT LIKE 'v2:%'`,
     [keyPrefix],
   );
   for (const row of legacyRows) {

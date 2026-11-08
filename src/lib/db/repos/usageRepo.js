@@ -312,9 +312,11 @@ export async function saveRequestUsage(entry) {
         ]
       );
       if (entry.clientKeyId) {
+        // Per-key accounting in the same atomic transaction: spend ceiling and
+        // token quota counters (prompt + completion tokens, mirroring upstream).
         db.run(
-          `UPDATE apiKeys SET spentUsd = spentUsd + ? WHERE id = ?`,
-          [Number(entry.cost || 0), entry.clientKeyId]
+          `UPDATE apiKeys SET spentUsd = spentUsd + ?, usedTokens = usedTokens + ? WHERE id = ?`,
+          [Number(entry.cost || 0), promptTokens + completionTokens, entry.clientKeyId]
         );
       }
 

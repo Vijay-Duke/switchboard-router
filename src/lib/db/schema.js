@@ -87,6 +87,8 @@ export const TABLES = {
       concurrencyLimit: "INTEGER",
       spendLimitUsd: "REAL",
       spentUsd: "REAL NOT NULL DEFAULT 0",
+      tokenLimit: "INTEGER",
+      usedTokens: "INTEGER NOT NULL DEFAULT 0",
     },
     indexes: [
       "CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)",

@@ -11,7 +11,7 @@ import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import * as log from "../utils/logger.js";
-import { authorizeClientKeyRequest, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
+import { authorizeClientKeyRequest, clientKeyTargetDenied, runWithClientKeyLease } from "../services/clientKeyPolicy.js";
 import { withConnectionInFlight } from "../services/connectionInFlight.js";
 
 // Video generation is xAI-only today; requests without a provider prefix
@@ -27,13 +27,13 @@ const CREATE_ROTATION_STATUSES = new Set([
   HTTP_STATUS.RATE_LIMITED,
 ]);
 
-async function authorizeVideoRequest(request) {
+async function authorizeVideoRequest(request, target = { kind: "model", id: null }) {
   const settings = await getSettings();
   return authorizeClientKeyRequest({
     settings,
     rawKey: extractApiKey(request),
     request,
-    target: { kind: "model", id: null },
+    target,
   });
 }
 
@@ -92,7 +92,10 @@ function withConnectionHeader(response, connectionId) {
  * POST /v1/videos/{generations|edits|extensions} — async job creation proxy.
  */
 export async function handleVideoCreate(request, action) {
-  const auth = await authorizeVideoRequest(request);
+  // Auth-only first: the target is only known after the (possibly multipart)
+  // body is read, so the per-key target check runs once the provider/model is
+  // resolved below.
+  const auth = await authorizeVideoRequest(request, null);
   if (!auth.ok) return auth.response;
 
   return runWithClientKeyLease(auth.lease, async () => {
@@ -102,6 +105,16 @@ export async function handleVideoCreate(request, action) {
     const resolved = await resolveVideoProvider(bodyInfo.parsed);
     if (resolved.error) return resolved.error;
     const { provider, model } = resolved;
+
+    // Per-key access control: the routed provider/model must be listed. A body
+    // we cannot read a model from (multipart) is denied for restricted keys.
+    const denied = await clientKeyTargetDenied(auth.clientKey, {
+      resolved: true,
+      id: bodyInfo.parsed?.model ? String(bodyInfo.parsed.model) : "",
+      provider,
+      model,
+    });
+    if (denied) return denied.response;
 
     // Strip the provider prefix (e.g. "xai/grok-imagine-video") before forwarding;
     // otherwise forward the original bytes untouched.

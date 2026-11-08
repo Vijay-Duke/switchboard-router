@@ -25,6 +25,35 @@ import { useNotificationStore } from "@/store/notificationStore";
  * Endpoint & API keys client UI. Initial read comes from the Server Component.
  * @param {{ initialData: EndpointInitialData }} props
  */
+function formatTokens(n) {
+  const value = Number(n || 0);
+  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+  return String(value);
+}
+
+/**
+ * Token-quota badge for a key row: usage summary plus optional progress.
+ * @param {any} key
+ */
+function tokenUsageBadge(key) {
+  if (!key.tokenLimit || key.tokenLimit <= 0) {
+    return Number(key.usedTokens || 0) > 0
+      ? { label: `${formatTokens(key.usedTokens)} tokens`, tone: "muted", percent: null }
+      : null;
+  }
+  const used = Number(key.usedTokens || 0);
+  const percent = Math.min(100, Math.round((used / key.tokenLimit) * 100));
+  const exhausted = used >= key.tokenLimit;
+  return {
+    label: `${formatTokens(used)} / ${formatTokens(key.tokenLimit)} tokens${exhausted ? " — limit reached" : ` (${percent}%)`}`,
+    tone: exhausted ? "danger" : percent > 80 ? "warn" : "muted",
+    percent,
+    exhausted,
+  };
+}
+
 export default function EndpointPageClient({ initialData }) {
   const queryClient = useQueryClient();
   const machineId = initialData?.machineId || "";
@@ -69,6 +98,7 @@ export default function EndpointPageClient({ initialData }) {
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
+  const [newKeyTokenLimit, setNewKeyTokenLimit] = useState("");
   const [createdKey, setCreatedKey] = useState(/** @type {string|null} */ (null));
   const [confirmState, setConfirmState] = useState(/** @type {any} */ (null));
   const [editingKey, setEditingKey] = useState(/** @type {any} */ (null));
@@ -98,14 +128,15 @@ export default function EndpointPageClient({ initialData }) {
   });
 
   const createKeyMutation = useMutation({
-    mutationFn: (/** @type {string} */ name) =>
+    mutationFn: (/** @type {{ name: string, tokenLimit: number | null }} */ { name, tokenLimit }) =>
       fetchJson("/api/keys", {
         method: "POST",
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, ...(tokenLimit != null ? { tokenLimit } : {}) }),
       }),
     onSuccess: (data) => {
       setCreatedKey(data.key || null);
       setNewKeyName("");
+      setNewKeyTokenLimit("");
       setShowAddModal(false);
       queryClient.invalidateQueries({ queryKey: queryKeys.endpoint.keys() });
     },
@@ -269,7 +300,40 @@ export default function EndpointPageClient({ initialData }) {
                         ${Number(key.spentUsd || 0).toFixed(2)} / ${Number(key.spendLimitUsd).toFixed(2)}
                       </span>
                     ) : null}
+                    {(() => { const badge = tokenUsageBadge(key); return badge ? (
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[11px] ${
+                          badge.tone === "danger"
+                            ? "bg-red-500/10 text-red-600"
+                            : badge.tone === "warn"
+                              ? "bg-orange-500/10 text-orange-600"
+                              : "bg-black/5 text-text-muted dark:bg-white/5"
+                        }`}
+                      >
+                        {badge.label}
+                      </span>
+                    ) : null; })()}
                   </div>
+                  {key.tokenLimit > 0 && (() => {
+                    const badge = tokenUsageBadge(key);
+                    return badge?.percent != null ? (
+                      <div
+                        className="mt-2 h-1.5 w-full max-w-64 overflow-hidden rounded-full bg-black/5 dark:bg-white/10"
+                        role="progressbar"
+                        aria-label="Token quota usage"
+                        aria-valuenow={badge.percent}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                      >
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            badge.exhausted ? "bg-red-500" : badge.percent > 80 ? "bg-orange-500" : "bg-primary"
+                          }`}
+                          style={{ width: `${badge.percent}%` }}
+                        />
+                      </div>
+                    ) : null;
+                  })()}
                   <p className="text-xs text-text-muted mt-1">
                     Created {new Date(key.createdAt).toLocaleDateString()}
                   </p>
@@ -347,9 +411,21 @@ export default function EndpointPageClient({ initialData }) {
             onChange={(e) => setNewKeyName(e.target.value)}
             placeholder="Production Key"
           />
+          <Input
+            label="Token limit (optional)"
+            type="number"
+            min="0"
+            step="1"
+            value={newKeyTokenLimit}
+            onChange={(e) => setNewKeyTokenLimit(e.target.value)}
+            placeholder="Unlimited"
+          />
           <div className="flex gap-2">
             <Button
-              onClick={() => createKeyMutation.mutate(newKeyName.trim())}
+              onClick={() => createKeyMutation.mutate({
+                name: newKeyName.trim(),
+                tokenLimit: newKeyTokenLimit === "" ? null : Math.max(0, parseInt(newKeyTokenLimit, 10) || 0),
+              })}
               fullWidth
               disabled={!newKeyName.trim() || createKeyMutation.isPending}
               loading={createKeyMutation.isPending}
@@ -360,6 +436,7 @@ export default function EndpointPageClient({ initialData }) {
               onClick={() => {
                 setShowAddModal(false);
                 setNewKeyName("");
+                setNewKeyTokenLimit("");
               }}
               variant="ghost"
               fullWidth
