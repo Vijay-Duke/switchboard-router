@@ -337,7 +337,7 @@ export default function EndpointPageClient({ initialData }) {
                     ) : null;
                   })()}
                   <p className="text-xs text-text-muted mt-1">
-                    Created {hasHydrated ? new Date(key.createdAt).toLocaleDateString() : "—"}
+                    Created <span data-i18n-skip>{hasHydrated ? new Date(key.createdAt).toLocaleDateString() : "—"}</span>
                   </p>
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>

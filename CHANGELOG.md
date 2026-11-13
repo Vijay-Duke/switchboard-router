@@ -1,7 +1,7 @@
 # v0.9.74 (2026-11-13)
 
 ## Fixes
-- Localize saved API key creation dates after hydration, preserving browser date formatting without server/browser locale or timezone text mismatches.
+- Localize saved API key creation dates after hydration, preserving browser date formatting without server/browser locale or timezone text mismatches. Keep the translation runtime from restoring the initial date placeholder.
 - Keep Claude TLS helper input-pipe failures within their request. Observe pipe errors before writing, retain the listener through queued errors after abort/rejection, terminate the failed helper, and fail an incomplete response body when needed.
 - Validate request body types before acquiring a helper process.
 

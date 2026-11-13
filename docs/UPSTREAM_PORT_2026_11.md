@@ -157,3 +157,8 @@ the server and client, then browser-local dates render after hydration. The
 full page regression verifies both matching hydration and localized dates. A read-only
 Mac capture confirms the live mismatch: Node en-US rendered 8/23/2026 while
 Chrome en-GB rendered 23/08/2026, both in Australia/Melbourne.
+
+The formatted date is excluded from DOM translation (the Created label remains
+translatable): translation refresh could otherwise cache and restore the initial
+placeholder over React's localized value. The hydration regression also exercises
+a translation pass before hydration and a refresh afterward.
