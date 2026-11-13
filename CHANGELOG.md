@@ -3,9 +3,11 @@
 ## Fixes
 - Keep the gateway health indicator consistent during hydration when another subscriber has already observed an outage. Client-only subscribers still receive the current health state immediately.
 - Use the built-in OpenAI/Anthropic family icons for custom compatible provider nodes, avoiding missing per-node image requests, and retry icons when their source changes.
+- Contain broken log pipes and disconnected HTTP responses at their stream boundaries, preventing an unhandled EPIPE from restarting the server while keeping unexpected errors fatal.
 
 ## Validation
 - Reproduce the health-indicator hydration failure against v0.9.72 and verify recovery without a React hydration error.
+- Exercise real closed stdout/stderr pipes and disconnected responses in subprocesses, and verify that unrelated stream errors still terminate the process.
 
 # v0.9.72 (2026-11-08)
 

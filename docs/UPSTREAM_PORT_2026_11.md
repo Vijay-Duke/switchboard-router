@@ -130,6 +130,11 @@ snapshot for hydration; ordinary client mounts retain current health state.
 Custom compatible provider nodes use existing family icons instead of
 requesting a static PNG named after each node UUID.
 
-One PM2 restart was observed during live verification. Its cause is being
-checked from current process/log evidence; it has not been attributed to
-heap pressure or the browser without evidence.
+Current PM2 logs identify the observed restart as an uncaught write EPIPE;
+the memory watchdog and PM2 memory limit did not cause that restart. The
+stack does not identify which pipe broke. The standalone wrapper now handles
+broken stdout/stderr pipes and disconnected HTTP response/owned h2c socket
+errors at those stream boundaries. Unexpected errors remain fatal. Subprocess
+regressions reproduce closed log pipes and a failed response while checking
+that subsequent healthy requests still work. Historical memory-watchdog
+events are separate and are not explained by this fix.

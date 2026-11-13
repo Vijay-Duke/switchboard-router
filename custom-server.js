@@ -3,6 +3,31 @@ const http = require("http");
 const DEFAULT_H2C_MAX_BODY_BYTES = 16 * 1024 * 1024;
 const H2C_BODY_READ_TIMEOUT_MS = 30_000;
 
+// A supervisor can close its log pipe while the server is still serving traffic.
+// Handle errors on that stream, without weakening the app's fatal-error policy.
+const stdioGuard = Symbol.for("switchboard.stdioBrokenPipeGuard");
+for (const stream of [process.stdout, process.stderr]) {
+  if (!stream || stream[stdioGuard]) continue;
+  stream[stdioGuard] = true;
+  let brokenPipe = false;
+  stream.on("error", (error) => {
+    if (error?.code === "EPIPE") {
+      brokenPipe = true;
+      return;
+    }
+    if (brokenPipe && error?.code === "ERR_STREAM_DESTROYED") return;
+    throw error;
+  });
+}
+
+function containDisconnectedStream(stream) {
+  stream.on("error", (error) => {
+    if (error?.code !== "EPIPE" && error?.code !== "ECONNRESET") throw error;
+    // Do not pass the error to destroy: that would emit it again.
+    stream.destroy();
+  });
+}
+
 function h2cMaxBodyBytes() {
   const raw = process.env.STREAM_TO_JSON_MAX_BYTES;
   const parsed = Number.parseInt(raw || "", 10);
@@ -23,6 +48,7 @@ http.createServer = (...args) => {
   const rest = args.filter((a) => typeof a !== "function");
   if (!handler) return origCreate(...args);
   const wrapped = (req, res) => {
+    containDisconnectedStream(res);
     // h2c downgrade, normal-routing case: with no "upgrade" listener registered,
     // node routes an Upgrade request through the handler as a plain HTTP/1.1
     // request (body intact) but leaks Upgrade/HTTP2-Settings downstream. Scrub
@@ -62,6 +88,8 @@ http.createServer = (...args) => {
       return origEmit.call(this, event, ...eventArgs);
     }
 
+    // Node hands ownership of upgraded sockets to this wrapper.
+    containDisconnectedStream(socket);
     const maxBodyBytes = h2cMaxBodyBytes();
     const contentLength = Number(req.headers["content-length"] || 0);
     if (!Number.isSafeInteger(contentLength) || contentLength < 0 || contentLength > maxBodyBytes) {
