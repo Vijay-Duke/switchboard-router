@@ -106,7 +106,9 @@ export default function EndpointPageClient({ initialData }) {
   // Client-only origin so SSR/hydrate don't stick on bare "/v1"
   const [baseUrl, setBaseUrl] = useState("/v1");
   const [origin, setOrigin] = useState("http://127.0.0.1:20128");
+  const [hasHydrated, setHasHydrated] = useState(false);
   useEffect(() => {
+    setHasHydrated(true);
     if (typeof window !== "undefined") {
       setBaseUrl(`${window.location.origin}/v1`);
       setOrigin(window.location.origin);
@@ -335,7 +337,7 @@ export default function EndpointPageClient({ initialData }) {
                     ) : null;
                   })()}
                   <p className="text-xs text-text-muted mt-1">
-                    Created {new Date(key.createdAt).toLocaleDateString()}
+                    Created {hasHydrated ? new Date(key.createdAt).toLocaleDateString() : "—"}
                   </p>
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>

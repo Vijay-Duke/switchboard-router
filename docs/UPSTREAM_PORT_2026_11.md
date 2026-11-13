@@ -149,3 +149,11 @@ request (or incomplete response body), and terminates that helper. The listener
 survives early rejection/abort until pipe close so queued write errors cannot
 escape afterward. Invalid body types are checked before acquiring a helper.
 This does not establish which pipe produced the earlier Mac WriteWrap stack.
+
+The remaining Endpoint page hydration failure also reproduces with different
+server/browser locales and timezones: saved-key creation dates used the host's
+default locale during both renders. Their initial placeholder now matches on
+the server and client, then browser-local dates render after hydration. The
+full page regression verifies both matching hydration and localized dates. A read-only
+Mac capture confirms the live mismatch: Node en-US rendered 8/23/2026 while
+Chrome en-GB rendered 23/08/2026, both in Australia/Melbourne.
