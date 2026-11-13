@@ -11,6 +11,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
+import Image from "next/image";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 
 // Force-stop FE animation if a provider stays active longer than this
