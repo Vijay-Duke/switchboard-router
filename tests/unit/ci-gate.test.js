@@ -63,7 +63,7 @@ function coversTest(runs, testFile) {
     const args = (match[1] || "").split(/\s+/).filter(Boolean);
     // An invocation with a filter must name the invariant explicitly. Unknown
     // flags (e.g. --exclude) cannot prove that the complete suite is included.
-    const filters = args.filter(arg => arg !== "--reporter=default");
+    const filters = args.filter(arg => arg !== "--reporter=default" && !/^--maxWorkers=[1-9]\d*$/.test(arg));
     return !filters.some(arg => arg.startsWith("-")) && (filters.length === 0 || filters.includes(testFile));
     });
   });
@@ -148,6 +148,12 @@ describe("publication waits for actual reusable CI tests", () => {
 
   it("accepts an actual same-commit workflow_call through a transitive gate", () => {
     expect(gated(fixture())).toBe(true);
+  });
+
+  it("accepts a worker limit without treating it as a test filter", () => {
+    const docs = fixture();
+    docs[".github/workflows/ci.yml"].jobs.tests.steps[0].run += " --maxWorkers=2";
+    expect(gated(docs)).toBe(true);
   });
   it("does not count a called CI test job whose prerequisite is skipped", () => {
     const docs = fixture();
