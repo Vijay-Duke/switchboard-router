@@ -71,7 +71,9 @@ jobs:
 
       - name: Run full test suite
         working-directory: tests
-        run: npx vitest run --reporter=default
+        # Bound concurrent module transforms/DB initialization, which otherwise
+        # exceed individual test timeouts on shared Windows runners.
+        run: npx vitest run --reporter=default --maxWorkers=2
 
   windows-invariants:
     name: Windows launcher and recovery
