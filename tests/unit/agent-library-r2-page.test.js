@@ -9,7 +9,7 @@
 // T9 skill delete failure surfaces notify.error.
 import React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createHarness, setValue, fire, jsonResponse, findByLabel } from "./dashboard-dom-harness.js";
+import { createHarness, setValue, fire, jsonResponse, findByLabel, click, settle } from "./dashboard-dom-harness.js";
 
 const notify = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn() }));
 vi.mock("@/store/notificationStore", () => ({
@@ -145,21 +145,22 @@ describe("agent-library page (round-2)", () => {
 
   it("T7: discovered skills render as real <button> elements that select", async () => {
     const harness = await mountPage();
-    await tabButton(harness.container, "Catalog").click();
-    await new Promise((r) => setTimeout(r, 0));
+    await click(tabButton(harness.container, "Catalog"));
 
     const input = harness.container.querySelector('input[placeholder^="e.g. npx skills add"]');
     await setValue(input, "anthropics/skills");
-    await tabButton(harness.container, "Resolve & Preview").click();
-    await new Promise((r) => setTimeout(r, 10));
+    await click(tabButton(harness.container, "Resolve & Preview"));
+    await settle(
+      () => [...harness.container.querySelectorAll("button")].some((b) => b.textContent.includes("Skill One")),
+      "discovered skill button",
+    );
 
     const discovered = [...harness.container.querySelectorAll("button")]
       .filter((b) => b.textContent.includes("Skill One"));
     expect(discovered).toHaveLength(1);
     expect(discovered[0].tagName).toBe("BUTTON");
 
-    discovered[0].click();
-    await new Promise((r) => setTimeout(r, 10));
+    await click(discovered[0]);
     const urlInput = [...harness.container.querySelectorAll("input")]
       .find((i) => i.value === "https://x/1.md");
     expect(urlInput).toBeTruthy();
