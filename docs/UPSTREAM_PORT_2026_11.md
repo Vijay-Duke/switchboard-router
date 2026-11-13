@@ -118,3 +118,18 @@ combo denies and concurrent catalog/inference reads have regression coverage.
 Qoder queue polling defaults to the documented three minutes; valid Antigravity
 sibling signatures remain intact. New reserved prefixes br/brx/zd can collide
 with custom provider nodes; deployment must check existing nodes before upgrade.
+
+## Live verification follow-up (2026-11-13)
+
+The authenticated Mac endpoint page and policy-dialog open/close pass on v0.9.72.
+Live browser verification also found custom-provider image 404s and an
+intermittent React text hydration mismatch. A controlled hydration regression
+reproduces the shared health indicator changing before a later boundary
+hydrates. The health hook now uses useSyncExternalStore with the same server
+snapshot for hydration; ordinary client mounts retain current health state.
+Custom compatible provider nodes use existing family icons instead of
+requesting a static PNG named after each node UUID.
+
+One PM2 restart was observed during live verification. Its cause is being
+checked from current process/log evidence; it has not been attributed to
+heap pressure or the browser without evidence.

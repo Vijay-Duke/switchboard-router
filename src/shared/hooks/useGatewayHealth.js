@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 const DEFAULT_POLL_MS = 30000;
 
@@ -18,7 +18,7 @@ let inflightPing = null;
 function setSharedOnline(online) {
   if (currentOnline === online) return;
   currentOnline = online;
-  for (const setOnline of subscribers) setOnline(online);
+  for (const notify of subscribers) notify();
 }
 
 async function sharedPing() {
@@ -62,20 +62,24 @@ function releaseSharedPoll() {
  * @returns {{ online: boolean }}
  */
 export function useGatewayHealth({ intervalMs = DEFAULT_POLL_MS } = {}) {
-  const [online, setOnline] = useState(currentOnline);
-
-  useEffect(() => {
-    subscribers.add(setOnline);
-    setOnline(currentOnline);
+  const subscribe = useCallback((notify) => {
+    subscribers.add(notify);
     ensureSharedPoll(intervalMs);
     sharedPing();
     return () => {
-      subscribers.delete(setOnline);
+      subscribers.delete(notify);
       releaseSharedPoll();
     };
   }, [intervalMs]);
 
+  // A health probe can finish before a later boundary hydrates. Match the
+  // server's initial online snapshot, then subscribe to the current value.
+  const online = useSyncExternalStore(subscribe, getOnlineSnapshot, getServerOnlineSnapshot);
+
   return { online };
 }
+
+function getOnlineSnapshot() { return currentOnline; }
+function getServerOnlineSnapshot() { return true; }
 
 export default useGatewayHealth;

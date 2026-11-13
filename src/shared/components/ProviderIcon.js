@@ -4,6 +4,12 @@ import { useState } from "react";
 import PropTypes from "prop-types";
 import Image from "next/image";
 
+function resolveIconSource(src) {
+  if (/^\/providers\/(?:openai-compatible-|custom-embedding-)[^/]+\.png$/.test(src || "")) return "/providers/openai.png";
+  if (/^\/providers\/anthropic-compatible-[^/]+\.png$/.test(src || "")) return "/providers/anthropic.png";
+  return src;
+}
+
 export default function ProviderIcon({
   src,
   alt,
@@ -12,9 +18,10 @@ export default function ProviderIcon({
   fallbackText = "?",
   fallbackColor,
 }) {
-  const [errored, setErrored] = useState(false);
+  const [failedSrc, setFailedSrc] = useState(null);
+  const imageSrc = resolveIconSource(src);
 
-  if (!src || errored) {
+  if (!imageSrc || failedSrc === imageSrc) {
     return (
       <span
         className={`inline-flex items-center justify-center font-bold rounded-lg ${className}`.trim()}
@@ -32,13 +39,13 @@ export default function ProviderIcon({
 
   return (
     <Image
-      src={src}
+      src={imageSrc}
       alt={alt}
       width={size}
       height={size}
       unoptimized
       className={className}
-      onError={() => setErrored(true)}
+      onError={() => setFailedSrc(imageSrc)}
     />
   );
 }

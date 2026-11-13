@@ -7,7 +7,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React, { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 
 const h = React.createElement;
 
@@ -110,6 +111,28 @@ describe("useGatewayHealth (U9)", () => {
 });
 
 describe("useGatewayHealth shared poll (W15)", () => {
+  it("hydrates server markup when another subscriber has already observed an outage", async () => {
+    function Status() {
+      return h("span", null, useGatewayHealth().online ? "online" : "offline");
+    }
+    const serverMarkup = renderToString(h(Status));
+    expect(serverMarkup).toContain("online");
+    globalThis.fetch = vi.fn(async () => ({ ok: false }));
+    setHidden(false);
+    await mountProbe();
+    expect(seen.at(-1)).toBe(false);
+
+    const container = document.createElement("div");
+    container.innerHTML = serverMarkup;
+    document.body.appendChild(container);
+    containers.push(container);
+    const recoverableErrors = [];
+    await act(async () => {
+      roots.push(hydrateRoot(container, h(Status), { onRecoverableError: (error) => recoverableErrors.push(error.message) }));
+    });
+    expect(container.textContent).toBe("offline");
+    expect(recoverableErrors).toEqual([]);
+  });
   it("two mounters share one in-flight probe and both receive the result", async () => {
     globalThis.fetch = vi.fn(async () => ({ ok: false }));
     setHidden(false);

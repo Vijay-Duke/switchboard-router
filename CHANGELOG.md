@@ -1,3 +1,12 @@
+# v0.9.73 (2026-11-13)
+
+## Fixes
+- Keep the gateway health indicator consistent during hydration when another subscriber has already observed an outage. Client-only subscribers still receive the current health state immediately.
+- Use the built-in OpenAI/Anthropic family icons for custom compatible provider nodes, avoiding missing per-node image requests, and retry icons when their source changes.
+
+## Validation
+- Reproduce the health-indicator hydration failure against v0.9.72 and verify recovery without a React hydration error.
+
 # v0.9.72 (2026-11-08)
 
 ## Fixes
