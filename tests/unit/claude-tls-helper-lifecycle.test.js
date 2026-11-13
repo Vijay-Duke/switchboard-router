@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { spawnSync } from "node:child_process";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -94,6 +95,85 @@ it("sends a bounded timeout in helper metadata with init, transport, and default
 });
 
 describe("Claude TLS helper lifecycle", () => {
+  it.skipIf(process.platform === "win32")("survives an actual closed helper input pipe in a subprocess", () => {
+    const moduleUrl = new URL("../../open-sse/identity/tls/claude-code.js", import.meta.url).href;
+    const helper = "require('node:fs').closeSync(0);process.stdout.end('{\"error\":\"request refused\"}\\n');setTimeout(()=>process.exit(0),50)";
+    const script = `
+      import { spawn } from 'node:child_process';
+      import { __setClaudeCodeSpawnForTest, createClaudeCodeFetch } from ${JSON.stringify(moduleUrl)};
+      __setClaudeCodeSpawnForTest(() => spawn(process.execPath, ['-e', ${JSON.stringify(helper)}], {stdio:['pipe','pipe','pipe']}));
+      let rejected = false;
+      try {
+        await createClaudeCodeFetch()('https://api.anthropic.com/v1/messages', {body:'x'.repeat(8*1024*1024)}, {alpn:['http/1.1']});
+      } catch { rejected = true; }
+      await new Promise(resolve => setTimeout(resolve, 150));
+      console.log(JSON.stringify({survived:true,rejected}));
+    `;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+      env: { ...process.env, SWITCHBOARD_CLAUDE_TLS_POOL_CAP: "0" },
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ survived: true, rejected: true });
+  });
+
+  it("rejects only the request when the helper input pipe fails", async () => {
+    const child = new FakeChild();
+    const spawned = installChild(child);
+    const pending = fetchWith();
+    await spawned;
+    const error = Object.assign(new Error("helper input pipe closed"), { code: "EPIPE" });
+
+    expect(() => child.stdin.emit("error", error)).not.toThrow();
+
+    const outcome = await outcomeWithin(pending);
+    expect(outcome.state).toBe("rejected");
+    expect(outcome.error).toBe(error);
+    expect(child.killed).toBe(true);
+  });
+
+  it("contains a late input-pipe failure after helper metadata rejected the request", async () => {
+    const child = new FakeChild();
+    const spawned = installChild(child);
+    const pending = fetchWith();
+    await spawned;
+    child.stdout.write(`${JSON.stringify({ error: "request refused" })}\n`);
+    expect((await outcomeWithin(pending)).state).toBe("rejected");
+
+    expect(() => child.stdin.emit("error", Object.assign(new Error("late input failure"), { code: "EPIPE" }))).not.toThrow();
+    expect(child.killed).toBe(true);
+  });
+
+  it("contains queued input failures after a request abort and releases the listener on close", async () => {
+    const child = new FakeChild(), controller = new AbortController();
+    const spawned = installChild(child);
+    const pending = fetchWith(controller.signal);
+    await spawned;
+    controller.abort();
+    expect((await outcomeWithin(pending)).error.name).toBe("AbortError");
+
+    expect(() => child.stdin.emit("error", Object.assign(new Error("aborted write"), { code: "EPIPE" }))).not.toThrow();
+    child.stdin.emit("close");
+    expect(child.stdin.listenerCount("error")).toBe(0);
+  });
+
+  it("fails the response body when the input pipe errors after metadata", async () => {
+    const child = new FakeChild();
+    const spawned = installChild(child);
+    const pending = fetchWith();
+    await spawned;
+    child.stdout.write(`${JSON.stringify({ status: 200, headers: [] })}\npartial`);
+    const response = await pending;
+    const text = outcomeWithin(response.text());
+    const error = Object.assign(new Error("incomplete helper input"), { code: "EPIPE" });
+
+    child.stdin.emit("error", error);
+
+    expect((await text).error).toBe(error);
+    expect(child.killed).toBe(true);
+  });
+
   it("terminates the serving helper when response body is canceled without an original signal", async () => {
     const child = new FakeChild();
     const spawned = installChild(child);

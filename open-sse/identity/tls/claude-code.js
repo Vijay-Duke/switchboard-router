@@ -162,6 +162,7 @@ function parseHelperResponse(stdout, stderr, child, signal) {
     let buffered = Buffer.alloc(0);
     let stderrText = "";
     let settled = false;
+    let failBodyInput = null;
     const onStderr = (chunk) => {
       if (stderrText.length >= MAX_HELPER_STDERR_BYTES) return;
       stderrText += chunk.toString("utf8", 0, MAX_HELPER_STDERR_BYTES - stderrText.length);
@@ -242,6 +243,9 @@ function parseHelperResponse(stdout, stderr, child, signal) {
         }
         finishBody(error);
       };
+      failBodyInput = (error) => {
+        if (!bodySettled) destroyBody(error);
+      };
       const onBodyError = (error) => finishBody(error);
       const onStdoutEnd = () => {
         stdoutEnded = true;
@@ -278,6 +282,16 @@ function parseHelperResponse(stdout, stderr, child, signal) {
     stdout.on("data", onData);
     child.once("error", onError);
     child.once("exit", onExitBeforeMetadata);
+    // Input can fail independently of ChildProcess.error, including after a
+    // helper rejects metadata or an abort kills it while writes are queued.
+    // Keep this listener until the pipe closes, even after request settlement.
+    const onInputError = (error) => {
+      if (!settled) fail(error);
+      else failBodyInput?.(error);
+      child.kill("SIGTERM");
+    };
+    child.stdin.on("error", onInputError);
+    child.stdin.once("close", () => child.stdin.off("error", onInputError));
     signal?.addEventListener("abort", onAbortBeforeMetadata, { once: true });
     if (signal?.aborted) onAbortBeforeMetadata();
   });
@@ -290,10 +304,10 @@ export function createClaudeCodeFetch() {
     }
     if (init.signal?.aborted) throw abortError();
     const binary = await resolveBinary();
+    const body = bodyToInput(init.body);
     const child = takePooledHelper() ?? spawnHelperChild(binary);
     schedulePoolRefill(binary);
 
-    const body = bodyToInput(init.body);
     const request = {
       url: String(url),
       method: init.method || "GET",
@@ -305,9 +319,11 @@ export function createClaudeCodeFetch() {
       bodyLength: body?.byteLength || 0,
       timeoutMs: helperTimeout(init, transport),
     };
+    // Observe child/pipe errors before submitting any bytes.
+    const response = parseHelperResponse(child.stdout, child.stderr, child, init.signal);
     child.stdin.write(`${JSON.stringify(request)}\n`);
     if (body) child.stdin.write(body);
     child.stdin.end();
-    return parseHelperResponse(child.stdout, child.stderr, child, init.signal);
+    return response;
   };
 }

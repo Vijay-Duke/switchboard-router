@@ -138,3 +138,14 @@ errors at those stream boundaries. Unexpected errors remain fatal. Subprocess
 regressions reproduce closed log pipes and a failed response while checking
 that subsequent healthy requests still work. Historical memory-watchdog
 events are separate and are not explained by this fix.
+
+## Claude helper input-pipe follow-up (v0.9.74)
+
+The wider EPIPE audit also found an unobserved child.stdin error in the native
+Claude TLS helper transport, predating the upstream port. A real closed-input
+subprocess reproduction exits the old parent process with EPIPE. The transport
+now observes input errors before submitting bytes, rejects only the affected
+request (or incomplete response body), and terminates that helper. The listener
+survives early rejection/abort until pipe close so queued write errors cannot
+escape afterward. Invalid body types are checked before acquiring a helper.
+This does not establish which pipe produced the earlier Mac WriteWrap stack.

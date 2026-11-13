@@ -1,3 +1,14 @@
+# v0.9.74 (2026-11-13)
+
+## Fixes
+- Keep Claude TLS helper input-pipe failures within their request. Observe pipe errors before writing, retain the listener through queued errors after abort/rejection, terminate the failed helper, and fail an incomplete response body when needed.
+- Validate request body types before acquiring a helper process.
+
+## Validation
+- Reproduce a real closed-helper-input EPIPE exiting the old process and verify the fixed process survives while rejecting the request.
+- Cover input failures before and after metadata, after rejection and abort, and listener cleanup on pipe close.
+- Stabilize Agent Library asynchronous rendering checks and bound CI test workers without skipping tests or changing timeouts.
+
 # v0.9.73 (2026-11-13)
 
 ## Fixes
